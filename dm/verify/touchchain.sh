@@ -77,6 +77,6 @@ if [ "$host_status" -eq 0 ] && [ "$assert_status" -eq 0 ]; then
     echo "TOUCHCHAIN $CASE OK 用时 $((SECONDS - START)) 秒"
     exit 0
 fi
-echo "【红】touchchain $CASE：host=$host_status assert=$assert_status；局目录：$RUN" >&2
+echo "【红】touchchain ${CASE}：host=$host_status assert=${assert_status}；局目录：$RUN" >&2
 echo "TOUCHCHAIN $CASE RED 用时 $((SECONDS - START)) 秒"
 exit 1

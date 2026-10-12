@@ -86,7 +86,7 @@ EOF2
   else
     if [ -f "$log" ]; then cat "$frame_tmp/run.log" >> "$log"; else cp "$frame_tmp/run.log" "$log"; fi
     printf '%s\t%s\n' "$id" "$name" >> "$fail_file"
-    echo "失败 $id $name（见 $log）" >&2
+    echo "失败 $id ${name}（见 ${log}）" >&2
   fi
 }
 

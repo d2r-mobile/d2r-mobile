@@ -3,7 +3,7 @@
 # Unit test for devbattery.sh: fake readings (DEVBATTERY_FAKE) + temporary directory, no device touched. Expected values are computed by hand from the rules: < 30 refuse and drop the marker; with the marker present, < 60 refuse; ≥ 60 remove the marker and pass; unreadable refuse
 cd "$(dirname "$0")"; T=$(mktemp -d); export DEVBATTERY_DIR=$T;   # 单测一律写临时目录，不碰 $DM_ROOT/run/ios 的真日志与告警 | Unit tests always write to a temporary directory and never touch the real logs and alerts in $DM_ROOT/run/ios
  source ./devbattery.sh; bad=0
-ck() { local want=$1 got; shift; DEVBATTERY_FAKE="$*" devbattery_gate 2>/dev/null; got=$?; [ "$got" = "$want" ] && echo "通 $* → $got" || { echo "不通 $* → $got（期望 $want）"; bad=1; }; }
+ck() { local want=$1 got; shift; DEVBATTERY_FAKE="$*" devbattery_gate 2>/dev/null; got=$?; [ "$got" = "$want" ] && echo "通 $* → $got" || { echo "不通 $* → ${got}（期望 ${want}）"; bad=1; }; }
 ck 0 80 0 1 1          # 80%：放行 | 80%: pass
 ck 1 25 1 1 0          # 25%：拒，落标记 | 25%: refuse, drop the marker
 [ -f $T/device_low_battery ] && echo "通 低电落标记" || { echo "不通 低电没落标记"; bad=1; }
@@ -11,6 +11,11 @@ ck 1 45 1 1 0          # 标记在、45%：拒 | Marker present, 45%: refuse
 ck 0 60 1 1 0          # 60%：撤标记放行 | 60%: remove the marker and pass
 [ ! -f $T/device_low_battery ] && echo "通 撤标记" || { echo "不通 标记没撤"; bad=1; }
 ck 0 45 1 1 0          # 没标记、45%：放行 | No marker, 45%: pass
+# 本机缺 timeout：与设备离线分开报，返回 3（PATH 换成只有基本命令的目录，UDID 给个假的；期望按规则：读电量前先找工具，找不到即 3）
+# timeout missing locally: reported separately from a device being offline, returns 3 (PATH is replaced by a directory with only basic commands, the UDID is a fake one; expected by rule: the tools are looked up before the battery is read, and not finding them gives 3)
+E=$T/emptybin; mkdir -p $E; for c in date mkdir dirname cat head awk; do ln -s "$(command -v $c)" $E/$c; done
+( PATH=$E DM_IOS_UDID=fake; unset DEVBATTERY_FAKE; devbattery_gate > $T/miss.out 2>&1; echo $? > $T/miss.rc )
+[ "$(cat $T/miss.rc)" = 3 ] && grep -q "本机缺读电量要用的命令" $T/miss.out && ! grep -q "离线" $T/miss.out && echo "通 缺 timeout → 3，报缺命令不报离线" || { echo "不通 缺 timeout → $(cat $T/miss.rc)：$(head -1 $T/miss.out)"; bad=1; }
 out=$(DEVBATTERY_FAKE="50 0 1 0" devbattery_gate 2>&1); case "$out" in *供电跟不上*) echo "通 插电不充记红";; *) echo "不通 插电不充没记红"; bad=1;; esac
 out=$(DEVBATTERY_FAKE="99 0 1 0" devbattery_gate 2>&1); case "$out" in *供电跟不上*) echo "不通 99% 停充被当成供电跟不上"; bad=1;; *) echo "通 99% 停充不记红";; esac
 DEVBATTERY_FAKE= DM_IOS_UDID=00000000-0000000000000000 devbattery_gate 2>/dev/null && { echo "不通 读不到却放行"; bad=1; } || echo "通 读不到拒"

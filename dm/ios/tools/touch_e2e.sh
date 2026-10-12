@@ -52,7 +52,7 @@ EOF
 )
 dc process launch --device $D --terminate-existing --environment-variables "$ENV" --json-output "$OUT/launch.json" $B -mode boot > "$OUT/launch.log" 2>&1
 PID=$(python3 -c "import json;print(json.load(open('$OUT/launch.json'))['result']['process']['processIdentifier'])")
-t "启动 pid $PID，跑 ${CAP}s"; sleep "$CAP"
+t "启动 pid ${PID}，跑 ${CAP}s"; sleep "$CAP"
 dc process terminate --device $D --pid "$PID" > "$OUT/stop.log" 2>&1 && t "已停 pid $PID" || t "pid $PID 已自行退出"
 # 只拉本局产物（Documents 里有 9 GB romfs，不整目录拉）：启动日志、四份记录、脚本里的截图
 # E2E_PULL（空格分隔，不带本局前缀，如 "c2s.jsonl state.jsonl s2.png"）：只拉这几份——每次 copy from 约 20 s，全拉会把锁内时间拖过 2 分钟
@@ -63,6 +63,6 @@ ALL="boot.txt ${RID}_c2s.jsonl ${RID}_uimsg.jsonl ${RID}_ticks.jsonl ${RID}_targ
 for f in $ALL; do
   g=${f#${RID}_}   # 拉回后去掉本局前缀，结果目录里的文件名与旧版一致（e2e_* 照旧） | After pulling, strip this run's prefix so the file names in the result directory match the old version (e2e_* unchanged)
   case $f in ${RID}_*.jsonl) g=e2e_$g;; esac
-  dc copy from --device $D --domain-type appDataContainer --domain-identifier $B --source "Documents/$f" --destination "$OUT/$g" >> "$OUT/copy.log" 2>&1 || t "【红】拉不到 $f（本局没写）"
+  dc copy from --device $D --domain-type appDataContainer --domain-identifier $B --source "Documents/$f" --destination "$OUT/$g" >> "$OUT/copy.log" 2>&1 || t "【红】拉不到 ${f}（本局没写）"
 done
 left=$(pids); [ -z "$left" ] && t "设备上 DmIOS 进程 0" || t "【红】仍有 DmIOS 进程 $left"

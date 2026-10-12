@@ -98,7 +98,7 @@ sleep 1; kill -0 "$IPROXY_PID" 2>/dev/null || { LEDGER_RES=转发没起来; echo
 cds_restart() {
   local p; p=$(pgrep -u "$(id -u)" -f 'CoreDeviceService.xpc/Contents/MacOS/CoreDeviceService' | head -1)
   [ -n "$p" ] && { kill -TERM "$p"; for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$p" 2>/dev/null || break; sleep 0.5; done; kill -0 "$p" 2>/dev/null && kill -KILL "$p"; }
-  echo "健康检查：$1 → 重启 CoreDeviceService（原 pid ${p:-无}）"; LEDGER_SEGS="${LEDGER_SEGS:+$LEDGER_SEGS；}重启服务:$1"
+  echo "健康检查：$1 → 重启 CoreDeviceService（原 pid ${p:-无}）"; LEDGER_SEGS="${LEDGER_SEGS:+${LEDGER_SEGS}；}重启服务:$1"
 }
 
 # 设备上本包 DmIOS 的 pid，一行一个。查询失败（devicectl 出错 / 超时 / 输出读不懂）返回 2、不输出——调用处不许把失败当成「没有进程」
@@ -153,13 +153,13 @@ wait_gone() {
     p=$(pids); rc=$?; [ -n "$p" ] && p="$(echo $p) "
     if [ "$rc" -ne 0 ]; then   # 查不到进程表 ≠ 已退出：接着等；查询一直失败到上限就记一行放行（收尾那道检查会再查） | Unable to query the process table ≠ exited: keep waiting; if queries keep failing up to the limit, log one line and let it through (the wrap-up check will query again)
       if [ $(( $(date +%s) - t0 )) -ge "$lim" ]; then
-        echo "$1：拉起前查设备进程表连续失败 ${lim} 秒，不能确认上一局已退出；最后一次报错：$(head -c 200 "$RUN/pids_last.err" 2>/dev/null | tr '\n' ' ')（逐次记录在 $RUN/pids_trace.log）"; LEDGER_SEGS="${LEDGER_SEGS:+$LEDGER_SEGS；}进程表查询失败:$1"; return
+        echo "$1：拉起前查设备进程表连续失败 ${lim} 秒，不能确认上一局已退出；最后一次报错：$(head -c 200 "$RUN/pids_last.err" 2>/dev/null | tr '\n' ' ')（逐次记录在 $RUN/pids_trace.log）"; LEDGER_SEGS="${LEDGER_SEGS:+${LEDGER_SEGS}；}进程表查询失败:$1"; return
       fi
       sleep 0.3; continue
     fi
     [ -n "$p" ] || break
     if [ $(( $(date +%s) - t0 )) -ge "$lim" ]; then
-      echo "$1：拉起前本包进程 pid ${p}等了 ${lim} 秒仍在进程表里，按 pid 结束"; LEDGER_SEGS="${LEDGER_SEGS:+$LEDGER_SEGS；}拉起前强制结束:$1"
+      echo "$1：拉起前本包进程 pid ${p}等了 ${lim} 秒仍在进程表里，按 pid 结束"; LEDGER_SEGS="${LEDGER_SEGS:+${LEDGER_SEGS}；}拉起前强制结束:$1"
       for q in $p; do stop_pid "$q"; done; t0=$(date +%s); lim=$((lim + 5))
     fi
     sleep 0.3
@@ -221,16 +221,16 @@ for i in $(seq 1 "$N"); do
     # 健康检查：拉起失败 / 超时 → 重启本用户 CoreDeviceService 再试一次；成功但 > 10 s → 下一局前重启
     # Health check: launch failed / timed out → restart this user's CoreDeviceService and try once more; succeeded but > 10 s → restart before the next run
     if [ "$lrc" -ne 0 ]; then
-      cds_restart "第 $i 次拉起失败（rc=$lrc）"; tA=$(date +%s)
+      cds_restart "第 $i 次拉起失败（rc=${lrc}）"; tA=$(date +%s)
       "$TIMEOUT_BIN" -k 5s 30s xcrun devicectl device process launch --device "$D" "$B" -mode boot >>"$OUT/launch_${attempt}.txt" 2>&1; lrc=$?
     elif [ $(( $(date +%s) - tA )) -gt 10 ]; then CDS_DUE=1; fi
     eval "$(python3 "$TOOLS/logport.py" read "$LOCAL_PORT" "$attempt_log" "$main_menu_timeout" "$game_screen_timeout")"
     cat "$attempt_log" >> "$CONSOLE"
     if [ "$result" -ne 0 ] && [ -z "$tL" ] && [ "$lrc" -eq 0 ] && [ "$envre" = 0 ] && noenv_instance "第 $i 次"; then envre=1; attempt=$((attempt - 1)); continue; fi
     [ "$pk" = 1 ] && { known_pk=1; stage=启动; }
-    chan=""; [ "$lrc" -ne 0 ] && chan="（拉起失败：devicectl 退出码 $lrc）"
+    chan=""; [ "$lrc" -ne 0 ] && chan="（拉起失败：devicectl 退出码 ${lrc}）"
     [ "$result" -ne 0 ] && [ -z "$tL" ] && [ "$lrc" -eq 0 ] && chan="（日志端口零行：App 未监听或 iproxy 不通）"
-    [ "$exited" = 1 ] || chan="$chan（quit 后实例未退）"
+    [ "$exited" = 1 ] || chan="${chan}（quit 后实例未退）"
 
     if [ "$result" -eq 0 ]; then
       break
@@ -254,9 +254,9 @@ for i in $(seq 1 "$N"); do
   if [ "$result" -eq 0 ]; then
     echo "第 $i/$N 次 OK：主菜单 $(count_lines MainMenuButtonRibbon "$CONSOLE") 进局 $(count_lines 'FrontEndNavigation ToGame' "$CONSOLE") 撤屏 1，用时 $(( $(date +%s) - START )) 秒；分段$seg"
     ok=$((ok + 1))
-    LEDGER_SEGS="${LEDGER_SEGS:+$LEDGER_SEGS；}$i:OK$seg"
+    LEDGER_SEGS="${LEDGER_SEGS:+${LEDGER_SEGS}；}$i:OK$seg"
   else
-    LEDGER_SEGS="${LEDGER_SEGS:+$LEDGER_SEGS；}$i:RED@$stage$seg"
+    LEDGER_SEGS="${LEDGER_SEGS:+${LEDGER_SEGS}；}$i:RED@$stage$seg"
     echo "第 $i/$N 次 RED：卡在：${stage}（主菜单 $(count_lines MainMenuButtonRibbon "$CONSOLE")/进局 $(count_lines 'FrontEndNavigation ToGame' "$CONSOLE")/撤屏 0）；分段$seg${chan}"
   fi
 done
@@ -284,18 +284,18 @@ if [ -z "${SMOKE_KEYS:-}" ] && [ "${SMOKE_PLAYER:-1}" = 1 ]; then
   au_real=$(grep -c 'audio::OpenAudioOut .*真出声' "$RUN/player.txt" 2>/dev/null); au_null=$(grep -c 'audio::OpenAudioOut .*静音接收端' "$RUN/player.txt" 2>/dev/null)
   hud_ok=$(LC_ALL=C grep -a 'dm_hud：' "$RUN/player.txt" 2>/dev/null | LC_ALL=C grep -a -v -c '未读到玩家')   # 产品缺省必须读得到受控玩家（同 smoke_mac.sh） | Product defaults must be able to read the controlled player (same as smoke_mac.sh)
   red_n=$(LC_ALL=C grep -a -c '【红】' "$RUN/player.txt" 2>/dev/null)   # 玩家路径日志不许有红行（同 smoke_mac.sh） | The player path log must have no failure lines (same as smoke_mac.sh)
-  if [[ "$pr" == result=0* ]] && [ "${au_real:-0}" -gt 0 ] && [ "${au_null:-0}" = 0 ] && [ "${hud_ok:-0}" -gt 0 ] && [ "${red_n:-0}" = 0 ]; then PLAYER_RES=OK; echo "玩家路径 OK：无看门狗变量，进局 35 s + 暂停菜单 20 s 仍活着；AudioOut 真出声 ${au_real} 路（$pr）"
-  else PLAYER_RES=RED; echo "玩家路径 RED：$pr；AudioOut 真出声 ${au_real:-0} 路 / 静音接收端 ${au_null:-0} 路（须真出声 > 0、静音 0）；读到玩家状态 ${hud_ok:-0} 行（须 > 0）；红行 ${red_n:-0} 条（须 0）"; fi
-  LEDGER_SEGS="${LEDGER_SEGS:+$LEDGER_SEGS；}玩家路径:$PLAYER_RES"
+  if [[ "$pr" == result=0* ]] && [ "${au_real:-0}" -gt 0 ] && [ "${au_null:-0}" = 0 ] && [ "${hud_ok:-0}" -gt 0 ] && [ "${red_n:-0}" = 0 ]; then PLAYER_RES=OK; echo "玩家路径 OK：无看门狗变量，进局 35 s + 暂停菜单 20 s 仍活着；AudioOut 真出声 ${au_real} 路（${pr}）"
+  else PLAYER_RES=RED; echo "玩家路径 RED：${pr}；AudioOut 真出声 ${au_real:-0} 路 / 静音接收端 ${au_null:-0} 路（须真出声 > 0、静音 0）；读到玩家状态 ${hud_ok:-0} 行（须 > 0）；红行 ${red_n:-0} 条（须 0）"; fi
+  LEDGER_SEGS="${LEDGER_SEGS:+${LEDGER_SEGS}；}玩家路径:$PLAYER_RES"
 fi
 
-[ "$ENV_RELAUNCH" -gt 0 ] && { echo "环境重起 ${ENV_RELAUNCH} 次（起来的实例没拿到环境变量，已按 pid 结束并重起；不算红）"; LEDGER_SEGS="${LEDGER_SEGS:+$LEDGER_SEGS；}环境重起:${ENV_RELAUNCH}次"; }
+[ "$ENV_RELAUNCH" -gt 0 ] && { echo "环境重起 ${ENV_RELAUNCH} 次（起来的实例没拿到环境变量，已按 pid 结束并重起；不算红）"; LEDGER_SEGS="${LEDGER_SEGS:+${LEDGER_SEGS}；}环境重起:${ENV_RELAUNCH}次"; }
 left=""; left_rc=2
 for _ in 1 2 3; do left=$(pids) && { left_rc=0; break; }; sleep 2; done   # devicectl 偶发失败重试；三次都失败 = 不能确认，按红报 | Retry on sporadic devicectl failures; all three failing = cannot confirm, report as a failure
 left=$(echo $left)
 if [ "$left_rc" -ne 0 ]; then
   echo "【红】结束后查设备进程表 3 次都失败（devicectl 出错 / 超时），不能确认本包已退出"
-  LEDGER_SEGS="${LEDGER_SEGS:+$LEDGER_SEGS；}收尾进程表查询失败"
+  LEDGER_SEGS="${LEDGER_SEGS:+${LEDGER_SEGS}；}收尾进程表查询失败"
 elif [ -n "$left" ]; then
   echo "【红】结束后仍有本包 DmIOS pid：$left"
   # 残留实例的 App 端日志（Documents/boot.txt）在结束它之前拉回：下次拉起会清空重写，锁外别的任务一拉起证据就没了

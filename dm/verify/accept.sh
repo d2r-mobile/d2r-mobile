@@ -62,7 +62,7 @@ if [ "${ACCEPT_ALL:-0}" != 1 ]; then
     elif ! printf '%s\n' "$CH" | grep -qvE '^(dm/gfx/|dm/ios/|docs/)|\.md$'; then SKIP="1 2 5 6 7 9"; SCOPE="改动只在 dm/gfx（及 dm/ios、文档）"; fi
   fi
 fi
-echo "SCOPE ${SCOPE}$([ -n "$SKIP" ] && echo "；跳过项序号 $SKIP（ACCEPT_ALL=1 强制全量）")"
+echo "SCOPE ${SCOPE}$([ -n "$SKIP" ] && echo "；跳过项序号 ${SKIP}（ACCEPT_ALL=1 强制全量）")"
 [ "${ACCEPT_SCOPE_ONLY:-0}" = 1 ] && exit 0
 # 并行子项都调用增量make；先在锁内只构建一次，避免冷树多个链接器争写同一个dmhost/dSYM。
 # The parallel sub-items all invoke an incremental make; build once first inside the lock, so that on a cold tree several linkers do not compete to write the same dmhost/dSYM.

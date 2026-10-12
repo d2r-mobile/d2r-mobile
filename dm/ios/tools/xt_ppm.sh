@@ -3,7 +3,7 @@
 # 用法：ppm.sh <序列…>，元素 = base / nofxaa / bloomq0 / skiptm / skipcp / skipfx / skipcopy / skiplin
 # Upper-bound matrix for the post-processing chain: one environment per run; outputs each pass's (keyed by first-draw fragment key) normalized ratio to the depth pre-pass fragment.
 # Usage: ppm.sh <sequence...>, elements = base / nofxaa / bloomq0 / skiptm / skipcp / skipfx / skipcopy / skiplin
-PN=$(bash "$(dirname "$0")/../../tools/product.sh" name touch); D=${XT_MINI_DIR:-$(ls -dt "${DM_ROOT:-$HOME/dm-work}"/run/mini/*_"$PN" 2>/dev/null | head -1)}; [ -d "$D" ] || { echo "没有 mini 同步目录 ${DM_ROOT:-$HOME/dm-work}/run/mini/*_$PN（先 mini_sync.sh，或用 XT_MINI_DIR 指定）"; exit 2; }; T=$D/src/dm/ios/tools; B=${DM_ROOT:-$HOME/dm-work}/run/xtrace/batch_$(date +%m%d_%H%M%S)_ppm; mkdir -p $B; O=$B/out.tsv; : > $O
+PN=$(bash "$(dirname "$0")/../../tools/product.sh" name touch); D=${XT_MINI_DIR:-$(ls -dt "${DM_ROOT:-$HOME/dm-work}"/run/mini/*_"$PN" 2>/dev/null | head -1)}; [ -d "$D" ] || { echo "没有 mini 同步目录 ${DM_ROOT:-$HOME/dm-work}/run/mini/*_${PN}（先 mini_sync.sh，或用 XT_MINI_DIR 指定）"; exit 2; }; T=$D/src/dm/ios/tools; B=${DM_ROOT:-$HOME/dm-work}/run/xtrace/batch_$(date +%m%d_%H%M%S)_ppm; mkdir -p $B; O=$B/out.tsv; : > $O
 source $T/mlock.sh; mlock_acquire "${XT_OWNER:?先设 XT_OWNER=线名} 后处理矩阵 $# 局 约 $(( $# * 95 / 60 )) 分钟"; trap mlock_release EXIT; i=0
 for v in "$@"; do
   case $v in

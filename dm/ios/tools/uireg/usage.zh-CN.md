@@ -147,7 +147,7 @@ python3 dm/ios/tools/uireg/uireg.py iphone a c e      # 跑几局
 
 仓库里没有单独出 iPad 包的脚本。做法和 `tools/smoke_mac.sh` 里出包的那两步相同，只多一项构建设置：
 
-1. 同样的 `xcodebuild` 命令，末尾加 `DM_DEVICE_FAMILY=1,2`（设备族里加上 iPad；工程缺省只面向 iPhone，见 `../../project.yml`）。
+1. 同样的 `xcodebuild` 命令，把其中的 `DM_DEVICE_FAMILY=1` 换成 `DM_DEVICE_FAMILY=1,2`（设备族里加上 iPad；`tools/smoke_mac.sh` 出包时固定只面向 iPhone，不跟 `../../project.yml` 的缺省值走）。
 2. 同样包成 `<名>.app/Wrapper/DmIOS.app`，外加 `WrappedBundle` 软链。
 
 每次出包用一个新的目录名，然后把路径给 `UIREG_APP_IPAD`。

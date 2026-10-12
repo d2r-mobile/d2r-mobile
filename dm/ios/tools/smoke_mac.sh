@@ -218,8 +218,10 @@ trap 'eval "$CLEAN"; ledger_write' EXIT; trap 'exit 143' INT TERM
 echo "SMOKE-MAC 开始 $N 次（${HOST}），结果目录 $RUN"
 UIREG_REDMARK=${DM_ROOT:-$HOME/dm-work}/run/ios/uireg_b_last_red.txt; [ -s "$UIREG_REDMARK" ] && echo "上次界面回归 b 局红（只报不拦）：$(cat "$UIREG_REDMARK")"
 ( cd "$TREE/dm/ios" && DM_GEN_ONLY=1 DM_IOS_DD="$DD" bash run.sh build && source tools/asc_env.sh && asc_auth &&
+  # 设备族固定只面向 iPhone，不跟工程的缺省值走：冒烟与界面回归的「iPhone 档」窗口和坐标换算按它定（公开仓库的工程缺省是 iPhone + iPad）
+  # The device family is fixed to iPhone only and does not follow the project default: the window and coordinate mapping of the "iPhone profile" in the smoke test and the UI regression are defined by it (the project default in the public repository is iPhone + iPad)
   xcodebuild -project DmIOS.xcodeproj -scheme DmIOS -configuration Release -destination 'platform=macOS,arch=arm64,variant=Designed for iPad' \
-    -derivedDataPath "$DD" -allowProvisioningUpdates ${ASC_AUTH[@]+"${ASC_AUTH[@]}"} build ) > "$RUN/build.log" 2>&1 \
+    -derivedDataPath "$DD" -allowProvisioningUpdates ${ASC_AUTH[@]+"${ASC_AUTH[@]}"} DM_DEVICE_FAMILY=1 build ) > "$RUN/build.log" 2>&1 \
   || { LEDGER_RES=构建失败; echo "【红】构建失败：$RUN/build.log"; grep -E "error:|🔴" "$RUN/build.log" | head -5; echo "SMOKE-MAC RED 0/$N 用时 $(( $(date +%s) - T0 )) 秒"; exit 2; }
 # 直接 open 构建产物会报 incorrect executable format：要包成 <名>.app/Wrapper/DmIOS.app + WrappedBundle 软链
 # Directly opening the build output reports incorrect executable format: it must be wrapped as <name>.app/Wrapper/DmIOS.app + a WrappedBundle symlink

@@ -19,7 +19,7 @@ PKG=$1; KEYS=$2; DM_ROOT=${DM_ROOT:-$HOME/dm-work}; OUT=$DM_ROOT/data/switch/3.3
 die() { echo "✗ $*" >&2; exit 1; }
 HT=${HACTOOL:-$(command -v hactool || true)}; [ -n "$HT" ] && [ -x "$HT" ] || die "没找到 hactool：装好后放进 PATH，或设 HACTOOL=<路径>（见本文件开头）"
 [ -f "$PKG" ] || die "没有这个游戏包：$PKG"; [ -f "$KEYS" ] || die "没有这个密钥文件：$KEYS"
-[ ! -e "$OUT" ] || die "已有 $OUT，不覆盖。要重做先自己把它移走"
+[ ! -e "$OUT" ] || die "已有 ${OUT}，不覆盖。要重做先自己把它移走"
 ht() { "$HT" -k "$KEYS" --disablekeywarns --suppresskeys "$@"; }
 T=$DM_ROOT/build/cache/dm/extract.$$; mkdir -p "$T/nca" || die "建不了中间目录 $T"; trap 'rm -rf "$T"' EXIT
 say() { echo "[$(date +%T)] $*"; }
@@ -64,4 +64,4 @@ SUMS
 [ -f "$OUT.part/RomFS/data/build_manifest.psv" ] || { echo "  ✗ 资源里没有 data/build_manifest.psv"; ok=0; }
 [ "$ok" = 1 ] || { rm -rf "$OUT.part"; die "版本不对：游戏包里的更新不是 3.3.94012"; }
 mv "$OUT.part" "$OUT" || die "改名到 $OUT 没成"
-say "好了：$OUT。接着在仓库根目录运行 ./setup.sh"
+say "好了：${OUT}。接着在仓库根目录运行 ./setup.sh"

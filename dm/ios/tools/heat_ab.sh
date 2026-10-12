@@ -12,7 +12,7 @@ for g in B A; do
   m=boot; [ $g = B ] && m=blank
   DEVICECTL_CHILD_DM_HEAT="heat_${g}_$RUN.tsv,10" DEVICECTL_CHILD_DM_THRCPU="thr_${g}_$RUN.tsv,10" DEVICECTL_CHILD_DM_NVN_TSV="frames_${g}_$RUN.tsv" DEVICECTL_CHILD_DM_SAVE_FRESH=1 DEVICECTL_CHILD_DM_WATCH=$((S + 20)) \
     xcrun devicectl device process launch --device $D --terminate-existing $B -mode $m > $R/launch_$g.log 2>&1 || { t "🔴 $g 启动失败"; exit 1; }
-  t "$g（$m）开始 $S 秒"; sleep $S
+  t "${g}（${m}）开始 $S 秒"; sleep $S
   p=$(pid); [ -n "$p" ] && xcrun devicectl device process terminate --device $D --pid $p > /dev/null 2>&1; sleep 3
   [ -z "$(pid)" ] || t "🔴 $g 停不掉"
   for f in heat thr frames; do [ $g = B ] && [ $f = frames ] && continue

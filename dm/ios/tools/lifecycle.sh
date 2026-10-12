@@ -90,7 +90,7 @@ chk "回前台后完整显示节拍窗 ≥ 2 个且空节拍、丢弃都不新�
 chk "进后台那一刻丢弃的帧数在上限内（只防失控，≤ 12）：${2:-无读数} 帧" $([ "${2:--1}" -ge 0 ] && [ "${2:-99}" -le 12 ] && echo 1 || echo 0)
 chk "回前台后 3D 比例没有因此降档" $(echo "$post" | grep -q "3D 渲染比例 0.7[02]" && echo 0 || echo 1)
 chk "红行 0（实得 $(grep -c '【红】' "$L")）" $(grep -q '【红】' "$L" && echo 0 || echo 1)
-chk "动作序列做完、进程还在（退出码 / 存活标志 $trc）" $([ "$trc" = 0 ] && echo 1 || echo 0)
+chk "动作序列做完、进程还在（退出码 / 存活标志 ${trc}）" $([ "$trc" = 0 ] && echo 1 || echo 0)
 chk "模拟回前台后 2 秒声卡回调有增量：$(grep -o '测试回前台后 2 s 声卡回调 +[0-9]*' "$L" | tail -1)" $([ "$MODE" != sim ] || grep -qE '测试回前台后 2 s 声卡回调 \+[1-9]' "$L" && echo 1 || echo 0)
 [ "$MODE" = sim ] && for p in $(pidof); do timeout 30 xcrun devicectl device process terminate --device $D --pid $p > /dev/null 2>&1; done
 echo "日志 $R"; [ $bad = 0 ] && echo "LIFECYCLE OK" || echo "LIFECYCLE RED"; exit $bad

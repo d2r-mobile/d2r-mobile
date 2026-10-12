@@ -147,7 +147,7 @@ The scope when no run name is given:
 
 The repository has no separate script for building an iPad package. The procedure is the same as the two packaging steps in `tools/smoke_mac.sh`, with just one more build setting:
 
-1. The same `xcodebuild` command, with `DM_DEVICE_FAMILY=1,2` added at the end (adds iPad to the device family; the project targets only iPhone by default, see `../../project.yml`).
+1. The same `xcodebuild` command, with its `DM_DEVICE_FAMILY=1` replaced by `DM_DEVICE_FAMILY=1,2` (adds iPad to the device family; `tools/smoke_mac.sh` always builds its package for iPhone only, regardless of the default in `../../project.yml`).
 2. Wrap it the same way as `<name>.app/Wrapper/DmIOS.app`, plus the `WrappedBundle` symlink.
 
 Use a new directory name each time you build a package, then give the path to `UIREG_APP_IPAD`.

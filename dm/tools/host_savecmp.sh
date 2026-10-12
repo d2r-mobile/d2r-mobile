@@ -96,7 +96,7 @@ SC=${SC:-$HERE/verify/savecmp.py}
 MJ=$TR/meta.json; [ -f "$TR/meta.v2.json" ] && MJ=$TR/meta.v2.json          # 补记墙钟区间的版本 | The version with the wall-clock interval recorded afterwards
 MJ=${META:-$MJ}   # 可显式指定 | Can be specified explicitly
 AT="--a-meta=$MJ"; grep -q wall_start "$MJ" || AT=${A_TIME:+--a-time=$A_TIME}
-echo "③ 正对照：真值 vs 宿主（$SC --b-time=$FT $AT）"; $PY "$SC" "$TR/save_after" "$T/user" --b-time=$FT $AT; G=$?
+echo "③ 正对照：真值 vs 宿主（$SC --b-time=$FT ${AT}）"; $PY "$SC" "$TR/save_after" "$T/user" --b-time=$FT $AT; G=$?
 echo "③ 负对照：真值 vs 起始存档"; $PY "$SC" "$TR/save_after" "$REF/0000000000000001" --b-time=$FT $AT; N=$?
 echo "结论：逐拍退出码 ${K6}、正对照退出码 ${G}（0 = 绿），负对照退出码 ${N}（须非 0）"
 [ $K6 = 0 ] && [ $G = 0 ] && [ $N != 0 ]

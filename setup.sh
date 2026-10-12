@@ -21,7 +21,7 @@ m() { if [ "$ZH" = 1 ]; then echo "$1"; else echo "$2"; fi; }
 case "${1:-}" in
   *.xci|*.XCI|*.nsp|*.NSP)
     [ $# -ge 2 ] || die "$(m "用法：./setup.sh <游戏包 .xci 或 .nsp> <prod.keys>" "Usage: ./setup.sh <game package .xci or .nsp> <prod.keys>")"
-    if [ -d "$GAME" ]; then say "$(m "已有游戏文件目录 $GAME，不再解包" "Game files directory $GAME already exists; skipping extraction")"
+    if [ -d "$GAME" ]; then say "$(m "已有游戏文件目录 ${GAME}，不再解包" "Game files directory $GAME already exists; skipping extraction")"
     else bash "$HERE/dm/tools/extract_game.sh" "$1" "$2" || exit 1; fi
     shift 2;;
 esac
@@ -59,18 +59,18 @@ SC_WANT=1.4.357.0
 if command -v spirv-cross > /dev/null 2>&1; then
   SC_HAVE=$(brew list --versions spirv-cross 2> /dev/null | awk '{print $2}')
   if [ "$SC_HAVE" = "$SC_WANT" ]; then ok "$(m "spirv-cross 的版本是验过的 $SC_WANT" "spirv-cross is the verified version $SC_WANT")"
-  elif [ -n "$SC_HAVE" ]; then note "$(m "spirv-cross 是 $SC_HAVE，验过的是 $SC_WANT：自己整条构建不受影响；往发布的壳里做包时翻译结果可能对不上（工具会报）" "spirv-cross is $SC_HAVE, the verified version is $SC_WANT: a full build of your own is unaffected; packing into a released shell may not match (the tool will say so)")"
+  elif [ -n "$SC_HAVE" ]; then note "$(m "spirv-cross 是 ${SC_HAVE}，验过的是 ${SC_WANT}：自己整条构建不受影响；往发布的壳里做包时翻译结果可能对不上（工具会报）" "spirv-cross is $SC_HAVE, the verified version is $SC_WANT: a full build of your own is unaffected; packing into a released shell may not match (the tool will say so)")"
   else note "$(m "读不到 spirv-cross 的版本（不是用 Homebrew 装的）；验过的是 $SC_WANT" "Cannot read the spirv-cross version (not installed with Homebrew); the verified version is $SC_WANT")"; fi
 fi
 tool python3     "生成与验证脚本" "generation and verification scripts" "brew install python"
 DOTNET=$(command -v dotnet || { [ -x "$HOME/.dotnet/dotnet" ] && echo "$HOME/.dotnet/dotnet"; } || true)
 if [ -n "$DOTNET" ]; then ok "dotnet"; else bad "$(m "缺 dotnet（编译着色器翻译工具）" "dotnet is missing (builds the shader translation tool)")" "brew install dotnet"; fi
 
-say "$(m "三、游戏文件（$GAME）" "3. Game files ($GAME)")"
+say "$(m "三、游戏文件（${GAME}）" "3. Game files ($GAME)")"
 gf=0
 while read -r want name; do
   if [ ! -f "$GAME/ExeFS/$name" ]; then echo "  ✗ $(m "缺 ExeFS/$name" "ExeFS/$name is missing")"; gf=$((gf+1))
-  elif [ "$(shasum -a 256 "$GAME/ExeFS/$name" | cut -c1-64)" = "$want" ]; then ok "ExeFS/$name（3.3.94012）"
+  elif [ "$(shasum -a 256 "$GAME/ExeFS/$name" | cut -c1-64)" = "$want" ]; then ok "ExeFS/${name}（3.3.94012）"
   else echo "  ✗ $(m "ExeFS/$name 不是 3.3.94012 这一版的" "ExeFS/$name is not from version 3.3.94012")"; gf=$((gf+1)); fi
 done <<SUMS
 55fd909bb7230b002357e5b0d8499c11f06888f345c49e69eb4734df44a27d0e main
@@ -92,7 +92,7 @@ LE=; for f in "${DM_LOCAL_ENV:-}" "$HERE/dm/ios/local.env" "$HOME/.config/dm-ios
 if [ -z "$LE" ]; then note "$(m "还没有签名配置：cp dm/ios/local.env.example dm/ios/local.env，填 DM_TEAM_ID 与 DM_BUNDLE_ID" "No signing configuration yet: cp dm/ios/local.env.example dm/ios/local.env, then fill in DM_TEAM_ID and DM_BUNDLE_ID")"
 else
   tid=$(. "$LE" > /dev/null 2>&1; echo "${DM_TEAM_ID:-}"); bid=$(. "$LE" > /dev/null 2>&1; echo "${DM_BUNDLE_ID:-}"); fa=$(. "$LE" > /dev/null 2>&1; echo "${DM_FREE_ACCOUNT:-}")
-  if [ -n "$tid" ] && [ -n "$bid" ]; then ok "$(m "团队号与包名已填（$LE）" "Team ID and bundle ID are set ($LE)")"; else note "$(m "$LE 里 DM_TEAM_ID / DM_BUNDLE_ID 还没填全" "DM_TEAM_ID / DM_BUNDLE_ID are not both set in $LE")"; fi
+  if [ -n "$tid" ] && [ -n "$bid" ]; then ok "$(m "团队号与包名已填（${LE}）" "Team ID and bundle ID are set ($LE)")"; else note "$(m "$LE 里 DM_TEAM_ID / DM_BUNDLE_ID 还没填全" "DM_TEAM_ID / DM_BUNDLE_ID are not both set in $LE")"; fi
   if [ "$fa" = 1 ]; then note "$(m "免费账号档：没有 iCloud 存档同步，App 每 7 天要重新构建重装" "Free account mode: no iCloud save sync; the app must be rebuilt and reinstalled every 7 days")"; fi
 fi
 
@@ -129,15 +129,41 @@ if ! "$PY" "$T/dmsh_chain.py" --check-tools > /dev/null 2>&1; then
   "$PY" "$T/dmsh_chain.py" --update-lock > /dev/null && "$PY" "$T/dmsh_chain.py" --header > /dev/null || die "翻译链登记没成功"
 fi
 V=$("$PY" "$T/dmsh_chain.py")
-shaders() { J=${J:-6} IOSOUT="$DM_ROOT/build/ios/dmsh_b" "$PY" "$T/dmsh_build.py" "$DM_ROOT/build/cache/dm/dmsh" "$DM_ROOT/build/cache/metal_shader_cache" | tail -12; }
-# 完成标记 _b_build.json 写在 Mac 侧缓存目录里（不在 iOS 库目录）：两处都看，否则每次都会重跑一遍（有缓存也要约 2 分钟）
-[ -f "$DM_ROOT/build/cache/metal_shader_cache/b-$V/_b_build.json" ] && ls "$DM_ROOT/build/ios/dmsh_b/b-$V" 2> /dev/null | grep -q "_b.metallib$" || step "翻译全部着色器（首次较久）" shaders
+# 翻译这一步做没做全，只认完成标记里的逐个结果：标记 _b_build.json（写在 Mac 侧缓存目录）里每个着色器都是 ok，并且 iOS 库目录里每个都有对应的库文件。
+# 只看「标记在、库目录里至少有一个文件」不够：翻译脚本即使全部失败也会写标记并正常退出，那样会把一个空的或缺了几千个的库当成做完。
+# Whether this step is complete is decided only by the per-shader results in the completion marker: every shader in _b_build.json (in the Mac-side cache directory) is ok, and every one has its library file in the iOS library directory.
+# "The marker exists and the directory holds at least one file" is not enough: the translation script writes the marker and exits normally even when everything failed, which would accept an empty library or one missing thousands of shaders.
+shaders_ok() {   # [say] = 把统计打印出来 | print the tally
+  "$PY" - "$DM_ROOT/build/cache/metal_shader_cache/b-$V/_b_build.json" "$DM_ROOT/build/ios/dmsh_b/b-$V" "${1:-}" <<'PYEOF'
+import collections, json, os, sys
+marker, ios, say = sys.argv[1:4]
+try: res = json.load(open(marker, encoding='utf-8'))
+except (OSError, ValueError): sys.exit(1)
+st = collections.Counter(r['st'] for r in res)
+have = set(os.listdir(ios)) if os.path.isdir(ios) else set()
+miss = [r['key'] for r in res if r['st'] == 'ok' and r['key'] + '_b.metallib' not in have]
+good = bool(res) and set(st) == {'ok'} and not miss
+if say:
+    print('  着色器 %d：成功 %d%s；iOS 库里缺 %d 个 | shaders %d: ok %d%s; missing from the iOS library: %d' % (
+        len(res), st['ok'], ''.join('，%s %d' % kv for kv in st.items() if kv[0] != 'ok'), len(miss),
+        len(res), st['ok'], ''.join(', %s %d' % kv for kv in st.items() if kv[0] != 'ok'), len(miss)))
+sys.exit(0 if good else 1)
+PYEOF
+}
+shaders() {
+  local log="$DM_ROOT/build/cache/dm/shaders.log" rc
+  J=${J:-6} IOSOUT="$DM_ROOT/build/ios/dmsh_b" "$PY" "$T/dmsh_build.py" "$DM_ROOT/build/cache/dm/dmsh" "$DM_ROOT/build/cache/metal_shader_cache" > "$log" 2>&1; rc=$?
+  tail -12 "$log"
+  [ $rc = 0 ] || { echo "  $(m "翻译脚本退出码 ${rc}，完整输出在 ${log}" "the translation script exited with ${rc}; full output in ${log}")"; return 1; }
+  shaders_ok say || { echo "  $(m "有着色器没翻译成功或库文件不全，完整输出在 ${log}" "some shaders failed or library files are missing; full output in ${log}")"; return 1; }
+}
+shaders_ok || step "翻译全部着色器（首次较久）" shaders
 # 随着色器库走的清单：哪些着色器的运行时下标没能证明有界（宿主按库版本核对这份清单，版本对不上会报红并退回保守做法）
 head -1 "$HERE/dm/gfx/nvn/c1_full.tsv" 2> /dev/null | grep -q "b-$V " || step "出着色器下标清单" "$PY" "$T/c1_guard.py" "$DM_ROOT/build/cache/metal_shader_cache/b-$V" "$HERE/dm/gfx/nvn/c1_full.tsv"
 
-say "工作区就绪：$DM_ROOT。"
+say "工作区就绪：${DM_ROOT}。"
 echo "  下一步先进入 setup 准备好的 Python 环境（构建与测试的脚本要用里面装的包）："
 echo "      source $DM_ROOT/build/cache/dm/venv/bin/activate"
-echo "  然后出 App：cd dm/ios && ./run.sh build（先在 dm/ios/local.env 里填 DM_TEAM_ID 与 DM_BUNDLE_ID；同时面向 iPad 加 DM_DEVICE_FAMILY=1,2）"
+echo "  然后出 App：cd dm/ios && ./run.sh build（先在 dm/ios/local.env 里填 DM_TEAM_ID 与 DM_BUNDLE_ID；缺省同时面向 iPhone 与 iPad，只要 iPhone 加 DM_DEVICE_FAMILY=1）"
 echo "  Next, enter the Python environment setup prepared (the build and test scripts need the packages in it):  source $DM_ROOT/build/cache/dm/venv/bin/activate"
-echo "  Then build the app:  cd dm/ios && ./run.sh build   (fill DM_TEAM_ID and DM_BUNDLE_ID in dm/ios/local.env first; add DM_DEVICE_FAMILY=1,2 to target iPad as well)"
+echo "  Then build the app:  cd dm/ios && ./run.sh build   (fill DM_TEAM_ID and DM_BUNDLE_ID in dm/ios/local.env first; it targets both iPhone and iPad by default, add DM_DEVICE_FAMILY=1 for iPhone only)"

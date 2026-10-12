@@ -11,7 +11,7 @@ set -u
 TOOLS=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd); export DM_ROOT=${DM_ROOT:-$HOME/dm-work}
 source "$TOOLS/local_env.sh"; local_env_need DM_BUNDLE_ID || exit 1
 B=$DM_BUNDLE_ID; DST=$DM_ROOT/data/switch/save_ref_warlock/0000000000000001/0
-[ -d "$DST" ] && { echo "已有标准存档 $DST，不覆盖"; exit 0; }
+[ -d "$DST" ] && { echo "已有标准存档 ${DST}，不覆盖"; exit 0; }
 GAME=${SMOKE_MAC_ROMFS:-$DM_ROOT/data/switch/3.3.94012/Update/RomFS/data}
 [ -f "$GAME/.build.config" ] || { echo "✗ 没有游戏资源 $GAME"; exit 1; }
 W=$(SMOKE_MAC_PKG_ONLY=1 bash "$TOOLS/smoke_mac.sh" 1 2>&1 | sed -n 's/^SMOKE-MAC 只出包 //p' | tail -1)
@@ -40,8 +40,8 @@ open -n "$W" --env DM_GAME_RES=2868x1320 --env DM_TEST_SAFE_L=62 --env DM_TEST_S
   --env DM_TOUCH_SCRIPT=fixture_touch.txt --env DM_TOUCH_SCRIPT_START=menu --env DM_GAME_SEED=0x12345678 --env DM_FIXED_TIME=1790000000 --args -mode boot
 r=$(python3 "$TOOLS/logport.py" until "$port" "$LOG" 160 '[script] 全部')   # 等触点脚本走完（建角、进局、保存并退出）；之后让 App 自己退出 | Wait for the touch point script to finish (create a character, enter the game, save and exit); then let the App quit by itself
 for _ in $(seq 1 20); do [ -z "$(pids)" ] && break; sleep 0.5; done; for p in $(pids); do kill -TERM "$p"; done
-case "$r" in result=0*) ;; *) echo "✗ 没走到建角进局（$r），日志 $LOG"; exit 1;; esac
+case "$r" in result=0*) ;; *) echo "✗ 没走到建角进局（${r}），日志 $LOG"; exit 1;; esac
 LC_ALL=C grep -a -q '【红】' "$LOG" && { echo "✗ 触点脚本有一步没走成：$(LC_ALL=C grep -a '【红】' "$LOG" | head -1 | cut -c1-120)，日志 $LOG"; exit 1; }
 n=$(find "$C/Documents/save.test" -name '*.d2s' 2> /dev/null | wc -l | tr -d ' ')
 [ "$n" -ge 2 ] || { echo "✗ 存档目录里只有 $n 个角色文件（要 2 个），日志 $LOG"; exit 1; }
-mkdir -p "$DST" && cp -R "$C/Documents/save.test/." "$DST/" && chmod -R u+w "$DST" && echo "标准存档已生成：$DST（$n 个角色）。重新出 App（run.sh build）后冒烟即可用"
+mkdir -p "$DST" && cp -R "$C/Documents/save.test/." "$DST/" && chmod -R u+w "$DST" && echo "标准存档已生成：${DST}（$n 个角色）。重新出 App（run.sh build）后冒烟即可用"

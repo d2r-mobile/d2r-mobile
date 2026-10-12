@@ -32,15 +32,15 @@ bash -c 'source $0/devlock.sh; devlock_acquire 外层 8 2>/dev/null; devlock_acq
 echo "4. set -e 的调用方（touch_e2e.sh 的写法）：持锁几秒后靠 EXIT 钩子放锁，锁必须放掉"
 for hold in 0 1 2 3; do
   bash -c 'set -euo pipefail; source $0/devlock.sh; devlock_acquire "钩子放锁 $2" 60 2>/dev/null; trap devlock_release EXIT; sleep $2' $H $T $hold; rc=$?
-  [ $rc = 0 ] && [ ! -d $DM_DEVLOCK_DIR ] && ok "持锁 $hold 秒：退出码 0、锁已放" || { bad "持锁 $hold 秒：退出码 $rc、锁目录$([ -d $DM_DEVLOCK_DIR ] && echo 还在 || echo 已放)"; rm -rf $DM_DEVLOCK_DIR; }
+  [ $rc = 0 ] && [ ! -d $DM_DEVLOCK_DIR ] && ok "持锁 $hold 秒：退出码 0、锁已放" || { bad "持锁 $hold 秒：退出码 ${rc}、锁目录$([ -d $DM_DEVLOCK_DIR ] && echo 还在 || echo 已放)"; rm -rf $DM_DEVLOCK_DIR; }
 done
 echo "5. 持有者已死的锁：set -e 的后来者要收回并拿到"
 mkdir $DM_DEVLOCK_DIR; echo 999999 > $DM_DEVLOCK_DIR/pid; echo 死掉的持有者 > $DM_DEVLOCK_DIR/owner; date +%s > $DM_DEVLOCK_DIR/started; echo "Sun Oct 11 01:06:01 2026" > $DM_DEVLOCK_DIR/lstart; echo 600 > $DM_DEVLOCK_DIR/max
 bash -c 'set -euo pipefail; unset DM_DEVLOCK_HELD; source $0/devlock.sh; devlock_acquire 后来者 60 2>$1/s5.err; trap devlock_release EXIT; cat $DM_DEVLOCK_DIR/owner > $1/s5.owner' $H $T; rc=$?
-[ $rc = 0 ] && [ "$(cat $T/s5.owner 2>/dev/null)" = 后来者 ] && ok "死锁被收回，后来者拿到锁" || bad "退出码 $rc，锁内 owner「$(cat $DM_DEVLOCK_DIR/owner 2>/dev/null)」，输出：$(cat $T/s5.err)"
+[ $rc = 0 ] && [ "$(cat $T/s5.owner 2>/dev/null)" = 后来者 ] && ok "死锁被收回，后来者拿到锁" || bad "退出码 ${rc}，锁内 owner「$(cat $DM_DEVLOCK_DIR/owner 2>/dev/null)」，输出：$(cat $T/s5.err)"
 [ ! -d $DM_DEVLOCK_DIR ] && ok "后来者退出后锁已放" || { bad "后来者退出后锁还在"; rm -rf $DM_DEVLOCK_DIR; }
 echo "6. 取不到锁要响亮：锁目录建不出来（父目录是个文件）→ 打【红】+ 非零退出"
 : > $T/notdir; DM_DEVLOCK_DIR=$T/notdir/device.lock DM_DEVLOCK_QUEUE=$T/q6 bash -c 'set -euo pipefail; unset DM_DEVLOCK_HELD; source $0/devlock.sh; devlock_acquire 取不到的 5 2>$1/s6.err; echo 不该走到这 > $1/s6.reach' $H $T & P6=$!
 ( sleep 8; kill -KILL $P6 2>/dev/null ) & K6=$!; wait $P6 2>/dev/null; rc=$?; kill $K6 2>/dev/null
-[ $rc != 0 ] && [ $rc != 137 ] && grep -q '【红】设备锁：取不到的 没取到锁' $T/s6.err && [ ! -e $T/s6.reach ] && ok "退出码 $rc：$(grep -m1 【红】 $T/s6.err | cut -c1-60)…" || bad "退出码 $rc（137 = 挂住被本测试杀掉），输出：$(head -2 $T/s6.err)"
+[ $rc != 0 ] && [ $rc != 137 ] && grep -q '【红】设备锁：取不到的 没取到锁' $T/s6.err && [ ! -e $T/s6.reach ] && ok "退出码 ${rc}：$(grep -m1 【红】 $T/s6.err | cut -c1-60)…" || bad "退出码 ${rc}（137 = 挂住被本测试杀掉），输出：$(head -2 $T/s6.err)"
 rm -rf $T; [ $fail = 0 ] && echo "devlock_max_test 通过" || { echo "🔴 devlock_max_test 有不通"; exit 1; }

@@ -36,8 +36,8 @@ devlock_watchdog() {   # 在后台跑：$1 持锁 pid，$2 其启动时刻，$3 
     kill -0 "$holder" 2>/dev/null || exit 0
     started=$(cat "$DEVLOCK_DIR/started" 2>/dev/null || echo 0); now=$(date +%s); held=$((now - started))
     [ "$held" -ge "$max" ] || continue
-    local msg="【红】设备锁看门狗：持有者「$owner」（pid $holder）已持有 ${held} 秒，超过上限 ${max} 秒 → 终止持锁进程树、释放锁"
-    echo "$msg" >&2; mkdir -p "$(dirname "$DEVLOCK_WD_LOG")"; echo "$(date '+%F %T') $msg（锁 $DEVLOCK_DIR）" >> "$DEVLOCK_WD_LOG"
+    local msg="【红】设备锁看门狗：持有者「${owner}」（pid ${holder}）已持有 ${held} 秒，超过上限 ${max} 秒 → 终止持锁进程树、释放锁"
+    echo "$msg" >&2; mkdir -p "$(dirname "$DEVLOCK_WD_LOG")"; echo "$(date '+%F %T') ${msg}（锁 ${DEVLOCK_DIR}）" >> "$DEVLOCK_WD_LOG"
     victims=$(devlock_descendants "$holder" | grep -v -x -e "$me" $(devlock_descendants "$me" | sed 's/^/-e /'))
     for v in $victims "$holder"; do kill -TERM "$v" 2>/dev/null; done
     sleep 5
@@ -114,7 +114,7 @@ devlock_acquire() {
   local rc=0; _devlock_acquire "$@" || rc=$?
   if [ "$rc" = 0 ] && [ "$(cat "$DEVLOCK_DIR/pid" 2>/dev/null)" != "${DM_DEVLOCK_HELD:-}" ]; then rc=97; fi
   [ "$rc" = 0 ] && return 0
-  echo "【红】设备锁：${1:-unknown} 没取到锁（返回 $rc；锁 $DEVLOCK_DIR 现在的持有者「$(cat "$DEVLOCK_DIR/owner" 2>/dev/null || echo 无)」pid $(cat "$DEVLOCK_DIR/pid" 2>/dev/null || echo 无)）" >&2
+  echo "【红】设备锁：${1:-unknown} 没取到锁（返回 ${rc}；锁 $DEVLOCK_DIR 现在的持有者「$(cat "$DEVLOCK_DIR/owner" 2>/dev/null || echo 无)」pid $(cat "$DEVLOCK_DIR/pid" 2>/dev/null || echo 无)）" >&2
   return "$rc"
 }
 _devlock_acquire() {
@@ -144,11 +144,13 @@ _devlock_acquire() {
   if { [ "$DEVLOCK_DIR" = "${DM_ROOT:-$HOME/dm-work}/run/ios/device.lock" ] && [ "${DM_DEVBATTERY:-1}" != 0 ]; } || [ "${DM_DEVBATTERY:-}" = 1 ]; then
     source "$(dirname "${BASH_SOURCE[0]}")/devbattery.sh"
     local bw0=$SECONDS bwmax=${DM_DEVBATTERY_WAIT_S:-3600}
+    local brc
     until devbattery_gate; do
+      brc=$?; [ $brc != 3 ] || { echo "【红】电量闸：本机缺命令（见上一行），等也没用，$owner 不取锁、退出" >&2; exit 4; }
       [ $((SECONDS - bw0)) -ge "$bwmax" ] && { echo "【红】电量闸等了 $((SECONDS - bw0)) 秒仍不放行（${DEVBATTERY_LINE:-}），$owner 不取锁、退出" >&2; exit 4; }
       sleep "${DM_DEVBATTERY_POLL_S:-60}"
     done
-    echo "电量闸放行：${DEVBATTERY_LINE:-}（$owner）" >&2
+    echo "电量闸放行：${DEVBATTERY_LINE:-}（${owner}）" >&2
   fi
   devlock_ticket_take "$owner"
   local ahead first q_notice=0
@@ -183,8 +185,8 @@ _devlock_acquire() {
       # 超过上限 30 秒还没放（持锁者的看门狗也没管用）：记红，但不碰别人的进程
       # Still not released 30 seconds past the limit (the holder's watchdog did not work either): log a failure line, but do not touch other people's processes
       if [ "${lock_max:-0}" -gt 0 ] && [ "$held" -gt $((lock_max + 30)) ] && [ $((now - over_notice)) -ge 60 ]; then
-        echo "【红】设备锁：持有者 ${lock_owner}（pid $pid）已持有 ${held} 秒，超过上限 ${lock_max} 秒仍未释放（看门狗没起作用），不代为终止，请找持有者" >&2
-        mkdir -p "$(dirname "$DEVLOCK_WD_LOG")"; echo "$(date '+%F %T') 等锁方：持有者「${lock_owner}」pid $pid 已持有 ${held} 秒、上限 ${lock_max} 秒仍未释放（锁 $DEVLOCK_DIR）" >> "$DEVLOCK_WD_LOG"
+        echo "【红】设备锁：持有者 ${lock_owner}（pid ${pid}）已持有 ${held} 秒，超过上限 ${lock_max} 秒仍未释放（看门狗没起作用），不代为终止，请找持有者" >&2
+        mkdir -p "$(dirname "$DEVLOCK_WD_LOG")"; echo "$(date '+%F %T') 等锁方：持有者「${lock_owner}」pid $pid 已持有 ${held} 秒、上限 ${lock_max} 秒仍未释放（锁 ${DEVLOCK_DIR}）" >> "$DEVLOCK_WD_LOG"
         over_notice=$now
       fi
       sleep 1

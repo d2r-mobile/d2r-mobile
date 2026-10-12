@@ -11,5 +11,5 @@ done
 local_env_need() {
   local v miss=
   for v in "$@"; do [ -n "${!v:-}" ] || miss="$miss $v"; done
-  [ -z "$miss" ] || { echo "🔴 缺本机配置：$miss（把 dm/ios/local.env.example 复制成 dm/ios/local.env 填好；本次读的是：${DM_LOCAL_ENV_FILE:-没找到配置文件}）" >&2; return 1; }
+  [ -z "$miss" ] || { echo "🔴 缺本机配置：${miss}（把 dm/ios/local.env.example 复制成 dm/ios/local.env 填好；本次读的是：${DM_LOCAL_ENV_FILE:-没找到配置文件}）" >&2; return 1; }
 }

@@ -6,8 +6,8 @@
 # those marked KEEP (artifacts of a failed host screenshot / watchdog) are not deleted; to keep some artifacts long term (a document references them), put an empty file PIN in the directory. Default root $DM_ROOT/run/verify/dm/shotgate, default 3 days (SHOTGATE_KEEP_DAYS). shotgate.sh calls it once at the end of every run.
 # Background: 956 directories and 34 GB piled up here with nobody cleaning, and the disk hit the limit twice.
 ROOT=${1:-${DM_ROOT:-$HOME/dm-work}/run/verify/dm/shotgate}; DAYS=${2:-${SHOTGATE_KEEP_DAYS:-3}}
-case "$ROOT" in */shotgate|*/shotgate/) ;; *) echo "shotgate_gc：根目录不是 shotgate（$ROOT），不动"; exit 2;; esac
-case "$DAYS" in ''|*[!0-9]*) echo "shotgate_gc：天数不是整数（$DAYS），不动"; exit 2;; esac
+case "$ROOT" in */shotgate|*/shotgate/) ;; *) echo "shotgate_gc：根目录不是 shotgate（${ROOT}），不动"; exit 2;; esac
+case "$DAYS" in ''|*[!0-9]*) echo "shotgate_gc：天数不是整数（${DAYS}），不动"; exit 2;; esac
 [ -d "$ROOT" ] || exit 0
 n=0
 while IFS= read -r d; do

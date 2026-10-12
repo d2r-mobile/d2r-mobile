@@ -19,7 +19,7 @@
 # Requires: Python 3.9+ with pillow numpy lz4 capstone unicorn; a C compiler (clang or gcc, for the small piece of C that decodes textures); the .NET SDK (to build the shader translation tool);
 #   spirv-cross; Apple's Metal shader compiler (on a Mac it comes with Xcode). This tool reports whatever is missing item by item at the start.
 # What it does is the same as "./setup.sh + the generation part of dm/ios/run.sh build", except that at the end it does not invoke an Xcode build but puts the build outputs into the shell.
-import hashlib, os, re, runpy, shutil, subprocess, sys, time, zipfile
+import hashlib, json, os, re, runpy, shutil, subprocess, sys, time, zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__)); DM = os.path.dirname(HERE); IOS = os.path.join(DM, 'ios'); GT = os.path.join(DM, 'gfx', 'tools')
 ROOT = os.path.abspath(os.environ.get('DM_ROOT') or os.path.expanduser('~/dm-work'))
@@ -167,8 +167,19 @@ def main():
         run(gt('dmsh_chain.py', '--update-lock'), what='登记翻译链'); run(gt('dmsh_chain.py', '--header'), what='写翻译链版本')
     local = run(gt('dmsh_chain.py'), what='取翻译链版本').strip().splitlines()[-1]
     ios_out = os.path.join(ROOT, 'build', 'ios', 'dmsh_b'); mac_cache = os.path.join(ROOT, 'build', 'cache', 'metal_shader_cache')
-    step('翻译全部着色器（首次约 8 分钟）', lambda: os.path.isfile(os.path.join(mac_cache, 'b-' + local, '_b_build.json')) and os.path.isdir(os.path.join(ios_out, 'b-' + local)) and any(f.endswith('_b.metallib') for f in os.listdir(os.path.join(ios_out, 'b-' + local))),   # 完成标记写在 Mac 侧缓存目录里 | the completion marker is written in the Mac-side cache directory
-         lambda: run(gt('dmsh_build.py', packs, mac_cache), env={'IOSOUT': ios_out, 'J': os.environ.get('J', '6'), 'MAIN': os.path.join(game, 'ExeFS', 'main')}, log=os.path.join(stage, 'shaders.log'), what='翻译着色器'))
+    # 做没做全只认完成标记（写在 Mac 侧缓存目录里）的逐个结果：每个着色器都是 ok，并且库目录里每个都有库文件。只看「标记在、目录里至少有一个文件」不够——
+    # 翻译脚本即使全部失败也会写标记并正常退出，那样会把空的或缺了几千个的库当成做完，缺的着色器要到游戏里才报红
+    # Completeness is decided only by the per-shader results in the completion marker (written in the Mac-side cache directory): every shader is ok, and every one has its library file in the library directory. "The marker exists and the directory holds at least one file" is not enough --
+    # the translation script writes the marker and exits normally even when everything failed, which would accept an empty library or one missing thousands of shaders, and the missing shaders would only turn red in the game
+    def shaders_done(tell=False):
+        try: res = json.load(open(os.path.join(mac_cache, 'b-' + local, '_b_build.json'), encoding='utf-8'))
+        except (OSError, ValueError): return False
+        d = os.path.join(ios_out, 'b-' + local); have = set(os.listdir(d)) if os.path.isdir(d) else set()
+        bad = [r for r in res if r['st'] != 'ok']; miss = [r['key'] for r in res if r['st'] == 'ok' and r['key'] + '_b.metallib' not in have]
+        if tell and (bad or miss or not res): say('着色器 %d 个：没翻译成功 %d 个，库目录里缺 %d 个（完整输出见 %s）' % (len(res), len(bad), len(miss), os.path.join(stage, 'shaders.log')))
+        return bool(res) and not bad and not miss
+    step('翻译全部着色器（首次约 8 分钟）', shaders_done,
+         lambda: (run(gt('dmsh_build.py', packs, mac_cache), env={'IOSOUT': ios_out, 'J': os.environ.get('J', '6'), 'MAIN': os.path.join(game, 'ExeFS', 'main')}, log=os.path.join(stage, 'shaders.log'), what='翻译着色器'), shaders_done(tell=True)))
     lib = os.path.join(stage, 'msl', 'b-' + chain); os.makedirs(os.path.dirname(lib)); shutil.copytree(os.path.join(ios_out, 'b-' + local), lib)   # 目录名用壳认的那个版本 | the directory name uses the version the shell recognizes
     if local != chain:   # 每个着色器的说明里也记着链版本，壳逐个核对（对不上拒绝加载，真机实测撞到）：一并改成壳认的那个 | each shader's description also records the chain version, and the shell checks them one by one (a mismatch is refused, hit in real-device testing): change them all to the one the shell recognizes
         old, new, n = ('"chain": "%s"' % local).encode(), ('"chain": "%s"' % chain).encode(), 0

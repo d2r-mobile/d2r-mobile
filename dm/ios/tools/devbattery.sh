@@ -22,12 +22,16 @@
 # devbattery_test.sh).
 DEVBATTERY_LOW=${DEVBATTERY_LOW:-30}; DEVBATTERY_RESUME=${DEVBATTERY_RESUME:-60}
 DEVBATTERY_DIR=${DEVBATTERY_DIR:-${DM_ROOT:-$HOME/dm-work}/run/ios}
-devbattery_read() {   # 输出「电量 充电 电源」三个数（0/1），读不到返回 1 | Outputs three numbers "battery level, charging, power source" (0/1); returns 1 if they cannot be read
+devbattery_read() {   # 输出「电量 充电 电源」三个数（0/1），读不到返回 1，没配 UDID 返回 2，本机缺工具返回 3 | Prints three numbers "level charging power" (0/1); returns 1 when unreadable, 2 when no UDID is configured, 3 when a local tool is missing
   if [ -n "${DEVBATTERY_FAKE:-}" ]; then echo "$DEVBATTERY_FAKE"; return 0; fi
   local u=${DM_IOS_UDID:-} out
   [ -n "$u" ] || { source "$(dirname "${BASH_SOURCE[0]}")/local_env.sh" 2>/dev/null; u=${DM_IOS_UDID:-}; }   # 调用方没 source 本机配置时自己取 | Fetch it ourselves when the caller has not sourced the local configuration
   [ -n "$u" ] || return 2   # 没配 UDID（与「读不到」分开报） | UDID not configured (reported separately from "unreadable")
-  out=$(timeout 20 ideviceinfo -u "$u" -q com.apple.mobile.battery 2>/dev/null) || out=$(timeout 20 ideviceinfo -n -u "$u" -q com.apple.mobile.battery 2>/dev/null) || return 1
+  # 本机缺工具与「设备没应答」分开报（返回 3）：timeout 来自 coreutils，macOS 不自带；缺它时下面两条命令根本起不来，原先一律报成「设备多半离线」并让调用方白等到上限
+  # A missing local tool is reported separately from "the device did not answer" (returns 3): timeout comes from coreutils and macOS does not ship it; without it the two commands below cannot even start, and this used to be reported as "device probably offline" while the caller waited until its limit
+  local tb; tb=$(command -v timeout || command -v gtimeout) || return 3
+  command -v ideviceinfo > /dev/null || return 3
+  out=$("$tb" 20 ideviceinfo -u "$u" -q com.apple.mobile.battery 2>/dev/null) || out=$("$tb" 20 ideviceinfo -n -u "$u" -q com.apple.mobile.battery 2>/dev/null) || return 1
   awk '/^BatteryCurrentCapacity:/{p=$2} /^BatteryIsCharging:/{c=($2=="true")} /^ExternalConnected:/{e=($2=="true")} /^FullyCharged:/{f=($2=="true")} END{ if (p=="") exit 1; print p, c+0, e+0, f+0 }' <<<"$out"
 }
 devbattery_gate() {
@@ -36,6 +40,9 @@ devbattery_gate() {
   if [ $rc = 2 ]; then
     echo "$now 没配 UDID" >> "$log"; DEVBATTERY_LINE="电量 没配 UDID"
     echo "【红】没配测试机 UDID（本机配置 ~/.config/dm-ios/local.env 的 DM_IOS_UDID 为空），读不了电量，这局不跑" >&2; devbattery_notify "没配测试机 UDID，真机局已拒绝"; return 1; fi
+  if [ $rc = 3 ]; then
+    echo "$now 本机缺工具" >> "$log"; DEVBATTERY_LINE="电量 读不了：本机缺 timeout 或 ideviceinfo"
+    echo "【红】本机缺读电量要用的命令：timeout（brew install coreutils）$(command -v timeout gtimeout > /dev/null && echo 有 || echo 没有)，ideviceinfo（brew install libimobiledevice）$(command -v ideviceinfo > /dev/null && echo 有 || echo 没有)。与设备无关，装好再跑" >&2; return 3; fi
   if [ $rc != 0 ]; then
     echo "$now 读不到" >> "$log"; DEVBATTERY_LINE="电量 读不到"
     echo "【红】测试机电量读不到（ideviceinfo 不通，设备多半离线或没电关机），这局不跑" >&2; devbattery_notify "测试机电量读不到，真机局已拒绝"; return 1; fi
@@ -44,10 +51,10 @@ devbattery_gate() {
   echo "$now $p% 充电=$c 电源=$e 充满=$f" >> "$log"
   if [ -f "$flag" ]; then
     if [ "$p" -ge "$DEVBATTERY_RESUME" ]; then rm -f "$flag"; echo "测试机电量回到 ${p}%（≥ ${DEVBATTERY_RESUME}%），撤掉暂停标记，真机局放行" >&2
-    else echo "【红】测试机电量暂停中：现 ${p}%，充到 ${DEVBATTERY_RESUME}% 才放行（标记 $flag：$(head -1 "$flag")）" >&2; return 1; fi
+    else echo "【红】测试机电量暂停中：现 ${p}%，充到 ${DEVBATTERY_RESUME}% 才放行（标记 ${flag}：$(head -1 "$flag")）" >&2; return 1; fi
   elif [ "$p" -lt "$DEVBATTERY_LOW" ]; then
     echo "$now 电量 ${p}% 充电=$c 电源=$e" > "$flag"
-    echo "【红】测试机电量 ${p}% 低于 ${DEVBATTERY_LOW}%：暂停全部真机局，充到 ${DEVBATTERY_RESUME}% 再放行（标记 $flag）" >&2
+    echo "【红】测试机电量 ${p}% 低于 ${DEVBATTERY_LOW}%：暂停全部真机局，充到 ${DEVBATTERY_RESUME}% 再放行（标记 ${flag}）" >&2
     devbattery_notify "测试机电量 ${p}%，真机局已暂停，充到 ${DEVBATTERY_RESUME}% 放行"; return 1
   fi
   [ "$e" = 1 ] && [ "$c" = 0 ] && [ "$f" = 0 ] && [ "$p" -lt "${DEVBATTERY_NOCHARGE:-90}" ] && echo "【红】测试机插着电源却没在充（${p}%）：供电跟不上，局照跑，请换充电头 / 线" >&2

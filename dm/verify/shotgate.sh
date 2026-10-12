@@ -22,7 +22,7 @@ touch "$R/index.start"   # 起跑时刻（收崩溃报告用） | Run start time
 make -s -C "$HERE/../host" || { echo "🔴 宿主编译失败"; exit 1; }
 # 宿主日志红线关键字表在 logred.sh（与 accept ② 共用）
 # The host log a failure line-line keyword table lives in logred.sh (shared with accept ②)
-ROUTE=${DM_NVN_ROUTE:-B}; [ -n "${DM_NVN_B:-}" ] && [ "${DM_NVN_B}" != all ] && ROUTE="A/B 混（DM_NVN_B=$DM_NVN_B）"   # 着色器路线：宿主缺省 B，DM_NVN_ROUTE=A 切回 A | Shader route: the host defaults to B, DM_NVN_ROUTE=A switches back to A
+ROUTE=${DM_NVN_ROUTE:-B}; [ -n "${DM_NVN_B:-}" ] && [ "${DM_NVN_B}" != all ] && ROUTE="A/B 混（DM_NVN_B=${DM_NVN_B}）"   # 着色器路线：宿主缺省 B，DM_NVN_ROUTE=A 切回 A | Shader route: the host defaults to B, DM_NVN_ROUTE=A switches back to A
 echo "着色器路线 ${ROUTE}；产物 $(basename "$OUT")；宿主 $BIN"
 rc=0; rows=""
 page() {   # 单页：截图 + 比对，结果写 $R/$1.res（首行 rc，次行读数） | Single page: screenshot + comparison, result written to $R/$1.res (first line rc, second line readings)
