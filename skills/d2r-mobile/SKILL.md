@@ -93,7 +93,7 @@ Fill in, asking the user for values you cannot read yourself:
 
 ```
 cd dm/ios
-DM_DEVICE_FAMILY=1,2 ./run.sh build     # 1,2 = iPhone and iPad; drop it for iPhone only
+./run.sh build                        # iPhone and iPad by default; use DM_DEVICE_FAMILY=1 for iPhone only
 ./run.sh install
 ```
 
