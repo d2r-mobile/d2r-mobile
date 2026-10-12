@@ -1,0 +1,19 @@
+<!-- Switch 着色器 → SPIR-V 翻译工具。引用仓内收录的 Ryujinx 着色器翻译库源码（dm/third_party/ryujinx）；可用 -p:RyuSrc=<目录> 指到别的一份。 -->
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RyuSrc Condition="'$(RyuSrc)' == ''">$(MSBuildThisFileDirectory)../../../third_party/ryujinx</RyuSrc>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="$(RyuSrc)/src/Ryujinx.Graphics.Shader/Ryujinx.Graphics.Shader.csproj" />
+    <ProjectReference Include="$(RyuSrc)/src/Ryujinx.Common/Ryujinx.Common.csproj" />
+  </ItemGroup>
+  <!-- 嵌入自身源码：参数 source-sha 报出，dmsh_chain.py 核对翻译器是用仓内源编的 -->
+  <ItemGroup>
+    <EmbeddedResource Include="Program.cs" LogicalName="src0" />
+    <EmbeddedResource Include="dmsh_xlate.csproj" LogicalName="src1" />
+  </ItemGroup>
+</Project>

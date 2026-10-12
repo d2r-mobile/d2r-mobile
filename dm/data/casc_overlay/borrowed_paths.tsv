@@ -1,0 +1,14 @@
+# 底部 UI 覆盖层借用的原包贴图路径。原因：给原包 TVFS 路径表加新路径时，游戏解析器会无限递归（编码没对上原版），所以先把新贴图写进没人读的旧路径。
+# 等新路径编码修好，借用的路径全部迁回新路径，本表清空。
+# 判据（两条都过才可借）：① main/sdk/subsdk0 的 strings 查不到文件名（正对照 Controller/HUD/EffectIcons 能查到 7 条）；
+#   ② 用带 1 MB 间隔的覆盖层（每个路径在新数据档里单独占一个窗口）跑三局，DM_FSLOG 显示该窗口被读 0 次。三局覆盖：主菜单、选角、营地、
+#   功能页 R 方向（背包 / 技能树 / 暂停菜单）、功能页 L 方向（背包 / 角色页 / 任务日志 / 暂停菜单）、野外（skill_main 前缀）。
+#   正对照：手柄 HUD 布局 hudpanelhd.json 与 Controller/HUD/LevelUpButton.sprite，每局各被读 1 次。现场 $DM_ROOT/run/play/borrow/pad。
+# 状态：可借 = 两条都过、尚未使用；已借 = 正在用（当前用途列）；禁借 = 某条没过
+原包路径	二进制字符串次数	营地R局读	营地L局读	野外局读	状态	当前用途
+data/hd/global/ui/PANEL/HUD_02/BugBTN.sprite	0	0	0	0	已借	底部 UI v4 底图（dm/ios/tools/gen_romfs_overlay.py）
+data/hd/global/ui/PANEL/HUD_02/front_panel.sprite	0	0	0	0	已借	局内面板外框关闭按钮图（dm/ios/tools/gen_romfs_overlay.py ← NativeHUD/touch/close.png）
+data/hd/global/ui/PANEL/HUD_02/Belt_UpArrow.sprite	0	0	0	0	可借	未用
+data/hd/global/ui/PANEL/Beta_Exit/BetaSurveyQR.sprite	0	0	0	0	可借	未用
+data/hd/global/ui/PANEL/AdvancedCharacterSheet/AdvancedCharacterSheet_SkullScroller.sprite	0	0	0	0	可借	未用
+data/hd/global/ui/PANEL/HUD_02/quest_button.sprite	0	1	1	1	禁借	—（字符串查不到、布局不引用，但每局都被读）

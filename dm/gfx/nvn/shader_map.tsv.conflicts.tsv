@@ -1,0 +1,17 @@
+# kind: evidence  Switch 控制段键冲突的 PC 候选裁定（差异最小 → 最简 → 哈希最小）
+dm_ctl_sha16	chosen_pc	class	candidates(pc:差异:规模)	records
+170d711cb0290746	67c858efc3fcf781	指令块不同（真实代码差异，Switch 编成同一二进制；需运行期定位包与序号或画面确认）	67c858efc3fcf781:4:31 83bb2ed8030f2e5b:4:31	ps_hair_p.bin#8 ps_hair_p.bin#10
+228ac21b01ac8272	261a6029b87a3a5b	指令块等长·输入签名不同（疑为输入寄存器重编号，同按配对选）	261a6029b87a3a5b:1:3 72e75628cab4e60a:1:3 7ca2c6b7e4d55e50:1:3	vs_popcorn_liquid_mesh_depth_v.bin#0 vs_popcorn_liquid_mesh_depth_v.bin#2 vs_popcorn_uber_mesh_depth_v.bin#0 vs_popcorn_uber_mesh_depth_v.bin#8
+463d9e09323caaca	f3334e2447570533	指令块相同·仅输入签名不同（建管线时按顶点着色器输出配对选）	f3334e2447570533:0:1 f3e1146daf6518c4:0:1	ps_models_hash_p.bin#0 ps_quad_efficiency_collect_p.bin#0
+60ff01e8ae40e485	3ac2e99eac3c9cb8	指令块等长·输入签名不同（疑为输入寄存器重编号，同按配对选）	3ac2e99eac3c9cb8:2:4 3c63926eff1b340d:2:4	vs_popcorn_uber_mesh_depth_v.bin#1 vs_popcorn_uber_mesh_depth_v.bin#9
+618342d86ec36c81	48611265537b4bf7	指令块不同（真实代码差异，Switch 编成同一二进制；需运行期定位包与序号或画面确认）	48611265537b4bf7:0:9 51de8ea74df55fd8:0:9	ps_compose_p.bin#2 ps_compose_p.bin#5
+62d3197aa02247ed	ecba1a74eda4d42a	指令块等长·输入签名不同（疑为输入寄存器重编号，同按配对选）	ecba1a74eda4d42a:2:4 fe107f2746969f21:2:4	vs_popcorn_mesh_depth_v.bin#1 vs_popcorn_mesh_depth_v.bin#9 vs_popcorn_stencil_v.bin#5
+63616a06a1ccd034	af002517ae365cc4	指令块不同（真实代码差异，Switch 编成同一二进制；需运行期定位包与序号或画面确认）	af002517ae365cc4:4:30 f361d09d2f890138:4:30	ps_hair_p.bin#2 ps_hair_p.bin#4
+74afe0c274ac090e	4a053d52b1e635c7	指令块相同·仅输入签名不同（建管线时按顶点着色器输出配对选）	4a053d52b1e635c7:0:2 50f10bae0d377115:0:2 a51dd28f80e80687:0:2	ps_popcorn_default_p.bin#144 ps_popcorn_default_p.bin#146 ps_popcorn_default_p.bin#147 ps_popcorn_default_p.bin#149 ps_popcorn_default_p.bin#150 ps_popcorn_default_p.bin#152 ps_popcorn_default_p.bin#153 ps_popcorn_default_p.bin#156 ps_popcorn_default_p.bin#159
+7bf4832d3985c501	15b71014e328ab75	指令块相同·仅输入签名不同（建管线时按顶点着色器输出配对选）	15b71014e328ab75:0:2 b674a0db47d3629b:0:2	ps_alpha_threshold_velocity_p.bin#0 ps_alpha_threshold_velocity_p.bin#2 ps_models_velocity_p.bin#0
+7fbab804c6ba3dcf	506653c87391b685	指令块相同·仅输入签名不同（建管线时按顶点着色器输出配对选）	506653c87391b685:0:4 6510fa008b8bc356:0:4	vs_models_grass_force_v.bin#2 vs_models_grass_force_v.bin#3
+949495670492f2e4	6f571a39533eb2d8	指令块相同·仅输入签名不同（建管线时按顶点着色器输出配对选）	6f571a39533eb2d8:0:0 bb1e231e80b4442f:0:0 be1975491388c4ac:0:0	ps_alpha_threshold_shadows_p.bin#0 ps_alpha_threshold_shadows_p.bin#2 ps_models_shadows_p.bin#0 ps_popcorn_stencil_p.bin#0
+9a650561e5c40791	07e14c16200e4132	指令块不同（真实代码差异，Switch 编成同一二进制；需运行期定位包与序号或画面确认）	07e14c16200e4132:1:7 263766e5cd512650:1:7	ps_compose_p.bin#1 ps_compose_p.bin#4
+b2ee08eed36b3efd	69a41eaba6863a1f	指令块相同·仅输入签名不同（建管线时按顶点着色器输出配对选）	69a41eaba6863a1f:0:2 88e11d6d09d2fd24:0:2 e3efadc299b11545:0:2	ps_popcorn_default_p.bin#180 ps_popcorn_default_p.bin#182 ps_popcorn_default_p.bin#183 ps_popcorn_default_p.bin#185 ps_popcorn_default_p.bin#186 ps_popcorn_default_p.bin#188 ps_popcorn_default_p.bin#189 ps_popcorn_default_p.bin#192 ps_popcorn_default_p.bin#195
+b76211745124af86	74ebc67ee92d1734	指令块相同·仅输入签名不同（建管线时按顶点着色器输出配对选）	74ebc67ee92d1734:0:3 ff60ddad549824e0:0:3	vs_models_grass_force_v.bin#0 vs_models_grass_force_v.bin#1
+fa85525dc10e694b	238ad1aaa8a95fb8	指令块等长·输入签名不同（疑为输入寄存器重编号，同按配对选）	238ad1aaa8a95fb8:1:3 7570b0b80b9e81fa:1:3	vs_popcorn_mesh_depth_v.bin#0 vs_popcorn_mesh_depth_v.bin#8 vs_popcorn_stencil_v.bin#1
