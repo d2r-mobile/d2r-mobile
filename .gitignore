@@ -1,0 +1,8 @@
+# 构建产物（Xcode 的派生数据目录，由 dm/ios 下的脚本生成）
+.iosdd/
+.iosdd_mac/
+.iosdd_*/
+.DS_Store
+
+# Local upstream synchronization and migration tools
+/.local-sync/

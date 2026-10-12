@@ -1,0 +1,77 @@
+{
+ "page": "局内·术士技能树（DLC）",
+ "truth": "~/dm-work/data/switch/truth_shots_v7/warlock_skilltree.png",
+ "host": {
+  "trigger": "OpenPanel:SkillsTreePanel+45",
+  "keys": "X@OpenPanel:MainMenuButtonRibbon>OpenPanel:CharacterSelectPanel,DOWN@%0.5+0.03>UpdateCharacterInfo,A@%0.5>SelectCharacter,A@%1>FrontEndNavigation:ToGame,PLUS@UnloadPanel:LoadScreenPanel%1>OpenPanel:PlayerInventoryExpansionLayout,R@%1>OpenPanel:SkillsTreePanel"
+ },
+ "viewport": [
+  0.06,
+  0.06,
+  0.94,
+  0.97
+ ],
+ "mask": [],
+ "note": "界面层静态内容：命名区域结构阈值 0.9（宿主对真值实测 ≥0.98）",
+ "regions": {
+  "顶部页签": {
+   "rect": [
+    0.06,
+    0.0,
+    0.94,
+    0.06
+   ],
+   "ssim_min": 0.9
+  },
+  "术士技能分页签": {
+   "rect": [
+    0.31,
+    0.12,
+    0.69,
+    0.17
+   ],
+   "ssim_min": 0.9
+  },
+  "技能图标": {
+   "rect": [
+    0.36,
+    0.18,
+    0.62,
+    0.75
+   ],
+   "ssim_min": 0.9
+  },
+  "技能说明浮窗": {
+   "rect": [
+    0.47,
+    0.47,
+    0.72,
+    0.99
+   ],
+   "ssim_min": 0.9
+  }
+ },
+ "elements": [
+  {
+   "name": "顶部五页签（技能树选中）",
+   "region": "顶部页签"
+  },
+  {
+   "name": "术士技能分页签（DLC 专属）",
+   "region": "术士技能分页签"
+  },
+  {
+   "name": "术士技能图标",
+   "region": "技能图标"
+  },
+  {
+   "name": "技能说明浮窗",
+   "region": "技能说明浮窗"
+  }
+ ],
+ "fine_grid": [
+  32,
+  18,
+  0.85
+ ]
+}

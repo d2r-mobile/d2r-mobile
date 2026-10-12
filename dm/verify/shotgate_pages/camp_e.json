@@ -1,0 +1,123 @@
+{
+ "page": "营地E拍对齐",
+ "truth": "~/dm-work/data/switch/truth_shots_v7/camp_e.png",
+ "host": {
+  "trigger": "DM:Tick:101#+1",
+  "keys": "A@OpenPanel:MainMenuButtonRibbon>FrontEndNavigation:ToGame",
+  "env": {
+   "DM_C2S_REPLAY": "~/dm-work/data/switch/truth_runs/camp1/c2s_to_E.jsonl",
+   "DM_GAME_SEED": "0x12345678",
+   "DM_FIXED_TIME": "1790000000",
+   "DM_TICK_HOLD": "101:SHOT",
+   "DM_POSCHK": "101:5813:4443:32768:32768"
+  },
+  "require_log": [
+   "DM_POSCHK 拍 101 玩家 (5813,4443)/(32768,32768) 真值 (5813,4443)/(32768,32768) 一致",
+   "冻结拍 101（目标 101）"
+  ]
+ },
+ "viewport": [
+  0,
+  0,
+  1,
+  0.82
+ ],
+ "mask": [],
+ "regions": {
+  "玩家角色": {
+   "rect": [
+    0.45,
+    0.3,
+    0.54,
+    0.52
+   ],
+   "ssim_min": 0.8
+  },
+  "篝火": [
+   0.2,
+   0.63,
+   0.38,
+   0.82
+  ],
+  "生命球": [
+   0.14,
+   0.85,
+   0.26,
+   1.0
+  ],
+  "法力球": [
+   0.74,
+   0.85,
+   0.86,
+   1.0
+  ],
+  "马车": {
+   "rect": [
+    0.74,
+    0.1,
+    0.95,
+    0.42
+   ],
+   "ssim_min": 0.8
+  },
+  "石墙与帐篷": [
+   0.1,
+   0.0,
+   0.5,
+   0.3
+  ],
+  "左上火把": {
+   "rect": [
+    0.02,
+    0.12,
+    0.08,
+    0.34
+   ],
+   "ssim_min": 0.8
+  }
+ },
+ "elements": [
+  {
+   "name": "3D 营地（视口非黑）",
+   "region": "viewport"
+  },
+  {
+   "name": "玩家角色 joe",
+   "region": "玩家角色"
+  },
+  {
+   "name": "篝火",
+   "region": "篝火"
+  },
+  {
+   "name": "生命球",
+   "region": "生命球"
+  },
+  {
+   "name": "法力球",
+   "region": "法力球"
+  },
+  {
+   "name": "马车",
+   "region": "马车"
+  },
+  {
+   "name": "石墙与物件",
+   "region": "石墙与帐篷"
+  },
+  {
+   "name": "左上火把",
+   "region": "左上火把"
+  }
+ ],
+ "dynmask": "~/dm-work/data/switch/shotgate_masks_v2/camp_e.png",
+ "thresholds": {
+  "dyn_ssim_min": 0.0
+ },
+ "note": "E 拍对齐（新口径）：真值 camp1 第 101 拍拍入口发 SHOT 后放行；宿主回放到 E、核站位、冻结、DM:Tick:101#+1 截。动画遮罩 = 宿主冻结下全速 / 慢速两次之差（占视口 23.7%，非弱判）；遮罩外细网格 32×18 ≥ 0.6，遮罩内元素靠命名区域 ≥ 0.8。负对照（抹玩家 / 火把 / 马车 / 生命球）全红。",
+ "fine_grid": [
+  32,
+  18,
+  0.6
+ ]
+}

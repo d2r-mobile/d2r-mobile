@@ -1,0 +1,116 @@
+{
+ "page": "小站页（传送点 第一幕）",
+ "truth": "~/dm-work/data/switch/truth_shots_v8/waypoint.png",
+ "host": {
+  "trigger": "OpenPanel:WaypointsPanelExpansion+45",
+  "keys": "A@OpenPanel:MainMenuButtonRibbon>FrontEndNavigation:ToGame,A@DM:Tick:135#>OpenPanel:WaypointsPanelExpansion",
+  "env": {
+   "DM_C2S_REPLAY": "~/dm-work/data/switch/truth_runs/wp1/c2s_to_E.jsonl",
+   "DM_GAME_SEED": "0x12345678",
+   "DM_FIXED_TIME": "1790000000",
+   "DM_POSCHK": "134:5802:4417:4925:44409"
+  },
+  "require_log": [
+   "DM_POSCHK 拍 134 玩家 (5802,4417)/(4925,44409) 真值 (5802,4417)/(4925,44409) 一致"
+  ]
+ },
+ "viewport": [
+  0.065,
+  0.02,
+  0.935,
+  0.965
+ ],
+ "mask": [],
+ "regions": {
+  "标题条": {
+   "rect": [
+    0.4,
+    0.02,
+    0.6,
+    0.07
+   ],
+   "ssim_min": 0.85
+  },
+  "幕页签": {
+   "rect": [
+    0.24,
+    0.12,
+    0.76,
+    0.18
+   ],
+   "ssim_min": 0.85
+  },
+  "当前小站高亮行": {
+   "rect": [
+    0.235,
+    0.18,
+    0.765,
+    0.26
+   ],
+   "ssim_min": 0.85
+  },
+  "已激活小站行": {
+   "rect": [
+    0.235,
+    0.26,
+    0.765,
+    0.63
+   ],
+   "ssim_min": 0.85
+  },
+  "未激活行（监牢一层）": {
+   "rect": [
+    0.235,
+    0.63,
+    0.765,
+    0.71
+   ],
+   "ssim_min": 0.85
+  },
+  "关闭提示": {
+   "rect": [
+    0.46,
+    0.91,
+    0.55,
+    0.96
+   ],
+   "ssim_min": 0.85
+  }
+ },
+ "elements": [
+  {
+   "name": "面板（视口非黑）",
+   "region": "viewport"
+  },
+  {
+   "name": "标题「传送点」",
+   "region": "标题条"
+  },
+  {
+   "name": "幕页签 I–V",
+   "region": "幕页签"
+  },
+  {
+   "name": "当前小站（流亡者营地）高亮",
+   "region": "当前小站高亮行"
+  },
+  {
+   "name": "已激活小站 5 行",
+   "region": "已激活小站行"
+  },
+  {
+   "name": "未激活小站（灰色、无图标）",
+   "region": "未激活行（监牢一层）"
+  },
+  {
+   "name": "B 关闭菜单",
+   "region": "关闭提示"
+  }
+ ],
+ "fine_grid": [
+  32,
+  18,
+  0.85
+ ],
+ "note": "站位硬判据：DM_POSCHK 在 arrive 拍 134 核玩家坐标 = 真值 wp1，宿主日志须有「一致」行。宿主回放 wp1 命令包到 E，拍 135 自己按 A，OpenPanel:WaypointsPanelExpansion+45 截。面板是界面层、背景压暗；已激活 / 未激活行的区别来自存档里的小站状态（save_ref_warlock_v2 joe），存档错位会红。"
+}

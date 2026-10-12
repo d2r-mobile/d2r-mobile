@@ -1,0 +1,116 @@
+{
+  "unit": "UIKit points",
+  "scaling": "k=min(1,width/667,height/375)",
+  "main": {
+    "center": [
+      "width-56*k",
+      "height-82*k"
+    ],
+    "diameter": "80*k",
+    "binding": "A",
+    "use": "主技能/交互/交换共用"
+  },
+  "skills": {
+    "count": 4,
+    "diameter": "52*k",
+    "main_distance": "112*k",
+    "angles_degrees": [
+      180,
+      210,
+      240,
+      270
+    ],
+    "bindings": [
+      "B",
+      "X",
+      "Y",
+      "R"
+    ]
+  },
+  "bottom_controls": {
+    "ids": [
+      "portal",
+      "belt1",
+      "belt2",
+      "belt3",
+      "belt4",
+      "menu"
+    ],
+    "first_center_x": "width/2-120*k",
+    "pitch": "48*k",
+    "center_y": "height-30*k",
+    "diameter": "44*k"
+  },
+  "full_hud_order": [
+    "原版血球",
+    "回城",
+    "腰带1",
+    "腰带2",
+    "腰带3",
+    "腰带4",
+    "功能",
+    "原版蓝球"
+  ],
+  "joystick": {
+    "idle_center": [
+      "90*k",
+      "height-100*k"
+    ],
+    "radius": "60*k",
+    "thumb_diameter": "46*k",
+    "deadzone": "6*k",
+    "zone": "x<width*.43,y>height*.25",
+    "axes": "left only, ±32767"
+  },
+  "map": {
+    "center": [
+      "width-30*k",
+      "30*k"
+    ],
+    "diameter": "44*k",
+    "binding": "MINUS"
+  },
+  "game_visible": [
+    "main",
+    "skill1",
+    "skill2",
+    "skill3",
+    "skill4",
+    "portal",
+    "belt1",
+    "belt2",
+    "belt3",
+    "belt4",
+    "menu",
+    "map",
+    "joystick"
+  ],
+  "navigation_visible": [
+    "main",
+    "skill1",
+    "skill2",
+    "skill3",
+    "skill4",
+    "menu",
+    "joystick"
+  ],
+  "not_yet_verified": [
+    "回城实际绑定与生效",
+    "原版HUD资源重排",
+    "强制跑步与取消精力机制",
+    "功能菜单难度首屏",
+    "真实触摸和手柄全局存档等价"
+  ],
+  "captured_device": {
+    "view_size_pt": [
+      956,
+      440
+    ],
+    "pixel_size": [
+      2868,
+      1320
+    ],
+    "scale": 3
+  },
+  "viewport_issue": "DM_OPMODE=0原生截图游戏内容未铺满，右/底黑区；触屏层真实铺满，不作为宽屏通过"
+}

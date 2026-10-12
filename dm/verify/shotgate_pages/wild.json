@@ -1,0 +1,155 @@
+{
+ "page": "野外页（冰冷之原小站，E 拍对齐）",
+ "truth": "~/dm-work/data/switch/truth_shots_v9/wild.png",
+ "host": {
+  "trigger": "DM:Tick:194#+1",
+  "keys": "A@OpenPanel:MainMenuButtonRibbon>FrontEndNavigation:ToGame,A@DM:Tick:133#>OpenPanel:WaypointsPanelExpansion,DOWN@DM:Tick:142#,A@DM:Tick:150#>ClosePanel:WaypointsPanelExpansion",
+  "env": {
+   "DM_C2S_REPLAY": "~/dm-work/data/switch/truth_runs/wild1/c2s_to_arrive.jsonl",
+   "DM_GAME_SEED": "0x12345678",
+   "DM_FIXED_TIME": "1790000000",
+   "DM_TICK_HOLD": "194:SHOT",
+   "DM_POSCHK": "194:5423:4688:32768:32768"
+  },
+  "require_log": [
+   "DM_POSCHK 拍 194 玩家 (5423,4688)/(32768,32768) 真值 (5423,4688)/(32768,32768) 一致",
+   "冻结拍 194（目标 194）"
+  ]
+ },
+ "viewport": [
+  0,
+  0,
+  1,
+  0.86
+ ],
+ "mask": [],
+ "regions": {
+  "区域名「进入冰冷之原」": {
+   "rect": [
+    0.44,
+    0.2,
+    0.56,
+    0.245
+   ],
+   "ssim_min": 0.8
+  },
+  "小站标签": {
+   "rect": [
+    0.47,
+    0.285,
+    0.53,
+    0.365
+   ],
+   "ssim_min": 0.8
+  },
+  "玩家角色": {
+   "rect": [
+    0.47,
+    0.38,
+    0.53,
+    0.53
+   ],
+   "ssim_min": 0.8
+  },
+  "小站平台": {
+   "rect": [
+    0.36,
+    0.46,
+    0.64,
+    0.65
+   ],
+   "ssim_min": 0.8
+  },
+  "生命球": [
+   0.14,
+   0.85,
+   0.26,
+   1.0
+  ],
+  "法力球": [
+   0.74,
+   0.85,
+   0.86,
+   1.0
+  ],
+  "生命数值": {
+   "rect": [
+    0.24,
+    0.84,
+    0.33,
+    0.885
+   ],
+   "ssim_min": 0.8
+  },
+  "左蓝焰": {
+   "rect": [
+    0.42,
+    0.46,
+    0.45,
+    0.53
+   ],
+   "ssim_min": 0.75
+  },
+  "右蓝焰": {
+   "rect": [
+    0.545,
+    0.46,
+    0.575,
+    0.53
+   ],
+   "ssim_min": 0.75
+  }
+ },
+ "elements": [
+  {
+   "name": "3D 野外（视口非黑）",
+   "region": "viewport"
+  },
+  {
+   "name": "进区提示「进入冰冷之原」",
+   "region": "区域名「进入冰冷之原」"
+  },
+  {
+   "name": "小站标签「冰冷之原 传送点」",
+   "region": "小站标签"
+  },
+  {
+   "name": "玩家角色 joe",
+   "region": "玩家角色"
+  },
+  {
+   "name": "小站平台与蓝焰",
+   "region": "小站平台"
+  },
+  {
+   "name": "生命球",
+   "region": "生命球"
+  },
+  {
+   "name": "法力球",
+   "region": "法力球"
+  },
+  {
+   "name": "生命数值",
+   "region": "生命数值"
+  },
+  {
+   "name": "小站左蓝焰",
+   "region": "左蓝焰"
+  },
+  {
+   "name": "小站右蓝焰",
+   "region": "右蓝焰"
+  }
+ ],
+ "fine_grid": [
+  32,
+  18,
+  0.6
+ ],
+ "note": "真值局 wild1（plans/wild_tick.tsv）：走到营地小站 arrive 拍 132，A 开小站、拍 142 方向下选冰冷之原、拍 150 A 传送，第 194 拍拍入口截（tickshot）。宿主回放命令包到 arrive（c2s_to_arrive.jsonl），三次按键按真值拍号自己按（客户端面板须客户端自己开），DM_TICK_HOLD=194:SHOT 冻结、DM_POSCHK 194 核站位（= 传送到了冰冷之原），DM:Tick:194#+1 截。 动画遮罩 9.9%（shotgate_masks_v3）。负对照全红：抹进区提示 / 小站标签 / 玩家 / 左蓝焰 / 生命数值、错地点（营地图）；站位错走 DM_POSCHK 撤图判「站位不一致」。",
+ "dynmask": "~/dm-work/data/switch/shotgate_masks_v3/wild.png",
+ "thresholds": {
+  "dyn_ssim_min": 0.0
+ }
+}

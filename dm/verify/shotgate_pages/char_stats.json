@@ -1,0 +1,103 @@
+{
+ "page": "局内·角色属性",
+ "truth": "~/dm-work/data/switch/truth_shots_v7/char_stats.png",
+ "host": {
+  "trigger": "OpenPanel:CharacterStatsPanel+45",
+  "keys": "A@OpenPanel:MainMenuButtonRibbon>FrontEndNavigation:ToGame,PLUS@UnloadPanel:LoadScreenPanel%1>OpenPanel:PlayerInventoryExpansionLayout,L@%1>OpenPanel:CharacterStatsPanel"
+ },
+ "viewport": [
+  0.06,
+  0.06,
+  0.94,
+  0.97
+ ],
+ "mask": [],
+ "note": "界面层静态内容：命名区域结构阈值 0.9（宿主对真值实测 ≥0.98）",
+ "regions": {
+  "顶部页签": {
+   "rect": [
+    0.06,
+    0.0,
+    0.94,
+    0.06
+   ],
+   "ssim_min": 0.9
+  },
+  "角色名与职业等级": {
+   "rect": [
+    0.13,
+    0.1,
+    0.4,
+    0.28
+   ],
+   "ssim_min": 0.9
+  },
+  "经验值": {
+   "rect": [
+    0.62,
+    0.2,
+    0.86,
+    0.28
+   ],
+   "ssim_min": 0.9
+  },
+  "四项属性": {
+   "rect": [
+    0.1,
+    0.3,
+    0.35,
+    0.82
+   ],
+   "ssim_min": 0.9
+  },
+  "攻防生命法力": {
+   "rect": [
+    0.35,
+    0.3,
+    0.66,
+    0.82
+   ],
+   "ssim_min": 0.9
+  },
+  "抗性": {
+   "rect": [
+    0.68,
+    0.3,
+    0.9,
+    0.56
+   ],
+   "ssim_min": 0.9
+  }
+ },
+ "elements": [
+  {
+   "name": "顶部五页签（角色选中）",
+   "region": "顶部页签"
+  },
+  {
+   "name": "joe 76 级圣骑士",
+   "region": "角色名与职业等级"
+  },
+  {
+   "name": "经验值",
+   "region": "经验值"
+  },
+  {
+   "name": "力量 / 敏捷 / 活力 / 能量",
+   "region": "四项属性"
+  },
+  {
+   "name": "伤害 / 防御 / 耐力 / 生命 / 法力",
+   "region": "攻防生命法力"
+  },
+  {
+   "name": "四项抗性",
+   "region": "抗性"
+  }
+ ],
+ "fine_grid": [
+  32,
+  18,
+  0.85
+ ]
+}

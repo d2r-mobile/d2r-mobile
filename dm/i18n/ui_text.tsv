@@ -1,0 +1,299 @@
+键	中文	English	用在哪
+dmPauseRestart	一键重开	Quick Restart	暂停菜单按钮（touch_layout.py）
+dmUpdBuild	构建 %d	Build %d	选角页左下角构建号（dm_update.c）
+dmUpdNew	有新版本 %d · %s	New version %d · %s	选角页新版本提示；%s = 版本文件里的说明（服务端给，未翻）
+dmUpdNoNet	无法联网检查更新 · 请在 设置 → D2R Mobile → 无线数据 里允许	Can't check for updates · Allow Wireless Data for this app in iOS Settings	选角页：查更新被系统拦了
+dmUpdFail	检查更新失败	Update check failed	选角页：查更新失败（包里没配下载站地址时）
+dmUpdFailSite	检查更新失败 · 可在浏览器打开 %s 手动更新	Update check failed · Open %s in a browser to update	选角页：查更新失败；%s = 下载站地址（读本机配置，不写死）
+dmUpdNewUrgent	新版本 %d · %s	New version %d · %s	建议立即更新档的说明行
+dmUpdUrgentTitle	建议立即更新	Update Recommended	建议立即更新档的红字标题
+dmUpdButton	更新	Update	选角页两个「更新」按钮（touch_layout.py）
+dmVaultStored	存着	Stored	编年史格子下的状态（dm_vault_ui.c）
+dmVaultSeen	收录过 · 没存	Not stored	编年史格子状态 / 说明框顶行
+dmVaultNone	还没遇到过	Not found	编年史格子状态 / 说明框顶行
+dmVaultStoredTip	存着 · 双击取出	Stored · Double-tap to withdraw	编年史说明框顶行；英文用原版词 ui[AdvancedStashWithdraw]「Withdraw」
+dmVaultStats	%d 件 · 已存 %d · 收录过 %d	%d · %d stored · %d seen	编年史暗金页统计行
+dmVaultSetStats	套装　%d 套 · 已存 %d / %d 件	Sets: %d · %d / %d pieces stored	编年史套装页统计行
+dmVaultSetFull	已存 %d / %d　已存齐	%d / %d stored · complete	编年史套装行计数（存齐）
+dmVaultSetHave	已存 %d / %d	%d / %d stored	编年史套装行计数
+dmVaultSearch	搜索「%s」：%d 件（暗金 %d · 套装 %d）	"%s": %d items (%d unique · %d set)	编年史搜索结果统计行
+dmStoreHead	存放：	Deposited: 	「存放」按钮完成后的系统提示开头（dm_pouch.c）；英文用原版词 ui[strGoldDeposit]「Deposit」
+dmStoreVault	编年史 %d 件	Chronicle %d	存放提示：进了编年史几件
+dmStoreStash	%s储藏箱 %d 件	%sStash %d	存放提示：进了储藏箱几件（%s = 分隔符）
+dmStorePouch	%s百宝囊 %d 件	%sPouch %d	存放提示：进了百宝囊几件（%s = 分隔符）
+dmStoreSep	，	, 	存放提示里的分隔符
+dmStoreNone	没有可以存放的物品	No items to deposit	存放提示：一件没存；同上
+dmStoreLeft	，%d 件留在背包	, %d left in inventory	存放提示：没存进去的件数
+dmStoreFull	这一格已放满，物品留在原处	That stack is full. Item left where it is.	存放提示：高级仓库那一格叠满 99，物品留在背包 / 仓库页
+dmPouchTitle	百宝囊	Pouch	百宝囊清单标题
+dmPouchEmpty	（空）	(empty)	百宝囊清单：空
+dmRwTitle	%s · %d 孔 · 可做的符文之语	%s · Socketed (%d) · Runewords	符文之语清单标题（dm_runeword.c；%s = 底材名）；英文用原版词：item-modifiers[Socketable]「Socketed (%i)」、ui[Runewords]
+dmRwLevel	需要等级 %d	Required Level: %d	符文之语清单每行的需要等级；英文 = 原版 item-modifiers[ItemStats1p]「Required Level: %d」
+dmKbJoin3	%s、%s、%s	%s, %s, %s	积分牌：三位先祖名字拼接（dm_kills.c）
+dmKbKilledNth	%s第 %d 次成功击杀！	%s slain! (kill #%d)	击杀首领后的系统提示
+dmKbKilledTotal	%s已累计击杀 %d 次！	%s slain %d times in total!	整十次等里程碑提示
+dmKbKills	击杀 %d	Kills %d	积分牌行：次数
+dmKbFirst	首杀 %m-%d %H:%M	First %m-%d %H:%M	积分牌行：首杀时刻（strftime）
+dmKbDrops	暗金 %d · 套装 %d	Unique %d · Set %d	积分牌行：掉落件数
+dmKbTimes	最快 %s · 最近 %s · 平均 %s	Best %s · Last %s · Avg %s	积分牌行：用时
+dmKbTotal	总击杀 %s	Total kills %s	积分牌底部总数
+dmKbAct1	第一幕	Act I	积分牌幕页签（touch_layout.py）
+dmKbAct2	第二幕	Act II	积分牌幕页签
+dmKbAct3	第三幕	Act III	积分牌幕页签
+dmKbAct4	第四幕	Act IV	积分牌幕页签
+dmKbAct5	第五幕	Act V	积分牌幕页签
+dmKbRift	秘境	Rift	积分牌第六个分组（touch_layout.py）
+dmKbSortAct	按幕顺序	By Act	积分牌排序下拉
+dmKbSortCount	按次数	By Kills	积分牌排序下拉（宿主 kb_sort 按这个键认）
+dmKbSortFast	按最快	By Best Time	积分牌排序下拉（宿主 kb_sort 按这个键认）
+dmBrPrefix	首领连战  %s	Boss Rush  %s	首领连战所有提示的前缀（dm_bossrush.c）
+dmBrDoneThisGame	本局已完成，下局再来	Already completed this game. Try again next game	首领连战：本局打过了
+dmBrToChamber	前 5 关完成，进门前往世界之石大殿	First 5 stages done. Enter the portal to the Worldstone Chamber	首领连战：前 5 关完成
+dmBrAllDone	全部完成	All stages complete	首领连战：全部完成
+dmBrStage	第 %d / %d 关：%s%s	Stage %d / %d: %s%s	首领连战：开打第几关（%s = 首领名、恐怖地带后缀）
+dmBrTerror	（恐怖地带）	 (Terror Zone)	首领连战第 6–10 关后缀
+dmBrAndariel	安达莉尔	Andariel	首领连战首领名
+dmBrDuriel	督瑞尔	Duriel	首领连战首领名
+dmBrMephisto	墨菲斯托	Mephisto	首领连战首领名
+dmBrDiablo	迪亚波罗	Diablo	首领连战首领名
+dmBrBaal	巴尔	Baal	首领连战首领名
+dmBrDiabloClone	暗黑迪亚波罗	Diablo Clone	首领连战第 11 关（怪物 333）
+dmBrUbers	超级墨菲斯托、超级迪亚波罗、超级巴尔	Uber Mephisto, Uber Diablo, Uber Baal	首领连战第 12 关
+dmBlissTitle	极乐世界	Elysium	建角页「极乐世界」勾选标题（touch_layout.py）
+dmBlissDesc	暗金 ×5、套装 ×3、符文 ×5；Boss 永远按首次击败掉落。	Unique ×5, Set ×3, Runes ×5; bosses always drop as on first kill.	建角页「极乐世界」说明
+dmRwHint	先移到个人仓库或背包	Move out of shared stash first	符文之语清单：底材在共享仓库时的灰字
+dmRwGo	一键合成	Craft	符文之语清单每行 / 详情页的合成按钮
+dmPauseShareLog	分享诊断日志	Share Diagnostics	暂停菜单按钮
+dmCustomAutoMana	自动喝药（生命 <50%、法力 <30%）	Auto-drink (Life 50%, Mana 30%)	自定义页开关（touch_layout.py _CUSTOM_ROWS；中英行数必须相同）
+dmCustomMercPot	佣兵自动喂药（生命 <50%，多耗药）	Auto-feed Merc at Life <50%	自定义页开关
+dmCustomDropLight	高价值掉落光柱	Light beam on valuable drops	自定义页开关
+dmCustomMapMark	小地图标注出入口、小站与任务终点	Automap: exits, waypoints, quests	自定义页开关；英文用原版词 keybinds[CfgAutoMap]「Automap」、objects[Waypoint]
+dmCustomItemNotes	物品注释与旧译名（重启后生效）	Item notes (Chinese only, restart)	自定义页开关（英文下注释不显示）
+dmCustomIcloud	iCloud 同步存档（重启后生效）	iCloud save sync (after restart)	自定义页开关
+dmCustomPotPick	腰带有空位时自动拾取能放进去的药水	Auto-pick potions into belt	自定义页开关
+dmCustomDropHaptic	高价值物品掉落时震动	Vibrate on valuable drops	自定义页开关
+dmCustomGemPick	符文与宝石自动拾取（直接进高级仓库）	Auto-stash runes & gems	自定义页开关
+dmCustomStoreBtn	背包「存放」按钮	Inventory Deposit button	自定义页开关
+dmCustomEcoFps	省电模式（30 帧）	Power saver (30 fps)	自定义页开关
+dmCustomLootFilter	掉落过滤（噩梦起自动隐藏杂物）	Loot Filter (auto, Nightmare+)	自定义页开关；Loot Filter 是原版过滤器的英文名
+dmCustomAutoBuff	自动补上增益技能（站着不动时）	Auto-recast buffs when idle	自定义页开关
+dmCustomLangEn	语言 / Language：English	Language: English	自定义页标题行右侧的语言开关（中文界面写中英两个词；英文界面的字体没有汉字，只写英文——English 这个词两种界面下都认得；勾上 = 英文界面 + 英文语音）
+dmCustomLangHint	重启游戏后生效 / Restart to apply	Restart to apply	语言开关勾选与当前语言不一致时显示在它下面
+dmTabGameSettings	游戏设定	Settings	触屏设置页第三个子页签（原版英文 Game Settings 放不进页签；中文取原版串原文）
+dmVaultPart0	头盔	Helms	编年史暗金页部位页签（wide_stash.py）
+dmVaultPart1	盔甲	Armor	编年史暗金页部位页签（wide_stash.py）
+dmVaultPart2	盾牌与手套	Shields\n& Gloves	编年史暗金页部位页签（wide_stash.py）
+dmVaultPart3	鞋子与腰带	Boots\n& Belts	编年史暗金页部位页签（wide_stash.py）
+dmVaultPart4	首饰	Jewelry	编年史暗金页部位页签（wide_stash.py）
+dmVaultPart5	剑与匕首	Swords\n& Daggers	编年史暗金页部位页签（wide_stash.py）
+dmVaultPart6	斧与爪	Axes\n& Claws	编年史暗金页部位页签（wide_stash.py）
+dmVaultPart7	锤与棍	Maces\n& Clubs	编年史暗金页部位页签（wide_stash.py）
+dmVaultPart8	长柄与矛	Polearms\n& Spears	编年史暗金页部位页签（wide_stash.py）
+dmVaultPart9	弓弩	Bows &\nCrossbows	编年史暗金页部位页签（wide_stash.py）
+dmVaultPart10	法杖与法器	Staves\n& Casters	编年史暗金页部位页签（wide_stash.py）
+dmVaultSearchHint	搜索名字	Search name	编年史搜索框提示字
+dmRvBytes	%lld 字节	%lld bytes	资源清单里的大小（romfs_validate.c，资源下载页显示）
+dmRvItem	%s%s（%s）	%s%s (%s)	资源清单：缺的文件（名字、应有大小）
+dmRvSep	、	, 	资源清单分隔符
+dmRvItem2	%s%s（%s / %s）	%s%s (%s / %s)	资源清单：没拷完的文件（现有 / 应有）
+dmRvHolesBad	区段表不对	bad hole table	资源清单：.holes 不对
+dmRvAllOk	%d 个文件都在	All %d files present	资源清单：齐了
+dmRvReport	已有 %d / %d 个文件。%s%s%s%s%s%s	%d / %d files present. %s%s%s%s%s%s	资源清单总述
+dmRvMissing	缺：	Missing: 	资源清单
+dmRvPeriod	。	. 	资源清单句号
+dmRvPartial	没拷完：	Incomplete: 	资源清单
+dmRvNoFile	缺少 %s	Missing %s	资源校验不过的原因
+dmRvHoles	%s.holes 区段表不对	%s.holes has a bad hole table	资源校验不过的原因
+dmRvShort	%s 还没拷完（%lld / %lld 字节）	%s is incomplete (%lld / %lld bytes)	资源校验不过的原因
+dmDlAppFolder	「D2R Mobile」	"D2R Mobile"	资源下载页：App 自己的文件夹（main.m）
+dmDlQuoted	「%@」	"%@"	资源下载页：文件夹名加引号
+dmDlIncomplete	%s里的资源还不完整：%s	Resources in %s are incomplete: %s	资源下载页：拷了一半
+dmDlNoData	没找到游戏资源。「D2R Mobile」里现在有：%s%s。把整个资源文件夹拷进来	No game resources found. "D2R Mobile" now contains: %s%s. Copy in the whole resource folder	资源下载页
+dmDlTidyFail	整理游戏资源没成（%s）	Could not organize the game resources (%s)	资源下载页（main.m）：档案散着放时挪进 data 没成
+dmDlUnknown	原因不明	unknown reason	资源下载页（main.m）
+dmDlPackBad	系统下载的资源包不完整：%s	The downloaded resource pack is incomplete: %s	资源下载页（main.m）
+dmDlNone	还没有放游戏资源	No game resources yet	资源下载页（main.m）
+dmDlNameSep	、	, 	资源下载页：文件夹名分隔符
+dmDlEtc	 等	 etc.	资源下载页：列不完
+dmDlRetry	重试	Retry	资源下载页按钮
+dmDlNoAssets	还没有游戏资源\n请先从内测页的「下载资源包」把「D2R Mobile Resources」文件夹下到手机，\n再在「文件」里把它整个拷到「我的 iPhone → D2R Mobile」（别改名、别多套一层），拷完后点重试	No game resources yet\nDownload the "D2R Mobile Resources" folder from "Download resource pack" on the beta page,\nthen in Files copy the whole folder to "On My iPhone → D2R Mobile" (do not rename or nest it), then tap Retry	资源下载页：兜底指引
+dmDlTestProgress	正在下载游戏资源\n0.00 / 5.50 GB（0%）  0.0 MB/s	Downloading game resources\n0.00 / 5.50 GB (0%)  0.0 MB/s	资源下载页（只在测试开关 DM_ASSETS_TEST 下）
+dmDlConnecting	正在连接资源服务器…	Connecting to the resource server…	资源下载页
+dmDlDownloading	正在下载游戏资源…	Downloading game resources…	资源下载页
+dmDlSpaceMsg	还差 %.2f GB。\n游戏资源还要下载 %.2f GB（另留 0.2 GB 余量），%@ 现在可用 %.2f GB。\n请在「设置 → 通用 → %@ 储存空间」清理后点重试。	%.2f GB more space needed.\nGame resources still need %.2f GB (plus 0.2 GB headroom); this %@ has %.2f GB free.\nFree up space in Settings → General → %@ Storage, then tap Retry.	资源下载页：空间不够（系统提示框正文）
+dmDlSpaceTitle	%@ 存储空间不足	%@ Storage Full	资源下载页：空间不够（提示框标题，%@ = iPhone / iPad）
+dmOk	好	OK	系统提示框按钮
+dmDlProgressNote	正在下载游戏资源\n%.2f / %.2f GB（%.0f%%）  %.1f MB/s%@	Downloading game resources\n%.2f / %.2f GB (%.0f%%)  %.1f MB/s%@	资源下载页进度（直接下载）
+dmDlCellTitle	正在使用蜂窝网络	Using Cellular Data	蜂窝网络提示框标题
+dmDlCellMsg	还要下载 %.2f GB 游戏资源，会消耗流量。建议连上无线局域网后再下。	%.2f GB of game resources left to download over cellular data. Wi-Fi is recommended.	蜂窝网络提示框正文
+dmDlCellLater	先不下	Not Now	蜂窝网络提示框按钮
+dmDlCellWait	还没有游戏资源\n连上无线局域网后点重试	No game resources yet\nConnect to Wi-Fi, then tap Retry	资源下载页
+dmDlCellGo	用流量下载	Use Cellular Data	蜂窝网络提示框按钮
+dmDlProgress	正在下载游戏资源\n%.2f / %.2f GB（%.0f%%）  %.1f MB/s	Downloading game resources\n%.2f / %.2f GB (%.0f%%)  %.1f MB/s	资源下载页进度（托管下载）
+dmDlPaused	下载已暂停（检查网络），恢复后自动继续	Download paused (check your network). It resumes automatically.	资源下载页
+dmDlPackWait	系统还在准备资源包，完成后自动继续	The system is still preparing the resource pack. It continues automatically.	资源下载页（main.m）
+dmDlNotReady	游戏资源还不能用\n%@\n处理后点重试	Game resources are not ready\n%@\nFix this, then tap Retry	资源下载页（main.m）
+dmDlWill	将下载游戏资源：还要下 %@（共 %.1f GB）	Downloading game resources: %@ remaining (%.1f GB total)	资源下载页：自动开始的大下载，开始前写明大小（%@ = 「4 MB」「4.1 GB」）
+dmDlNotStarted	%@游戏资源下载没开始：%@\n%@\n也可以从内测页手动下载资源包，放进「我的 iPhone → D2R Mobile」	%@The resource download could not start: %@\n%@\nYou can also download the resource pack from the beta page and put it in "On My iPhone → D2R Mobile"	资源下载页：取不到下载地址 / 清单时停在这一页（前缀、原因、下一步）
+dmDlNetDown	手机现在连不上网络（第一次打开时系统会问是否允许联网，没允许的话到「设置 → D2R Mobile」里打开）	this device is offline (on first launch the system asks whether to allow network access; if you declined, turn it on in Settings → D2R Mobile)	资源下载页：下载没开始的原因
+dmDlNoServer	连不上资源服务器	cannot reach the resource server	资源下载页：下载没开始的原因（asset_dl.m）
+dmDlNoBase	包里没有配置下载地址	this build has no download address configured	资源下载页：下载没开始的原因（asset_dl.m）
+dmDlNextAuto	网络通了会自动继续，也可以点重试；已经下好的部分不会重下	It resumes automatically once you are back online, or tap Retry. Anything already downloaded is kept.	资源下载页：下一步
+dmDlNextRetry	点重试再试一次；已经下好的部分不会重下	Tap Retry to try again. Anything already downloaded is kept.	资源下载页：下一步
+dmDlStopped	游戏资源下载停了：%@\n已下 %.2f / %.2f GB，点重试接着下（不会重头）	The resource download stopped: %@\nDownloaded %.2f / %.2f GB. Tap Retry to resume (it will not start over)	资源下载页：中途停了
+dmDlCopyIn	还没有游戏资源\n把游戏资源文件夹拷进「我的 iPhone → D2R Mobile」（在「文件」App 里）\n文件夹叫什么、套了几层都认；拷完后点重试	No game resources yet\nCopy the game resource folder into "On My iPhone → D2R Mobile" in the Files app\nAny folder name or nesting works; then tap Retry	资源下载页：这个包没配下载地址时（照公开仓库自己出的包）
+dmDlCopyInShort	把缺的文件拷进同一个文件夹后点重试	Copy the missing files into the same folder, then tap Retry	资源下载页：没配下载地址、资源不完整时接在清单后面
+dmOldNoSupportPkg	本包不带老机型支持（缺 romfs_overlay_astc/pack.json）	This build has no support for older devices (romfs_overlay_astc/pack.json is missing)	老机型补充包：没用上的原因（main.m）
+dmOldPackSize	「%s」里的补充包大小不对（%.2f / %.2f GB），像是没拷完	The pack in "%s" has the wrong size (%.2f / %.2f GB); the copy looks incomplete	老机型补充包：没用上的原因
+dmOldPackBad	「%s」里的补充包内容不对（和这个版本不配套，或拷坏了），请重新下载	The pack in "%s" does not match this version or is corrupted; please download it again	老机型补充包：没用上的原因
+dmOldPackNone	没找到老机型补充包	Supplementary pack for older devices not found	老机型补充包：没用上的原因
+dmOldUnsupTitle	暂不支持本机型	Device Not Supported	老机型弹框标题（本包不带老机型支持时）
+dmOldUnsupMsg	本机型（iPhone 14 及更早，A16 及以前芯片）暂不支持：显卡不支持游戏素材格式。iPhone 15 Pro 及以后可以玩。	This device (iPhone 14 or earlier, A16 chip or older) is not supported yet: its GPU cannot read the game's texture format. iPhone 15 Pro and later can run the game.	老机型弹框正文
+dmOldNeedTitle	需要老机型补充包	Supplementary Pack Required	老机型弹框标题
+dmOldNeedMsg	本机型需要老机型补充包（约 %.1f GB）。\n在「文件」里把「Legacy Device Pack」文件夹整个拷到「我的 iPhone → D2R Mobile」，再打开D2R Mobile。%@	This device needs the supplementary pack for older devices (about %.1f GB).\nIn the Files app, copy the whole "Legacy Device Pack" folder into "On My iPhone → D2R Mobile", then open D2R Mobile again.%@	老机型弹框正文（%@ = 没用上的原因，可空）
+dmOldWhySuffix	\n（%s）	\n(%s)	老机型弹框正文末尾的原因
+dmOldDl	直接下载	Download	老机型弹框按钮
+dmOldCopied	已经拷好了	Already Copied	老机型弹框按钮
+dmOldQuit	退出	Quit	老机型弹框按钮
+dmOldConnecting	正在连接下载服务器…	Connecting to the download server…	老机型补充包下载页
+dmOldDlFail	下载失败：%s	Download failed: %s	老机型补充包：没用上的原因
+dmOldProgress	正在下载老机型补充包\n%.2f / %.2f GB（%.0f%%）%@	Downloading the supplementary pack\n%.2f / %.2f GB (%.0f%%)%@	老机型补充包下载页进度
+dmA11ySurface	游戏触屏操作区	Game touch area	旁白（VoiceOver）读的触屏区名字（front_ios.m）
+dmInputTitle	输入	Input	输入框缺省标题
+dmNameRule	英文字母或汉字：2–15 个英文字母，或 1–5 个汉字（可混用）	Letters or Chinese characters: 2–15 letters, or 1–5 Chinese characters (can be mixed)	起名框规则说明
+dmNameTitle	角色名	Character Name	起名框缺省标题
+dmQtyTitle	数量	Quantity	数量框缺省标题；英文 = 原版 skills[skilldesc4]「Quantity」
+dmNameBlankRandom	留空 = 随机取名	Leave blank for a random name	起名框占位字
+dmNamePickIme	先在键盘上选好字	Finish choosing characters on the keyboard first	起名框：还在组字
+dmNameTooShort	至少 2 个英文字母，或 1 个汉字	At least 2 letters, or 1 Chinese character	起名框：太短
+dmNameEdge	开头和结尾不能是 - 或 _	Cannot start or end with - or _	起名框：首尾
+dmCancel	取消	Cancel	输入框按钮
+dmConfirm	确定	OK	输入框 / 存档失败框按钮
+dmSaveNoSpace	存储空间不足，进度未保存	Not enough storage. Progress was not saved	存档失败提示框
+dmHudLife	生命: %d / %d	Life: %d / %d	底栏生命（DmTouchOverlay.m，用预渲染字形拼，字形集由 gen_hud_v4.py 从这一行取）
+dmHudMana	法力: %d / %d	Mana: %d / %d	底栏法力（同上）
+dmDlVerifying	正在校验 %@	Verifying %@	资源下载进度第三行（asset_dl.m）
+dmDlWriteFail	写入 %@ 失败：%@	Failed to write %@: %@	资源下载失败原因
+dmDlBad3	%@ 下了 3 次校验都不过	%@ failed verification 3 times	资源下载失败原因
+dmDlNetRetry	网络中断，%d 秒后自动重试	Network lost. Retrying in %d s	资源下载进度第三行
+dmDlReconnect	连接不稳，已重新连接（第 %d 次）	Unstable connection. Reconnected (attempt %d)	资源下载进度第三行：这一片掉速后换了新连接（asset_dl.m）
+dmShareLogFile	D2R Mobile Diagnostics_%@_%@.txt	D2RMobile_diagnostics_%@_%@.txt	分享诊断日志时系统分享面板上的文件名（dm_sharelog.m；文件内容给我们看，搜行用的中文键不翻）
+dmVaultTierN	普通	Norm	编年史档次勾选（wide_stash.py；中文同原版 NormalQuality）
+dmVaultTierX	优异	Exc	编年史档次勾选（中文同原版 ExceptionalQuality）
+dmVaultTierE	精英	Elite	编年史档次勾选（中文同原版 EliteQuality）
+dmStashVaultTab	编年史	Vault	储藏箱第六页签（中文同原版 Chronicle；英文原词放不下、压到前一个页签）
+dmTroveTab	珍宝匣	Trove	储藏箱第三个页签：宝石 / 符文 / 材料三页合成的一页（wide_stash.py；材料、符文两个页签挪出屏）
+dmRiftSayPrefix	秘境  %s	Rift  %s	秘境系统提示的前缀（dm_rift.c say）
+dmRiftSayFirst	第 %d 层首通奖励已掉在脚下	Level %d first clear reward	秘境系统提示（dm_rift.c）；英文：「首通」暗黑 3 无对应原文，拟
+dmRiftSayDoneBoth	本层完成，下一层与回城之门已开启	Rift complete! Portals opened	秘境系统提示（dm_rift.c）；英文：complete 取自暗黑 3 官方 2.1.0 补丁说明（news.blizzard.com/en-us/article/14569138）「complete the current Greater Rift level」；整句拟；暗黑 3 结算窗口标题原文「GREATER RIFT COMPLETE」/ Urshi 面板标题「RIFT COMPLETE」（游戏内截图 diablo.fandom.com/wiki/File:New_Completion_Rift.jpg、File:UrshiMenu.jpg）
+dmRiftSayLateBoth	超时未过关，重打与回城之门已开启	Not cleared. Portals opened	秘境系统提示（dm_rift.c）；超时打倒守护者不算过关；英文：not cleared，不用 Failed（没死也没失败，只是不计）
+dmRiftSayLateNext	超时未过关，重打之门已开启	Not cleared. Portal opened	秘境系统提示（dm_rift.c）；超时打倒守护者不算过关；英文：not cleared，不用 Failed（没死也没失败，只是不计）
+dmRiftSayLateTown	超时未过关，回城之门已开启	Not cleared. Town Portal open	秘境系统提示（dm_rift.c）；超时打倒守护者不算过关；英文：not cleared，不用 Failed（没死也没失败，只是不计）
+dmRiftSayLate	超时未过关	Level not cleared	秘境系统提示（dm_rift.c）；超时打倒守护者不算过关；英文：not cleared，不用 Failed（没死也没失败，只是不计）
+dmRiftSayDoneNext	本层完成，下一层之门已开启	Rift complete! Portal opened	秘境系统提示（dm_rift.c）；英文：同上；暗黑 3 结算窗口标题原文「GREATER RIFT COMPLETE」/ Urshi 面板标题「RIFT COMPLETE」（游戏内截图 diablo.fandom.com/wiki/File:New_Completion_Rift.jpg、File:UrshiMenu.jpg）
+dmRiftSayDoneTown	本层完成，回城之门已开启	Complete! Town Portal open	秘境系统提示（dm_rift.c）；英文：Town Portal = 暗黑 2 原版 skills[skillan219]；暗黑 3 结算窗口标题原文「GREATER RIFT COMPLETE」/ Urshi 面板标题「RIFT COMPLETE」（游戏内截图 diablo.fandom.com/wiki/File:New_Completion_Rift.jpg、File:UrshiMenu.jpg）
+dmRiftSayDone	本层完成	Rift complete	秘境系统提示（dm_rift.c）；英文：同上；暗黑 3 结算窗口标题原文「GREATER RIFT COMPLETE」/ Urshi 面板标题「RIFT COMPLETE」（游戏内截图 diablo.fandom.com/wiki/File:New_Completion_Rift.jpg、File:UrshiMenu.jpg）
+dmRiftSayErr	秘境出错了，这次没开	The Rift could not be opened	秘境系统提示（dm_rift.c）；英文：拟
+dmRiftSayStart	第 %d 层开始，限时 15 分钟	Level %d: 15 minute time limit	秘境系统提示（dm_rift.c）；英文：Greater Rift level / time limit 取自暗黑 3 官方 2.1.0 补丁说明（news.blizzard.com/en-us/article/14569138）「complete the current Greater Rift level within the designated time limit」
+dmRiftSayGift	赠彩虹刻面一颗，已掉在脚下	A Rainbow Facet has dropped	秘境系统提示（dm_rift.c）；「彩虹刻面」是旧译名（原版现行「彩虹魔石」）；英文物品名 = 原版键 Rainbow Facet 的 enUS；英文：物品名 = 暗黑 2 原版 item-names[Rainbow Facet]
+dmRiftSayTimeout	时间到：本层未过关，守护者仍会掉落	Time's up: level not cleared	秘境系统提示（dm_rift.c）；超时打倒守护者不算过关；英文：not cleared，不用 Failed（没死也没失败，只是不计）
+dmRiftSayGuardian	进度已满：守护者现身！	The Rift Guardian appears!	秘境系统提示（dm_rift.c）；英文：Rift Guardian 取自暗黑 3 官方 2.1.0 补丁说明（news.blizzard.com/en-us/article/14569138）；出现时的界面原句没查到，拟
+dmElyToaGround	背包已满，赦免之证掉在脚边	Inventory full: Token of Absolution dropped	极乐世界新角色补齐（dm_elysium.c）：背包放不下时的系统提示；英文物品名 = 暗黑 2 原版 Token of Absolution
+dmMercSlotLocked	通关地狱后打通秘境10层解锁	Clear Greater Rift Level 10 to unlock	佣兵新装备位没解锁时的系统提示（dm_rift.c；中文是 原句）；英文：Greater Rift 取暗黑 3 原文
+dmRiftPtsGot	最高第 %d 层：获得 %d 技能点、%d 属性点	Level %d: +%d Skill Points, +%d Stat Points	秘境系统提示（dm_rift.c 通关点数）；英文：Skill Points / Stat Points 写全，取暗黑 2 原版人物面板的说法（Stat Points Remaining / Skill Choices Remaining；不缩成 Skill / Stat）；中文这句本身就占两行，英文同样两行
+dmSkillCapLocked	打通任意一层秘境后解锁技能等级上限	Clear any Rift level to unlock the skill level cap	技能树里对已到 20 级的技能再加点、而这个角色还没打通过秘境时的系统提示（dm_actions.c）；英文：Rift / level 同秘境其它提示
+dmRiftPtsHeld	未分配的点数太多，剩余奖励在用掉后补发	Spend your points to get the rest	秘境系统提示（dm_rift.c 通关点数）：未用点数顶到上限，剩下的等用掉后补发；英文按原意写
+dmRiftTierN	第 %d 层	Level %d	秘境层号（面板大字、积分牌、顶部条共用）；英文：层数叫 level：暗黑 3 官方 2.1.0 补丁说明（news.blizzard.com/en-us/article/14569138）「Greater Rift level」；暗黑 3 方尖碑选层下拉原文「Level 12」「Level 25 (Torment 6)」（游戏内截图 diablo.fandom.com/wiki/File:HP2AA65JO17Q1434998338415.jpg）；暗黑 3 结算屏与排行榜写 Tier（「TIER 31 COMPLETED」、列名 Tier），选层写 Level；同一局里用两个词更乱，全用 Level，未分场合
+dmRiftCapResel	换一层再打	Choose another level	大秘境面板（dm_rift_ui.c）已完成页上组说明；英文：拟
+dmRiftCapGuard	回到守护者处	Return to Guardian	大秘境面板（dm_rift_ui.c）已完成页下组说明；英文：拟
+dmRiftCapVoid	本层作废	Run will be lost	大秘境面板（dm_rift_ui.c）；英文：拟
+dmRiftCapVoidPad	按住 X，本层放弃	Hold X to quit level	大秘境面板进行中页「放弃」钮上方的说明，手柄模式用（dm_rift_ui.c）；英文：拟（按钮叫 Quit）
+dmRiftTitleDone	本层已完成	Rift Complete	大秘境面板（dm_rift_ui.c）；英文：见 dmRiftSayDoneBoth；暗黑 3 结算窗口标题原文「GREATER RIFT COMPLETE」/ Urshi 面板标题「RIFT COMPLETE」（游戏内截图 diablo.fandom.com/wiki/File:New_Completion_Rift.jpg、File:UrshiMenu.jpg）
+dmRiftTitleLate	超时未过关	Time's Up	大秘境面板（dm_rift_ui.c）超时打倒守护者时的标题；英文：拟
+dmRiftTitleRun	秘境进行中	Rift in Progress	大秘境面板（dm_rift_ui.c）
+dmRiftGuardDown	已击败守护者	Guardian slain	大秘境面板（dm_rift_ui.c）；英文：slain = 暗黑 2 原版 ui[sysmsg9]「was slain.」；Rift Guardian 见上（此处栏宽放不下全称）
+dmRiftNextOpen	下一层之门已开启	Next portal open	大秘境面板（dm_rift_ui.c）；英文：拟
+dmRiftRetryOpen	重打本层之门已开启	Portal reopened	大秘境面板（dm_rift_ui.c）超时：守护者处那扇门重打本层；英文：拟
+dmRiftSaved	进度已记录	Progress saved	大秘境面板（dm_rift_ui.c）
+dmRiftNotCounted	不计入通关	Not cleared	大秘境面板（dm_rift_ui.c）超时；英文：拟
+dmRiftTimeLeft	剩余时间	Time Left	大秘境面板（dm_rift_ui.c）
+dmRiftProgress	进度	Progress	大秘境面板（dm_rift_ui.c）
+dmRiftLvlBase	原版	Unchanged	大秘境面板「怪物等级」：9 层以下不改等级；英文：拟（9 层以下不改怪物等级）
+dmRiftGamUni	暗金	Unique	大秘境面板（dm_rift_ui.c）
+dmRiftGamSet	套装	Set	大秘境面板（dm_rift_ui.c）
+dmRiftGamUniAfter	通关后暗金	Unique after	大秘境面板（dm_rift_ui.c）；英文：拟：通关所选层之后的暗金几率；栏宽只够 12 个字符；英文界面不用这两条（换成小标题 dmRiftGamAfterEn + 并排两个数），只为表的完整留着
+dmRiftGamSetAfter	通关后套装	Set after	大秘境面板（dm_rift_ui.c）；英文：同上；英文界面不用这两条（换成小标题 dmRiftGamAfterEn + 并排两个数），只为表的完整留着
+dmRiftMsGot	已领取	Claimed	大秘境面板（dm_rift_ui.c）
+dmRiftMsNext	下一目标	Next	大秘境面板（dm_rift_ui.c）
+dmRiftMsNo	未达成	Locked	大秘境面板（dm_rift_ui.c）
+dmKbRiftName	大秘境	Greater Rift	积分牌秘境项（dm_kills.c）
+dmKbRiftBest	最高通关 %d 层	Best Level: %d	积分牌秘境项（dm_kills.c）；英文：拟；排行榜原文没查到
+dmKbRiftNever	还没进过秘境	No Greater Rifts yet	积分牌秘境项（dm_kills.c）；英文：拟
+dmKbRiftClears	通关 %d · 死亡 %d	Cleared %d · Deaths %d	积分牌秘境项（dm_kills.c）；英文：拟
+dmKbRiftUnlock	可选到第 %d 层	Max: %d	积分牌秘境项（dm_kills.c）；英文：拟
+dmKbRiftMs	首通奖励	First Clear Rewards	积分牌秘境项（dm_kills.c）；英文：拟
+dmKbRiftMsNext	下一档在第 %d 层	Next at Level %d	积分牌秘境项（dm_kills.c）；英文：拟
+dmKbRiftMsAll	已全部领取	All claimed	积分牌秘境项（dm_kills.c）
+dmKbRiftFast	最快 %d:%02d	Best Time %d:%02d	积分牌秘境项（dm_kills.c）；英文：拟（同积分牌 dmKbTimes 的 Best）；暗黑 3 排行榜列名为 Time Spent（意思是用时，不是最快），未采用，留 Best Time
+dmKbRiftMsGot	首通奖励已领取	First clear reward claimed	积分牌秘境项（dm_kills.c）；英文：拟
+dmKbRiftTotal	最高 %d 层	Best Level: %d	积分牌秘境项（dm_kills.c）；英文：拟
+dmCloudConflict	iCloud 共享仓库两边不一致，已保留本机，请联系我们	iCloud shared stash mismatch: kept this device. Please contact us	iCloud 同步冲突提示（diag.c）
+dmRiftHudTitle	秘境	Rift	秘境顶部进度条（dm_rift_hud.m，UIKit）
+dmRiftHudDone	第 %d 层完成	Level %d complete	秘境顶部进度条（dm_rift_hud.m，UIKit）；英文：见 dmRiftSayDoneBoth
+dmRiftHudLate	第 %d 层超时	Level %d overtime	秘境顶部进度条（dm_rift_hud.m，UIKit）；英文：拟
+dmRiftHudGuard	守护者现身	Rift Guardian	秘境顶部进度条（dm_rift_hud.m，UIKit）；英文：见 dmRiftSayGuardian
+dmRiftHudNext	下次第 %d 层	Next: Level %d	秘境顶部进度条（dm_rift_hud.m，UIKit）；英文：拟
+dmRiftHudSame	下次仍是这一层	Next: same level	秘境顶部进度条（dm_rift_hud.m，UIKit）；英文：拟
+dmRiftHudKill	击败守护者	Slay the Rift Guardian	秘境顶部进度条（dm_rift_hud.m，UIKit）；英文：拟；任务目标原句没查到
+dmRiftHudGoal	消灭秘境中的怪物   %d%%	Slay the monsters   %d%%	秘境顶部进度条（dm_rift_hud.m，UIKit）；英文：拟；任务目标原句没查到
+dmRiftMsItem10	破免大板	Sunder Charm	大秘境面板首通奖励列表（touch_layout.py RF_MS）；英文自拟：原版没有统称（六件各有名字，词条里有 Sundered），用玩家通行叫法
+dmRiftMsSub10	随机一种	One at random	大秘境面板首通奖励列表（touch_layout.py RF_MS）
+dmRiftMsTier10	10 层	10	首通奖励列表的层号（布局里是静态字，一行一条）；英文：英文只写层号（栏宽放不下 Level N；标题栏已说明是 First Clear）
+dmRiftMsItem20	毁灭	Annihilus	大秘境面板首通奖励列表（touch_layout.py RF_MS）；英文 = 原版串表键 Annihilus 的 enUS
+dmRiftMsTier20	20 层	20	首通奖励列表的层号（布局里是静态字，一行一条）；英文：英文只写层号（栏宽放不下 Level N；标题栏已说明是 First Clear）
+dmRiftMsItem30	地狱火炬	Hellfire Torch	大秘境面板首通奖励列表（touch_layout.py RF_MS）；英文 = 原版键 Hellfire Torch 的 enUS
+dmRiftMsTier30	30 层	30	首通奖励列表的层号（布局里是静态字，一行一条）；英文：英文只写层号（栏宽放不下 Level N；标题栏已说明是 First Clear）
+dmRiftMsItem40	无形精英底材	Ethereal Elite	大秘境面板首通奖励列表（touch_layout.py RF_MS）
+dmRiftMsSub40	带孔	Socketed item	大秘境面板首通奖励列表（touch_layout.py RF_MS）；英文 = 原版 ui[LootFilterEtherealSocketed]「Ethereal / Socketed」里的词
+dmRiftMsTier40	40 层	40	首通奖励列表的层号（布局里是静态字，一行一条）；英文：英文只写层号（栏宽放不下 Level N；标题栏已说明是 First Clear）
+dmRiftMsItem50	先祖暗金珠宝	Colossal Jewel	大秘境面板首通奖励列表（touch_layout.py RF_MS）；英文统称是英文社区的通行叫法（Colossal Jewel），原版只有 6 个单件名：item-names.json 的 Defender's Fire / Defender's Bile / Protector's Frost / Protector's Stone / Guardian's Thunder / Guardian's Light（中文 防御者之火 / 防御者之怒 / 保卫者之霜 / 保卫者之石 / 守护者之雷 / 守护者之光）
+dmRiftMsSub50	随机一种	One at random	大秘境面板首通奖励列表（touch_layout.py RF_MS）
+dmRiftMsTier50	50 层	50	首通奖励列表的层号（布局里是静态字，一行一条）；英文：英文只写层号（栏宽放不下 Level N；标题栏已说明是 First Clear）
+dmRiftMsItem60	死亡深度	Death's Fathom	大秘境面板首通奖励列表（touch_layout.py RF_MS）；中文是旧译名（原版现行「死亡深渊」）；英文 = 原版键 Fathom 的 enUS
+dmRiftMsTier60	60 层	60	首通奖励列表的层号（布局里是静态字，一行一条）；英文：英文只写层号（栏宽放不下 Level N；标题栏已说明是 First Clear）
+dmRiftMsItem70	格利风之眼	Griffon's Eye	大秘境面板首通奖励列表（touch_layout.py RF_MS）；中文是旧译名（原版现行「狮鹫之眼」）；英文 = 原版同名键的 enUS
+dmRiftMsTier70	70 层	70	首通奖励列表的层号（布局里是静态字，一行一条）；英文：英文只写层号（栏宽放不下 Level N；标题栏已说明是 First Clear）
+dmRiftMsItem80	泰瑞尔的威能	Tyrael's Might	大秘境面板首通奖励列表（touch_layout.py RF_MS）；中文是旧译名（原版现行「泰瑞尔的力量」）；英文 = 原版同名键的 enUS
+dmRiftMsTier80	80 层	80	首通奖励列表的层号（布局里是静态字，一行一条）；英文：英文只写层号（栏宽放不下 Level N；标题栏已说明是 First Clear）
+dmRiftMsItem90	破免大板	Sunder Charm	大秘境面板首通奖励列表（touch_layout.py RF_MS）；同 dmRiftMsItem10
+dmRiftMsSub90	补齐没有的那种	One you are missing	大秘境面板首通奖励列表（touch_layout.py RF_MS）
+dmRiftMsTier90	90 层	90	首通奖励列表的层号（布局里是静态字，一行一条）；英文：英文只写层号（栏宽放不下 Level N；标题栏已说明是 First Clear）
+dmRiftMsItem100	六颗高级符文	6 High Runes	大秘境面板首通奖励列表（touch_layout.py RF_MS）
+dmRiftMsSub100	28–33 号符文各一颗	Lo to Zod, one each	大秘境面板首通奖励列表（touch_layout.py RF_MS）；符文名 = 原版 item-runes[r28]–[r33]：Lo / Sur / Ber / Jah / Cham / Zod Rune
+dmRiftMsTier100	100 层	100	首通奖励列表的层号（布局里是静态字，一行一条）；英文：英文只写层号（栏宽放不下 Level N；标题栏已说明是 First Clear）
+dmRiftSelT	选择层数	Select Level	大秘境面板（touch_layout.py _rift_panel）；英文：仿暗黑 2 原版 ui[strselectdiff]「Select Difficulty」；level 见 dmRiftTierN
+dmRiftInfT	本层	This Level	大秘境面板（touch_layout.py _rift_panel）；英文：拟
+dmRiftRange	可选层数	Unlocked	大秘境面板（touch_layout.py _rift_panel）；英文：拟
+dmRiftBest	最高通关	Highest	大秘境面板（touch_layout.py _rift_panel）；英文：拟
+dmRiftStr	怪物强度	Monster Power	大秘境面板（touch_layout.py _rift_panel）；英文：Monster Power 是暗黑 3 1.0.5 的正式系统名（官方博客 us.diablo3.com/en/blog/7540457：「Monster Power, a new system designed to give players more control over how challenging enemies are」，并自比暗黑 2 的 Players X）
+dmRiftLvl	怪物等级	Monster Level	大秘境面板（touch_layout.py _rift_panel）；暗黑 2 的说法（原版 ui[charmonster]「level %d monster」；怪物一律 Monster，不用 Enemy）
+dmRiftTime	限时	Time Limit	大秘境面板（touch_layout.py _rift_panel）；英文：time limit 取自暗黑 3 官方 2.1.0 补丁说明（news.blizzard.com/en-us/article/14569138）
+dmRiftGamT	安亚赌博	Gamble at Anya	大秘境面板（touch_layout.py _rift_panel）；英文用原版词 ui[gamble]「gamble」
+dmRiftBtnStart	开始	Enter Rift	大秘境面板（touch_layout.py _rift_panel）；英文：拟；方尖碑面板按钮原文没查到；暗黑 3 方尖碑面板的进入按钮原文为 ACCEPT；我们的面板没有它那句前置说明，单一个 Accept 不知接受什么，未采用，留 Enter Rift（看过认可）
+dmRiftBtnAbandon	放弃	Quit	大秘境面板（touch_layout.py _rift_panel）；英文用 Quit（「放弃用 quit 不是 abandon」）
+dmRiftBtnResel	重新选层	Select Level	大秘境面板（touch_layout.py _rift_panel）已完成页上组按钮；英文与选层页标题同词
+dmRiftCapCont	回到离开时的位置	Resume your run	大秘境面板（touch_layout.py _rift_panel）；英文：拟
+dmRiftBtnCont	继续	Continue	大秘境面板（touch_layout.py _rift_panel）
+dmRiftMsT	首通奖励	First Clear	大秘境面板（touch_layout.py _rift_panel）
+dmRiftMsN	每档另得 符文 · 赦免之证 · 打孔	+Rune, Token, Socket	大秘境面板（touch_layout.py _rift_panel）
+dmRiftPanelTitle	大秘境	Greater Rift	大秘境面板（touch_layout.py _rift_panel）
+dmPadLegDiff	难度	Difficulty	积分牌手柄提示条 X（dm_kills.c）；英文 = 原版 ui[automapdif]「Difficulty: %s」里的词
+dmPadLegSort	排序	Sort	积分牌手柄提示条 Y；英文 = 原版 ui[strSort]「Sort」
+dmPadLegView	查看 / 取出	View / Withdraw	编年史仓库页手柄提示条（dm_vault_ui.c）；Withdraw = 原版 ui[AdvancedStashWithdraw]
+dmPadLegPrev	上一页	Previous Page	同上；英文 = 原版 ui[NPCPreviousPage]
+dmPadLegNext	下一页	Next Page	同上；英文 = 原版 ui[NPCNextPage]
+dmPadHintDeposit	存入	Deposit	编年史页「按住 Y」那半句（dm_padmode.c）；英文 = 原版 ui[strGoldDeposit]
+dmPadLegIdentify	捡起（按住鉴定）	Pick Up (Hold to Identify)	手柄模式光标在未鉴定物品上时，原版提示条 A 那条的「捡起」换成这句（dm_padmode.c 换串小表）；写法照原版「捡起(按住使用)」；英文：拟
+dmPadDiffLine	游戏难度：%d	Game Difficulty: %d	手柄版暂停菜单的难度行（dm_padmode.c）；英文 = 原版 ui[OptionsMenuGameDifficulty]「Game Difficulty」
+dmRiftGamAfterEn	通关本层后	After This Level	大秘境面板赌博区英文版的小标题行（中文界面不用：中文是「通关后暗金 / 通关后套装」两行）
+dmRiftMsNEn	每档另得 符文 · 赦免之证 · 打孔	+ Rune, Token of Absolution, Sockets	大秘境面板右上那句的英文版控件（物品名 = 暗黑 2 原版 item-modifiers[toa]「Token of Absolution」、ui[Addsocketsui]「Add sockets」）

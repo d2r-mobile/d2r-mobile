@@ -1,0 +1,77 @@
+{
+ "page": "局内·任务日志",
+ "truth": "~/dm-work/data/switch/truth_shots_v7/quest_log.png",
+ "host": {
+  "trigger": "OpenPanel:QuestLogPanelExpansion+45",
+  "keys": "A@OpenPanel:MainMenuButtonRibbon>FrontEndNavigation:ToGame,PLUS@UnloadPanel:LoadScreenPanel%1>OpenPanel:PlayerInventoryExpansionLayout,L@%1>OpenPanel:CharacterStatsPanel,L@%1>OpenPanel:QuestLogPanelExpansion"
+ },
+ "viewport": [
+  0.06,
+  0.06,
+  0.94,
+  0.97
+ ],
+ "mask": [],
+ "note": "界面层静态内容：命名区域结构阈值 0.9（宿主对真值实测 ≥0.98）",
+ "regions": {
+  "顶部页签": {
+   "rect": [
+    0.06,
+    0.0,
+    0.94,
+    0.06
+   ],
+   "ssim_min": 0.9
+  },
+  "幕页签 I–V": {
+   "rect": [
+    0.24,
+    0.11,
+    0.76,
+    0.17
+   ],
+   "ssim_min": 0.9
+  },
+  "任务图标": {
+   "rect": [
+    0.33,
+    0.2,
+    0.66,
+    0.52
+   ],
+   "ssim_min": 0.9
+  },
+  "任务名与说明": {
+   "rect": [
+    0.24,
+    0.53,
+    0.76,
+    0.72
+   ],
+   "ssim_min": 0.9
+  }
+ },
+ "elements": [
+  {
+   "name": "顶部五页签（任务日志选中）",
+   "region": "顶部页签"
+  },
+  {
+   "name": "幕页签 I–V",
+   "region": "幕页签 I–V"
+  },
+  {
+   "name": "第一幕六个任务图标（完成状态）",
+   "region": "任务图标"
+  },
+  {
+   "name": "任务名「交易的工具」与说明",
+   "region": "任务名与说明"
+  }
+ ],
+ "fine_grid": [
+  32,
+  18,
+  0.85
+ ]
+}

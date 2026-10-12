@@ -1,0 +1,100 @@
+{
+ "page": "局内·术士营地",
+ "truth": "~/dm-work/data/switch/truth_shots_v7/warlock_camp.png",
+ "host": {
+  "trigger": "UnloadPanel:LoadScreenPanel+60",
+  "keys": "X@OpenPanel:MainMenuButtonRibbon>OpenPanel:CharacterSelectPanel,DOWN@%0.5+0.03>UpdateCharacterInfo,A@%0.5>SelectCharacter,A@%1>FrontEndNavigation:ToGame",
+  "env": {
+   "DM_TOWNWP_OFF": "1"
+  }
+ },
+ "viewport": [
+  0,
+  0,
+  1,
+  0.82
+ ],
+ "mask": [
+  [
+   0.36,
+   0.3,
+   0.43,
+   0.52
+  ]
+ ],
+ "regions": {
+  "术士角色": {
+   "rect": [
+    0.47,
+    0.33,
+    0.53,
+    0.52
+   ],
+   "ssim_min": 0.9
+  },
+  "篝火": [
+   0.2,
+   0.63,
+   0.38,
+   0.82
+  ],
+  "生命球": [
+   0.14,
+   0.85,
+   0.26,
+   1.0
+  ],
+  "法力球": [
+   0.74,
+   0.85,
+   0.86,
+   1.0
+  ],
+  "马车": [
+   0.74,
+   0.1,
+   0.95,
+   0.42
+  ],
+  "技能栏": {
+   "rect": [
+    0.27,
+    0.9,
+    0.73,
+    1.0
+   ],
+   "ssim_min": 0.9
+  }
+ },
+ "elements": [
+  {
+   "name": "3D 营地（视口非黑）",
+   "region": "viewport"
+  },
+  {
+   "name": "术士角色",
+   "region": "术士角色"
+  },
+  {
+   "name": "篝火",
+   "region": "篝火"
+  },
+  {
+   "name": "生命球",
+   "region": "生命球"
+  },
+  {
+   "name": "法力球",
+   "region": "法力球"
+  },
+  {
+   "name": "马车",
+   "region": "马车"
+  },
+  {
+   "name": "术士技能栏",
+   "region": "技能栏"
+  }
+ ],
+ "note": "术士角色与技能栏结构阈值收紧到 0.9：同位姿换成圣骑士 joe（负对照）时角色区 0.769、技能栏 0.778，宽阈值 0.45 会放过"
+}
