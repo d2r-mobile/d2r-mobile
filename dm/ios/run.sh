@@ -1,9 +1,9 @@
 #!/bin/bash
 # 构建、显式装机、按模式启动并拉回 Documents/<mode>.txt。用法：[DM_OUT=产物目录] [DM_NOINSTALL=1] run.sh build | run.sh install | run.sh <mode> [上限秒]
-# 包缺省只面向 iPhone；要同时面向 iPad：DM_DEVICE_FAMILY=1,2 ./run.sh build（设备族是构建设置，这里替你传给 xcodebuild）
+# 包缺省同时面向 iPhone 与 iPad；只要 iPhone：DM_DEVICE_FAMILY=1 ./run.sh build（设备族是构建设置，这里替你传给 xcodebuild）
 # 产物与日志在 $DM_ROOT/run/ios/（不进仓）。真机按 bundle 停：--terminate-existing 只停本 App。
 # Build, explicitly install, launch by mode and pull back Documents/<mode>.txt. Usage: [DM_OUT=output dir] [DM_NOINSTALL=1] run.sh build | run.sh install | run.sh <mode> [timeout seconds]
-# The app targets iPhone only by default; to target iPad as well: DM_DEVICE_FAMILY=1,2 ./run.sh build (device family is a build setting; this passes it to xcodebuild for you)
+# The app targets both iPhone and iPad by default; for iPhone only: DM_DEVICE_FAMILY=1 ./run.sh build (device family is a build setting; this passes it to xcodebuild for you)
 # Outputs and logs go to $DM_ROOT/run/ios/ (not in the repo). On device, stopping is by bundle: --terminate-existing stops only this App.
 set -u
 cd "$(dirname "$0")"

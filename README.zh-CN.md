@@ -228,7 +228,7 @@ flowchart LR
 
    ```
    cp dm/ios/local.env.example dm/ios/local.env     # 填 DM_TEAM_ID 与 DM_BUNDLE_ID；免费 Apple ID 另填 DM_FREE_ACCOUNT=1 与 DM_IOS_UDID，构建时手机连着
-   cd dm/ios && DM_DEVICE_FAMILY=1,2 ./run.sh build    # 1,2 = 同时面向 iPhone 与 iPad；只要 iPhone 可以不写
+   cd dm/ios && ./run.sh build    # 缺省同时面向 iPhone 与 iPad；只要 iPhone：DM_DEVICE_FAMILY=1 ./run.sh build
    ```
 
 装到手机上第一次打开，App 会要「游戏资源文件夹」，也就是游戏文件里的 18 个资源档案。怎么放见 [docs/GAME_FILES.zh-CN.md](docs/GAME_FILES.zh-CN.md) 的「手机上要放的那个游戏资源文件夹」一节。

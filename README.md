@@ -228,7 +228,7 @@ The fastest route is [the one-sentence build](#build-it-with-one-sentence): your
 
    ```
    cp dm/ios/local.env.example dm/ios/local.env     # set DM_TEAM_ID and DM_BUNDLE_ID; with a free Apple ID also set DM_FREE_ACCOUNT=1 and DM_IOS_UDID, and keep the phone connected while building
-   cd dm/ios && DM_DEVICE_FAMILY=1,2 ./run.sh build    # 1,2 = build for both iPhone and iPad; leave it out for iPhone only
+   cd dm/ios && ./run.sh build    # targets both iPhone and iPad by default; for iPhone only: DM_DEVICE_FAMILY=1 ./run.sh build
    ```
 
 The first time you open the app on your phone, it asks for the "game resource folder": the 18 resource archives from your game files. The section "The "game resource folder" that goes on the phone" in [docs/GAME_FILES.md](docs/GAME_FILES.md) shows where to put them.
