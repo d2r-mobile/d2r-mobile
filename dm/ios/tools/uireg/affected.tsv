@@ -31,7 +31,7 @@ dm/host/dm_bossrush*	kbb bd
 dm/host/dm_townwp*	*
 dm/host/dm_rift*	kba kbb dc wp tp
 dm/host/dm_unit.h	kbb dc wp tp
-dm/host/dm_pouch*	t u s sb vt1 c
+dm/host/dm_pouch*	t u s sb vt1 c sa
 dm/host/dm_padmode*	a f rf2 pk od pvb psel0 psel1 psel2 psel3
 dm/host/hle_fs.c	rf1 rf2 rf3 e pg2 vt1 v od
 dm/host/hle_tact*	a e od

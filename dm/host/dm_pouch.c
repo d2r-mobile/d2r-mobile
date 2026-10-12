@@ -248,6 +248,17 @@ static int adv_stack_full(uint64_t G, uint64_t player, uint32_t code) {   // 高
 void dm_pouch_c2s(uint64_t *regs) {   // regs：x0 游戏、x1 玩家、x2 包、x3 长度（可改） | regs: x0 game, x1 player, x2 packet, x3 length (writable)
     uint64_t G = regs[0], player = regs[1]; const uint8_t *pk = (const uint8_t *)(uintptr_t)regs[2]; uint32_t len = (uint32_t)regs[3]; if (!B || !G || !player || !pk) return;
     if (len == 17 && pk[0] == 0x19) { uint32_t pg; memcpy(&g_pick_id, pk + 1, 4); memcpy(&g_pick_x, pk + 5, 4); memcpy(&g_pick_y, pk + 9, 4); memcpy(&pg, pk + 13, 4); if (pg) g_pick_id = 0; return; }   // 只记从背包（页 0）拿起的 | only record pickups from the inventory (page 0)
+    // 手柄「按住确认键移到当前页」（触屏双击不可成叠物品也是它）：物品还在背包里、不经手上——个人页 0x54 [物品 id]…（21 字节）、共享页 0x55 [物品 id][共享页单位]…（29 字节），实录。
+    // 三类物品走这条时直接把整条包换成原版「移到仓库」0x63（背包来源）；叠满就不换，照原样落到玩家选的那一页（共享页的在这里提示，个人页的由 stash_sweep 发一次没进去后提示）
+    // Gamepad "hold the confirm button to move to the current page" (a touch double-tap on a non-stackable item is the same thing): the item stays in the backpack and never goes onto the cursor -- personal page 0x54 [item id]... (21 bytes), shared page 0x55 [item id][shared page unit]... (29 bytes), as recorded.
+    // When one of the three item kinds takes this path, the whole packet is replaced with the original "move to stash" 0x63 (backpack source); when the stack is full it is not replaced and lands on the page the player chose as usual (the shared page case shows a hint here, the personal page case is hinted after stash_sweep sends once and it does not go in)
+    if ((len == 21 && pk[0] == 0x54) || (len == 29 && pk[0] == 0x55)) { uint32_t id; memcpy(&id, pk + 1, 4);
+        uint64_t dm_diag_srv_item(uint32_t); uint64_t it = dm_diag_srv_item(id); if (!it || !bag_item(player, id) || !(is_rune_gem(it) || is_mat(it))) return;
+        uint32_t unit = adv_stash_unit(player); int near = ((int (*)(uint64_t, uint64_t, int, int))(B + 0x650d10))(G, player, 0x10b, 0x32) & 1; if (!unit || !near) return;
+        uint32_t code = item_code(it);
+        if (adv_stack_full(G, player, code)) { if (pk[0] == 0x55) g_c2s_full = 1; LOG("珍宝匣：%.3s（id %u）按住确认键移到%s页，高级仓库那一格已叠满 → 照原样移过去", (const char *)&code, id, pk[0] == 0x55 ? "共享" : "个人"); return; }
+        static uint8_t st[25]; memset(st, 0, sizeof st); st[0] = 0x63; memcpy(st + 5, &id, 4); memcpy(st + 9, &unit, 4); regs[2] = (uint64_t)(uintptr_t)st; regs[3] = 25;
+        LOG("珍宝匣：%.3s（id %u）按住确认键移到%s页 → 改成原版移到仓库（高级仓库单位 %u）", (const char *)&code, id, pk[0] == 0x55 ? "共享" : "个人", unit); return; }
     if (len != 13 || pk[0] != 0x45) return;
     uint32_t id; memcpy(&id, pk + 1, 4); if (!id || id != g_pick_id) return;   // 不是刚从背包拿起的那件（比如从别的页拖过来的）：不管 | not the item just picked up from the inventory (e.g. dragged from another page): ignore
     uint64_t dm_diag_srv_item(uint32_t); uint64_t it = dm_diag_srv_item(id); if (!it || !(is_rune_gem(it) || is_mat(it))) return;
@@ -449,6 +460,18 @@ void dm_pouch_srv_tick(uint8_t *b, uint64_t G, uint64_t player) {   // 服务端
         if (go63) { move_to_stash(b, G, player, id, unit); if (nw < 64) wl[nw++] = (watch){ id, tq }; LOG("百宝囊：物品 id %u 在储藏箱旁 → 原版移到仓库（高级仓库单位 %u）", id, unit); }
         else if (!unit) LOG("百宝囊：物品 id %u —— 这个角色没有高级仓库，不收", id);
         else if (pouch_put(b, G, player, id) > 0) saved = 1; }
+    // 测试开关 DM_TEST_HOLDY=<拍>:<物品码>:<54|55>（手柄光标不好用脚本摆位，用它造「按住确认键移到当前页」）：到拍对背包里第一件这种物品代发那条包（字段照实录的填：个人页 0x54、共享页 0x55），走收包分发、会经过上面的改道
+    // Test switch DM_TEST_HOLDY=<tick>:<item code>:<54|55> (the gamepad cursor is hard to position from a script, so this creates "hold the confirm button to move to the current page"): at that tick, send that packet on behalf of the first such item in the backpack (fields filled as recorded: personal page 0x54, shared page 0x55), going through packet dispatch and therefore through the rerouting above
+    { static int at = -1, kind; static char code[5]; if (at < 0) { const char *e = getenv("DM_TEST_HOLDY"); if (!e || sscanf(e, "%d:%4[^:]:%x", &at, code, &kind) != 3) at = 0; }
+      if (at > 0 && tq >= (uint32_t)at) { at = 0; uint64_t inv = *(uint64_t *)(player + 0x90), it = inv && *(uint32_t *)inv == 0x01020304 ? *(uint64_t *)(inv + 0x10) : 0, f = 0;
+          for (int k = 0; it && k < 2048 && !f; k++) { uint64_t d = *(uint64_t *)(it + 0x10); if (!d) break; uint32_t c = item_code(it); if (*(uint32_t *)(it + 0xc) == 0 && *(uint8_t *)(d + 0x55) == 0 && !memcmp(&c, code, strlen(code))) f = it; else it = *(uint64_t *)(d + 0xb0); }
+          if (f) { uint64_t pp = *(uint64_t *)(f + 0x38); uint32_t id = *(uint32_t *)(f + 8), sh = 0; uint16_t x = pp ? (uint16_t)*(int32_t *)(pp + 0x10) : 0, y = pp ? (uint16_t)*(int32_t *)(pp + 0x14) : 0; uint8_t pk[29]; memset(pk, 0, sizeof pk);
+              for (uint64_t en = inv ? *(uint64_t *)(inv + 0x68) : 0, n = 0; en && n < 16 && !sh; en = *(uint64_t *)(en + 0x10), n++) if (*(uint8_t *)(en + 9) && !*(uint8_t *)(en + 0xa)) sh = *(uint32_t *)en;
+              int ln; pk[0] = (uint8_t)kind; memcpy(pk + 1, &id, 4);
+              if (kind == 0x55) { memcpy(pk + 5, &sh, 4); memcpy(pk + 13, &x, 2); memcpy(pk + 15, &y, 2); pk[17] = 4; pk[21] = 0x0d; pk[23] = 9; ln = 29; }
+              else { memcpy(pk + 9, &x, 2); memcpy(pk + 11, &y, 2); pk[13] = 4; pk[17] = 0x0d; pk[19] = 9; ln = 21; }
+              LOG("测试 DM_TEST_HOLDY：拍 %u 对背包里的 %s（id %u，格 %u,%u）代发 0x%02x", tq, code, id, x, y, kind);
+              *(uint32_t *)(G + 0x19050) = 1; ((void (*)(uint64_t, uint64_t, uint8_t *, uint32_t))(b + 0x6e5b40))(G, player, pk, (uint32_t)ln); *(uint32_t *)(G + 0x19050) = 0; } } }
     for (int i = 0; i < g_c2s_nq; i++) { uint32_t id = g_c2s_q[i];   // 拖进共享页被改道放回背包的（dm_pouch_c2s）：人还在箱子旁就发原版移到仓库 | items dragged into the shared tab and rerouted back to the inventory (dm_pouch_c2s): if still at the stash, send the game's move-to-stash
         if (go63 && bag_item(player, id)) { move_to_stash(b, G, player, id, unit); if (nw < 64) wl[nw++] = (watch){ id, tq }; LOG("珍宝匣：物品 id %u 已回到背包 → 原版移到仓库（高级仓库单位 %u）", id, unit); }
         else LOG("珍宝匣：物品 id %u 改道后%s，留在背包", id, go63 ? "不在背包里" : "人已离开储藏箱"); }

@@ -205,7 +205,7 @@ def main():
     # 六、照壳的清单核对一项不缺，再放进去
     # 6. Check against the shell's manifest that nothing is missing, then put it in
     miss = [m for m in manifest if not (os.path.isdir(os.path.join(stage, m)) if m.endswith('/') else os.path.isfile(os.path.join(stage, m)))]
-    if miss: die('有 %d 项没做出来：%s' % (len(miss), '、'.join(miss)))
+    if miss: die('有 %d 项没做出来：%s。壳的清单里要、而这份工具没有生成——壳与工具不是同一版。请用与这份仓库同一版本的壳（发布页最新的 D2RMobile-shell.ipa），或把仓库更新到与壳对应的版本' % (len(miss), '、'.join(miss)))
     tmp = out_ipa + '.part'; added = 0
     with zipfile.ZipFile(tmp, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as o:
         for i in z.infolist(): o.writestr(i, z.read(i.filename))

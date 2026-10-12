@@ -14,7 +14,7 @@ The front page says the project "contains none and distributes none" of the game
 
 All of these are generated on your own machine from your own game files. Every time the public repository is exported, a tool takes the real game files and searches the whole tree for them byte by byte; a hit blocks the export.
 
-A few things derived from the game files are used internally but are not shipped here: the startup prefetch list (each line carries the first bytes of an original resource block — without it, launch skips one ahead-of-time decode step), the seed save for the shared stash (without it, the game creates an empty one itself as the original does), and two fixtures for the interface-binding tests (captured from the memory of the running game — without them, the three tests that read them are skipped automatically).
+A few things derived from the game files are used internally but are not shipped here: the startup prefetch list (each line carries the first bytes of an original resource block — without it, launch skips one ahead-of-time decode step: measured with the iOS package running on a Mac, the character select screen is reached in 3.3–4.0 s versus 2.8 s with the list, two runs each; not measured on a phone), the seed save for the shared stash (without it, the game creates an empty one itself as the original does), and two fixtures for the interface-binding tests (captured from the memory of the running game — without them, the three tests that read them are skipped automatically).
 
 ## In the repository
 

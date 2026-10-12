@@ -40,6 +40,7 @@ All at once: `python3 -m pip install pillow numpy lz4 capstone unicorn` (`./setu
 | Tool | Used for | Official site |
 |---|---|---|
 | astcenc | Converting textures for older devices without BC texture support | <https://github.com/ARM-software/astc-encoder> |
+| hactool | Needed by `dm/tools/extract_game.sh` to extract files from your game package; not needed if your game files are already prepared some other way. We tested with upstream commit `1d64a83` | <https://github.com/SciresM/hactool> |
 
 ## Extra tools for on-device and verification scripts
 
