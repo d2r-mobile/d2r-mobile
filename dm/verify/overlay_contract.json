@@ -1,0 +1,123 @@
+{
+  "schema": "overlay-accept-v1",
+  "status": "等待独立布局规格与首次原生截图；不是已通过的UI验收",
+  "producer": "DmTouchOverlay.controlMetadata + DM_TOUCH_SHOT + DM_SCREEN_SHOT",
+  "scope": "只准备合成层控件验收；原17页NVN帧、逐拍6格与存档不改豁免、不加遮罩",
+  "metadata_required": [
+    "coordinate_space",
+    "view_size_pt",
+    "scale",
+    "pixel_size",
+    "navigation",
+    "controls"
+  ],
+  "control_required": [
+    "id",
+    "rect_pt",
+    "npad_button",
+    "visible"
+  ],
+  "known_control_ids": [
+    "main",
+    "skill1",
+    "skill2",
+    "skill3",
+    "skill4",
+    "portal",
+    "belt1",
+    "belt2",
+    "belt3",
+    "belt4",
+    "menu",
+    "map"
+  ],
+  "producer_additions_requested": [
+    "摇杆外圈/拇指/方向弧实际绘制rect与活动状态",
+    "截图状态与同一份metadata关联",
+    "截图来源：原生预览或真机，不混报"
+  ],
+  "independent_expectation": {
+    "source": "单独冻结的布局规格，不能使用实际导出rect自证位置正确",
+    "bottom_order": [
+      "血球",
+      "portal",
+      "belt1",
+      "belt2",
+      "belt3",
+      "belt4",
+      "menu",
+      "蓝球"
+    ],
+    "skill_cluster": [
+      "main",
+      "skill1",
+      "skill2",
+      "skill3",
+      "skill4"
+    ],
+    "state_visible_controls": "以明确状态下的独立规格为准，预留portal/腰带不自动视为已实现",
+    "protected_hud_regions": "由布局规格给出；不凭实现输出推定，不全局遮掉游戏差异"
+  },
+  "levels": [
+    {
+      "id": "overlay_pixels",
+      "checks": [
+        "PNG像素尺寸与point_size×scale一致",
+        "landscape方向",
+        "可见控件alpha像素存在",
+        "隐藏控件未漏画",
+        "控件位置/底栏顺序与独立规格一致",
+        "摇杆与控件无越界",
+        "受保护HUD区域无遮挡"
+      ],
+      "proof": "透明overlay PNG＋同快照metadata＋独立布局规格；只证明此层，未证明真机合成"
+    },
+    {
+      "id": "actual_composition",
+      "checks": [
+        "真实整窗图中控件确实存在",
+        "方向/全屏/不拉伸",
+        "未遮关键HUD"
+      ],
+      "proof": "实际原生/真机整窗PNG；自动像素合成对拍须同一帧game/overlay/composite证据，否则只报告未核，不拿不同动画帧硬比或用离线黑底冒充"
+    },
+    {
+      "id": "input_equivalence",
+      "checks": [
+        "同规则域/原像/起始档/种子",
+        "触屏与手柄的原版UI消息序列一致",
+        "完整真值拍区间的6格/5类数量/bad完全一致",
+        "保存文件逐字节一致"
+      ],
+      "proof": "真实触摸流程和手柄流程的输入/日志/保存副本；纯C单测不是终点"
+    }
+  ],
+  "negative_controls": [
+    "漏掉一个可见控件",
+    "只在overlay PNG存在但真实window没画出",
+    "错误PNG尺寸/scale/方向",
+    "控件错位/底栏错序",
+    "隐藏控件仍画出",
+    "摇杆或控件越界",
+    "遮挡受保护HUD",
+    "旧metadata与新截图串用",
+    "漏拍/重复拍/bad读失败/单位数漂移",
+    "新规则偷用旧真值或遮位置/精力/全局哈希"
+  ],
+  "separate_unverified": [
+    "portal_binding_verified",
+    "game_hud_relayout_verified",
+    "强制跑步/无限精力新玩法规则",
+    "持续施放与交换手势没有冲突"
+  ],
+  "ruleset_boundary": "新跑步/无限精力用明确新版本参照与独立预期；旧war13原件保持冻结且完整对拍",
+  "current_evidence": {
+    "original_truth_run": "~/dm-work/run/verify/ryu/war_summon13_1002_takeover",
+    "truth_ticks": 2978,
+    "truth_first": 36,
+    "truth_last": 3013,
+    "host_replay_first": "~/dm-work/run/platform/hsc_war_summon13_1002_takeover_1002_071540_86459",
+    "host_replay_first_result": "完整2978拍6格/数量/bad一致，但唯一缺Warlock.ctl，整体退出1，KEEP",
+    "host_replay_bound_pending": "平台在原始缺CTL局之外，按真实客户端绑定后另跑完整回放；不复制/豁免CTL"
+  }
+}

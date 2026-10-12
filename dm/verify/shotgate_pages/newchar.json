@@ -1,0 +1,83 @@
+{
+ "page": "职业选择页",
+ "truth": "~/dm-work/data/switch/truth_shots_v7/newchar.png",
+ "host": {
+  "trigger": "OpenExclusivePanel:CharacterCreatePanel+180",
+  "keys": "PLUS@OpenPanel:MainMenuButtonRibbon>OpenPanel:OnlinePlayModeModal,DOWN@OpenPanel:OnlinePlayModeModal,A@ControllerActionEnd>OpenExclusivePanel:CharacterCreatePanel"
+ },
+ "viewport": [
+  0,
+  0,
+  1,
+  1
+ ],
+ "mask": [],
+ "regions": {
+  "职业角色一排": [
+   0.12,
+   0.31,
+   0.92,
+   0.67
+  ],
+  "篝火": [
+   0.46,
+   0.66,
+   0.54,
+   0.77
+  ],
+  "标题": [
+   0.35,
+   0.04,
+   0.65,
+   0.22
+  ],
+  "左侧城墙": [
+   0.0,
+   0.05,
+   0.25,
+   0.45
+  ],
+  "右侧房屋": [
+   0.62,
+   0.05,
+   1.0,
+   0.45
+  ],
+  "选中职业（野蛮人，左起第 4 个）": [
+   0.4,
+   0.31,
+   0.5,
+   0.67
+  ]
+ },
+ "elements": [
+  {
+   "name": "3D 场景（视口非黑）",
+   "region": "viewport"
+  },
+  {
+   "name": "八个职业角色（含术士）",
+   "region": "职业角色一排"
+  },
+  {
+   "name": "篝火与火光",
+   "region": "篝火"
+  },
+  {
+   "name": "标题「选择英雄职业 / 野蛮人」",
+   "region": "标题"
+  },
+  {
+   "name": "城墙背景",
+   "region": "左侧城墙"
+  },
+  {
+   "name": "房屋背景",
+   "region": "右侧房屋"
+  },
+  {
+   "name": "选中职业野蛮人（聚光）",
+   "region": "选中职业（野蛮人，左起第 4 个）"
+  }
+ ]
+}

@@ -1,0 +1,78 @@
+# 改动文件 → 受影响的 uireg 局（uireg_pick.py 读；合入门槛 = 受影响局 + 核心局 + Mac 冒烟，整表只在出大包前 / 夜里浸泡）
+# 列：路径通配（fnmatch，相对仓库根）<TAB> 局（空格分隔；* = 整表；- = 不挑局，只跑核心局）。从上往下匹配，取第一条命中的行（具体的写在前、通配的兜底写在后）。@uireg = 按 uireg.py 改动落在哪些局里。
+# 新规矩：交来的分支只跑「这里挑出的局 + 它自己的专项」，两档整表只在合批候选头上跑一遍；批次叠放时用 uireg_pick.py --main <前一批候选头> 挑。
+# 这里挑不到的东西靠专项补：秘境（dm_rift*）要真机专项；手柄（dm_padmode / hle_hid / dm_gamepad.m）要手柄局；资源定位（romfs_validate / asset_dl / main.m 启动段）要真机资源现场；
+# 动 dm/ios 外壳启动路径（main.m、front_ios.m 的建视图 / 生命周期段）的分支，交回归前必须自己跑过真机 smoke.sh（bg-launch 两次退回：iPad 档进不了局、真机冒烟 0/3）。
+# 新加局时顺手在这里登记；没登记的 dm/ 源文件，uireg_pick.py 记「未登记」并按整表处理（宁多跑不漏跑）。
+dm/host/tests/*	-
+dm/host/Makefile	-
+dm/tools/patch_nso.py	*
+dm/PRODUCT	*
+dm/ios/tools/gen_romfs_overlay.py	*
+dm/i18n/*	*
+dm/ios/tools/dm_i18n.py	*
+dm/host/dm_i18n*	*
+dm/ios/tools/annot_strings.py	k j rw1 rw2 kbb vt1
+dm/host/dm_textbox*	k j rw1 rw2 kbb vt1
+dm/host/dm_runeword*	k j rw1 rw2 rwp rwd d
+dm/host/dm_vault*	vf1 vf2 vt1 pg1 pg2 c s sb t u d cb
+dm/host/dm_pages*	pg1 pg2 vt1 c s sb
+dm/ios/tools/wide_stash.py	vf1 vf2 vt1 pg1 pg2 c s sb t u d cb
+dm/ios/tools/gen_trove_art.py	s sb t u d cb
+dm/ios/tools/gen_widestash_art.py	vf1 vf2 vt1 pg1 pg2 c s sb t u d cb
+dm/ios/tools/gen_vault_table.py	vt1
+dm/host/dm_potpick*	bd bdm p q b
+dm/host/dm_lootfilter*	bd bdm p q b
+dm/host/dm_autobuff*	bd bdm p q b
+dm/host/dm_beltauto*	ba bd bdm p q b
+dm/host/dm_kills*	kba kbb
+dm/host/dm_elysium*	v v2 kbb
+dm/host/dm_bossrush*	kbb bd
+dm/host/dm_townwp*	*
+dm/host/dm_rift*	kba kbb dc wp tp
+dm/host/dm_unit.h	kbb dc wp tp
+dm/host/dm_pouch*	t u s sb vt1 c
+dm/host/dm_padmode*	a f rf2 pk od pvb psel0 psel1 psel2 psel3
+dm/host/hle_fs.c	rf1 rf2 rf3 e pg2 vt1 v od
+dm/host/hle_tact*	a e od
+dm/host/hle_hid*	a f rf2 pk sl1
+dm/ios/Sources/dm_gamepad.m	a f rf2 pk
+dm/host/romfs_validate*	e pk rf2
+dm/ios/Sources/asset_dl.m	e pk rf2
+dm/ios/Sources/main.m	a e pk rf2 top od
+dm/ios/run.sh	e pk
+dm/i18n/*	a e k kba vt1 rf2
+dm/host/dm_bright*	a top
+dm/host/dm_drophaptic*	kbb
+dm/host/dm_freetp*	tp a p q f g
+dm/host/dm_dropfilter*	kbb
+dm/host/dm_shoprefresh*	b m p ra top me1 me3 pvb
+dm/host/dm_world*	ex tb tp dz top i b
+dm/host/dm_actions*	a g n
+dm/host/dm_hud*	a f pk bd bdm q g
+dm/host/dm_uiscreen*	a f pk bd q sb
+dm/host/dm_cloudsync*	rf3 e pg2 vt1 v
+dm/host/dm_update*	e
+dm/host/dm_custom*	e kbb
+dm/host/hle_charname*	e v
+dm/host/dm_namegen*	e v
+dm/host/dm_textinput*	e v vt1
+dm/host/dm_cursor*	a c f g h j m n p q s t u sb cb sl1 sl2 me1 me2 pg2 vt1 rw1 bd
+dm/host/hle_touch*	a c f g h j m n p q s t u sb cb sl1 sl2 me1 me2 pg2 vt1 rw1 bd
+dm/host/touch_mac.c	a c j s sb pg2 vt1 rw1
+dm/ios/tools/touch_layout.py	a c f g h j k m n p q s t u sb cb sl1 me1 me2 pg2 vt1 vf1 vf2 rw1 rw2 kba bd pk pvb
+dm/ios/Sources/front_ios.m	a c f g h j m n p q s t u sb cb sl1 sl2 me1 me2 pg2 vt1 rw1 bd pk
+dm/ios/Sources/*	a e pk rf2
+dm/ios/NativeHUD/*	a f pk bd g q
+dm/host/diag.c	-
+dm/host/crash.c	-
+dm/host/hle_*	*
+dm/host/*.c	*
+dm/host/*.h	*
+dm/ios/tools/uireg/uireg.py	@uireg
+dm/ios/tools/*	-
+dm/verify/*	-
+docs/*	-
+*.md	-
+dm/ios/tools/merc_slots.py	f ms
+dm/ios/tools/gen_merc_art.py	f ms

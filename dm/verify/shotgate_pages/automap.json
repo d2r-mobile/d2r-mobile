@@ -1,0 +1,95 @@
+{
+ "page": "局内·自动地图",
+ "truth": "~/dm-work/data/switch/truth_shots_v7/automap.png",
+ "host": {
+  "trigger": "OpenPanel:AutoMap+45",
+  "keys": "A@OpenPanel:MainMenuButtonRibbon>FrontEndNavigation:ToGame,MINUS@UnloadPanel:LoadScreenPanel%1>OpenPanel:AutoMap",
+  "env": {
+   "DM_TOWNWP_OFF": "1"
+  }
+ },
+ "viewport": [
+  0,
+  0,
+  1,
+  0.82
+ ],
+ "mask": [
+  [
+   0.4,
+   0.17,
+   0.6,
+   0.27
+  ],
+  [
+   0.36,
+   0.3,
+   0.47,
+   0.52
+  ]
+ ],
+ "note": "遮罩两处随墙钟 / 随机走的内容：进入营地的红字横幅（淡出时刻两边不同）、游荡 NPC 瓦瑞夫及其名牌。地图线与 NPC 名标、右上图例为静态，区域结构阈值 0.8",
+ "regions": {
+  "右上图例（区域名）": {
+   "rect": [
+    0.9,
+    0.03,
+    1.0,
+    0.13
+   ],
+   "ssim_min": 0.8
+  },
+  "地图叠加线与 NPC 名标": {
+   "rect": [
+    0.55,
+    0.05,
+    0.8,
+    0.4
+   ],
+   "ssim_min": 0.8
+  },
+  "玩家角色": {
+   "rect": [
+    0.45,
+    0.3,
+    0.54,
+    0.52
+   ],
+   "ssim_min": 0.8
+  },
+  "生命球": [
+   0.14,
+   0.85,
+   0.26,
+   1.0
+  ],
+  "法力球": [
+   0.74,
+   0.85,
+   0.86,
+   1.0
+  ]
+ },
+ "elements": [
+  {
+   "name": "右上图例（流亡者营地 / 干燥高地 / 亡者大殿）",
+   "region": "右上图例（区域名）"
+  },
+  {
+   "name": "地图叠加线与 NPC 名标",
+   "region": "地图叠加线与 NPC 名标"
+  },
+  {
+   "name": "玩家角色",
+   "region": "玩家角色"
+  },
+  {
+   "name": "生命球",
+   "region": "生命球"
+  },
+  {
+   "name": "法力球",
+   "region": "法力球"
+  }
+ ]
+}

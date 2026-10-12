@@ -1,0 +1,92 @@
+{
+ "page": "选角页",
+ "trigger": "两边：OpenPanel:MainMenuButtonRibbon 后第 150 帧（真值按 30 帧/秒折墙钟）；存档 save_ref_warlock_v2",
+ "viewport": [
+  0.21,
+  0.0,
+  1.0,
+  0.88
+ ],
+ "mask": [],
+ "regions": {
+  "左侧菜单": [
+   0.0,
+   0.0,
+   0.205,
+   1.0
+  ],
+  "角色": [
+   0.445,
+   0.15,
+   0.585,
+   0.87
+  ],
+  "篝火": [
+   0.21,
+   0.58,
+   0.27,
+   0.73
+  ],
+  "右侧角色框": [
+   0.665,
+   0.4,
+   0.885,
+   0.5
+  ],
+  "推广框位置": [
+   0.215,
+   0.01,
+   0.355,
+   0.22
+  ],
+  "营地背景": [
+   0.6,
+   0.05,
+   1.0,
+   0.4
+  ]
+ },
+ "elements": [
+  {
+   "name": "3D 营地（视口非黑）",
+   "region": "viewport",
+   "expect": "有"
+  },
+  {
+   "name": "营地背景（城堡、树）",
+   "region": "营地背景",
+   "expect": "有"
+  },
+  {
+   "name": "角色模型（受光，不是剪影）",
+   "region": "角色",
+   "expect": "有"
+  },
+  {
+   "name": "篝火与火光",
+   "region": "篝火",
+   "expect": "有"
+  },
+  {
+   "name": "左侧菜单",
+   "region": "左侧菜单",
+   "expect": "有"
+  },
+  {
+   "name": "右侧角色框（joe 76 级圣骑士）",
+   "region": "右侧角色框",
+   "expect": "有"
+  },
+  {
+   "name": "「术士君临现已上线」推广框",
+   "region": "推广框位置",
+   "expect": "无（拥有 DLC）"
+  }
+ ],
+ "truth": "~/dm-work/data/switch/truth_shots_v7/charselect.png",
+ "host": {
+  "trigger": "OpenPanel:MainMenuButtonRibbon+150",
+  "keys": "",
+  "env": {"DM_FE_AUTO": "0"}
+ }
+}

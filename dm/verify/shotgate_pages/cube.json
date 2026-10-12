@@ -1,0 +1,90 @@
+{
+ "page": "局内·赫拉迪克方块",
+ "truth": "~/dm-work/data/switch/truth_shots_v7/cube.png",
+ "host": {
+  "trigger": "OpenPanel:HoradricCubeLayout+45",
+  "keys": "A@OpenPanel:MainMenuButtonRibbon>FrontEndNavigation:ToGame,PLUS@UnloadPanel:LoadScreenPanel%1>OpenPanel:PlayerInventoryExpansionLayout,LS@%1>OpenPanel:HoradricCubeLayout"
+ },
+ "viewport": [
+  0.06,
+  0.0,
+  0.94,
+  0.97
+ ],
+ "mask": [],
+ "fine_grid": [
+  32,
+  18,
+  0.85
+ ],
+ "note": "界面层静态内容：命名区域结构阈值 0.9，细网格 32×18",
+ "regions": {
+  "标题条（赫拉迪克魔盒 / 物品栏）": {
+   "rect": [
+    0.07,
+    0.02,
+    0.93,
+    0.07
+   ],
+   "ssim_min": 0.9
+  },
+  "魔盒 3×4 格": {
+   "rect": [
+    0.22,
+    0.32,
+    0.3,
+    0.55
+   ],
+   "ssim_min": 0.9
+  },
+  "合成按钮": {
+   "rect": [
+    0.26,
+    0.57,
+    0.31,
+    0.65
+   ],
+   "ssim_min": 0.9
+  },
+  "魔盒装饰纹样": {
+   "rect": [
+    0.08,
+    0.1,
+    0.46,
+    0.86
+   ],
+   "ssim_min": 0.8
+  },
+  "物品栏（含方块本体）": {
+   "rect": [
+    0.52,
+    0.1,
+    0.88,
+    0.82
+   ],
+   "ssim_min": 0.9
+  }
+ },
+ "elements": [
+  {
+   "name": "标题「赫拉迪克魔盒 / 物品栏」",
+   "region": "标题条（赫拉迪克魔盒 / 物品栏）"
+  },
+  {
+   "name": "魔盒格子",
+   "region": "魔盒 3×4 格"
+  },
+  {
+   "name": "合成按钮",
+   "region": "合成按钮"
+  },
+  {
+   "name": "魔盒装饰纹样",
+   "region": "魔盒装饰纹样"
+  },
+  {
+   "name": "物品栏与方块本体",
+   "region": "物品栏（含方块本体）"
+  }
+ ]
+}

@@ -1,0 +1,6 @@
+{"seq":0,"cat":"DM","act":"Tick","arg":"3#"}
+{"seq":1,"cat":"PanelManager","act":"OpenPanel","arg":"Inventory"}
+{"seq":2,"cat":"DM","act":"Tick","arg":"4#"}
+{"seq":3,"cat":"PanelManager","act":"UnloadPanel","arg":"Inventory"}
+{"seq":4,"cat":"DM","act":"Tick","arg":"5#"}
+{"seq":5,"cat":"PanelManager","act":"OpenPanel","arg":"Inventory"}

@@ -1,0 +1,113 @@
+文件	匹配	理由
+ios/tools/touch_strings.py	*	原版字符串表的原文 / 改写（中文列、英文列各一套，按语言列写进原版串，本身就是本地化数据）
+ios/Sources/dm_sharelog.m	*	诊断文件内容是给开发看的；搜行用的中文键（boot: 版本 / [诊断] / 温控档位）按规定保持中文；分享文件名已进中英表
+host/front_mac.m	*	Mac 开发宿主窗口，不进 iOS 产品
+host/hle_thread.c	*	卡死现场 / 线程转储，只进日志
+host/crash.c	*	崩溃与看门狗现场，只进日志
+host/hle_movie.c	*	过场播放日志（MVLOG）
+host/hle_granny.c	*	启动分段计时标签，只进日志
+host/hle_tact.c	*	启动分段计时标签，只进日志
+host/hle_fdstat.c	*	文件描述符统计，只进日志
+host/hle_fs.c	*	存档写错误注入 / 错误码说明，只进日志
+host/hle_touch.c	*	触屏采样调试串，只进日志
+host/dm_actions.c	*	动作结果说明，只进日志（LOG 的 %s 参数）
+host/dm_cursor.c	*	交互层判定说明 / 挪位审计 / 一键重开状态，只进日志
+host/dm_world.c	*	走近物品 / 单位分类的调试串，只进日志
+host/dm_elysium.c	*	极乐世界读档转储，只进日志
+host/dm_vault.c	*	编年史存取对账说明，只进日志
+host/dm_pages.c	*	翻页对账说明，只进日志
+host/dm_cloudsync.c	*	iCloud 备份来源标签（写进备份文件名旁的日志）
+host/dm_drophaptic.c	*	掉落震动名单的说明列，只进日志（LOG 的「第 N 档（%s）」）
+ios/Sources/dm_update.m	*	查更新失败原因 / 网络路径状态，只进日志（界面只显示 dm_update.c 的三种固定文字，已进中英表）
+ios/Sources/cloud_ios.m	*	iCloud 同步日志
+host/diag.c	@res_report	资源读数日志标签
+host/diag.c	@crash_watch_progress	看门狗进展标签，只进日志
+host/diag.c	RomFS读	卡顿分类表（日志）
+host/diag.c	锁等	卡顿分类表（日志）
+host/diag.c	条件变量等	卡顿分类表（日志）
+host/diag.c	地址等	卡顿分类表（日志）
+host/diag.c	同步对象等	卡顿分类表（日志）
+host/diag.c	主线程等	卡顿分类表（日志）
+host/diag.c	出图等	卡顿分类表（日志）
+host/diag.c	着色器/管线	卡顿分类表（日志）
+host/diag.c	TACT解码	卡顿分类表（日志）
+host/diag.c	=物	怪物血条后的抗性缩写：物品注释一系，只在简中显示（monres_on_setinfo 判 dm_lang_zh）
+host/diag.c	=魔	同上
+host/diag.c	=火	同上
+host/diag.c	=电	同上
+host/diag.c	=冰	同上
+host/diag.c	=毒	同上
+host/diag.c	%s%s免	同上（免疫）
+host/diag.c	品质%u	魔盒 / 物品读数，只进日志
+host/diag.c	魔盒 id%u	魔盒读数，只进日志
+host/diag.c	读取画面	状态行，只进日志
+host/diag.c	=盖着	状态行，只进日志
+host/diag.c	=已撤	状态行，只进日志
+host/diag.c	=未见过	状态行，只进日志
+host/diag.c	=无	状态行，只进日志
+host/diag.c	未读到玩家	状态行，只进日志
+host/diag.c	局内 区域	状态行，只进日志
+host/diag.c	(死亡)	状态行，只进日志
+host/diag.c	=菜单	状态行，只进日志
+host/diag.c	截图写盘	截图日志
+host/diag.c	=完成	截图日志
+host/diag.c	=失败	截图日志
+host/dm_runeword.c	@job_stop	合成中止原因，只进日志
+host/dm_runeword.c	@list_close	清单关闭原因，只进日志
+host/dm_runeword.c	@job_readback	合成结果，只进日志
+host/dm_runeword.c	储藏箱格	符文来源位置，只进日志
+host/dm_runeword.c	背包格	符文来源位置，只进日志
+host/dm_vault_ui.c	@vu_guard	控件守卫的日志标签
+ios/Sources/main.m	@dm_host_shutdown	退出原因，只进日志
+ios/Sources/main.m	DM_LOG_PORT	日志端口回执
+ios/Sources/main.m	下载游戏资源	fail:what 只进日志
+ios/Sources/main.m	温控档位	诊断日志行
+ios/Sources/main.m	=未知	机型读不到时的日志占位
+ios/Sources/asset_dl.m	手机剩余空间不够	prepare 失败原因，只进日志（界面另用 dmDlSpaceMsg）
+ios/Sources/asset_dl.m	DM_ASSET_DL_OFF	只在测试开关下出现的原因
+ios/Sources/front_ios.m	@skip_wait	触点脚本日志
+ios/Sources/front_ios.m	松手落点	抬手判定日志
+ios/Sources/front_ios.m	场景 activationState	场景状态日志
+ios/Sources/front_ios.m	GPU 无样本	性能读数日志
+ios/Sources/front_ios.m	电量 未知	性能读数日志
+ios/Sources/front_ios.m	GPU %.2f	性能读数日志
+ios/Sources/front_ios.m	电量 %.0f	性能读数日志
+ios/Sources/DmTouchOverlay.m	主技能	圆钮标签数组：游戏态走不到（技能钮 / 回城钮画图标、药剂 / 功能被跳过、地图钮关掉；盘点待定 1）
+ios/Sources/DmTouchOverlay.m	技能	同上
+ios/Sources/DmTouchOverlay.m	=回城	同上
+ios/Sources/DmTouchOverlay.m	=药剂	同上
+ios/Sources/DmTouchOverlay.m	=功能	同上
+ios/Sources/DmTouchOverlay.m	=地图	同上
+ios/Sources/DmTouchOverlay.m	确认／交换	导航态标签：只在测试开关 DM_TOUCH_NAV_PAD=1 下出现
+ios/Sources/DmTouchOverlay.m	=返回	同上
+ios/Sources/DmTouchOverlay.m	=操作	同上
+ios/Sources/DmTouchOverlay.m	=绑定	同上
+ios/Sources/DmTouchOverlay.m	下一页	同上
+ios/Sources/DmTouchOverlay.m	=取消	同上
+ios/tools/gen_hud_v4.py	十字（默认态）	生成脚本的格子标签（不画字）
+ios/tools/gen_hud_v4.py	生命法力	生命 / 法力字形集的中文部分（英文字母由中英表补）
+ios/tools/gen_hud_v4.py	攻击	lbl_main.png 烘了但前端画不到（主钮有图标时不写字，盘点待定 2）
+host/dm_beltauto.c	*	腰带读数（红 / 蓝 / 紫 / 列 N）只拼进日志行，不上屏
+host/dm_rift.c	@place_door	开门时的日志标签（哈洛加斯 / 结算处…），不上屏
+host/dm_rift.c	@dm_door_label	门名牌自带中英两个参数（挂进原版串表，跟游戏语言走），不走这张表
+host/dm_bossrush.c	@dm_door_label	同上
+ios/tools/gen_romfs_overlay.py	DM_ASTC_PACK 目录里缺	构建脚本的报错，不上屏
+ios/Sources/main.m	按测试开关 DM_TEST_NO_BC	只在测试开关下出现的日志行
+ios/Sources/main.m	不支持——不起游戏	只进日志
+host/dm_padmode.c	%s=「%s」	测试日志里拼的串（键 = 值），不上屏
+host/dm_padmode.c	=、	同上
+host/dm_padmode.c	=(空)	同上
+ios/tools/gen_romfs_overlay.py	触屏版布局在 layouts/	覆盖层标记文件 ctrl_touch 的内容，不上屏
+host/romfs_validate.c	档案 %d 个齐	校验通过时的摘要，只进启动日志
+host/diag.c	服务端已没有这件	拾取诊断，只进日志（LOG「拾取：物品…」）
+host/diag.c	还在地上（没捡成）	同上
+host/diag.c	容器 %u 页 %u 格	同上
+host/dm_rift.c	@merc_dump	佣兵装备位的测试读数（DM_TEST_MERC_DUMP），只进日志
+host/dm_rift.c	部位 %u 模式 %u id %u	佣兵装备位的测试读数，只进日志
+host/dm_rift.c	[%.3s 部位 %u]	同上
+host/dm_rift.c	[类型 %u 类号 %u id %u 等级 %d 生命上限 %d]	随从生命的测试读数（DM_RIFT_TEST_PETDUMP），只进日志
+host/dm_kills.c	@DM_WIDGET_OK	控件类型核对的日志标签（dm_widget.h），不上屏
+host/dm_custom.c	@DM_WIDGET_OK	同上
+host/dm_rift_ui.c	@DM_WIDGET_OK	同上
+host/dm_autobuff.c	*	技能名、排除理由、测试读数都只进日志；这个功能屏上没有自己的文字（玩家看到的是原版的施法动作）
+ios/Sources/dm_shader_prep.m	*	公开版壳专用的「首次准备着色器」页（整个文件在 #ifdef DM_SHELL 里，内测包不编）：这时宿主与中英表还没起，中英两套文字就写在文件里、跟系统语言走

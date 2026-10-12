@@ -1,0 +1,87 @@
+{
+ "page": "局内·技能树",
+ "truth": "~/dm-work/data/switch/truth_shots_v7/skilltree.png",
+ "host": {
+  "trigger": "OpenPanel:SkillsTreePanel+45",
+  "keys": "A@OpenPanel:MainMenuButtonRibbon>FrontEndNavigation:ToGame,PLUS@UnloadPanel:LoadScreenPanel%1>OpenPanel:PlayerInventoryExpansionLayout,R@%1>OpenPanel:SkillsTreePanel"
+ },
+ "viewport": [
+  0.06,
+  0.06,
+  0.94,
+  0.97
+ ],
+ "mask": [],
+ "regions": {
+  "顶部页签": {
+   "rect": [
+    0.06,
+    0.0,
+    0.94,
+    0.06
+   ],
+   "ssim_min": 0.9
+  },
+  "技能树分页签": {
+   "rect": [
+    0.31,
+    0.12,
+    0.69,
+    0.17
+   ],
+   "ssim_min": 0.9
+  },
+  "技能图标列": {
+   "rect": [
+    0.36,
+    0.18,
+    0.62,
+    0.7
+   ],
+   "ssim_min": 0.9
+  },
+  "技能说明浮窗（精力）": {
+   "rect": [
+    0.475,
+    0.5,
+    0.635,
+    0.97
+   ],
+   "ssim_min": 0.9
+  },
+  "左右装饰格栅": [
+   0.08,
+   0.1,
+   0.23,
+   0.85
+  ]
+ },
+ "elements": [
+  {
+   "name": "顶部五页签（技能树选中）",
+   "region": "顶部页签"
+  },
+  {
+   "name": "技能树分页签",
+   "region": "技能树分页签"
+  },
+  {
+   "name": "技能图标",
+   "region": "技能图标列"
+  },
+  {
+   "name": "技能说明浮窗（光标悬停精力）",
+   "region": "技能说明浮窗（精力）"
+  },
+  {
+   "name": "左右格栅装饰",
+   "region": "左右装饰格栅"
+  }
+ ],
+ "note": "界面层静态内容：命名区域结构阈值收紧到 0.9（宿主对真值实测 1.0）。负对照：未转换角色的四项菜单图在「菜单六项」区 0.641，宽阈值 0.45 会放过",
+ "fine_grid": [
+  32,
+  18,
+  0.85
+ ]
+}

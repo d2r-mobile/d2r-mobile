@@ -1,0 +1,77 @@
+{
+ "page": "局内·物品栏",
+ "truth": "~/dm-work/data/switch/truth_shots_v7/inventory.png",
+ "host": {
+  "trigger": "OpenPanel:PlayerInventoryExpansionLayout+45",
+  "keys": "A@OpenPanel:MainMenuButtonRibbon>FrontEndNavigation:ToGame,PLUS@UnloadPanel:LoadScreenPanel%1>OpenPanel:PlayerInventoryExpansionLayout"
+ },
+ "viewport": [
+  0.06,
+  0.06,
+  0.94,
+  0.97
+ ],
+ "mask": [],
+ "note": "界面层静态内容：命名区域结构阈值 0.9（宿主对真值实测 ≥0.98）",
+ "regions": {
+  "顶部页签": {
+   "rect": [
+    0.06,
+    0.0,
+    0.94,
+    0.06
+   ],
+   "ssim_min": 0.9
+  },
+  "装备栏": {
+   "rect": [
+    0.35,
+    0.11,
+    0.64,
+    0.56
+   ],
+   "ssim_min": 0.9
+  },
+  "背包格（含赫拉迪克方块）": {
+   "rect": [
+    0.35,
+    0.57,
+    0.65,
+    0.8
+   ],
+   "ssim_min": 0.9
+  },
+  "金币": {
+   "rect": [
+    0.44,
+    0.8,
+    0.56,
+    0.86
+   ],
+   "ssim_min": 0.9
+  }
+ },
+ "elements": [
+  {
+   "name": "顶部五页签（物品栏选中）",
+   "region": "顶部页签"
+  },
+  {
+   "name": "装备栏（含腰带药水）",
+   "region": "装备栏"
+  },
+  {
+   "name": "背包与方块、护身符",
+   "region": "背包格（含赫拉迪克方块）"
+  },
+  {
+   "name": "金币数",
+   "region": "金币"
+  }
+ ],
+ "fine_grid": [
+  32,
+  18,
+  0.85
+ ]
+}

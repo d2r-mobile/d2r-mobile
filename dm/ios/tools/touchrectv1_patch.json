@@ -1,0 +1,1486 @@
+{
+ "dict": {
+  "fields": {
+   "dict": {
+    "anchor": {
+     "value": {
+      "x": 0,
+      "y": 0
+     }
+    },
+    "rect": {
+     "dict": {
+      "width": {
+       "value": 2952
+      },
+      "height": {
+       "value": 764
+      }
+     },
+     "order": [
+      "x",
+      "y",
+      "width",
+      "height"
+     ]
+    },
+    "skillsOnRow": {
+     "value": 13
+    },
+    "fitToParent": {
+     "value": true
+    }
+   },
+   "order": [
+    "priority",
+    "anchor",
+    "rect",
+    "skillsOnRow",
+    "fitToParent"
+   ]
+  },
+  "children": {
+   "list": [
+    {
+     "base": 0,
+     "patch": {
+      "dict": {
+       "fields": {
+        "value": {
+         "rect": {
+          "x": -1403,
+          "y": -222,
+          "width": 2774,
+          "height": 250
+         },
+         "anchor": {
+          "x": 0.5,
+          "y": 1
+         }
+        }
+       }
+      },
+      "order": [
+       "type",
+       "name",
+       "fields"
+      ]
+     }
+    },
+    {
+     "base": 1,
+     "patch": {
+      "dict": {
+       "fields": {
+        "dict": {
+         "rect": {
+          "dict": {
+           "x": {
+            "value": -959
+           },
+           "y": {
+            "value": -269
+           },
+           "scale": {
+            "value": 0.7131428571428571
+           }
+          },
+          "order": [
+           "x",
+           "y",
+           "width",
+           "height",
+           "scale"
+          ]
+         },
+         "attribute": {
+          "value": "health"
+         },
+         "minLiquidHeight": {
+          "value": 2
+         },
+         "maxSmoothingSeconds": {
+          "value": 1.0
+         },
+         "jumpSmoothingSeconds": {
+          "value": 0.25
+         },
+         "smoothDecrease": {
+          "value": false
+         },
+         "potionPreviewTransparency": {
+          "value": 0.35
+         },
+         "poisonHsvTransform": {
+          "value": [
+           0.3,
+           0.0,
+           0.0,
+           0.0
+          ]
+         },
+         "anchor": {
+          "value": {
+           "x": 0.5,
+           "y": 1
+          }
+         }
+        },
+        "order": [
+         "rect",
+         "attribute",
+         "minLiquidHeight",
+         "maxSmoothingSeconds",
+         "jumpSmoothingSeconds",
+         "smoothDecrease",
+         "potionPreviewTransparency",
+         "poisonHsvTransform",
+         "anchor"
+        ]
+       },
+       "children": {
+        "list": [
+         {
+          "base": 0,
+          "patch": {
+           "dict": {
+            "fields": {
+             "dict": {
+              "anchor": {
+               "value": {
+                "x": 0.5
+               }
+              },
+              "rect": {
+               "dict": {
+                "scale": {
+                 "value": 1.4022435897435899
+                }
+               },
+               "order": [
+                "y",
+                "x",
+                "scale"
+               ]
+              },
+              "fontType": {
+               "value": "16pt"
+              },
+              "style": {
+               "dict": {
+                "alignment": {
+                 "dict": {
+                  "v": {
+                   "value": "bottom"
+                  }
+                 },
+                 "order": [
+                  "v",
+                  "h"
+                 ]
+                },
+                "spacing": {
+                 "value": "$MinimumSpacing"
+                },
+                "dropShadow": {
+                 "value": "$DefaultDropShadow"
+                }
+               },
+               "order": [
+                "pointSize",
+                "alignment",
+                "spacing",
+                "dropShadow"
+               ]
+              }
+             },
+             "order": [
+              "anchor",
+              "rect",
+              "fontType",
+              "style"
+             ]
+            }
+           },
+           "order": [
+            "type",
+            "name",
+            "fields"
+           ]
+          }
+         },
+         {
+          "base": 1,
+          "patch": {
+           "dict": {
+            "fields": {
+             "value": {
+              "filename": "PANEL/HUD_02/HealthManaAnimation/HealthIdle/4k/globe_health_man_idle",
+              "fps": 24,
+              "useAdvancedColoring": true,
+              "recolorRange": {
+               "hue": [
+                0.0,
+                1.01
+               ],
+               "saturation": [
+                0.0,
+                1.01
+               ],
+               "value": [
+                0.0,
+                1.01
+               ]
+              },
+              "hsvTransform": [
+               -0.3333,
+               -0.05,
+               -0.5,
+               0.0
+              ]
+             }
+            }
+           },
+           "order": [
+            "type",
+            "name",
+            "fields"
+           ]
+          }
+         },
+         {
+          "base": 2,
+          "patch": {
+           "dict": {
+            "fields": {
+             "value": {
+              "rect": {
+               "y": 3,
+               "scale": 2.0
+              },
+              "filename": "PANEL/HUD_02/HealthManaAnimation/HotPoint/FrameSet1/globe_hot_point"
+             }
+            }
+           },
+           "order": [
+            "type",
+            "name",
+            "fields"
+           ]
+          }
+         }
+        ]
+       }
+      },
+      "order": [
+       "type",
+       "name",
+       "fields",
+       "children"
+      ]
+     }
+    },
+    {
+     "base": 2,
+     "patch": {
+      "dict": {
+       "fields": {
+        "dict": {
+         "rect": {
+          "dict": {
+           "x": {
+            "value": 711
+           },
+           "y": {
+            "value": -269
+           },
+           "scale": {
+            "value": 0.7131428571428571
+           }
+          },
+          "order": [
+           "x",
+           "y",
+           "width",
+           "height",
+           "scale"
+          ]
+         },
+         "attribute": {
+          "value": "mana"
+         },
+         "maxSmoothingSeconds": {
+          "value": 1.0
+         },
+         "jumpSmoothingSeconds": {
+          "value": 0.25
+         },
+         "potionPreviewTransparency": {
+          "value": 0.5
+         },
+         "anchor": {
+          "value": {
+           "x": 0.5,
+           "y": 1
+          }
+         }
+        },
+        "order": [
+         "rect",
+         "attribute",
+         "maxSmoothingSeconds",
+         "jumpSmoothingSeconds",
+         "potionPreviewTransparency",
+         "anchor"
+        ]
+       },
+       "children": {
+        "list": [
+         {
+          "base": 0,
+          "patch": {
+           "dict": {
+            "fields": {
+             "dict": {
+              "anchor": {
+               "value": {
+                "x": 0.5
+               }
+              },
+              "rect": {
+               "dict": {
+                "scale": {
+                 "value": 1.4022435897435899
+                }
+               },
+               "order": [
+                "y",
+                "x",
+                "scale"
+               ]
+              },
+              "style": {
+               "dict": {
+                "alignment": {
+                 "dict": {
+                  "v": {
+                   "value": "bottom"
+                  }
+                 },
+                 "order": [
+                  "v",
+                  "h"
+                 ]
+                },
+                "spacing": {
+                 "value": "$MinimumSpacing"
+                },
+                "dropShadow": {
+                 "value": "$DefaultDropShadow"
+                }
+               },
+               "order": [
+                "pointSize",
+                "alignment",
+                "spacing",
+                "dropShadow"
+               ]
+              }
+             },
+             "order": [
+              "anchor",
+              "rect",
+              "style"
+             ]
+            }
+           },
+           "order": [
+            "type",
+            "name",
+            "fields"
+           ]
+          }
+         },
+         {
+          "base": 1,
+          "patch": {
+           "dict": {
+            "fields": {
+             "value": {
+              "filename": "PANEL/HUD_02/HealthManaAnimation/HealthIdle/4k/globe_health_man_idle",
+              "fps": 20,
+              "useAdvancedColoring": true,
+              "recolorRange": {
+               "hue": [
+                0.0,
+                1.01
+               ],
+               "saturation": [
+                0.0,
+                1.01
+               ],
+               "value": [
+                0.0,
+                1.01
+               ]
+              },
+              "hsvTransform": [
+               -0.3333,
+               -0.05,
+               -0.05,
+               0.0
+              ]
+             }
+            }
+           },
+           "order": [
+            "type",
+            "name",
+            "fields"
+           ]
+          }
+         },
+         {
+          "base": 2,
+          "patch": {
+           "dict": {
+            "fields": {
+             "value": {
+              "rect": {
+               "y": 3,
+               "scale": 2.0
+              },
+              "filename": "PANEL/HUD_02/HealthManaAnimation/HotPoint/FrameSet1/globe_hot_point",
+              "useAdvancedColoring": true,
+              "recolorRange": {
+               "hue": [
+                0.0,
+                1.01
+               ],
+               "saturation": [
+                0.0,
+                1.01
+               ],
+               "value": [
+                0.0,
+                1.01
+               ]
+              },
+              "hsvTransform": [
+               -0.3333,
+               -0.1,
+               -0.0,
+               1.0
+              ]
+             }
+            }
+           },
+           "order": [
+            "type",
+            "name",
+            "fields"
+           ]
+          }
+         }
+        ]
+       }
+      },
+      "order": [
+       "type",
+       "name",
+       "fields",
+       "children"
+      ]
+     }
+    },
+    {
+     "value": {
+      "type": "SkillSelectButtonWidget",
+      "name": "SkillBindTemplate",
+      "fields": {
+       "rect": {
+        "x": -783,
+        "y": -337,
+        "scale": 0.9
+       },
+       "side": "bind",
+       "skillIconFilenames": "$SkillIconFilenames",
+       "anchor": {
+        "x": 0.5,
+        "y": 1
+       }
+      },
+      "children": [
+       {
+        "type": "TextBoxWidget",
+        "name": "HotkeyText",
+        "fields": {
+         "rect": "$SkillHotkeyTextRect",
+         "style": "$SkillHotkeyTextStyle",
+         "useAltStyleIfDoesntFit": true,
+         "altStyle": "$SkillHotkeyTextAltStyle"
+        }
+       },
+       {
+        "type": "TextBoxWidget",
+        "name": "QuantityText",
+        "fields": {
+         "rect": "$SkillQuantityTextRect",
+         "style": "$SkillQuantityTextStyle"
+        }
+       }
+      ]
+     }
+    },
+    {
+     "base": 3,
+     "patch": {
+      "dict": {
+       "fields": {
+        "dict": {
+         "rect": {
+          "dict": {
+           "x": {
+            "value": -1594
+           },
+           "y": {
+            "value": -410
+           }
+          },
+          "order": [
+           "x",
+           "y"
+          ]
+         },
+         "anchor": {
+          "value": {
+           "x": 0.5,
+           "y": 1
+          }
+         },
+         "transparency": {
+          "value": 0.0
+         }
+        },
+        "order": [
+         "filename",
+         "rect",
+         "anchor",
+         "transparency"
+        ]
+       }
+      },
+      "order": [
+       "type",
+       "name",
+       "fields"
+      ]
+     }
+    },
+    {
+     "base": 4,
+     "patch": {
+      "dict": {
+       "fields": {
+        "dict": {
+         "rect": {
+          "dict": {
+           "x": {
+            "value": -938
+           },
+           "y": {
+            "value": -403
+           }
+          },
+          "order": [
+           "x",
+           "y"
+          ]
+         },
+         "anchor": {
+          "value": {
+           "x": 0.5,
+           "y": 1
+          }
+         }
+        },
+        "order": [
+         "rect",
+         "filename",
+         "hitMargin",
+         "anchor"
+        ]
+       },
+       "children": {
+        "list": [
+         {
+          "base": 0,
+          "patch": {
+           "dict": {
+            "fields": {
+             "dict": {
+              "filename": {
+               "value": "PANEL/HUD_02/LevelAnimation/leftFlash"
+              },
+              "blendMode": {
+               "value": "black"
+              },
+              "fps": {
+               "value": 14
+              },
+              "loop": {
+               "value": false
+              },
+              "hideOnComplete": {
+               "value": true
+              },
+              "playing": {
+               "value": false
+              }
+             },
+             "order": [
+              "rect",
+              "filename",
+              "blendMode",
+              "fps",
+              "loop",
+              "hideOnComplete",
+              "playing"
+             ]
+            }
+           },
+           "order": [
+            "type",
+            "name",
+            "fields"
+           ]
+          }
+         },
+         {
+          "base": 1,
+          "patch": {
+           "dict": {
+            "fields": {
+             "dict": {
+              "filename": {
+               "value": "PANEL/HUD_02/LevelAnimation/rightFlash"
+              },
+              "blendMode": {
+               "value": "black"
+              },
+              "fps": {
+               "value": 14
+              },
+              "loop": {
+               "value": false
+              },
+              "hideOnComplete": {
+               "value": true
+              },
+              "playing": {
+               "value": false
+              }
+             },
+             "order": [
+              "rect",
+              "filename",
+              "blendMode",
+              "fps",
+              "loop",
+              "hideOnComplete",
+              "playing"
+             ]
+            }
+           },
+           "order": [
+            "type",
+            "name",
+            "fields"
+           ]
+          }
+         }
+        ]
+       }
+      },
+      "order": [
+       "type",
+       "name",
+       "fields",
+       "children"
+      ]
+     }
+    },
+    {
+     "value": {
+      "type": "ImageWidget",
+      "name": "BeltPopupArrow",
+      "fields": {
+       "filename": "PANEL/HUD_02/Belt_UpArrow",
+       "rect": {
+        "x": 222,
+        "y": -164
+       },
+       "anchor": {
+        "x": 0.5,
+        "y": 1
+       }
+      }
+     }
+    },
+    {
+     "value": {
+      "type": "ImageWidget",
+      "name": "TouchBeltFrame",
+      "fields": {
+       "anchor": {
+        "x": 0.5,
+        "y": 1
+       },
+       "filename": "PANEL/HUD_02/belt_popped_row",
+       "rect": {
+        "x": -395,
+        "y": -210
+       }
+      }
+     }
+    },
+    {
+     "base": 16,
+     "patch": {
+      "dict": {
+       "fields": {
+        "dict": {
+         "rect": {
+          "dict": {
+           "x": {
+            "value": -395
+           },
+           "y": {
+            "value": -210
+           }
+          },
+          "order": [
+           "x",
+           "y"
+          ]
+         },
+         "poppedRowFilename": {
+          "value": "PANEL/HUD_02/belt_popped_row"
+         },
+         "poppedCapFilename": {
+          "value": "PANEL/HUD_02/belt_popped_cap"
+         },
+         "cellOffsetInRow": {
+          "value": {
+           "x": 12,
+           "y": 6
+          }
+         },
+         "itemOffsetInCell": {
+          "value": {
+           "x": 1,
+           "y": 1
+          }
+         },
+         "cellSize": {
+          "value": "$ItemCellSize"
+         },
+         "anchor": {
+          "value": {
+           "x": 0.5,
+           "y": 1
+          }
+         }
+        },
+        "order": [
+         "rect",
+         "poppedRowFilename",
+         "poppedCapFilename",
+         "cellOffsetInRow",
+         "itemOffsetInCell",
+         "cellPadding",
+         "cellSize",
+         "anchor",
+         "controllerDefaultItemTransparency",
+         "focusOnMouseOver"
+        ]
+       },
+       "children": {
+        "list": [
+         {
+          "base": 0,
+          "patch": {
+           "dict": {
+            "fields": {
+             "dict": {
+              "text": {
+               "value": "123"
+              },
+              "rect": {
+               "dict": {
+                "width": {
+                 "value": 130
+                }
+               },
+               "order": [
+                "x",
+                "y",
+                "width"
+               ]
+              },
+              "style": {
+               "value": {
+                "pointSize": "$MediumFontSize",
+                "fontColor": "$FontColorGoldYellow",
+                "options": {
+                 "hideOverflow": true
+                }
+               }
+              }
+             },
+             "order": [
+              "text",
+              "rect",
+              "style"
+             ]
+            }
+           },
+           "order": [
+            "type",
+            "name",
+            "fields"
+           ]
+          }
+         }
+        ]
+       }
+      },
+      "order": [
+       "type",
+       "name",
+       "fields",
+       "children"
+      ]
+     }
+    },
+    {
+     "value": {
+      "type": "LevelUpButtonWidget",
+      "name": "StatUp",
+      "fields": {
+       "type": "stats",
+       "labels": [
+        "@strlvlup",
+        "@strlvlup"
+       ],
+       "isFloating": true,
+       "rect": {
+        "x": -1067,
+        "y": -581
+       },
+       "filename": "PANEL/HUD_02/quest_button",
+       "leftPanelOffset": {
+        "x": 1080
+       },
+       "hoveredFrame": 3,
+       "disabledFrame": 2,
+       "disabledTint": {
+        "a": 1
+       },
+       "anchor": {
+        "x": 0.5,
+        "y": 1
+       }
+      },
+      "children": [
+       {
+        "type": "TextBoxWidget",
+        "name": "Label",
+        "fields": {
+         "anchor": {
+          "x": 0.5
+         },
+         "rect": {
+          "y": -3
+         },
+         "fontType": "16pt",
+         "style": {
+          "pointSize": "$XMediumLargeFontSize",
+          "alignment": {
+           "v": "bottom",
+           "h": "center"
+          },
+          "spacing": "$MinimumSpacing",
+          "dropShadow": "$DefaultDropShadow"
+         }
+        }
+       }
+      ]
+     }
+    },
+    {
+     "value": {
+      "type": "LevelUpButtonWidget",
+      "name": "SkillUp",
+      "fields": {
+       "type": "skills",
+       "labels": [
+        "@strnewskl",
+        "@strnewskl"
+       ],
+       "isFloating": true,
+       "rect": {
+        "x": 895,
+        "y": -581
+       },
+       "filename": "PANEL/HUD_02/quest_button",
+       "rightPanelOffset": {
+        "x": -1080
+       },
+       "hoveredFrame": 3,
+       "disabledFrame": 2,
+       "disabledTint": {
+        "a": 1
+       },
+       "anchor": {
+        "x": 0.5,
+        "y": 1
+       }
+      },
+      "children": [
+       {
+        "type": "TextBoxWidget",
+        "name": "Label",
+        "fields": {
+         "anchor": {
+          "x": 0.5
+         },
+         "rect": {
+          "y": -3
+         },
+         "fontType": "16pt",
+         "style": {
+          "pointSize": "$XMediumLargeFontSize",
+          "alignment": {
+           "v": "bottom",
+           "h": "center"
+          },
+          "spacing": "$MinimumSpacing",
+          "dropShadow": "$DefaultDropShadow"
+         }
+        }
+       }
+      ]
+     }
+    },
+    {
+     "value": {
+      "type": "LevelUpButtonWidget",
+      "name": "QuestAlert",
+      "fields": {
+       "type": "quests",
+       "labels": [
+        "@CfgQuestLog",
+        "@CfgQuestLog"
+       ],
+       "isFloating": true,
+       "rect": {
+        "x": -1067,
+        "y": -581
+       },
+       "filename": "PANEL/HUD_02/quest_button",
+       "leftPanelOffset": {
+        "x": 1080
+       },
+       "newStatsButtonOverlapOffset": {
+        "y": -210
+       },
+       "hoveredFrame": 3,
+       "disabledFrame": 2,
+       "disabledTint": {
+        "a": 1
+       },
+       "anchor": {
+        "x": 0.5,
+        "y": 1
+       }
+      },
+      "children": [
+       {
+        "type": "TextBoxWidget",
+        "name": "Label",
+        "fields": {
+         "anchor": {
+          "x": 0.5
+         },
+         "rect": {
+          "y": -3
+         },
+         "fontType": "16pt",
+         "style": {
+          "pointSize": "$XMediumLargeFontSize",
+          "alignment": {
+           "v": "bottom",
+           "h": "center"
+          },
+          "spacing": "$MinimumSpacing",
+          "dropShadow": "$DefaultDropShadow"
+         }
+        }
+       }
+      ]
+     }
+    },
+    {
+     "base": 10,
+     "patch": {
+      "dict": {
+       "fields": {
+        "dict": {
+         "anchor": {
+          "value": {
+           "x": 1,
+           "y": 1
+          }
+         },
+         "rect": {
+          "dict": {
+           "x": {
+            "value": -334
+           },
+           "y": {
+            "value": -459
+           }
+          },
+          "order": [
+           "x",
+           "y"
+          ]
+         }
+        },
+        "order": [
+         "anchor",
+         "rect",
+         "side",
+         "skillIconFilenames",
+         "skillButton"
+        ]
+       },
+       "children": {
+        "list": [
+         {
+          "base": 0,
+          "patch": null
+         }
+        ]
+       }
+      },
+      "order": [
+       "type",
+       "name",
+       "fields",
+       "children"
+      ]
+     }
+    },
+    {
+     "base": 11,
+     "patch": {
+      "dict": {
+       "fields": {
+        "dict": {
+         "anchor": {
+          "value": {
+           "x": 1,
+           "y": 1
+          }
+         },
+         "rect": {
+          "dict": {
+           "x": {
+            "value": -871
+           },
+           "y": {
+            "value": -459
+           }
+          },
+          "order": [
+           "x",
+           "y"
+          ]
+         }
+        },
+        "order": [
+         "anchor",
+         "rect",
+         "side",
+         "skillIconFilenames",
+         "skillButton"
+        ]
+       },
+       "children": {
+        "list": [
+         {
+          "base": 0,
+          "patch": null
+         }
+        ]
+       }
+      },
+      "order": [
+       "type",
+       "name",
+       "fields",
+       "children"
+      ]
+     }
+    },
+    {
+     "base": 12,
+     "patch": {
+      "dict": {
+       "fields": {
+        "dict": {
+         "anchor": {
+          "value": {
+           "x": 1,
+           "y": 1
+          }
+         },
+         "rect": {
+          "dict": {
+           "x": {
+            "value": -603
+           },
+           "y": {
+            "value": -924
+           }
+          },
+          "order": [
+           "x",
+           "y"
+          ]
+         }
+        },
+        "order": [
+         "anchor",
+         "rect",
+         "side",
+         "skillIconFilenames",
+         "skillButton"
+        ]
+       },
+       "children": {
+        "list": [
+         {
+          "base": 0,
+          "patch": null
+         }
+        ]
+       }
+      },
+      "order": [
+       "type",
+       "name",
+       "fields",
+       "children"
+      ]
+     }
+    },
+    {
+     "base": 13,
+     "patch": {
+      "dict": {
+       "fields": {
+        "dict": {
+         "anchor": {
+          "value": {
+           "x": 1,
+           "y": 1
+          }
+         },
+         "rect": {
+          "dict": {
+           "x": {
+            "value": -799
+           },
+           "y": {
+            "value": -727
+           }
+          },
+          "order": [
+           "x",
+           "y"
+          ]
+         }
+        },
+        "order": [
+         "anchor",
+         "rect",
+         "side",
+         "skillIconFilenames",
+         "skillButton"
+        ]
+       },
+       "children": {
+        "list": [
+         {
+          "base": 0,
+          "patch": null
+         }
+        ]
+       }
+      },
+      "order": [
+       "type",
+       "name",
+       "fields",
+       "children"
+      ]
+     }
+    },
+    {
+     "base": 14,
+     "patch": {
+      "dict": {
+       "fields": {
+        "dict": {
+         "anchor": {
+          "value": {
+           "x": 1,
+           "y": 1
+          }
+         },
+         "rect": {
+          "dict": {
+           "x": {
+            "value": -334
+           },
+           "y": {
+            "value": -996
+           }
+          },
+          "order": [
+           "x",
+           "y"
+          ]
+         }
+        },
+        "order": [
+         "anchor",
+         "rect",
+         "side",
+         "skillIconFilenames",
+         "skillButton"
+        ]
+       },
+       "children": {
+        "list": [
+         {
+          "base": 0,
+          "patch": null
+         }
+        ]
+       }
+      },
+      "order": [
+       "type",
+       "name",
+       "fields",
+       "children"
+      ]
+     }
+    },
+    {
+     "base": 15,
+     "patch": {
+      "dict": {
+       "fields": {
+        "dict": {
+         "anchor": {
+          "value": {
+           "x": 0.5,
+           "y": 1
+          }
+         },
+         "rect": {
+          "dict": {
+           "x": {
+            "value": -241
+           },
+           "y": {
+            "value": -161
+           }
+          },
+          "order": [
+           "x",
+           "y"
+          ]
+         }
+        },
+        "order": [
+         "anchor",
+         "rect",
+         "side",
+         "skillIconFilenames",
+         "skillButton"
+        ]
+       },
+       "children": {
+        "list": [
+         {
+          "base": 0,
+          "patch": null
+         }
+        ]
+       }
+      },
+      "order": [
+       "type",
+       "name",
+       "fields",
+       "children"
+      ]
+     }
+    },
+    {
+     "base": 17,
+     "patch": {
+      "dict": {
+       "fields": {
+        "dict": {
+         "anchor": {
+          "value": {
+           "x": 0.5,
+           "y": 1
+          }
+         },
+         "rect": {
+          "dict": {
+           "x": {
+            "value": -294
+           },
+           "y": {
+            "value": -418
+           }
+          },
+          "order": [
+           "x",
+           "y",
+           "scale"
+          ]
+         }
+        },
+        "order": [
+         "anchor",
+         "rect",
+         "filename",
+         "blendMode",
+         "fps",
+         "loop",
+         "hideOnComplete",
+         "playing"
+        ]
+       }
+      },
+      "order": [
+       "type",
+       "name",
+       "fields"
+      ]
+     }
+    },
+    {
+     "base": 18,
+     "patch": {
+      "dict": {
+       "fields": {
+        "dict": {
+         "anchor": {
+          "value": {
+           "x": 0.5,
+           "y": 1
+          }
+         },
+         "rect": {
+          "dict": {
+           "x": {
+            "value": -62
+           },
+           "y": {
+            "value": -152
+           }
+          },
+          "order": [
+           "x",
+           "y"
+          ]
+         }
+        },
+        "order": [
+         "anchor",
+         "rect",
+         "filename",
+         "type",
+         "labels",
+         "tooltipOffset",
+         "disabledFrame",
+         "disabledTint",
+         "focusOnMouseOver"
+        ]
+       }
+      },
+      "order": [
+       "type",
+       "name",
+       "fields",
+       "children"
+      ]
+     }
+    },
+    {
+     "value": {
+      "type": "ImageWidget",
+      "name": "TouchHealthBallRing",
+      "fields": {
+       "anchor": {
+        "x": 0.5,
+        "y": 1
+       },
+       "filename": "Controller/Panel/EmoteWheel/Emote_Circle",
+       "rect": {
+        "x": -973,
+        "y": -282,
+        "scale": 0.8914285714285713
+       }
+      }
+     }
+    },
+    {
+     "value": {
+      "type": "ImageWidget",
+      "name": "TouchManaBallRing",
+      "fields": {
+       "anchor": {
+        "x": 0.5,
+        "y": 1
+       },
+       "filename": "Controller/Panel/EmoteWheel/Emote_Circle",
+       "rect": {
+        "x": 697,
+        "y": -282,
+        "scale": 0.8914285714285713
+       }
+      }
+     }
+    }
+   ]
+  }
+ },
+ "order": [
+  "type",
+  "name",
+  "fields",
+  "children"
+ ]
+}
