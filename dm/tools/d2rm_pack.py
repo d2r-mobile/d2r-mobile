@@ -70,6 +70,14 @@ def check_env(game):
         except Exception: bad.append('Python 包 %s：%s -m pip install pillow numpy lz4 capstone unicorn' % (m, PY))
     if not (shutil.which('clang') or shutil.which('gcc') or shutil.which('cc')): bad.append('C 编译器（clang 或 gcc）')
     dotnet = shutil.which('dotnet') or (os.path.expanduser('~/.dotnet/dotnet') if os.path.exists(os.path.expanduser('~/.dotnet/dotnet')) else None)
+    # 编出来的翻译工具是个独立的小程序，启动时自己找 .NET 运行时：只认 DOTNET_ROOT 和几个固定位置（Homebrew、发行版自带的常不在其中），找不到就起不来，
+    # 后面会被报成「翻译器不是用仓内源编的」。没设时按 dotnet 自己报的运行时位置设上，子进程都继承
+    # The translation tool that gets built is a standalone program that locates the .NET runtime itself at startup: it only looks at DOTNET_ROOT and a few fixed locations (Homebrew and distribution packages are often not among them), and cannot start when it finds none,
+    # which would later be reported as "the translator was not built from the in-repo source". When it is not set, set it from the runtime location dotnet itself reports; all child processes inherit it
+    if dotnet and not os.environ.get('DOTNET_ROOT'):
+        r = subprocess.run([dotnet, '--list-runtimes'], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        m = re.search(r'^Microsoft\.NETCore\.App \S+ \[(.*)[/\\]shared[/\\]Microsoft\.NETCore\.App\]', r.stdout.decode('utf-8', 'replace'), re.M)
+        if m: os.environ['DOTNET_ROOT'] = m.group(1)
     if not dotnet: bad.append('.NET SDK（dotnet）：https://dotnet.microsoft.com/download')
     if not shutil.which('spirv-cross'): bad.append('spirv-cross：https://github.com/KhronosGroup/SPIRV-Cross')
     for f in ('ExeFS/main', 'ExeFS/sdk', 'RomFS/data/build_manifest.psv'):

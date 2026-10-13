@@ -65,6 +65,14 @@ fi
 tool python3     "生成与验证脚本" "generation and verification scripts" "brew install python"
 DOTNET=$(command -v dotnet || { [ -x "$HOME/.dotnet/dotnet" ] && echo "$HOME/.dotnet/dotnet"; } || true)
 if [ -n "$DOTNET" ]; then ok "dotnet"; else bad "$(m "缺 dotnet（编译着色器翻译工具）" "dotnet is missing (builds the shader translation tool)")" "brew install dotnet"; fi
+# 编出来的翻译工具是个独立的小程序，启动时要自己找 .NET 运行时：只认 DOTNET_ROOT 和几个固定位置，Homebrew 装的不在其中，找不到就起不来
+#（那时后面会报成「翻译器不是用仓内源编的」，其实是它没跑起来）。没设 DOTNET_ROOT 时，按 dotnet 自己报的运行时位置设上。
+# The translation tool that gets built is a standalone program that has to locate the .NET runtime itself at startup: it only looks at DOTNET_ROOT and a few fixed locations, and a Homebrew install is not among them, so it cannot start
+# (which would later be reported as "the translator was not built from the in-repo source" although it simply did not run). When DOTNET_ROOT is not set, set it from the runtime location dotnet itself reports.
+if [ -n "$DOTNET" ] && [ -z "${DOTNET_ROOT:-}" ]; then
+  DOTNET_ROOT=$("$DOTNET" --list-runtimes 2> /dev/null | sed -n 's/^Microsoft\.NETCore\.App [^ ]* \[\(.*\)\/shared\/Microsoft\.NETCore\.App\]$/\1/p' | head -1)
+  [ -n "$DOTNET_ROOT" ] && export DOTNET_ROOT || unset DOTNET_ROOT
+fi
 
 say "$(m "三、游戏文件（${GAME}）" "3. Game files ($GAME)")"
 gf=0
@@ -117,7 +125,13 @@ packs() {
 }
 [ "$(ls "$DM_ROOT/build/cache/dm/dmsh" 2> /dev/null | wc -l | tr -d ' ')" = 162 ] || step "取着色器包（162 个）" packs
 
-xlate() { "$DOTNET" publish "$HERE/dm/gfx/tools/dmsh_xlate" -c Release -o "$DM_ROOT/build/gfx/dmsh_xlate" -v quiet; }
+xlate() {
+  "$DOTNET" publish "$HERE/dm/gfx/tools/dmsh_xlate" -c Release -o "$DM_ROOT/build/gfx/dmsh_xlate" -v quiet || return 1
+  # 编完当场跑一下：起不来（找不到 .NET 运行时等）就在这里把它自己的报错打出来，不留到后面被报成别的事
+  "$DM_ROOT/build/gfx/dmsh_xlate/dmsh_xlate" --source-sha > /dev/null 2>&1 && return 0
+  echo "  $(m "翻译工具编出来了但起不来，它自己的报错：" "the translation tool was built but does not start; its own error:")"; "$DM_ROOT/build/gfx/dmsh_xlate/dmsh_xlate" --source-sha 2>&1 | head -6 | sed 's/^/    /'
+  echo "  $(m "多半是找不到 .NET 运行时：设 DOTNET_ROOT=<.NET 安装目录> 后重跑（Homebrew：export DOTNET_ROOT=\"\$(brew --prefix dotnet)/libexec\"）" "most likely the .NET runtime was not found: set DOTNET_ROOT=<.NET install directory> and rerun (Homebrew: export DOTNET_ROOT=\"\$(brew --prefix dotnet)/libexec\")")"; return 1
+}
 [ -x "$DM_ROOT/build/gfx/dmsh_xlate/dmsh_xlate" ] || step "编译着色器翻译工具" xlate
 
 # 翻译链版本由源码与工具指纹共同决定。本机工具与仓内登记的不一样（别的 Xcode / spirv-cross 版本、自己编的翻译工具）是正常的：
