@@ -70,6 +70,24 @@ python3 dm/tools/d2rm_pack.py <D2RMobile-shell.ipa> <你的游戏文件目录> <
 - 可以切到后台或关掉；回来从头数一遍，已经编过的每个只要不到一毫秒，等于接着做。
 - 这几分钟手机会发热，建议插着电、别套太厚的壳。
 
+## 老机型（A16 及更早的芯片）
+
+iPhone 14 系列、iPhone 15 / 15 Plus 以及更早的机型，要多做一份贴图包，并在第一步里带上它。完整说明见 [LEGACY_DEVICES.zh-CN.md](LEGACY_DEVICES.zh-CN.md)，这条路上的做法是：
+
+1. 准备编码器 astcenc：从上游发布页下载对应系统的压缩包解开即可（<https://github.com/ARM-software/astc-encoder/releases>，Windows 用 `astcenc-…-windows-x64.zip` 里的 `bin/astcenc-avx2.exe`）。
+2. 做贴图包（三条命令，`<游戏文件目录>` 同上，`D` 是你选的输出目录）：
+
+   ```
+   python3 dm/tools/astc_pack.py <游戏文件目录>/RomFS D/work --astcenc <astcenc 的路径> --preset thorough
+   python3 dm/tools/casc_overlay.py pack <游戏文件目录>/RomFS D/pack D/work/repl.tsv 0-8
+   python3 dm/tools/astc_pack.py finalize D/pack
+   ```
+
+3. 做包时带上它：把环境变量 `D2RM_ASTC_PACK` 设成 `D/pack` 的完整路径，再照第一步运行 `d2rm_pack.py`。工具会说一句「带老机型支持」。
+4. 第三步放游戏资源时，把 `D/pack/Legacy Device Pack` 这个文件夹也整个拷进手机，和游戏资源文件夹放在同一层。
+
+贴图包和安装包是配对的：重新做了贴图包，就要重新做包。
+
 ## 出了问题
 
 - 工具报「壳与这份源码不是同一版」：换成与壳同一个发布版本的源码。

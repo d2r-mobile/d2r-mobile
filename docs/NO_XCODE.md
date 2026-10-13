@@ -70,6 +70,24 @@ With a package made on a computer without that compiler, the app stops on a "Fir
 - You can switch away or close the app; when you come back it counts from the start again, but each shader already compiled takes less than a millisecond, so in effect it continues.
 - The phone gets warm during these minutes; keeping it plugged in and out of a thick case helps.
 
+## Older devices (A16 and earlier chips)
+
+The iPhone 14 family, iPhone 15 / 15 Plus and earlier models need an extra texture pack, passed in at step 1. The full explanation is in [LEGACY_DEVICES.md](LEGACY_DEVICES.md); on this route it goes like this:
+
+1. Get the astcenc encoder: download the archive for your system from the upstream release page and unpack it (<https://github.com/ARM-software/astc-encoder/releases>; on Windows use `bin/astcenc-avx2.exe` from `astcenc-…-windows-x64.zip`).
+2. Make the texture pack (three commands; `<game files directory>` as above, `D` is an output directory of your choice):
+
+   ```
+   python3 dm/tools/astc_pack.py <game files directory>/RomFS D/work --astcenc <path to astcenc> --preset thorough
+   python3 dm/tools/casc_overlay.py pack <game files directory>/RomFS D/pack D/work/repl.tsv 0-8
+   python3 dm/tools/astc_pack.py finalize D/pack
+   ```
+
+3. Pass it when packaging: set the environment variable `D2RM_ASTC_PACK` to the full path of `D/pack`, then run `d2rm_pack.py` as in step 1. The tool prints a line saying older-device support is included.
+4. When you put the game resources on the phone in step 3, also copy the whole `D/pack/Legacy Device Pack` folder to the phone, at the same level as the game resource folder.
+
+The texture pack and the install package are a matched pair: if you remake the pack, remake the package.
+
 ## When something goes wrong
 
 - The tool says the shell and this source are not the same version: use the source of the same release as the shell.

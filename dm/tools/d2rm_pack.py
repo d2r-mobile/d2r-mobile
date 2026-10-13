@@ -6,6 +6,7 @@
 # 用法：d2rm_pack.py <壳.ipa> <游戏文件目录> <输出.ipa>
 #   游戏文件目录 = Switch 版 3.3.94012 的 Update 目录，里面有 ExeFS/{main,sdk} 与 RomFS/data/…（怎么从自己的游戏导出）
 #   工作目录（缓存与中间产物，约 12 GB）：环境变量 DM_ROOT，缺省 ~/dm-work；每一步做过就跳过
+#   老机型（A16 及更早的芯片）：先做好贴图包，再带环境变量 D2RM_ASTC_PACK=<贴图包的 pack 目录> 运行本工具
 # 需要：Python 3.9+ 与 pillow numpy lz4 capstone unicorn；C 编译器（clang 或 gcc，解贴图的小段 C 用）；.NET SDK（编着色器翻译工具）；
 #   spirv-cross；苹果的 Metal 着色器编译器（Mac 上随 Xcode）。缺什么本工具开头会逐项报。
 # 它做的事与「./setup.sh + dm/ios/run.sh build 的生成部分」相同，只是最后不调 Xcode 构建，而是把产物放进壳里。
@@ -16,6 +17,7 @@
 # Usage: d2rm_pack.py <shell.ipa> <game files directory> <output.ipa>
 #   game files directory = the Update directory of Switch version 3.3.94012, containing ExeFS/{main,sdk} and RomFS/data/... (how to export it from your own game)
 #   working directory (cache and intermediate outputs, about 12 GB): environment variable DM_ROOT, default ~/dm-work; every step already done is skipped
+#   Older devices (A16 and earlier chips): make the texture pack first, then run this tool with the environment variable D2RM_ASTC_PACK=<the pack directory of the texture pack>
 # Requires: Python 3.9+ with pillow numpy lz4 capstone unicorn; a C compiler (clang or gcc, for the small piece of C that decodes textures); the .NET SDK (to build the shader translation tool);
 #   spirv-cross; Apple's Metal shader compiler (on a Mac it comes with Xcode). This tool reports whatever is missing item by item at the start.
 # What it does is the same as "./setup.sh + the generation part of dm/ios/run.sh build", except that at the end it does not invoke an Xcode build but puts the build outputs into the shell.
@@ -154,8 +156,22 @@ def main():
     # 三、覆盖层
     # 3. Overlay
     say('生成覆盖层')
-    run([PY, os.path.join(IOS, 'tools', 'gen_romfs_overlay.py'), romfs, os.path.join(stage, 'romfs_overlay')], cwd=IOS, env={'DM_ROMFS_SRC': romfs}, log=os.path.join(stage, 'gen_overlay.log'), what='生成覆盖层')
-    for d in ('romfs_overlay_astc', 'romfs_overlay_astc_variants'): shutil.rmtree(os.path.join(stage, d), ignore_errors=True)
+    # 老机型（显卡不支持 BC 贴图的 A16 及更早芯片）：D2RM_ASTC_PACK=<贴图包目录>（astc_pack.py + casc_overlay.py pack + astc_pack.py finalize 的产物，里面有 pack_index.tsv 与 pack.json）
+    # 给了就再出一套 ASTC 版覆盖层放进安装包（索引里那两万多张贴图指向贴图包的数据档，内容不进安装包；App 按其中的 pack.json 核对手机上的贴图包）。
+    # 它是从游戏资源现生成的，壳里不带；贴图包本身由使用者拷进手机。没给就不带，老机型上 App 会说明缺这一步
+    # Older devices (A16 and earlier chips, whose GPU does not support BC textures): D2RM_ASTC_PACK=<texture pack directory> (the output of astc_pack.py + casc_overlay.py pack + astc_pack.py finalize, containing pack_index.tsv and pack.json)
+    # When given, an additional ASTC overlay is produced and put into the install package (its index points the twenty-odd thousand textures at the data archive of the texture pack, whose content does not go into the install package; the App checks the pack on the phone against the pack.json in it).
+    # It is generated on the spot from the game resources and is not carried in the shell; the texture pack itself is copied to the phone by the user. When not given it is left out, and on older devices the App explains that this step is missing
+    astc = os.environ.get('D2RM_ASTC_PACK', '').strip(); astc = os.path.abspath(astc) if astc else ''
+    if astc and not all(os.path.isfile(os.path.join(astc, f)) for f in ('pack_index.tsv', 'pack.json')): die('D2RM_ASTC_PACK 指的目录里没有 pack_index.tsv / pack.json：%s（要的是贴图包三步做完后的那个 pack 目录）' % astc)
+    run([PY, os.path.join(IOS, 'tools', 'gen_romfs_overlay.py'), romfs, os.path.join(stage, 'romfs_overlay')], cwd=IOS, env={'DM_ROMFS_SRC': romfs, 'DM_ASTC_PACK': astc}, log=os.path.join(stage, 'gen_overlay.log'), what='生成覆盖层')
+    extra = []
+    if astc:
+        if not os.path.isfile(os.path.join(stage, 'romfs_overlay_astc', 'pack.json')): die('老机型的覆盖层没生成出来（见 %s）' % os.path.join(stage, 'gen_overlay.log'))
+        extra = ['romfs_overlay_astc/', 'romfs_overlay_astc_variants/']; pj = json.load(open(os.path.join(astc, 'pack.json'), encoding='utf-8'))
+        say('带老机型支持：贴图包 %s（%.2f GB，SHA-256 %s…）；装机后把它里面给手机用的那个文件夹（收尾那一步生成的）拷进手机' % (astc, pj['size'] / 1e9, pj['sha256'][:12]))
+    else:
+        for d in ('romfs_overlay_astc', 'romfs_overlay_astc_variants'): shutil.rmtree(os.path.join(stage, d), ignore_errors=True)
 
     # 四、着色器：取包 → 翻译工具 → 翻译并编成 Metal 库（与 setup.sh 相同）
     # 4. Shaders: extract the shader packs from the game resources → translation tool → translate and compile into Metal libraries (same as setup.sh)
@@ -228,7 +244,7 @@ def main():
     tmp = out_ipa + '.part'; added = 0
     with zipfile.ZipFile(tmp, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as o:
         for i in z.infolist(): o.writestr(i, z.read(i.filename))
-        for m in manifest:
+        for m in manifest + extra:
             src = os.path.join(stage, m)
             files = [os.path.join(d, f) for d, _, fs in sorted(os.walk(src)) for f in sorted(fs)] if m.endswith('/') else [src]
             for f in files:

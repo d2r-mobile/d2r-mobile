@@ -62,7 +62,7 @@ python3 dm/tools/astc_pack.py finalize "$D/pack"                   # 3 收尾：
 - **贴图包和 App 是配对的**。App 按 `pack.json` 里的 SHA-256 核对手机上的贴图包；重新生成过贴图包，就要用新的 `$D/pack` 重新构建 App。同一份游戏文件、同一版 astcenc、同一档（`--preset thorough`）生成的包是逐字节相同的，所以平时不需要重做。
 - 文件夹没拷完、拷错了位置、或者和 App 不配套，App 会在弹框里直接说是哪一种。
 - 游戏资源文件夹照常要放（见 [GAME_FILES.zh-CN.md](GAME_FILES.zh-CN.md)）；贴图包是另外加的一个文件夹，不是替换。
-- 这条路目前要用 Mac 和 Xcode 构建。「不用 Xcode」的壳这一版还不带老机型的配套部分。
+- 上面写的是「有 Mac」那条路。不用 Xcode、走壳加做包工具的，做贴图包的三条命令相同，带进安装包的方式不同，见 [NO_XCODE.zh-CN.md](NO_XCODE.zh-CN.md) 里「老机型」一节；Windows 上 astcenc 用上游发布页的现成可执行文件即可。
 
 ## 它做了什么（想了解的话）
 
