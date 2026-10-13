@@ -18,7 +18,8 @@ typedef struct { float x, y, r; uint64_t button; } dm_tc_target;
 typedef struct {
     float width, height;
     dm_tc_target target[DM_TC_COUNT];
-    float joy_x, joy_y, joy_radius;
+    float joy_x, joy_y, joy_radius;   /* 没按时底盘的显示位置（静止位）与底盘半径 | where the base is shown while not pressed (rest position), and the base radius */
+    float joy_zone_r, joy_zone_t, joy_min_x, joy_max_y;   /* 起摇杆区的右界与上界（左与下到屏幕边）；按下后底盘圆心的夹回界：x 不小于、y 不大于 | right and upper bounds of the stick-start zone (left and bottom reach the screen edges); clamp bounds for the base centre once pressed: x not less than, y not greater than */
     dm_tc_target swap;   /* 技能组切换键：本地开关，不直接发按键 | Skill set switch key: a local toggle; does not send a key directly */
     dm_tc_target diff;   /* 底部 UI v4 第 0 格难度：点开 / 收起 1–8 选择条，不发按键 | Bottom UI v4 cell 0 difficulty: tap to open / collapse the 1–8 selector bar; sends no key */
     dm_tc_target pick[8];   /* 选择条 8 格（第 i 格 = 人数档 i+1），在七格上方 | The selector bar's 8 cells (cell i = player-count level i+1), above the seven cells */
@@ -122,7 +123,7 @@ typedef struct {
     int belt_rows, belt_open, belt_request;
     /* 腰带点一下 = 自己喝，松手那一刻就喝，点几下喝几瓶；不判双击、腰带上不做喂雇佣兵的手势 | one tap on the belt = the player drinks, at the moment of release, several taps drink several; no double-tap detection, no mercenary feeding gesture on the belt */
     int belt_gap_cell; double belt_gap_at;   /* 按着第二组技能时要喝药：先把 ZL 和技能键松开、空出 DM_TC_ZL_LEAD_S，到 belt_gap_at 才按腰带键（belt_gap_cell = 等着的那一格，0 = 没有） | to drink a potion while a skill of the second skill set is held: first release ZL and the skill key and leave a gap of DM_TC_ZL_LEAD_S, and only at belt_gap_at press the belt key (belt_gap_cell = the cell that is waiting, 0 = none) */
-    double joy_lost_s; float joy_lost_x, joy_lost_y;   /* 摇杆手指被系统取消的时刻与当时的位置（0 = 没有）：紧接着在附近重新落下的手指接着当摇杆 | time and position at which the joystick finger was cancelled by the system (0 = none): a finger landing again nearby right afterwards continues as the joystick */
+    double joy_lost_s; float joy_lost_x, joy_lost_y, joy_lost_ox, joy_lost_oy;   /* 摇杆手指被系统取消的时刻与当时的位置（0 = 没有）：紧接着在附近重新落下的手指接着当摇杆 | time and position at which the joystick finger was cancelled by the system (0 = none): a finger landing again nearby right afterwards continues as the joystick */
     int joy_block;   /* 讲话文字框单独开着（前端不进面板态）：这时落在底座上的手指不起摇杆，照旧只当一次点击（关讲话框）。前端按面板栈写 | speech text box open on its own (the front end does not enter panel state): a finger on the base starts no stick and is still just one click (closes the speech box). Written by the front end from the panel stack */
     double belt_pulse_s;   /* 最近一次「给玩家喝」的腰带脉冲还在发的时刻：其间按着的第二组技能连同 ZL 一起让开，收回后 ZL 重新领先 DM_TC_ZL_LEAD_S 技能键才回来 | Time until which the most recent "player drinks" belt pulse is still being sent: during it the held second-set skill gives way together with ZL, and after the release ZL again leads by DM_TC_ZL_LEAD_S before the skill key comes back */
     int belt_q;   /* 此刻有别的脉冲在发 / 别的补发在等：排着，空了再落地（不互相盖掉）。值 = 格 | another pulse is being sent / another resend is pending: queue and fire when free (they never overwrite each other). Value = cell */
@@ -193,7 +194,7 @@ int dm_tc_belt_outside(const dm_tc_state *state, float x, float y);
 #define DM_TC_BELT_SWIPE_PT 24      /* 腰带格上松手时纵向位移过这么多点 = 展开 / 收起；不到 = 点按（喝） | On release over a belt cell, vertical displacement beyond this many points = expand / collapse; less = tap (drink) */
 #define DM_TC_KEY_MIN_S 0.035       /* 技能键至少按住这么久（约 2 帧）；不够的松手时补成脉冲，保证游戏读到 | A skill button is held at least this long (about 2 frames); a shorter one is made up as a pulse on release to guarantee the game reads it */
 #define DM_TC_JOY_RESUME_S 0.35   /* 摇杆那根手指被系统取消后，这么久之内在原处附近重新落下的手指接着当摇杆（不要求落在底座附近） | after the joystick finger is cancelled by the system, a finger landing again near the same spot within this long continues as the joystick (landing near the base is not required) */
-#define DM_TC_JOY_GRAB_K 1.5f   /* 手指落在离摇杆底座中心这么多倍半径之内才起摇杆（底座固定，不跟落指点） | the joystick starts only when a finger lands within this many radii of the joystick base center (the base is fixed and does not follow the touch-down point) */
+#define DM_TC_JOY_GRAB_K 1.5f   /* 摇杆那根手指被系统取消后重新落下：离原处这么多倍底盘半径之内才接着当摇杆 | after the stick finger is cancelled by the system and touches down again: it continues as the stick only within this many base radii of the original place */
 #define DM_TC_ZL_LEAD_S 0.17   /* 修饰键领先主键的时间（约 10 帧；同一帧按下游戏只认主键） | Time the modifier key leads the main key (about 10 frames; pressed in the same frame, the game only recognizes the main key) */
 #define DM_TC_DOUBLE_TAP_S 0.40   /* 两次单击间隔上限 | Upper limit of the interval between two single taps */
 #define DM_TC_HOLD_USE_S 0.60     /* 「按住」动作的按住时长：Mac 宿主实测 0.25 s 只捡起、0.45 s 打开魔盒 | Hold duration of the "hold" action: measured on the Mac host, 0.25 s only picks up, 0.45 s opens the cube */

@@ -5,7 +5,7 @@
 #include <stdlib.h>
 static int checks;
 #define CHECK(x) do { ++checks; if (!(x)) { fprintf(stderr,"FAIL line=%d %s\n",__LINE__,#x); exit(1); } } while (0)
-static int push(dm_tc_state *s, float w, float h, float d) {   /* 在底座圆心起手（底座固定），向右推 d 点，返回横轴输出 | start on the base center (the base is fixed), push d points to the right, return the horizontal axis output */
+static int push(dm_tc_state *s, float w, float h, float d) {   /* 在静止位起手（在起摇杆区里，圆心 = 落点），向右推 d 点，返回横轴输出 | start at the rest position (inside the stick-start zone, centre = touch point), push d points to the right, return the horizontal output */
     dm_tc_init(s, w, h); float cx = s->layout.joy_x, cy = s->layout.joy_y; dm_tc_begin(s, 0, cx, cy); CHECK(s->joy_slot == 0);
     dm_tc_move(s, 0, cx + d, cy); return s->lx;
 }
@@ -24,7 +24,7 @@ int main(void) {
     dm_tc_init(&s, 1366, 768); CHECK(s.layout.joy_radius > 104 && s.layout.joy_radius < 105);   /* 画出来的底盘仍按视觉倍数：60 × 1.745 | The drawn base still follows the visual multiplier: 60 × 1.745 */
 
     /* 底边那一条：手机（没设）照旧能在最底起摇杆 | Bottom-edge strip: a phone (not set) can still start the stick at the very bottom as before */
-    dm_tc_init(&s, 956, 440); dm_tc_begin(&s, 0, 90, 425); CHECK(s.joy_slot == 0); dm_tc_cancel_all(&s);   /* 圆心 90,340、可起手半径 90：(90,425) 在内 | center 90,340, grab radius 90: (90,425) is inside */
+    dm_tc_init(&s, 956, 440); dm_tc_begin(&s, 0, 90, 425); CHECK(s.joy_slot == 0); dm_tc_cancel_all(&s);   /* 起摇杆区一直到屏幕底：(90,425) 在内 | the stick-start zone reaches the bottom of the screen: (90,425) is inside */
     /* iPad：底部 20 点里起手不当摇杆、松手不当点地 | iPad: a touch starting in the bottom 20 points is not treated as the stick, and its release is not treated as a ground tap */
     dm_tc_set_edge_bottom(20); dm_tc_init(&s, 1366, 768);
     dm_tc_begin(&s, 0, 100, 760); CHECK(s.joy_slot == DM_TC_NONE && s.finger[0].target == DM_TC_EDGE);

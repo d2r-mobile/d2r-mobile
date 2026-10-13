@@ -8,7 +8,7 @@ The iPhone 14 family, iPhone 15 / 15 Plus and earlier models can play; they just
 
 Almost all of the game's textures use BC compression. Apple GPUs support that format only from the A17 Pro (iPhone 15 Pro) on; earlier chips cannot read it. The answer is to convert those textures offline, on a computer, into ASTC, which these devices do support — the picture is the same picture. Textures are game content, so we cannot provide this pack; it can only be generated on your own computer from your own game files.
 
-**Which devices need it**: the App decides this itself at launch, so there is no table to consult. A device that needs it shows "Supplementary Pack Required"; if it shows "Device Not Supported" instead, the App was built without the part that goes with the pack — rebuild it as in step 4 below.
+**Which devices need it**: the App decides this itself at launch, so there is no table to consult. A device that needs it shows "Supplementary Pack Required"; if it shows "One More Step for This Device" (older versions say "Device Not Supported") instead, the App was built without the part that goes with the pack — rebuild it as in step 4 below.
 
 ## What you need
 
@@ -51,7 +51,7 @@ Afterwards `$D/pack` contains:
    cd dm/ios && DM_ASTC_PACK="$D/pack" ./run.sh build
    ```
 
-   An App built without this variable only says "Device Not Supported" on older devices.
+   An App built without this variable only says "One More Step for This Device" (older versions say "Device Not Supported") on older devices.
 
 5. **Install** as usual (`./run.sh install` or Xcode).
 
@@ -72,4 +72,4 @@ Afterwards `$D/pack` contains:
 
 ## In practice
 
-The lowest device we measured is the iPhone 14 Pro Max (A16, 6 GB of RAM), running at 60 fps. During internal testing this route was completed by users on A16 devices.
+The lowest device we measured is the iPhone 14 Pro Max (A16, 6 GB of RAM), running at 60 fps. During internal testing this route was completed by users on A16 devices; the oldest device our test players actually play on is the iPhone 13 Pro Max (A15, 6 GB of RAM), in the 30 fps mode.

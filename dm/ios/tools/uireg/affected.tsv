@@ -14,7 +14,8 @@ dm/ios/tools/dm_i18n.py	*
 dm/host/dm_i18n*	*
 dm/ios/tools/annot_strings.py	k j rw1 rw2 kbb vt1
 dm/host/dm_textbox*	k j rw1 rw2 kbb vt1
-dm/host/dm_runeword*	k j rw1 rw2 rwp rwd d
+dm/host/dm_rwlv*	k j rw1 rw2 rwp rwd d rwlv
+dm/host/dm_runeword*	k j rw1 rw2 rwp rwd d rwlv
 dm/host/dm_vault*	vf1 vf2 vt1 pg1 pg2 c s sb t u d cb
 dm/host/dm_pages*	pg1 pg2 vt1 c s sb
 dm/ios/tools/wide_stash.py	vf1 vf2 vt1 pg1 pg2 c s sb t u d cb

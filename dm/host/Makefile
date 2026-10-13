@@ -7,7 +7,7 @@ MACOS_MIN ?= 26.0
 CFLAGS=-O1 -g -Wall -Wno-unused-function -mmacosx-version-min=$(MACOS_MIN)
 # 服务层接管 hle_*.c 按通配纳入：新增文件不改这一行（免合并冲突）
 # Service-layer takeover hle_*.c files are included by wildcard: adding a file does not touch this line (avoids merge conflicts)
-SRC=main.c loader.c hle.c crash.c diag.c thread.c memstat.m dm_cursor.c dm_cursor_item.c dm_world.c dm_textinput.c dm_update.c dm_actions.c dm_namegen.c dm_cloudsync.c dm_custom.c dm_elysium.c dm_bossrush.c dm_pages.c dm_vault.c dm_vault_ui.c dm_kills.c dm_textbox.c dm_turnsmooth.c dm_textbox_core.c dm_potpick.c dm_lootfilter.c dm_autobuff.c dm_beltauto.c dm_padmode.c dm_pouch.c dm_drophaptic.c dm_freetp.c dm_townwp.c dm_shoprefresh.c dm_runeword.c dm_uiscreen.c dm_dropfilter.c dm_hud.c dm_rift.c dm_rift_ui.c dm_bright.c touch_mac.c romfs_validate.c ../ios/Sources/dm_touch_controls.c $(sort $(wildcard hle_*.c)) front_mac.m app_mac.m ../ios/Sources/dm_gamepad.m entry.S dm_i18n.c
+SRC=main.c loader.c hle.c crash.c diag.c thread.c memstat.m dm_cursor.c dm_cursor_item.c dm_world.c dm_textinput.c dm_update.c dm_actions.c dm_namegen.c dm_cloudsync.c dm_custom.c dm_elysium.c dm_bossrush.c dm_pages.c dm_vault.c dm_vault_ui.c dm_kills.c dm_textbox.c dm_turnsmooth.c dm_textbox_core.c dm_potpick.c dm_lootfilter.c dm_autobuff.c dm_beltauto.c dm_padmode.c dm_pouch.c dm_drophaptic.c dm_freetp.c dm_townwp.c dm_shoprefresh.c dm_runeword.c dm_rwlv_core.c dm_uiscreen.c dm_dropfilter.c dm_hud.c dm_rift.c dm_rift_ui.c dm_bright.c touch_mac.c romfs_validate.c ../ios/Sources/dm_touch_controls.c $(sort $(wildcard hle_*.c)) front_mac.m app_mac.m ../ios/Sources/dm_gamepad.m ../ios/Sources/cloud_ios.m entry.S dm_i18n.c
 # NVN 空设备 + nn::vi（dm/gfx/）
 # 按通配纳入 dm/gfx 与 dm/gfx/nvn 下的源（tests/ metal/ 不进宿主）：新增文件不改这一行
 # NVN null device + nn::vi (dm/gfx/)
@@ -20,6 +20,12 @@ LIBDEFLATE=../third_party/libdeflate/lib/deflate_decompress.c ../third_party/lib
 .DEFAULT_GOAL := dmhost   # 下面先写了表头生成规则，缺省目标要明说（否则 make 只生成表头、不编宿主） | The header generation rules are written first below, so the default goal must be stated explicitly (otherwise make only generates the headers and does not build the host)
 print-macos-min:
 	@echo $(MACOS_MIN)
+# 老接口版（图形后端不用 Metal 4，见 gfx/nvn/nvn_mtl.m 的 DM_NVN_M3）：最低系统单独一个数；包名另起，存档与日志目录跟着包名走、不与正式包共用
+# Older-API build (graphics backend without Metal 4, see DM_NVN_M3 in gfx/nvn/nvn_mtl.m): its minimum system is a separate number; the package gets its own name, and the save and log directory follows the package name instead of being shared with the regular package
+MACOS_MIN_M3 ?= 15.0
+CFLAGS_M3=$(subst -mmacosx-version-min=$(MACOS_MIN),-mmacosx-version-min=$(MACOS_MIN_M3),$(CFLAGS)) -DDM_NVN_M3=1 -DAPP_NAME='"D2R Mobile M3"'
+print-macos-min-m3:
+	@echo $(MACOS_MIN_M3)
 # 由原版表生成的头文件：不进仓库，构建时从玩家自己的游戏文件（Switch 版 3.3.94012 的 Update/RomFS）生成；路径用环境变量 DM_ROMFS_SRC 指定
 # Headers generated from the original game's tables: not checked into the repository, generated at build time from the player's own game files (Update/RomFS of Switch version 3.3.94012); the path is given by the environment variable DM_ROMFS_SRC
 ROMFS?=$(or $(DM_ROMFS_SRC),$(DM_ROOT)/data/switch/3.3.94012/Update/RomFS)
@@ -36,3 +42,7 @@ dm_bright_levels.inc: ../tools/gen_bright_levels.py ../ios/tools/touch_layout.py
 	python3 ../tools/gen_bright_levels.py "$(ROMFS)" > $@.tmp && mv $@.tmp $@
 dmhost: $(SRC) $(GFX) $(LIBDEFLATE) dm.h hle.h dm_input.h front.h touch_mac.h dm_cursor.h dm_i18n_tab.h ../ios/Sources/dm_touch_controls.[ch] $(GFX_H) $(GENH)
 	clang $(CFLAGS) -I. -I../gfx/nvn/include -fobjc-arc -o $@ $(SRC) $(GFX) $(LIBDEFLATE) -framework Cocoa -framework QuartzCore -framework Metal -framework AudioToolbox -framework ImageIO -framework UniformTypeIdentifiers -framework GameController
+# 老接口版宿主（图形后端不用 Metal 4，目标 macOS 15.0）：同一棵树、同一份源码，只多一个编译开关；不在缺省目标里，要用时 make dmhost_m3
+# Older-API host (graphics backend without Metal 4, target macOS 15.0): the same tree and the same source, with just one more compile switch; not in the default targets, run make dmhost_m3 when needed
+dmhost_m3: $(SRC) $(GFX) $(LIBDEFLATE) dm.h hle.h dm_input.h front.h touch_mac.h dm_cursor.h dm_i18n_tab.h ../ios/Sources/dm_touch_controls.[ch] $(GFX_H) $(GENH)
+	clang $(CFLAGS_M3) -I. -I../gfx/nvn/include -fobjc-arc -o $@ $(SRC) $(GFX) $(LIBDEFLATE) -framework Cocoa -framework QuartzCore -framework Metal -framework AudioToolbox -framework ImageIO -framework UniformTypeIdentifiers -framework GameController

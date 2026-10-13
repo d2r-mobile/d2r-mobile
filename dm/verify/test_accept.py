@@ -45,13 +45,14 @@ class AcceptTests(unittest.TestCase):
                    'echo txn >> "$TRACE"; echo "结论：存档事务回归 4/4 绿"; exit "${TXN_RC:-0}"\n')
         for tree in ['host', 'gfx']:
             p = self.root / f'dm/{tree}/tests'; p.mkdir(parents=True)
-            (p / 'Makefile').write_text('run:\n\t@echo OK\n')
+            (p / 'Makefile').write_text('run:\n\t@echo OK\nrun-m3:\n\t@echo OK\n')   # run-m3：图形层单测的老接口版那一遍（accept ④ 两遍都跑） | run-m3: the older-API pass of the graphics-layer unit tests (accept step 4 runs both passes)
         p = self.root / 'dm/ios/tests'; p.mkdir(parents=True)   # iOS 触摸层单测（accept ④ 第六套）的替身 | Stand-in for the iOS touch layer unit tests (accept ④, sixth suite)
         (p / 'Makefile').write_text('test:\n\t@echo OK\n')
         (self.root / 'dm/host/Makefile').write_text(
             'all:\n\t@test "$${HOST_BUILD_RC:-0}" = 0\n'
             '\t@echo built >> "$$HOME/build-count"\n'
-            '\t@touch "$$HOME/host-built"\n')
+            '\t@touch "$$HOME/host-built"\n'
+            'dmhost_m3:\n\t@true\n')   # 老接口版宿主（accept ⑪ 用） | older-API host (used by accept step 11)
         for p in ['camp_e', 'stash', 'wild', 'charselect', 'skilltree', 'npc']:
             (self.verify / f'shotgate_pages/{p}.json').write_text('{}')
 
@@ -64,10 +65,27 @@ class AcceptTests(unittest.TestCase):
         return subprocess.run(['bash', str(self.verify / 'accept.sh'), *args],
                               env=self.env, capture_output=True, text=True, errors='replace', timeout=10)
 
+    def test_m3_shotgate_runs_only_when_graphics_touched(self):
+        # ⑪ 老接口版画面闸门按改动范围触发：碰图形层 / 宿主图形前端文件就跑，碰不到就跳过并写明（期望值按规则手写）
+        # The older-API picture gate (step 11) is triggered by the scope of the change: it runs when graphics-layer / host graphics and front-end files are touched, and is skipped with a note otherwise (expected values written by hand from the rule)
+        for ch, want in (('dm/gfx/nvn/nvn_mtl.m', '老接口版画面闸门 跑'), ('dm/host/front_mac.m dm/host/dm_rift.c', '老接口版画面闸门 跑'),
+                         ('dm/host/Makefile', '老接口版画面闸门 跑'), ('dm/host/dm_rift.c dm/host/hle_fs.c', '老接口版画面闸门 本次改动不涉及，跳过'),
+                         ('dm/ios/Sources/main.m docs/x.md', '老接口版画面闸门 本次改动不涉及，跳过')):
+            r = self.run_accept('/fixture/out', ACCEPT_SCOPE_CH=ch, ACCEPT_SCOPE_ONLY='1')
+            self.assertIn(want, r.stdout, ch)
+
+    def test_m3_shotgate_row_present(self):
+        # 夹具不是 git 仓库、读不出改动清单 ⇒ 照跑：表里有 ⑪ 这一行，画面闸门脚本被调了两次（缺省宿主一次、老接口版宿主一次）
+        # The fixture is not a git repository and no list of changes can be read => it runs anyway: the table has the step 11 row, and the picture-gate script is called twice (once with the default host, once with the older-API host)
+        r = self.run_accept('/fixture/out')
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn('⑪ 老接口版画面闸门', r.stdout)
+        self.assertEqual(self.trace.read_text().count('shot:'), 2, self.trace.read_text())
+
     def test_fast_has_only_five_pages_and_no_transaction(self):
         r = self.run_accept('--fast', '/fixture/out')
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertEqual(self.trace.read_text().strip(), 'shot:/fixture/out camp_e stash wild charselect skilltree')
+        self.assertEqual(self.trace.read_text().strip(), '\n'.join(['shot:/fixture/out camp_e stash wild charselect skilltree'] * 2))   # 两次：③ 缺省宿主、⑪ 老接口版宿主（夹具读不出改动清单 ⇒ 照跑），页面相同 | twice: step 3 with the default host, step 11 with the older-API host (the fixture cannot read a list of changes => it runs anyway), same pages
 
     def test_full_runs_transaction_and_propagates_its_failure(self):
         r = self.run_accept('--full', '/fixture/out', TXN_RC='1')

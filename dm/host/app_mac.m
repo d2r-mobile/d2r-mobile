@@ -14,7 +14,9 @@
 #include "dm_i18n.h"
 #define T(k) (@(dm_ui(k)))
 
-#define APP_NAME "D2R Mobile"
+#ifndef APP_NAME
+#define APP_NAME "D2R Mobile"   // 存档与日志目录名；老接口版构建时另给（host/Makefile CFLAGS_M3），两个包不共用存档 | name of the save and log directory; given separately when building the older-API version (host/Makefile CFLAGS_M3), so the two packages do not share saves
+#endif
 static NSString *const kRomfsKey = @"RomfsDir";
 
 // 这个文件夹是不是游戏资源：认 data/build_manifest.psv。选到上一两层（解包目录的根、Update）也认，往里找一层
@@ -79,12 +81,21 @@ int dm_app_bootstrap(int *argc, char ***argv) {
         [fm removeItemAtPath:[logd stringByAppendingPathComponent:@"host.prev.log"] error:nil];
         [fm moveItemAtPath:lf toPath:[logd stringByAppendingPathComponent:@"host.prev.log"] error:nil];
         if (!isatty(2)) { freopen(lf.fileSystemRepresentation, "w", stderr); setvbuf(stderr, NULL, _IOLBF, 0); }
+        // 不要系统的「窗口状态恢复」：上次被强退 / 崩过之后，系统会在启动时弹「上次意外退出，要重新打开窗口吗」的模态框——游戏没有可恢复的窗口，
+        // 框却挡着主窗口收不到鼠标键盘（游戏在后面照跑）。等同于带启动参数 -ApplePersistenceIgnoreState YES；要在建 NSApplication 之前设
+        // No system "window state restoration": after a forced quit / crash the system shows a modal "the app quit unexpectedly, reopen windows?" at launch - the game has no window to restore,
+        // yet the dialog covers the main window, which then receives no mouse or keyboard (the game keeps running behind it). Equivalent to the launch argument -ApplePersistenceIgnoreState YES; must be set before NSApplication is created
+        [NSUserDefaults.standardUserDefaults setVolatileDomain:@{ @"ApplePersistenceIgnoreState": @YES } forName:NSArgumentDomain];
         [NSApplication sharedApplication]; [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular]; [NSApp activateIgnoringOtherApps:YES];
         NSString *prod = res_item(@"product");
         if (!prod || ![fm fileExistsAtPath:[prod stringByAppendingPathComponent:@"main.patched.bin"]]) {
             alert(T("dmAppBrokenTitle"), T("dmAppBroken")); exit(1);
         }
         NSUserDefaults *ud = NSUserDefaults.standardUserDefaults;
+        // 包标识换过（内测正式包为了 iCloud 改用与 iOS 包同一个标识）：偏好按包标识分域，选过的资源文件夹、看过键位对照这两项从旧域（公开口径的标识）接过来一次，免得再选一遍
+        // The bundle identifier has changed (the internal build switched to the same identifier as the iOS package for iCloud): preferences are scoped by bundle identifier, so the two items - the chosen resource folder and having seen the key reference - are carried over once from the old domain (the identifier of public builds), to avoid choosing again
+        if (![ud stringForKey:kRomfsKey] && ![NSBundle.mainBundle.bundleIdentifier isEqualToString:@"org.d2rmobile.mac"]) { NSUserDefaults *old = [[NSUserDefaults alloc] initWithSuiteName:@"org.d2rmobile.mac"]; NSString *r = [old stringForKey:kRomfsKey];
+            if (r) { [ud setObject:r forKey:kRomfsKey]; if ([old boolForKey:@"KeysShown"]) [ud setBool:YES forKey:@"KeysShown"]; LOG("App：从旧包标识的偏好里接过资源文件夹 %s", r.UTF8String); } }
         NSString *saved = [ud stringForKey:kRomfsKey], *why = nil, *rom = saved ? romfs_root(saved, &why) : nil;
         if (getenv("DM_APP_ROMFS")) {   // 测试（没人点对话框时用）：直接给资源文件夹；不对就把同一句报错写进日志并退出，不弹框、不记进偏好 | Test (for when nobody is there to click the dialog): give the resource folder directly; if it is wrong, write the same error sentence to the log and exit, with no dialog and nothing saved to preferences
             rom = romfs_root(@(getenv("DM_APP_ROMFS")), &why);
@@ -95,6 +106,8 @@ int dm_app_bootstrap(int *argc, char ***argv) {
             [ud setObject:rom forKey:kRomfsKey];
         }
         { void dm_custom_init(const char *dir); dm_custom_init(sup.fileSystemRepresentation); }   // 自定义设置文件的目录现在就给（同 iOS 壳）：不给的话要等存档挂上才知道在哪，而语言开关正是在挂存档那一刻读它改游戏语言的——晚了开关就不生效 | the directory of the custom settings file is given right now (same as the iOS shell): otherwise it is only known once the save is mounted, and the language switch is read to change the game language at exactly that moment - too late and the switch has no effect
+        if (!getenv("DM_TOUCH_DEFAULTS")) setenv("DM_TOUCH_DEFAULTS", "1", 1);   // 产品缺省同 iOS 包（hle_fs.c settings_seed：玩家没碰过的设置键补上——小地图放右上角、进局自动打开、显示物品用开关式等；已有的键不动）。命令行宿主缺省不做，那边要对 Switch 真值比图 | product defaults same as the iOS package (hle_fs.c settings_seed: fills in settings keys the player has never touched - minimap in the top-right corner, opened automatically on entering a game, show-items as a toggle, and so on; existing keys are left alone). The command-line host does not do this by default, since it has to be compared against Switch ground-truth images
+        if (!getenv("DM_APP_SUPPORT")) setenv("DM_CLOUD_REAL", "1", 1);   // iCloud 同步（ios/Sources/cloud_ios.m，两端共用）只认玩家真实的存档目录；测试用的支持目录一律不同步 | iCloud sync (ios/Sources/cloud_ios.m, shared by both platforms) only recognises the player's real save directory; a support directory used for testing is never synced
         setenv("DM_WINDOW", "1", 1); setenv("DM_APP", "1", 1);
         setenv("DM_SAVE", save.fileSystemRepresentation, 1); setenv("DM_TEMP", temp.fileSystemRepresentation, 1);
         setenv("DM_ROMFS", rom.fileSystemRepresentation, 1); setenv("DM_ROOT", sup.fileSystemRepresentation, 1);

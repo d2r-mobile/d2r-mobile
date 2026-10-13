@@ -24,6 +24,7 @@
 //   Get localized string main+0x7f5630(&{key, length}) (the game picks between the normal / legacy translation sets by setting). Client send packet main+0x2ceab0(packet, length).
 //   Socket packets follow the client packets of a real socketing run (fm_ipadfull_k): 0x19 [item id][u32 x][u32 y][u32 page] (17 bytes, pick up to the cursor) → 0x28 [rune id][base id][u32 equipment slot 0][u32 page][u16 x][u16 y] (21 bytes, socket it).
 #include "hle.h"
+#include "dm_rwlv_core.h"
 #include "dm_i18n.h"
 #include "dm_actions.h"
 #include "dm_input.h"
@@ -146,7 +147,7 @@ static uint64_t first_item(uint64_t u) { uint64_t c = u ? *(uint64_t *)(u + 0x90
 static struct { uint32_t base; int n; cand_t c[NROW]; int open; } g_list;   // 打开着的清单 | The currently open list
 static int rune_lv(uint8_t *b, uint64_t t, int cls, int lvoff) { uint64_t ir = *(uint64_t *)(t + 0x15c0); uint32_t in = *(uint32_t *)(t + 0x15c8); return ir && cls >= 0 && (uint32_t)cls < in && lvoff >= 0 ? *(uint8_t *)(ir + (uint64_t)cls * 0x1c0 + lvoff) : 0; }
 static void rune_code(uint64_t t, int cls, char out[4]) { uint64_t ir = *(uint64_t *)(t + 0x15c0); uint32_t in = *(uint32_t *)(t + 0x15c8); memset(out, 0, 4); if (ir && cls >= 0 && (uint32_t)cls < in) memcpy(out, (const void *)(ir + (uint64_t)cls * 0x1c0 + 0x80), 3); }
-static int g_lvoff = -1;   // 物品表行里「需要等级」的偏移：首次用到时按已知三颗符文的值（塔尔 17 / 艾斯 15 / 沙伊 29，misc.txt levelreq）在行里找，找不到就不显示等级 | Offset of "required level" in the item table row: on first use, searched for in the row using the known values of three runes (Tal 17 / Eth 15 / Shael 29, misc.txt levelreq); if not found, the level is not shown
+static int g_lvoff = -1;   // 物品表行里「需求等级」（levelreq）的偏移：首次用到时按已知物品的原版值在行里找（dm_rwlv_core.c），找不到就不显示等级 | offset of "required level" (levelreq) in an item-table row: found on first use by the original values of known items (dm_rwlv_core.c); when not found no level is shown
 
 // 这件物品能当符文之语底材吗（品质、孔、物品表标志；位置另判）
 // Can this item serve as a runeword base item (quality, sockets, item table flag; location is checked separately)
@@ -163,10 +164,13 @@ static void count_have(uint8_t *b, uint64_t pl, int cls, have_t *h) {
             if (st) h->stack += st; else if (o) h->shared++; else if (pg == PG_INV) h->inv++; else if (pg == PG_CUBE) h->cube++; else h->stash++; }
         it = *(uint64_t *)(d + 0xb0); }
 }
-static int find_lvoff(uint64_t t) {
-    uint64_t ir = *(uint64_t *)(t + 0x15c0); if (!ir || *(uint32_t *)(t + 0x15c8) < 640) return -1;
-    for (int o = 0; o < 0x1c0; o++) if (*(uint8_t *)(ir + 631 * 0x1c0 + o) == 17 && *(uint8_t *)(ir + 629 * 0x1c0 + o) == 15 && *(uint8_t *)(ir + 637 * 0x1c0 + o) == 29) return o;
-    return -1;
+static int find_lvoff(uint64_t t) {   // 锚点与找法见 dm_rwlv_core.c；找不到（或不唯一）返回 -1，清单不显示等级 | anchors and the search are in dm_rwlv_core.c; returns -1 when not found (or not unique), and the list then shows no level
+    uint64_t ir = *(uint64_t *)(t + 0x15c0); uint32_t in = *(uint32_t *)(t + 0x15c8); int o = ir ? dm_rw_find_lvoff((const uint8_t *)ir, in, 0x1c0) : -1;
+    // 测试开关 DM_TEST_RW_LVDUMP=<文件>：把整张物品表逐行写成「物品码<TAB>读到的需求等级」，给 dm/ios/tools/rw_lvcheck.py 与原版 weapons / armor / misc 三张表全量核
+    // Test switch DM_TEST_RW_LVDUMP=<file>: write the whole item table line by line as "item code<TAB>required level read", for dm/ios/tools/rw_lvcheck.py to check in full against the original weapons / armor / misc tables
+    const char *e = getenv("DM_TEST_RW_LVDUMP"); FILE *f = e && o >= 0 ? fopen(e, "w") : NULL;
+    if (f) { for (uint32_t i = 0; i < in; i++) { const uint8_t *r = (const uint8_t *)(ir + (uint64_t)i * 0x1c0); char c[5] = {0}; memcpy(c, r + 0x80, 4); for (int k = 0; k < 4; k++) if (c[k] == ' ') c[k] = 0; fprintf(f, "%s\t%u\n", c, r[o]); } fclose(f); LOG("符文之语：DM_TEST_RW_LVDUMP 写了 %u 行 → %s", in, e); }
+    return o;
 }
 static int cand_cmp(const void *a, const void *b2) { const cand_t *x = a, *y = b2; if (x->ok != y->ok) return y->ok - x->ok; if (x->miss != y->miss) return x->miss - y->miss; return x->lv - y->lv; }
 // 列出这件底材能做的全部符文之语，并按此刻能取用的符文定 ok（能出按钮）
@@ -174,7 +178,7 @@ static int cand_cmp(const void *a, const void *b2) { const cand_t *x = a, *y = b
 static int base_where(uint8_t *b, uint64_t pl, uint64_t it, int *page, int *x, int *y, int *slot);
 static int build_list(uint8_t *b, uint64_t it) {
     uint64_t t = tables(b, it), pl = player(b); if (!t || !pl || !base_ok(b, it, t)) return 0;
-    if (g_lvoff < 0) { g_lvoff = find_lvoff(t); LOG("符文之语：物品表「需要等级」偏移 %#x", g_lvoff); }
+    if (g_lvoff == -1) { g_lvoff = find_lvoff(t); if (g_lvoff < 0) LOG("【红】符文之语：物品表里没找到「需求等级」那一列（锚点物品对不上），清单不显示等级"); else LOG("符文之语：物品表「需求等级」偏移 %#x", g_lvoff); if (g_lvoff < 0) g_lvoff = -2; }
     int ns = sockets(b, it), stash_open = *(uint8_t *)(b + 0x2d5ff60) != 0, bp = 0, bx = 0, by = 0, bsl = 0, bw = base_where(b, pl, it, &bp, &bx, &by, &bsl);
     int can_put = bw && !(bw == 1 && bp == PG_STASH && !stash_open);   // 底材在能镶的位置（储藏箱里的要箱子开着）；共享仓库里的照列、不出按钮 | Base item is in a socketable location (one in the stash needs the stash open); one in the shared stash is still listed, without a button
     uint64_t rr = *(uint64_t *)(t + 0x1880), rn = *(uint64_t *)(t + 0x1888); g_list.n = 0;
@@ -186,9 +190,11 @@ static int build_list(uint8_t *b, uint64_t it) {
         int good = 0; for (int k = 0; k < 6 && !good && !bad; k++) { int ty = *(const int16_t *)(e + 0x4a + 2 * k); if (ty && is_type(b, it, ty)) good = 1; }
         if (bad || !good) continue;
         cand_t *c = &g_list.c[g_list.n++]; memset(c, 0, sizeof *c); c->rec = (int)r; c->nr = nr; memcpy(c->cls, cls, sizeof cls); c->ok = can_put; int runes_ok = 1;
-        c->lv = rune_lv(b, t, *(int32_t *)(it + 4), g_lvoff);   // 需要等级 = 底材与各符文的最大值（原版做成以后的说明同此；物品单位 +4 = 物品类号） | Required level = max of the base item and each rune (same as the original game's description once formed; item unit +4 = item class id)
+        int base_req = rune_lv(b, t, *(int32_t *)(it + 4), g_lvoff), rreq[6];   // 需要等级 = 底材与各符文需求等级的最大值（原版做成以后的说明同此；物品单位 +4 = 物品类号） | required level = the maximum of the required levels of the base item and each rune (the same as the original's description once made; item unit +4 = item class number)
         char key[64]; memcpy(key, e, 63); key[63] = 0; loc_tb(b, key, c->name, sizeof c->name);
-        for (int k = 0; k < nr; k++) { int lv = rune_lv(b, t, cls[k], g_lvoff); if (lv > c->lv) c->lv = lv;
+        for (int k = 0; k < nr; k++) rreq[k] = rune_lv(b, t, cls[k], g_lvoff);
+        c->lv = dm_rw_need_level(base_req, rreq, nr);
+        for (int k = 0; k < nr; k++) {
             int need = 0; for (int j = 0; j < nr; j++) need += cls[j] == cls[k]; have_t h; count_have(b, pl, cls[k], &h);
             int usable = h.inv + (stash_open ? h.stash + h.shared + h.stack : 0), total = h.inv + h.stash + h.shared + h.stack + h.cube;
             if (usable < need) { c->ok = 0; runes_ok = 0; }
@@ -552,7 +558,7 @@ int dm_runeword_long_press(const dm_cursor_item_info *ci) {   // 长按物品分
     uint64_t it = unit_item(b, ci->id); if (!it || *(uint32_t *)(it + 0xc) > 1) return 0;
     if (!build_list(b, it)) return 0;
     g_list.base = ci->id; g_list.open = 1; ui_show(b, 1); ui_fill(b, it); ui_layout(); g_check_at = 6;
-    LOG("符文之语：长按 %s（id %u）→ 清单 %d 行（首行「%s」%s）", ci->code, ci->id, g_list.n, g_list.c[0].name, g_list.c[0].ok ? "可做" : "不可做");
+    LOG("符文之语：长按 %s（id %u）→ 清单 %d 行（首行「%s」需要等级 %d %s）", ci->code, ci->id, g_list.n, g_list.c[0].name, g_list.c[0].lv, g_list.c[0].ok ? "可做" : "不可做");
     if (getenv("DM_TEST_RW_DESC") && !strcmp(getenv("DM_TEST_RW_DESC"), "all")) {   // 测试开关 =all：表里每个 complete 的符文之语都生成一遍原版说明，记行数（定详情字号用） | Test switch =all: generate the original game's description once for every complete runeword in the table and log the line counts (used to pick the detail font size)
         uint8_t ver = *(uint8_t *)(b + 0x2127c48); uint64_t t = ver >= 1 && ver <= 3 ? *(uint64_t *)(b + 0x2d64a18 + ver * 16) : 0, rr = t ? *(uint64_t *)(t + 0x1880) : 0; uint32_t rn = t ? *(uint32_t *)(t + 0x1888) : 0;
         int mx = 0, mxr = -1, cnt = 0, fail = 0; static char d[4096];

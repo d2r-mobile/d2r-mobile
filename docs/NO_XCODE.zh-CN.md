@@ -15,7 +15,7 @@ English: [NO_XCODE.md](NO_XCODE.md)
 
 ## 壳里有什么、没有什么
 
-壳从本仓库的[发布页](https://github.com/d2r-mobile/d2r-mobile/releases)下载。壳（`D2RMobile-shell.ipa`，约 3 MB）里只有我们自己的宿主程序、图标和两张随仓库公开的表。它**没有**：游戏程序、着色器、覆盖层、界面素材、任何从游戏文件生成的数据表。构建壳的脚本（`dm/ios/tools/shell_build.sh`）在最后会拿真实的游戏内容去壳里逐个文件搜一遍，搜到就不出壳。
+壳从本仓库的[发布页](https://github.com/d2r-mobile/d2r-mobile/releases)下载。发布页上有两份：`D2RMobile-shell.ipa` 给 iOS 26 及以上，`D2RMobile-shell-ios18.ipa` 给 iOS 18 – 25（[OLDER_SYSTEMS.zh-CN.md](OLDER_SYSTEMS.zh-CN.md)），按手机的系统挑一份，后面的步骤相同。壳（约 4 MB）里只有我们自己的宿主程序、图标和两张随仓库公开的表。它**没有**：游戏程序、着色器、覆盖层、界面素材、任何从游戏文件生成的数据表。构建壳的脚本（`dm/ios/tools/shell_build.sh`）在最后会拿真实的游戏内容去壳里逐个文件搜一遍，搜到就不出壳。
 
 壳自己起不来——它启动时会告诉你「这个安装包里还没有游戏程序」。
 

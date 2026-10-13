@@ -10,7 +10,7 @@ uint64_t guest_ns(void) { return 0; }
 uint64_t dm_guest_frame(void) { return 0; }   // 界面鼠标 / 前端路径按出图帧节拍走；本单测不测它们 | the UI mouse / front-end paths run on the presented-frame cadence; this unit test does not test them
 int dm_world_has_target(void) { return 1; }   // 点世界（dm_world.c）的桩：有目标 = 主按钮照常发键 | stub for world tapping (dm_world.c): has a target = the primary button sends its key as usual
 unsigned dm_world_tap(float nx, float ny) { (void)nx; (void)ny; return 0; }
-uint64_t dm_padmode_legend_click(float nx, float ny) { (void)nx; (void)ny; return 0; }
+uint64_t dm_padmode_legend_click(float nx, float ny) { (void)nx; (void)ny; return 0; } int dm_padmode_hud_click(float nx, float ny, uint64_t *b) { (void)nx; (void)ny; (void)b; return 0; } int dm_padmode_legend_has(uint32_t g) { (void)g; return 0; } int dm_game_paused(void) { return 0; }
 int dm_shop_open(void) { return 0; }   // 商人页（dm_actions.c）的桩：没开 | stub for the vendor page (dm_actions.c): not open
 int dm_padmode_current(void) { return 0; }   // 手柄 / 触屏模式（dm_padmode.c）的桩：触屏 | Stub for controller / touch mode (dm_padmode.c): touch
 uint64_t dm_padmode_page_keys(uint64_t m) { (void)m; return 0; } void dm_padmode_legend_hide(const char *l, int a) { (void)l; (void)a; } int dm_padmode_busy(void) { return 0; } uint64_t dm_padmode_page_held(void) { return 0; } void dm_padmode_page_pulse(uint64_t m) { (void)m; } void dm_padmode_ident_hint(int on) { (void)on; } void dm_padmode_legend(int a, const char *t) { (void)a; (void)t; } const char *dm_str(uint8_t *b, const char *k) { (void)b; return k; }   // 手柄页键 / 提示条 / 取串的桩（个人仓库手柄翻页用，触屏下不走） | Stubs for controller page keys / button legend / string fetch (used by controller paging of the personal stash, not reached under touch)

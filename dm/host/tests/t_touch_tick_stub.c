@@ -90,4 +90,4 @@ int dm_runeword_long_press(const void *ci) { (void)ci; return 0; }   // 符文�
 int dm_runeword_list_open(void) { return 0; }
 void dm_runeword_button(const char *name) { (void)name; }
 void dm_runeword_list_close(void) {}
-uint64_t dm_padmode_legend_click(float nx, float ny) { (void)nx; (void)ny; return 0; }   // 鼠标点按键提示条（dm_padmode.c）：这些单测不带游戏映像，给空桩 | mouse click on the key-hint bar (dm_padmode.c): these unit tests carry no game image, so an empty stub is given
+uint64_t dm_padmode_legend_click(float nx, float ny) { (void)nx; (void)ny; return 0; } int dm_padmode_hud_click(float nx, float ny, uint64_t *b) { (void)nx; (void)ny; (void)b; return 0; } int dm_padmode_legend_has(uint32_t g) { (void)g; return 0; } int dm_game_paused(void) { return 0; }   // 鼠标点按键提示条（dm_padmode.c）：这些单测不带游戏映像，给空桩 | mouse click on the key-hint bar (dm_padmode.c): these unit tests carry no game image, so an empty stub is given

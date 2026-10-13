@@ -46,7 +46,7 @@ echo $$ > "$LOCK/pid"; echo "$ME" > "$LOCK/owner"; trap 'rm -rf "$LOCK"' EXIT
 mkdir -p "${DM_ROOT:-$HOME/dm-work}/run/verify/dm/accept"
 L=$(mktemp -d "${DM_ROOT:-$HOME/dm-work}/run/verify/dm/accept/$(date +%m%d_%H%M%S)_${TREE}_$$.XXXXXX") || { echo "ACCEPT RED 无法创建结果目录"; exit 1; }
 T0=$SECONDS
-SKIP=""; SCOPE="全量"
+SKIP=""; SCOPE="全量"; M3GATE=1   # M3GATE：老接口版（图形后端 DM_NVN_M3=1）的画面闸门跑不跑，见 ⑪ | M3GATE: whether the picture gate of the older-API build (graphics backend DM_NVN_M3=1) runs, see step 11
 if [ "${ACCEPT_ALL:-0}" != 1 ]; then
   ROOT=$(git -C "$HERE" rev-parse --show-toplevel 2>/dev/null); MB=$(git -C "$HERE" merge-base HEAD main 2>/dev/null)
   CH=""; [ -n "$ROOT" ] && [ -n "$MB" ] && CH=$( { git -C "$ROOT" diff --name-only --no-renames "$MB" HEAD; git -C "$ROOT" status --porcelain --no-renames | cut -c4-; } 2>/dev/null | sort -u | grep -v '^$')   # --no-renames：改名按「删旧 + 加新」两条路径列，旧路径在别的目录时不会被漏掉 | --no-renames: a rename is listed as two paths, "delete old + add new", so the old path is not missed when it is in another directory
@@ -62,7 +62,10 @@ if [ "${ACCEPT_ALL:-0}" != 1 ]; then
     elif ! printf '%s\n' "$CH" | grep -qvE '^(dm/gfx/|dm/ios/|docs/)|\.md$'; then SKIP="1 2 5 6 7 9"; SCOPE="改动只在 dm/gfx（及 dm/ios、文档）"; fi
   fi
 fi
-echo "SCOPE ${SCOPE}$([ -n "$SKIP" ] && echo "；跳过项序号 ${SKIP}（ACCEPT_ALL=1 强制全量）")"
+# ⑪ 老接口版画面闸门只在改动碰到图形层或宿主的图形 / 前端 / 构建文件时跑（动图形的人两条路都得验，别的线不多付这一分钟）；读不出改动清单时照跑
+# The older-API picture gate (step 11) runs only when the change touches the graphics layer or the host's graphics / front-end / build files (whoever changes graphics must verify both paths, and other work does not pay this extra minute); when the list of changes cannot be read it runs anyway
+if [ "${ACCEPT_ALL:-0}" != 1 ] && [ -n "${CH:-}" ] && ! printf '%s\n' "$CH" | grep -qE '^dm/gfx/|^dm/host/(front|app_mac|touch_mac|memstat)[^/]*$|^dm/host/Makefile$|^dm/verify/(shotgate|hostshot|accept)'; then M3GATE=0; fi
+echo "SCOPE ${SCOPE}$([ -n "$SKIP" ] && echo "；跳过项序号 ${SKIP}（ACCEPT_ALL=1 强制全量）")；老接口版画面闸门 $([ $M3GATE = 1 ] && echo 跑 || echo 本次改动不涉及，跳过)"
 [ "${ACCEPT_SCOPE_ONLY:-0}" = 1 ] && exit 0
 # 并行子项都调用增量make；先在锁内只构建一次，避免冷树多个链接器争写同一个dmhost/dSYM。
 # The parallel sub-items all invoke an incremental make; build once first inside the lock, so that on a cold tree several linkers do not compete to write the same dmhost/dSYM.
@@ -192,13 +195,24 @@ item 9 "⑨ 功能用例 touchchain" "自动收集 script.txt + assert.py 用例
 PAGES=()
 [ "$MODE" = fast ] && PAGES=(camp_e stash wild charselect skilltree)
 PAGE_NAMES=${PAGES[*]:-$(cd "$HERE/shotgate_pages" && ls *.json | sed 's/\.json$//' | tr '\n' ' ')}
-item 3 "③ 画面闸门 shotgate ${MODE}（${PAGE_NAMES}）" "每页对真值绿（结构 / 非黑 / 网格 / 命名区域 / 应有元素 / 宿主日志无【红】）" shotgate.log 'SHOTGATE_ALL' 1 "$HERE/shotgate.sh" "$OUT" ${PAGES[@]+"${PAGES[@]}"} &
+# ⑪ 老接口版画面闸门：同一批页面用老接口版宿主（make dmhost_m3）再过一遍。排在 ③ 后面串着跑，不和 ③ 抢宿主
+# Step 11, older-API picture gate: the same set of pages is run once more with the older-API host (make dmhost_m3). It runs serially after step 3 and does not compete with it for hosts
+m3_shotgate() {
+  local name="⑪ 老接口版画面闸门 shotgate ${MODE}（DM_NVN_M3=1，${PAGE_NAMES}）" want="老接口版宿主每页对真值绿"
+  if [ $M3GATE != 1 ]; then printf '0\n| %s | %s | ⏭ 老接口版画面闸门：本次改动不涉及，跳过 | 0 秒 |\n' "$name" "$want" > "$L/11.row"; echo "⏭ ${name}（老接口版画面闸门：本次改动不涉及，跳过）"; return 0; fi
+  case " $SKIP " in *" 3 "*) printf '0\n| %s | %s | ⏭ 跳过：%s | 0 秒 |\n' "$name" "$want" "$SCOPE" > "$L/11.row"; echo "⏭ ${name}（跳过：${SCOPE}）"; return 0;; esac
+  local s=$SECONDS rc=0
+  { make -s -C "$HERE/../host" dmhost_m3 && DM_HOST="$HERE/../host/dmhost_m3" "$HERE/shotgate.sh" "$OUT" ${PAGES[@]+"${PAGES[@]}"}; } > "$L/shotgate_m3.log" 2>&1 || rc=1
+  local got=$(grep -E 'SHOTGATE_ALL' "$L/shotgate_m3.log" | tail -1) mark; [ $rc = 0 ] && mark="✅" || mark="🔴"
+  printf '%s\n| %s | %s | %s %s | %s 秒 |\n' "$rc" "$name" "$want" "$mark" "${got:-（无读数行，见 shotgate_m3.log）}" "$((SECONDS - s))" > "$L/11.row"; echo "$mark ${name}（$((SECONDS - s)) 秒）"
+}
+{ item 3 "③ 画面闸门 shotgate ${MODE}（${PAGE_NAMES}）" "每页对真值绿（结构 / 非黑 / 网格 / 命名区域 / 应有元素 / 宿主日志无【红】）" shotgate.log 'SHOTGATE_ALL' 1 "$HERE/shotgate.sh" "$OUT" ${PAGES[@]+"${PAGES[@]}"}; m3_shotgate; } &
 unit_tests() {   # ④ 宿主与图形单测（E:SHOT 合入后 gfx 单测链接失败，accept 却绿）：任何失败或构建 / 链接错误即红 | (4) host and graphics unit tests (after E:SHOT was merged the gfx unit test failed to link, yet accept was green): any failure or build / link error is a failure
   local rc=0
   "${DM_ROOT:-$HOME/dm-work}/build/cache/dm/venv/bin/python" "$HERE/ryu/test_selfcmp.py" > "$L/unit_selfcmp.log" 2>&1 && echo "UNIT selfcmp 通过" || { echo "UNIT selfcmp 失败（见 unit_selfcmp.log）"; rc=1; }
   "${DM_ROOT:-$HOME/dm-work}/build/cache/dm/venv/bin/python" "$HERE/ryu/test_plan.py" > "$L/unit_plan.log" 2>&1 && echo "UNIT plan 通过" || { echo "UNIT plan 失败（见 unit_plan.log）"; rc=1; }
   make -j8 -C "$HERE/../host/tests" run > "$L/unit_host.log" 2>&1 && echo "UNIT host 通过" || { echo "UNIT host 失败：$(grep -m1 -iE 'error|fail|失败|红' "$L/unit_host.log" | cut -c1-140)"; rc=1; }
-  make -j8 -C "$HERE/../gfx/tests" run > "$L/unit_gfx.log" 2>&1 && echo "UNIT gfx 通过" || { echo "UNIT gfx 失败：$(grep -m1 -iE 'error|fail|失败|红|undefined' "$L/unit_gfx.log" | cut -c1-140)"; rc=1; }
+  make -j8 -C "$HERE/../gfx/tests" run > "$L/unit_gfx.log" 2>&1 && make -j8 -C "$HERE/../gfx/tests" run-m3 >> "$L/unit_gfx.log" 2>&1 && echo "UNIT gfx 通过" || { echo "UNIT gfx 失败：$(grep -m1 -iE 'error|fail|失败|红|undefined' "$L/unit_gfx.log" | cut -c1-140)"; rc=1; }
   # iOS 触摸层单测（这一套从没接进闸门，回城钮改版后红了一天没人看见）
   # iOS touch layer unit tests (this set was never wired into the gate check, and after the town portal button redesign it was red for a day without anyone seeing it)
   make -C "$HERE/../ios/tests" test > "$L/unit_ios.log" 2>&1 && echo "UNIT ios 通过" || { echo "UNIT ios 失败：$(grep -m1 -E 'FAIL|Error|error' "$L/unit_ios.log" | cut -c1-140)"; rc=1; }
@@ -229,7 +243,7 @@ item 10 "⑩ 局内切运行模式 opmode" "切换前已进局；取走通知 30
 [ "$MODE" = full ] && item 6 "⑥ 存档事务 save_txn_regress" "4/4 注入命中；已提交文件同期望版；校验和自洽；残缺工作目录 / 拒绝日志负对照成立" save_txn.log '^✓|^✗|^结论|^SAVE_TXN' 6 bash "$HERE/../tools/save_txn_regress.sh" "$OUT" &
 wait
 allrc=0; rows=()
-ITEMS=(0 1 2 3 4 5 7 8 9 10); [ "$MODE" = full ] && ITEMS+=(6)
+ITEMS=(0 1 2 3 11 4 5 7 8 9 10); [ "$MODE" = full ] && ITEMS+=(6)
 for k in "${ITEMS[@]}"; do { read -r rc; read -r row; } < "$L/$k.row"; [ "$rc" = 0 ] || allrc=1; rows+=("$row"); done
 [ "$allrc" = 0 ] || echo "ACCEPT $MODE 红；本目录保留，不删不覆盖" > "$L/KEEP"
 echo; echo "| 项 | 期望 | 真结果 | 用时 |"; echo "|---|---|---|---|"; printf '%s\n' "${rows[@]}"

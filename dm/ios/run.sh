@@ -72,15 +72,25 @@ if [ "$1" = build ]; then
   [ -f Gen/romfs_overlay/data/.build.config ] || { t "🔴 没生成覆盖层 Gen/romfs_overlay"; exit 1; }
   # 免费的开发者账号（个人团队）签不了这几项权限：DM_FREE_ACCOUNT=1 时从工程描述里去掉再生成。去掉后少的是 iCloud 存档同步、
   # 持续执行模式与更高的内存上限；游戏照常运行（地址预留已按不带扩展虚拟寻址也放得下来定，见 host/hle_svc.c）
-  # A free developer account (personal team) cannot sign these entitlements: with DM_FREE_ACCOUNT=1 they are removed from the project
-  # description before generating. What is lost is iCloud save sync,
-  # sustained execution mode and the higher memory limit; the game runs as usual (the address reservation is already sized to fit without
-  # extended virtual addressing, see host/hle_svc.c)
+  # 两个开关各自独立、可以叠：先按免费档去掉签不了的，再按老接口版改部署目标（公开用户多是免费账号，「免费账号 + iOS 18」要两样都生效）。都没设 = 原样生成
+  # A free developer account (personal team) cannot sign these entitlements: with DM_FREE_ACCOUNT=1 they are removed from the project description before generating. What is lost is iCloud save sync,
+  # sustained execution mode and the higher memory limit; the game runs as usual (the address reservation is sized to fit without extended virtual addressing as well, see host/hle_svc.c)
+  # The two switches are independent and can be combined: first remove what the free tier cannot sign, then change the deployment target for the older-API build (most public users have free accounts, and "free account + iOS 18" needs both to take effect). Neither set = generate as is
+  SPEC=project.yml; FREE=
   if [ "${DM_FREE_ACCOUNT:-0}" = 1 ]; then
     python3 tools/project_free.py project.yml project_free.yml || { t "🔴 DM_FREE_ACCOUNT：免费档的工程描述没生成（见上）"; exit 1; }   # 去掉签不了的六行权限与用不上的资源下载扩展 | remove the six entitlement lines it cannot sign and the asset download extension it has no use for
-    xcodegen generate -q --spec project_free.yml >/dev/null || { t "🔴 xcodegen 失败"; exit 1; }; rm -f project_free.yml; t "按免费账号生成：不带 iCloud / 持续执行 / 增加内存上限 / 扩展虚拟寻址，也不带资源下载扩展（只占一个应用标识）"
-  else
+    SPEC=project_free.yml; FREE=free
+  fi
+  if [ "${DM_IOS_M3:-0}" = 1 ]; then   # 老接口版：图形后端不用 Metal 4，部署目标 iOS 18.0（tools/project_m3.py）；缺省不走这里 | older-API build: the graphics backend does not use Metal 4, deployment target iOS 18.0 (tools/project_m3.py); not taken by default
+    python3 tools/project_m3.py $SPEC project_m3.yml $FREE || { rm -f project_free.yml; t "🔴 DM_IOS_M3：老接口版的工程描述没生成（见上）"; exit 1; }
+    SPEC=project_m3.yml
+  fi
+  if [ $SPEC = project.yml ]; then
   xcodegen generate -q >/dev/null || { t "🔴 xcodegen 失败"; exit 1; }
+  else
+    xcodegen generate -q --spec $SPEC >/dev/null; XG=$?; rm -f project_free.yml project_m3.yml; [ $XG = 0 ] || { t "🔴 xcodegen 失败"; exit 1; }
+    [ -z "$FREE" ] || t "按免费账号生成：不带 iCloud / 持续执行 / 增加内存上限 / 扩展虚拟寻址，也不带资源下载扩展（只占一个应用标识）"
+    [ "${DM_IOS_M3:-0}" != 1 ] || t "按老接口版生成：部署目标 iOS 18.0、图形后端不用 Metal 4"
   fi
   [ "${DM_GEN_ONLY:-}" = 1 ] && { t "生成完成（DM_GEN_ONLY）"; exit 0; }   # tools/testflight.sh 只要生成，自己 archive | tools/testflight.sh only needs the generation step and does the archive itself
   asc_auth   # App Store Connect API 密钥（有就带上，供签名自动注册 App Group 等能力；见 tools/asc_env.sh） | App Store Connect API key (included if present, so signing can auto-register capabilities such as the App Group; see tools/asc_env.sh)

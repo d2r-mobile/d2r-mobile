@@ -4,16 +4,23 @@
 // 只同步玩家真实存档 Documents/save；测试存档（save.test 等）缺省不同步。测试开关 DM_TEST_ICLOUD_SUB=<子目录名>：测试存档也同步，云端用容器里的这个子目录（与真实存档的 saves 隔开，不会把测试角色传到玩家设备上）。
 // 测试开关 DM_TEST_ICLOUD_DIR=<本地目录>：用本地目录当云端（不碰 iCloud），测试存档也同步。不以 / 开头的路径拼到 App 的 Documents 下（下同）。
 // 测试开关 DM_TEST_ICLOUD_ROOT=<本地目录>：用本地目录当 iCloud 容器的 Documents（下有 saves / saves_v2），验目录换代与一次性迁移；测试存档也同步。
+// Mac 原生 App（宿主 app_mac.m 包成的那个）也编这个文件，同一个容器、同一套规则：真实存档 = 应用支持目录下的 save（启动代码设 DM_CLOUD_REAL=1；
+// 带 DM_APP_SUPPORT 起的测试局不设，一律当测试存档、不同步）；没有「切后台」，改成退出 App 前传一次并等它传完（dm_cloud_flush_wait）。
 // 开关：「自定义」页 icloud（缺省开）。没登录 iCloud / 本 App 的 iCloud 被关：取不到容器，整套跳过，日志记一行。
-// iOS side of iCloud save sync: get the iCloud container directory, let the cloud packages download first, then call the shared core dm_cloud_sync (dm/host/dm_cloudsync.c).
-// Startup: dm_cloud_boot is called in boot_thread before dm_main mounts the save; waits at most 5 seconds, pulls each cloud package and swaps it into the local save under "later write overwrites earlier write"; after that the game reads the save list as usual.
-// While running: each time a save commit succeeds (Commit in hle_fs.c), the commit hook first clonefiles the committed directory into a snapshot (copy-on-write, nearly free); in a run it is only marked pending, and on leaving the run / going to background the snapshot is compared with the cloud on a serial queue, upload only (allow_down = 0); commits outside a run are uploaded on the spot.
-// Only the player's real save Documents/save is synced; test saves (save.test etc.) are not synced by default. Test switch DM_TEST_ICLOUD_SUB=<subdirectory name>: test saves are synced too, and the cloud uses this subdirectory of the container (kept apart from the real save's saves, so test characters are not uploaded to the player's devices).
-// Test switch DM_TEST_ICLOUD_DIR=<local directory>: use a local directory as the cloud (iCloud untouched); test saves are synced too. Paths not starting with / are joined under the App's Documents (same below).
-// Test switch DM_TEST_ICLOUD_ROOT=<local directory>: use a local directory as the iCloud container's Documents (containing saves / saves_v2), to verify the directory generation change and the one-time migration; test saves are synced too.
-// Switch: icloud on the 「自定义」(Custom) page (on by default). Not signed in to iCloud / iCloud turned off for this App: the container cannot be obtained, the whole thing is skipped and one log line is written.
+// The iOS side of iCloud save sync: obtain the iCloud container directory, let the cloud packages download first, then call the shared core dm_cloud_sync (dm/host/dm_cloudsync.c).
+// Startup: dm_cloud_boot is called in boot_thread, before dm_main mounts the save; it waits at most 5 seconds, pulls each cloud package and swaps it into the local save by "last write wins", after which the game reads the save list as usual.
+// While running: every time a save commit succeeds (Commit in hle_fs.c), the commit hook first clonefiles the committed directory into a snapshot (copy-on-write, nearly free); in game it is only marked as pending, and on leaving the game / going to the background the snapshot is compared with the cloud on a serial queue and only uploaded (allow_down = 0); commits outside a game are uploaded on the spot.
+// Only the player's real save Documents/save is synced; test saves (save.test and so on) are not synced by default. Test switch DM_TEST_ICLOUD_SUB=<subdirectory name>: test saves are synced as well, using this subdirectory of the container in the cloud (separate from the saves of the real save, so test characters are not sent to the player's devices).
+// Test switch DM_TEST_ICLOUD_DIR=<local directory>: use a local directory as the cloud (iCloud is not touched); test saves are synced as well. A path not starting with / is joined under the App's Documents (same below).
+// Test switch DM_TEST_ICLOUD_ROOT=<local directory>: use a local directory as the Documents of the iCloud container (with saves / saves_v2 under it), to verify the directory generation change and the one-time migration; test saves are synced as well.
+// The native Mac App (the one the host's app_mac.m is wrapped into) compiles this file too, with the same container and the same rules: the real save = save under the application support directory (the startup code sets DM_CLOUD_REAL=1;
+// test runs launched with DM_APP_SUPPORT do not set it and are always treated as test saves, not synced); there is no "going to the background", so it uploads once before quitting the App and waits for it to finish (dm_cloud_flush_wait).
+// Switch: icloud on the Custom page (on by default). Not signed in to iCloud / iCloud turned off for this App: the container cannot be obtained, the whole thing is skipped, and one line is logged.
 #import <Foundation/Foundation.h>
+#include <TargetConditionals.h>
+#if TARGET_OS_IPHONE
 #import <UIKit/UIKit.h>
+#endif
 #include <signal.h>
 #include <sys/clonefile.h>
 #include <stdatomic.h>
@@ -87,14 +94,27 @@ static void on_commit(const char *commit_dir) {
 void dm_cloud_flush(int background) {
     if (!g_q) return;   // 没开同步（测试存档 / 没登录 iCloud / 自定义页关了） | Sync not enabled (test save / not signed in to iCloud / turned off on the Custom page)
     if (background) atomic_store(&g_bg, 1);
+#if TARGET_OS_IPHONE
     __block UIBackgroundTaskIdentifier tk = UIBackgroundTaskInvalid;
     if (background) tk = [UIApplication.sharedApplication beginBackgroundTaskWithName:@"dm.cloud" expirationHandler:^{ LOG("【红】iCloud 同步：后台收尾时间到，系统叫停（没传完的下次启动补传）"); [UIApplication.sharedApplication endBackgroundTask:tk]; tk = UIBackgroundTaskInvalid; }];
+#endif
     dispatch_async(g_q, ^{
         NSString *p = g_pend; g_pend = nil;
         if (p) upload_snap(p, background ? "切到后台，" : "退出这一局回到前端，");
         else LOG("iCloud 同步：%s，局内没有待传的存档", background ? "切到后台" : "退出这一局回到前端");
+#if TARGET_OS_IPHONE
         if (tk != UIBackgroundTaskInvalid) dispatch_async(dispatch_get_main_queue(), ^{ if (tk != UIBackgroundTaskInvalid) { [UIApplication.sharedApplication endBackgroundTask:tk]; tk = UIBackgroundTaskInvalid; } });
+#endif
     });
+}
+// 退出 App 前（Mac）：把局内攒下的最新一份传掉，并等队列里的活做完，最多 sec 秒。返回 1 = 做完了（或本来就没开同步），0 = 到点还没完
+// Before quitting the App (Mac): upload the latest copy accumulated during the game and wait for the queued work to finish, at most sec seconds. Returns 1 = done (or sync was not on in the first place), 0 = not finished in time
+int dm_cloud_flush_wait(double sec) {
+    if (!g_q) return 1;
+    dispatch_semaphore_t done = dispatch_semaphore_create(0);
+    dispatch_async(g_q, ^{ NSString *p = g_pend; g_pend = nil; if (p) upload_snap(p, "退出 App 前，"); else LOG("iCloud 同步：退出 App 前，没有待传的存档"); dispatch_semaphore_signal(done); });
+    if (dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(sec * NSEC_PER_SEC)))) { LOG("【红】iCloud 同步：退出 App 前 %.0f 秒没传完（没传完的下次启动补传）", sec); return 0; }
+    return 1;
 }
 void dm_cloud_foreground(void) { atomic_store(&g_bg, 0); }
 static void cloud_ingame(int on) { if (on) atomic_store(&g_session, 1); }
@@ -126,7 +146,11 @@ static NSURL *container(double limit) {   // 取 iCloud 容器：要在主线程
 // (later, deleting a character removes packages, so we cannot keep blocking on the manifest forever). Returns 0 = skip sync this time
 static NSString *test_path(const char *e) {   // 测试开关里的路径：不以 / 开头的拼到 App 的 Documents 下（真机容器路径每次装包都变） | Paths in test switches: those not starting with / are joined under the App's Documents (the real-device container path changes on every install)
     if (!e) return nil; if (e[0] == '/') return @(e);
+#if TARGET_OS_OSX
+    return [@(getenv("DM_SAVE") ?: ".").stringByDeletingLastPathComponent stringByAppendingPathComponent:@(e)];   // Mac：拼到存档目录的上一级（应用支持目录） | Mac: joined to the parent of the save directory (the application support directory)
+#else
     return [NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject stringByAppendingPathComponent:@(e)];
+#endif
 }
 static int v2_ready(NSString *nw, NSString *okf) {   // 迁移过来的整套是否都到了本机 | Whether the whole migrated set has arrived on this device
     NSFileManager *fm = NSFileManager.defaultManager; if ([fm fileExistsAtPath:okf]) return 1;
@@ -167,8 +191,15 @@ void dm_cloud_boot(void) {
     const char *sv = getenv("DM_SAVE"), *sub = getenv("DM_TEST_ICLOUD_SUB"), *ldir = getenv("DM_TEST_ICLOUD_DIR"), *lroot = getenv("DM_TEST_ICLOUD_ROOT"); if (!sv) return;
     NSString *doc = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
     NSString *save = @(sv); int real = [save.stringByStandardizingPath isEqualToString:[doc stringByAppendingPathComponent:@"save"].stringByStandardizingPath];
+#if TARGET_OS_OSX
+    real = getenv("DM_CLOUD_REAL") != NULL; (void)doc;   // Mac：真实存档由启动代码认（app_mac.m：没带 DM_APP_SUPPORT 的那种起法） | Mac: the real save is recognised by the startup code (app_mac.m: the way of launching without DM_APP_SUPPORT)
+#endif
     int off = getenv("DM_TEST_ICLOUD_OFF") != NULL;                   // 测试总闸：脚本起的局一律带它（tools/cloud_guard.sh），整局不同步 | Test master gate: runs launched by scripts always carry it (tools/cloud_guard.sh), and the whole run does not sync
-    if (!real && !sub && !ldir && !lroot) { if (off) LOG("iCloud 同步：测试开关 DM_TEST_ICLOUD_OFF，本局不同步"); return; }   // 测试存档：不同步 | Test save: not synced
+    if (!real && !sub && !ldir && !lroot) { if (off) LOG("iCloud 同步：测试开关 DM_TEST_ICLOUD_OFF，本局不同步");   // 测试存档：不同步 | Test save: not synced
+#if TARGET_OS_OSX
+        else LOG("iCloud 同步：测试用的存档目录（DM_APP_SUPPORT），本局不同步");
+#endif
+        return; }
     // Mac 上跑的 iOS 包：缺省整个不连真实 iCloud。这个包只发 iPhone / iPad，Mac 上跑的全是开发与测试；开发机登着真实账号时，
     // 它就是那个账号的又一台设备，任何脚本、手点图标都会和真实云端双向同步（出过把测试存档传进真实云端）。本地测试云端（DIR / ROOT）不受影响；
     // 真要在 Mac 上连真实云端：同时给 DM_REAL_ICLOUD=1 与 DM_REAL_ICLOUD_CONFIRM=写入真实云端。真机不走这一支。
@@ -193,9 +224,10 @@ void dm_cloud_boot(void) {
     g_q = dispatch_queue_create("dm.cloud", DISPATCH_QUEUE_SERIAL);
     for (NSString *f in [NSFileManager.defaultManager contentsOfDirectoryAtPath:save.stringByDeletingLastPathComponent error:nil] ?: @[])   // 上次被杀时没删掉的提交快照 | Commit snapshots not deleted when we were last killed
         if ([f hasPrefix:[save.lastPathComponent stringByAppendingString:@".cloudsnap"]]) [NSFileManager.defaultManager removeItemAtPath:[save.stringByDeletingLastPathComponent stringByAppendingPathComponent:f] error:nil];
-    int pend = pending_downloads(1);
+    double t1 = CFAbsoluteTimeGetCurrent(); int pend = pending_downloads(1);
     while (pend && CFAbsoluteTimeGetCurrent() - t0 < limit) { usleep(100000); pend = pending_downloads(0); }
-    int n = run_sync(save, 1);
+    double t2 = CFAbsoluteTimeGetCurrent(); int n = run_sync(save, 1);
+    LOG("iCloud 同步：启动分段 取容器与查齐 %.0f ms、等下载 %.0f ms、文件协调与同步 %.0f ms", (t1 - t0) * 1000, (t2 - t1) * 1000, (CFAbsoluteTimeGetCurrent() - t2) * 1000);
     LOG("iCloud 同步：启动 %.0f ms，动作 %d 个%s（云端目录 %s）", (CFAbsoluteTimeGetCurrent() - t0) * 1000, n, pend ? [NSString stringWithFormat:@"，%d 个包没等到下载完、本次跳过", pend].UTF8String : "", ldir ? "本地测试目录" : sub ? sub : "saves_v2");
     g_dm_save_commit_hook = on_commit;
     { extern void (*g_dm_ingame_hook)(int); extern void (*g_dm_charsel_hook)(void); g_dm_ingame_hook = cloud_ingame; g_dm_charsel_hook = cloud_charsel; }   // 进局记一局开始；回到前端 = 这一局结束，传一次 | Entering a run marks the start of a run; returning to the front end = this run has ended, upload once

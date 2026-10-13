@@ -15,7 +15,7 @@ The normal route is to build the whole app with Xcode on a Mac (see "Building" o
 
 ## What the shell contains and does not contain
 
-Download the shell from this repository's [Releases page](https://github.com/d2r-mobile/d2r-mobile/releases). The shell (`D2RMobile-shell.ipa`, about 3 MB) contains only our own host program, the icon and two tables that are public in this repository. It does **not** contain: the game program, shaders, the overlay, UI art, or any data table generated from game files. The script that builds the shell (`dm/ios/tools/shell_build.sh`) finishes by searching every file in the shell for real game content, and refuses to produce a shell if it finds any.
+Download the shell from this repository's [Releases page](https://github.com/d2r-mobile/d2r-mobile/releases). There are two on the Releases page: `D2RMobile-shell.ipa` for iOS 26 and later, `D2RMobile-shell-ios18.ipa` for iOS 18 – 25 ([OLDER_SYSTEMS.md](OLDER_SYSTEMS.md)); pick the one for your phone's system, the steps after that are the same. The shell (about 4 MB) contains only our own host program, the icon and two tables that are public in this repository. It does **not** contain: the game program, shaders, the overlay, UI art, or any data table generated from game files. The script that builds the shell (`dm/ios/tools/shell_build.sh`) finishes by searching every file in the shell for real game content, and refuses to produce a shell if it finds any.
 
 The shell cannot start by itself: on launch it tells you that this package has no game program in it yet.
 

@@ -309,6 +309,21 @@ static uint64_t legend_at(uint8_t *b, uint64_t w, uint64_t xy, int dep) {
     uint64_t ch = rd8(w + 0x58), n = rd8(w + 0x60); for (uint64_t i = n < 256 ? n : 0; ch && i-- > 0; ) { uint64_t r = legend_at(b, rd8(ch + 8 * i), xy, dep + 1); if (r) return r; }
     return 0;
 }
+// 屏上最上面那条看得见的按键提示条里有没有某个键帽（如 ＋ = 0xe005）。Mac 键盘的回车据此决定当 ＋ 还是当确认（touch_mac.c）。只许游戏主线程调
+// Whether the topmost visible key-hint bar on screen contains a given key cap (e.g. + = 0xe005). Return on a Mac keyboard uses this to decide between + and confirm (touch_mac.c). Call only from the game main thread
+static uint64_t legend_top(uint8_t *b, uint64_t w, int dep) {
+    if (!w || dep > 8 || !*(uint8_t *)(uintptr_t)(w + 0x50) || !*(uint8_t *)(uintptr_t)(w + 0x51)) return 0;
+    uint64_t vt = rd8(w) - (uint64_t)(uintptr_t)b; if (vt == 0x20b7960 || vt == 0x20b7a30) return rd8(w + 0x88) && rd8(w + 0x90) && rd8(w + 0x90) <= 12 ? w : 0;
+    uint64_t ch = rd8(w + 0x58), n = rd8(w + 0x60); for (uint64_t i = n < 256 ? n : 0; ch && i-- > 0; ) { uint64_t r = legend_top(b, rd8(ch + 8 * i), dep + 1); if (r) return r; }
+    return 0;
+}
+int dm_padmode_legend_has(uint32_t glyph) {
+    extern module_t g_mod[]; extern int g_nmod; uint8_t *b = NULL; for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) b = (uint8_t *)g_mod[i].base;
+    uint64_t root = b ? rd8((uint64_t)(uintptr_t)(b + 0x2f05458)) : 0, lg = root ? legend_top(b, root, 0) : 0; if (!lg) return 0;
+    { const char *nm = (const char *)(uintptr_t)rd8(lg + 8); if (glyph == 0xe005 && nm && !strcmp(nm, "MainMenuLegend")) return 0; }   // 主菜单例外：它的提示条有「＋ 新角色」，但回车在主菜单要当确认（进入游戏）；新角色用 = 键或鼠标点那一条 | main menu exception: its hint bar has "+ New Character", but Return on the main menu must act as confirm (enter the game); a new character uses the = key or a mouse click on that entry
+    uint64_t arr = rd8(lg + 0x88), n = rd8(lg + 0x90); for (uint64_t i = 0; i < n; i++) if (*(int32_t *)(uintptr_t)(arr + 0x40 * i + 8) == 1 && *(uint32_t *)(uintptr_t)(arr + 0x40 * i) == glyph) return 1;
+    return 0;
+}
 uint64_t dm_padmode_legend_click(float nx, float ny) {
     extern module_t g_mod[]; extern int g_nmod; uint8_t *b = NULL; for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) b = (uint8_t *)g_mod[i].base;
     if (!b || !g_cur) return 0; int W = *(int32_t *)(b + 0x211da38), H = *(int32_t *)(b + 0x211da3c); uint64_t root = rd8((uint64_t)(uintptr_t)(b + 0x2f05458)); if (!root || W <= 0 || H <= 0) return 0;
@@ -325,9 +340,38 @@ uint64_t dm_padmode_legend_click(float nx, float ny) {
     if (*(int32_t *)(uintptr_t)(e + 8) == 1) for (unsigned k = 0; k < sizeof km / sizeof *km && !btn; k++) {   // 键帽 → 键：照 legend_find 的比法，拿动作号建一个空字条目取它的键帽来比 | key cap -> key: the same comparison as legend_find, build an entry with empty text from the action number and take its key cap to compare
         uint64_t ent[8] = { 0 }; struct { const char *p; uint64_t n; } sv = { "", 0 }; ((void (*)(void *, int, int, void *))(b + 0xaa9358))(ent, km[k].act, 0, &sv); legend_free(b, ent);
         if ((int32_t)ent[1] == 1 && (uint32_t)ent[0] == gl) btn = km[k].btn; }
+    if (!btn && gl == 0xe008) btn = DM_BTN_LS;   // 按左摇杆（物品栏「打开魔盒」）同样没有动作号可比（实测 e008） | pressing the left stick (inventory "Open Cube") likewise has no action number to compare with (measured e008)
     if (!btn && gl == 0xe005) btn = DM_BTN_PLUS;   // ＋ 键没有对应的动作号可比（主菜单「＋ 新角色」）：直接认它的键帽码（实测 e005） | the + key has no action number to compare with (main menu "+ New Character"): recognise its key-cap code directly (measured e005)
     LOG("手柄提示条：鼠标点在第 %d 条（共 %llu 条，键帽 %x）→ %s", hit + 1, (unsigned long long)n, gl, btn ? "按它那个键" : "认不出是哪个键，不按");
     return btn;
+}
+// 鼠标点局内底部 HUD（Mac App）：手柄版 HUD 上的东西不是可点控件（手柄各有专键），鼠标点上去原先被当成「点世界」。按在哪个控件上就按它对应的键：
+//   技能格 1–6 = A B Y X R ZR（屏上键帽的次序）；腰带四格 = 十字键 左 上 下 右（原版对应，同 dm_touch_controls.c）；中间的钮 = ＋（开功能页）；跑 / 走钮 = 按左摇杆。
+//   血球、魔球、经验条、耐力条：没有对应的键，吃掉这一下（不许落到世界上去发令）。返回 0 = 没点在 HUD 上，1 = 按 *btn，2 = 吃掉不处理。只许游戏主线程调
+// Mouse clicks on the in-game bottom HUD (Mac App): the things on the gamepad-layout HUD are not clickable widgets (the gamepad has a dedicated key for each), and a mouse click on them used to be treated as "click the world". Pressing on a widget presses its corresponding key:
+//   skill slots 1–6 = A B Y X R ZR (the order of the key caps on screen); the four belt cells = D-pad left up down right (as in the original, same as dm_touch_controls.c); the middle button = + (open the function page); the run / walk button = press the left stick.
+//   Life orb, mana orb, experience bar, stamina bar: no corresponding key, so the click is swallowed (it must not fall through to the world and issue an order). Returns 0 = not on the HUD, 1 = press *btn, 2 = swallowed without action. Call only from the game main thread
+int dm_padmode_hud_click(float nx, float ny, uint64_t *btn) {
+    extern module_t g_mod[]; extern int g_nmod; uint8_t *b = NULL; for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) b = (uint8_t *)g_mod[i].base;
+    if (!b || !g_cur) return 0; int W = *(int32_t *)(b + 0x211da38), H = *(int32_t *)(b + 0x211da3c); uint64_t root = rd8((uint64_t)(uintptr_t)(b + 0x2f05458)); if (!root || W <= 0 || H <= 0) return 0;
+    if (*(volatile uint8_t *)(b + 0x2d5ff51) | *(volatile uint8_t *)(b + 0x2d5ff67)) return 0;   // 游戏停着（暂停菜单、大秘境选层页这类借壳的面板开着——手势层的面板名单认不到后者）：HUD 不认，免得点技能格变成在那一页上按 A | the game is stopped (pause menu, or a panel borrowing another shell such as the Greater Rift level-selection page is open - the gesture layer's panel list does not recognise the latter): the HUD is not recognised, so a click on a skill slot does not turn into pressing A on that page
+    uint64_t hud = pm_find(root, "HUDPanel", 5); if (!hud || !*(uint8_t *)(uintptr_t)(hud + 0x50) || !*(uint8_t *)(uintptr_t)(hud + 0x51)) return 0;   // pm_find 的第三个参数是起始深度：只看根的直接子面板 | the third argument of pm_find is the starting depth: look only at the direct child panels of the root
+    uint64_t xy = (uint64_t)(uint32_t)(nx * W) | ((uint64_t)(uint32_t)(ny * H) << 32), ch = rd8(hud + 0x58), n = rd8(hud + 0x60);
+    static const struct { const char *nm; uint64_t btn; } km[] = { { "SkillButton1", DM_BTN_A }, { "SkillButton2", DM_BTN_B }, { "SkillButton3", DM_BTN_Y }, { "SkillButton4", DM_BTN_X }, { "SkillButton5", DM_BTN_R }, { "SkillButton6", DM_BTN_ZR },
+        { "LevelUpButton", DM_BTN_PLUS }, { "RunButton", DM_BTN_LS }, { "RunButtonPrompt", DM_BTN_LS }, { "HealthBall", 0 }, { "ManaBall", 0 }, { "ExpBar", 0 }, { "StaminaBar", 0 }, { "SkillSwapIndicator", 0 }, { "LTButtonPrompt", 0 } };
+    static const uint64_t belt[4] = { DM_BTN_LEFT, DM_BTN_UP, DM_BTN_DOWN, DM_BTN_RIGHT };
+    #define HUD_HIT(w, q) (((int (*)(uint64_t, uint64_t))rd8(rd8(w) + 0x48))((w), (q)) & 1)
+    int px = (int)(nx * W), py = (int)(ny * H);
+    for (int pass = 0; pass < 2; pass++)   // 先认有键的（跑 / 走钮被耐力条压着一部分），再认只吃掉的 | first recognise the ones with a key (the run / walk button is partly covered by the stamina bar), then the ones that are only swallowed
+        for (uint64_t i = n < 64 ? n : 0; ch && i-- > 0; ) { uint64_t w = rd8(ch + 8 * i); if (!w || !*(uint8_t *)(uintptr_t)(w + 0x50)) continue; const char *nm = (const char *)(uintptr_t)rd8(w + 8); if (!nm) continue;
+            if (!pass && !strcmp(nm, "Belt") && HUD_HIT(w, xy)) {   // 腰带是一个控件、四格等宽（子控件只是四个键帽字）：沿这一行量出它的左右边，按四等分取格 | the belt is one widget with four equal-width cells (the child widgets are only the four key-cap glyphs): measure its left and right edges along this row and pick the cell by quarters
+                int l = px, r = px; while (l > 0 && HUD_HIT(w, (uint64_t)(uint32_t)(l - 2) | ((uint64_t)(uint32_t)py << 32))) l -= 2; while (r < W - 1 && HUD_HIT(w, (uint64_t)(uint32_t)(r + 2) | ((uint64_t)(uint32_t)py << 32))) r += 2;
+                int k = r > l ? (px - l) * 4 / (r - l + 1) : 0; if (k < 0) k = 0; if (k > 3) k = 3; *btn = belt[k]; LOG("手柄 HUD：鼠标点在腰带第 %d 格（腰带 x %d–%d）→ 按十字键 %s", k + 1, l, r, k == 0 ? "LEFT" : k == 1 ? "UP" : k == 2 ? "DOWN" : "RIGHT"); return 1; }
+            for (unsigned k = 0; k < sizeof km / sizeof *km; k++) if ((km[k].btn != 0) == !pass && !strcmp(nm, km[k].nm) && HUD_HIT(w, xy)) {
+                *btn = km[k].btn; uint64_t kb = km[k].btn; const char *kn = kb == DM_BTN_A ? "A" : kb == DM_BTN_B ? "B" : kb == DM_BTN_Y ? "Y" : kb == DM_BTN_X ? "X" : kb == DM_BTN_R ? "R" : kb == DM_BTN_ZR ? "ZR" : kb == DM_BTN_PLUS ? "PLUS" : kb == DM_BTN_LS ? "LS" : "";
+                if (kb) LOG("手柄 HUD：鼠标点在 %s → 按 %s", nm, kn); else LOG("手柄 HUD：鼠标点在 %s → 没有对应的键，这一下不处理", nm); return kb ? 1 : 2; } }
+    #undef HUD_HIT
+    return 0;
 }
 static void legend_pump(uint8_t *b, uint64_t frame) {   // 游戏主线程每帧 | Game main thread, every frame
     static int miss, tot; static uint64_t logged; int test = getenv("DM_TEST_LEGEND") != NULL;

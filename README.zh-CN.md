@@ -4,7 +4,7 @@
 
 这不是一个「勉强能跑」的技术演示，而是一个打磨到可以天天玩、从开荒一路玩到终局的移动版。
 
-平台：iPhone / iPad（iOS 26 起）· Mac（Apple 芯片，macOS 26 及以上，第一版）· 游戏版本：Switch 版「术士君临」1.0.34.0（对应 PC 版 3.3.94012）· 中文 / English · 许可证：MIT · **需要自备游戏文件**
+平台：iPhone / iPad（iOS 26 起；iOS 18 – 25 用老接口版）· Mac（Apple 芯片，macOS 26 及以上；macOS 15 – 25 用老接口版）· 游戏版本：Switch 版「术士君临」1.0.34.0（对应 PC 版 3.3.94012）· 中文 / English · 许可证：MIT · **需要自备游戏文件**
 
 English: [README.md](README.md)
 
@@ -201,6 +201,15 @@ flowchart LR
 
 本项目基于 Switch 版 1.0.34.0（对应 PC 版的 3.3.94012）实现并验证，工具默认只认这一版。已有社区用户反馈，参照仓库结构自行适配了其他版本并成功运行。规则表按游戏版本分组存放（`dm/tools/patch_nso.py` 里按主程序的构建标识分组），欢迎把你适配的版本提交回来。
 
+**先对一下你的设备**——系统决定用哪种构建，芯片决定要不要多做一份贴图包，两件事可以叠：
+
+| 你的设备 | iOS 26 及以上 | iOS 18 – 25 |
+|---|---|---|
+| **A17 Pro 及更新**（iPhone 15 Pro 起、iPhone 16 起） | 缺省构建，照下面走 | [老接口版](docs/OLDER_SYSTEMS.zh-CN.md) |
+| **A16 及更早**（iPhone 14 系列、iPhone 15 / 15 Plus 及更早） | 缺省构建 + [老机型贴图包](docs/LEGACY_DEVICES.zh-CN.md) | [老接口版](docs/OLDER_SYSTEMS.zh-CN.md) + [老机型贴图包](docs/LEGACY_DEVICES.zh-CN.md) |
+
+Mac 只看系统：macOS 26 及以上用缺省构建，macOS 15 – 25 用[老接口版](docs/OLDER_SYSTEMS.zh-CN.md)。
+
 | | 有 Mac | 没有 Mac |
 |---|---|---|
 | 电脑 | Apple 芯片的 Mac，装好 Xcode | Windows / Linux / 没装 Xcode 的 Mac |
@@ -245,14 +254,15 @@ flowchart LR
 
 ```bash
 source ~/dm-work/build/cache/dm/venv/bin/activate
-dm/tools/mac_app.sh        # 产出 ~/dm-work/out/macapp/D2R Mobile.app
+dm/tools/mac_app.sh                  # macOS 26 及以上：产出 ~/dm-work/out/macapp/D2R Mobile.app
+DM_MAC_M3=1 dm/tools/mac_app.sh      # macOS 15 – 25：产出 D2R Mobile M3.app
 ```
 
-这是第一版：界面用原版的手柄版界面，键盘对应整套手柄键位。它还没有人真的坐下来玩过——键位、已知的不足和第一次打开时要做的事，见 [docs/MAC.zh-CN.md](docs/MAC.zh-CN.md)。
+界面用原版的手柄版界面。键盘：空格确认、Esc 返回、回车、`=` 键开菜单 / 新角色，W A S D 移动，其余手柄键各有对应。鼠标：点怪、NPC、物件会走过去交互，底部的技能格、药水格、按键提示、面板里的按钮和页签、建角时的职业、小地图都能点；点空地走路和物品的拖放还没有。存档在这台 Mac 上（自己构建的 App 没有 iCloud 同步），可以从 iPhone / iPad 手工导入。键位表、建角怎么按、鼠标能做什么、导入步骤和已知不足，见 [docs/MAC.zh-CN.md](docs/MAC.zh-CN.md)。键盘、实体手柄这几项还未经真人操作，你试过的话，请告诉我们结果。
 
 ### 没有 Mac：壳 + 做包工具
 
-从本仓库的[发布页](https://github.com/d2r-mobile/d2r-mobile/releases)下载我们预先做好的「壳」安装包（`D2RMobile-shell.ipa`），里面不含游戏内容。加上你自己的游戏文件，在 Windows 或 Linux 上做出安装包，再用自签工具签名装机。走这条路时做包的电脑上没有苹果的着色器编译器，所以手机**第一次启动**要花约 7 分钟把着色器编完（一次性，带进度条）；用 Xcode 构建的包没有这一步。步骤与每一步的验证现状见 [docs/NO_XCODE.zh-CN.md](docs/NO_XCODE.zh-CN.md)。
+从本仓库的[发布页](https://github.com/d2r-mobile/d2r-mobile/releases)下载我们预先做好的、不含游戏内容的「壳」安装包（`D2RMobile-shell.ipa`；iOS 18 – 25 用 `D2RMobile-shell-ios18.ipa`），加上你自己的游戏文件，在 Windows 或 Linux 上做出安装包，再用自签工具签名装机。只有走这条路时，因为做包的电脑上没有苹果的着色器编译器，手机**第一次启动**要花约 7 分钟把着色器编完（一次性，带进度条）；用 Xcode 构建的包没有这一步。步骤与每一步的验证现状见 [docs/NO_XCODE.zh-CN.md](docs/NO_XCODE.zh-CN.md)。
 
 ## 已知限制
 
@@ -262,7 +272,8 @@ dm/tools/mac_app.sh        # 产出 ~/dm-work/out/macapp/D2R Mobile.app
 | `.nsp` / `.xci` 两种游戏包 | 工具只核对主程序的版本，不区分包的格式；我们自己用 `.xci` 走过全程，有网友反馈 `.nsp` 格式的游戏包也完美兼容 |
 | 用自签工具（Sideloadly、AltStore 等）签名装机 | 没验过，欢迎开 Issue 告诉我们结果 |
 | Linux 上做包 | 没验过（Windows 与 Mac 上验过） |
-| A16 及更早的机型（iPhone 14 系列、iPhone 15 / 15 Plus 等） | 可以玩，要多做一份老机型贴图包并带着它构建 App：[docs/LEGACY_DEVICES.zh-CN.md](docs/LEGACY_DEVICES.zh-CN.md)。App 提示「暂不支持本机型」就是缺这一步 |
+| 没升到 iOS 26 / macOS 26 的设备 | 可以玩，用老接口版（最低 iOS 18.0 / macOS 15.0）：[docs/OLDER_SYSTEMS.zh-CN.md](docs/OLDER_SYSTEMS.zh-CN.md) |
+| A16 及更早的机型（iPhone 14 系列、iPhone 15 / 15 Plus 等） | 可以玩，要多做一份老机型贴图包并带着它构建 App：[docs/LEGACY_DEVICES.zh-CN.md](docs/LEGACY_DEVICES.zh-CN.md)。App 提示「这台设备要多做一步」（旧版本显示的是「暂不支持本机型」）就是缺这一步 |
 | 物品注释里的「一句点评」与「旧译名对照」 | 两张内容表不随仓库提供，可自备，见 `dm/ios/tools/annot/README.zh-CN.md` |
 
 ## 参与与反馈
@@ -272,6 +283,18 @@ dm/tools/mac_app.sh        # 产出 ~/dm-work/out/macapp/D2R Mobile.app
 - 想改代码：先跑通上面的测试入口，每次改动都要过回归闸门。
 
 **往别的平台走：** 这套做法不限于 iPhone 和 iPad。Apple 芯片的 Mac 已经有了原生版本（见上面「在 Mac 上直接玩」），用的是同一份游戏程序和同一个宿主。安卓手机用的是同一类处理器，游戏程序同样可以原生执行，这条路完全走得通：要换的只是宿主和图形层对接的那一侧。作者手边没有安卓手机，非常期待看到有人把它带到安卓上。
+
+**往别的游戏走：** 已经有人拿同一份宿主去试别的 Switch 游戏。宿主里有一些「iOS 上缺省就开」的行为是为这一个游戏写的，换游戏会先撞到它们，动手前先关掉或挪走：
+
+- `dm/host/hle_oe.c`：三维渲染比例在 iOS 上缺省 0.75，`scale3d_tick` 按这个游戏渲染器里的偏移去改写——换一个游戏，那就是个野指针。
+- `dm/host/hle_fs.c`：首次启动预置共享仓库（`DM_STASH_SEED`）与触屏版缺省设置（`DM_TOUCH_DEFAULTS`），iOS 上缺省开。
+- `dm/host/main.c`：存档落盘节流改的是游戏程序里一个固定地址上的常数；`argv[0]` 写死成 `"D2R"`。
+- `dm/host/hle_time.c`：固定时刻的测试开关认的是游戏程序里的一个固定地址。
+- `dm/host/front_mac.m` 的 `front_game_res`：底座 / 掌机两档分辨率写死成 1600×900 / 1280×720。
+- `dm/host/dm_cloudsync.c`：按 `.d2s` 认角色目录。
+- `dm/host/dm_cursor.c`、`dm/host/dm_world.c`：整个文件都是这个游戏专属的。
+
+更干净的做法是把这些缺省值挪进各游戏自己的配置，宿主里不带游戏专属的缺省；欢迎朝这个方向提合并请求。
 
 ## 各部分的说明
 
@@ -286,6 +309,7 @@ dm/tools/mac_app.sh        # 产出 ~/dm-work/out/macapp/D2R Mobile.app
 | [docs/NO_XCODE.zh-CN.md](docs/NO_XCODE.zh-CN.md) | 不用 Xcode、不用 Mac 的做法 |
 | [docs/MAC.zh-CN.md](docs/MAC.zh-CN.md) | 在 Mac 上玩：构建 macOS App、键位、已知不足 |
 | [docs/LEGACY_DEVICES.zh-CN.md](docs/LEGACY_DEVICES.zh-CN.md) | 老机型（A16 及更早）：怎么做贴图包、怎么放进手机 |
+| [docs/OLDER_SYSTEMS.zh-CN.md](docs/OLDER_SYSTEMS.zh-CN.md) | 老系统（iOS 18 – 25、macOS 15 – 25）：老接口版怎么出、和老机型贴图包怎么组合 |
 | [docs/DERIVED.zh-CN.md](docs/DERIVED.zh-CN.md) | 仓库里与游戏有关的东西：有什么、没有什么、为什么 |
 
 ## 声明
