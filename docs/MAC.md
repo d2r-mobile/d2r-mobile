@@ -2,9 +2,13 @@
 
 中文：[MAC.zh-CN.md](MAC.zh-CN.md)
 
-On an Apple silicon Mac this project can be built into a native macOS App, `D2R Mobile.app`: double-click to start, with keyboard, mouse and gamepad all working. It runs the same game and the same features we added (rifts, the trove, the chronicle, the Custom page and so on), using the original game's gamepad UI.
+On an Apple silicon Mac running **macOS 26 or later**, this project can be built into a native macOS App, `D2R Mobile.app`: double-click to start, with keyboard, mouse and gamepad all working. It runs the same game and the same features we added (rifts, the trove, the chronicle, the Custom page and so on), using the original game's gamepad UI.
 
 **Up front: nobody has actually sat down and played this version yet.** Keyboard keys, a physical gamepad, the resource-folder dialog, ⌘Q and menu clicks, and how it feels in the hand — none of these five has been operated by a person. Everything described as "verified" below was run unattended: keys injected by a test script, the mouse through a test entry point, quit / full screen / window resizing through test switches. If you are among the first to try it, please open an issue and tell us how it went.
+
+## Requirements
+
+Apple silicon and macOS 26 or later. The graphics side is built entirely on a graphics interface that only exists from macOS 26 on (Metal 4); on earlier systems it neither compiles nor opens (the system says the App cannot be used with this version of macOS). The iPhone / iPad version requires iOS 26 for the same reason.
 
 ## Build
 

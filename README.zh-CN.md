@@ -4,7 +4,7 @@
 
 这不是一个「勉强能跑」的技术演示，而是一个打磨到可以天天玩、从开荒一路玩到终局的移动版。
 
-平台：iPhone / iPad（iOS 26 起）· Mac（Apple 芯片，macOS 13 起，第一版）· 游戏版本：Switch 版「术士君临」1.0.34.0（对应 PC 版 3.3.94012）· 中文 / English · 许可证：MIT · **需要自备游戏文件**
+平台：iPhone / iPad（iOS 26 起）· Mac（Apple 芯片，macOS 26 及以上，第一版）· 游戏版本：Switch 版「术士君临」1.0.34.0（对应 PC 版 3.3.94012）· 中文 / English · 许可证：MIT · **需要自备游戏文件**
 
 English: [README.md](README.md)
 
