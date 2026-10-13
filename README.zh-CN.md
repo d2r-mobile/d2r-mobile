@@ -81,7 +81,7 @@ iPhone 17 Pro Max 实测：
 
 安装包一百多 MB；游戏资源（约 5.6 GB）单独放进手机，升级 App 时存档和资源都不动。
 
-## 为手指设计
+之所以能这么快：程序是原生执行的，没有一条指令经过模拟；图形直接走 Metal；着色器全部离线翻译、预先编好，进新场景不用现编。旧机型（A16 及更早，如 iPhone 14 系列、iPhone 15）不支持游戏原本的贴图压缩格式，要用你自己的游戏文件另做一份贴图包，同样满帧——做法见 [docs/LEGACY_DEVICES.zh-CN.md](docs/LEGACY_DEVICES.zh-CN.md)。
 
 每一个面板、每一种操作都按触屏重做过，原则只有一条：**沿用原版的界面语言，用手势代替往屏幕上加按钮**。字号和点击范围按手指大小设计。拿起来就会玩，玩久了也顺手。
 
@@ -262,6 +262,7 @@ dm/tools/mac_app.sh        # 产出 ~/dm-work/out/macapp/D2R Mobile.app
 | `.nsp` / `.xci` 两种游戏包 | 工具只核对主程序的版本，不区分包的格式；我们自己用 `.xci` 走过全程，有网友反馈 `.nsp` 格式的游戏包也完美兼容 |
 | 用自签工具（Sideloadly、AltStore 等）签名装机 | 没验过，欢迎开 Issue 告诉我们结果 |
 | Linux 上做包 | 没验过（Windows 与 Mac 上验过） |
+| A16 及更早的机型（iPhone 14 系列、iPhone 15 / 15 Plus 等） | 可以玩，要多做一份老机型贴图包并带着它构建 App：[docs/LEGACY_DEVICES.zh-CN.md](docs/LEGACY_DEVICES.zh-CN.md)。App 提示「暂不支持本机型」就是缺这一步 |
 | 物品注释里的「一句点评」与「旧译名对照」 | 两张内容表不随仓库提供，可自备，见 `dm/ios/tools/annot/README.zh-CN.md` |
 
 ## 参与与反馈
@@ -284,6 +285,7 @@ dm/tools/mac_app.sh        # 产出 ~/dm-work/out/macapp/D2R Mobile.app
 | [docs/DEPENDENCIES.zh-CN.md](docs/DEPENDENCIES.zh-CN.md) | 依赖清单与第三方许可证 |
 | [docs/NO_XCODE.zh-CN.md](docs/NO_XCODE.zh-CN.md) | 不用 Xcode、不用 Mac 的做法 |
 | [docs/MAC.zh-CN.md](docs/MAC.zh-CN.md) | 在 Mac 上玩：构建 macOS App、键位、已知不足 |
+| [docs/LEGACY_DEVICES.zh-CN.md](docs/LEGACY_DEVICES.zh-CN.md) | 老机型（A16 及更早）：怎么做贴图包、怎么放进手机 |
 | [docs/DERIVED.zh-CN.md](docs/DERIVED.zh-CN.md) | 仓库里与游戏有关的东西：有什么、没有什么、为什么 |
 
 ## 声明

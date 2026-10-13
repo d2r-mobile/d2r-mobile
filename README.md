@@ -81,7 +81,7 @@ Measured on an iPhone 17 Pro Max:
 
 The install package is a little over 100 MB. The game resources (about 5.6 GB) go onto the phone separately, and app updates leave your saves and resources alone.
 
-## Built for fingers
+Why it is this fast: the program executes natively, and not a single instruction goes through emulation; graphics go straight to Metal; every shader is translated offline and compiled ahead of time, so nothing is compiled when you enter a new scene. Older chips (A16 and earlier, such as the iPhone 14 family and iPhone 15) do not support the game's original compressed texture format; they need an extra texture pack made from your own game files, and then run at full frame rate too — see [docs/LEGACY_DEVICES.md](docs/LEGACY_DEVICES.md).
 
 We rebuilt every panel and every action for touch, with one rule: **keep the original interface language, and use gestures in place of extra buttons**. Text and tap targets are sized for fingers. You can play the moment you pick it up, and long sessions stay comfortable.
 
@@ -262,7 +262,8 @@ Download our prebuilt "shell" package (`D2RMobile-shell.ipa`) from the [Releases
 | `.nsp` / `.xci` game packages | The tools only check the version of the main program and do not distinguish package formats; we ran the whole path with an `.xci` ourselves, and users have reported that `.nsp` packages work perfectly as well |
 | Signing and installing with a sideloading tool (Sideloadly, AltStore and the like) | Not verified; open an issue and tell us how it went |
 | Making the package on Linux | Not verified (verified on Windows and Mac) |
-| The "one-line verdict" and "legacy Chinese name" entries in item notes | The repository does not ship these two content tables; you can supply your own, see `dm/ios/tools/annot/README.md` |
+| A16 and earlier devices (iPhone 14 family, iPhone 15 / 15 Plus and so on) | Playable; they need a Legacy Device Pack and an App built with it: [docs/LEGACY_DEVICES.md](docs/LEGACY_DEVICES.md). "Device Not Supported" in the App means this step is missing |
+| The "one-line verdict" and "legacy Chinese name" entries in item notes | These two content tables are not shipped with the repository; you can supply your own, see `dm/ios/tools/annot/README.md` |
 
 ## Contributing and feedback
 
@@ -284,6 +285,7 @@ Download our prebuilt "shell" package (`D2RMobile-shell.ipa`) from the [Releases
 | [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) | Dependencies and third-party licenses |
 | [docs/NO_XCODE.md](docs/NO_XCODE.md) | Building without Xcode and without a Mac |
 | [docs/MAC.md](docs/MAC.md) | Playing on a Mac: building the macOS App, key mapping, known gaps |
+| [docs/LEGACY_DEVICES.md](docs/LEGACY_DEVICES.md) | Older devices (A16 and earlier): making the texture pack and putting it on the phone |
 | [docs/DERIVED.md](docs/DERIVED.md) | Game-related material in this repository: what is here, what is not, and why |
 
 ## Legal

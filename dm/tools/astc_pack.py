@@ -127,7 +127,7 @@ def finalize(packdir):
         for b in iter(lambda: f.read(64 << 20), b''): h.update(b)
     info = {'name': name, 'size': os.path.getsize(src), 'sha256': h.hexdigest()}
     json.dump(info, open(os.path.join(packdir, 'pack.json'), 'w'), ensure_ascii=False, indent=1)
-    root = os.path.join(packdir, '老机型补充包'); os.makedirs(os.path.join(root, 'data'), exist_ok=True)
+    root = os.path.join(packdir, 'Legacy Device Pack'); os.makedirs(os.path.join(root, 'data'), exist_ok=True)
     dst = os.path.join(root, 'data', name)
     if os.path.exists(dst): os.remove(dst)
     os.link(src, dst)

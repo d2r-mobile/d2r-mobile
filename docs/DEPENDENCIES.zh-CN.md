@@ -39,7 +39,7 @@ English: [DEPENDENCIES.md](DEPENDENCIES.md)
 
 | 工具 | 用来做什么 | 官方地址 |
 |---|---|---|
-| astcenc | 给不支持 BC 贴图格式的旧机型转换贴图 | <https://github.com/ARM-software/astc-encoder> |
+| astcenc | 给不支持 BC 贴图格式的旧机型（A16 及更早）转换贴图；从源码编，编法与整条做法见 [LEGACY_DEVICES.zh-CN.md](LEGACY_DEVICES.zh-CN.md)。我们用的是 v5.2.0 | <https://github.com/ARM-software/astc-encoder> |
 | hactool | 用 `dm/tools/extract_game.sh` 从你的游戏包取文件时要用；游戏文件已经用别的办法备好时不用装。我们实测用的是上游提交 `1d64a83` | <https://github.com/SciresM/hactool> |
 
 ## 真机与验证脚本额外需要
