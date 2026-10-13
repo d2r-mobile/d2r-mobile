@@ -483,7 +483,7 @@ def site_window(seg):
         if m in ('cbz', 'cbnz', 'tbz', 'tbnz') or m.startswith('b.'):
             tgt = x.operands[-1].imm
             if lo <= tgt < hi: newt = copy0 + (tgt - lo)
-            else: ex_targets.append(tgt); newt = exits + 16 * (len(ex_targets) - 1)
+            else: ex_targets.append(tgt); newt = exits + 16 * len(ex_targets)   # 出口桩第 0 个留给顺序落出（见下），窗口外的目标从第 1 个起 | Exit stub 0 is reserved for the sequential fall-out (see below); targets outside the window start from stub 1
             pc = copy0 + 4 * k; off = (newt - pc) >> 2
             if m in ('tbz', 'tbnz'): w = (w & 0xFFF8001F) | ((off & 0x3FFF) << 5)
             else: w = (w & 0xFF00001F) | ((off & 0x7FFFF) << 5)
@@ -492,8 +492,15 @@ def site_window(seg):
             assert m not in ('adr', 'adrp', 'b', 'bl', 'br', 'blr', 'ret') and not (m == 'ldr' and '[' not in x.op_str), hex(x.address)
         words.append(w)
     for w in words: emit(w)
-    ex_targets.append(hi)
-    for t in ex_targets:
+    # 出口桩的次序：副本最后一条指令执行完是「顺序落出」，落进紧跟在副本后面的第 0 个出口桩——所以第 0 个必须是回 hi 的落出口，窗口外的跳转目标排在其后。
+    # r40 及以前落出口排在最后：窗口里只要有跳到窗口外的条件跳转（比较交换的「比较不等」出口），写成功后就落进第一个外部出口 = 当成比较失败处理
+    # （一次操作做两遍 / 无锁表被多弹）。暗黑有 6 个这样的窗口（main 0x1848eb8 / 0x1848f28 / 0x1848f84，sdk 0x2ea0fc / 0x2ea4cc / 0x2ea644），
+    # 只有跳回窗口内的 cbnz 的窗口不受影响。等价验证原先随机抽不到「比较相等」那一向，所以一直是绿的（equiv.py 已补窗口分支双向强制）。
+    # Order of the exit stubs: when the last instruction of the copy has executed, control "falls out sequentially" into exit stub 0, which immediately follows the copy -- so stub 0 must be the fall-out exit back to hi, and jump targets outside the window come after it.
+    # Up to r40 the fall-out exit was placed last: whenever a window contained a conditional jump to outside the window (the "compare not equal" exit of a compare-and-swap), a successful write fell into the first external exit = handled as a failed compare
+    # (one operation done twice / a lock-free list popped more than once). The game has 6 such windows (main 0x1848eb8 / 0x1848f28 / 0x1848f84, sdk 0x2ea0fc / 0x2ea4cc / 0x2ea644);
+    # windows whose only branch is a cbnz back into the window are not affected. The equivalence check used to never draw the "compare equal" direction at random, so it stayed green (equiv.py now forces both directions of window branches).
+    for t in [hi] + ex_targets:
         emit(STRX(S, T)); emit(LDP(S, T, 31, -16)); emit(B(here(), t)); emit(NOP)
     return start, lo, hi
 

@@ -90,6 +90,29 @@ def plain_block(a):
     if ins[5].mnemonic != 'ldr' or ins[5].operands[1].mem.base != T: return None              # ldr xS,[xT]：读槽 | ldr xS,[xT]: read the slot
     if ins[7].mnemonic != 'str' or ins[7].operands[1].mem.base != T: return None              # str xS,[xT]：写回槽——只有普通块有，条件块没有（与旧版口径相同） | str xS,[xT]: write back to the slot - only ordinary blocks have it, conditional blocks do not (same convention as the old version)
     return ins[6].address
+# 独占窗口内的条件分支（状态 cbz/cbnz 已被 deexcl 改成 nop，不在此列）：随机状态几乎抽不到「比较相等」那一向（2^-32），
+# 所以每条分支两个方向各强制走一遍——两份映像同一条分支同时改成 nop（不跳）/ 无条件 b（必跳），其余照常比。
+# 由来：r40 及以前改写器把窗口副本的「顺序落出」出口排在外部出口之后，比较交换窗口写成功后落进「比较不等」的出口；随机试验全绿（暗黑 6 个窗口：main 0x1848eb8 / 0x1848f28 / 0x1848f84，sdk 0x2ea0fc / 0x2ea4cc / 0x2ea644）。
+# Conditional branches inside an exclusive window (the status cbz/cbnz has already been turned into nop by deexcl and is not included): a random state almost never draws the "compare equal" direction (2^-32),
+# so each branch is forced through both directions once -- in both images the same branch is changed to nop (not taken) / an unconditional b (taken) at the same time, and the rest is compared as usual.
+# Background: up to r40 the rewriter placed the "sequential fall-out" exit of the window copy after the external exits, so a compare-and-swap window fell into the "compare not equal" exit after a successful write; the random trials were all green (6 windows in the game: main 0x1848eb8 / 0x1848f28 / 0x1848f84, sdk 0x2ea0fc / 0x2ea4cc / 0x2ea644).
+def cond_target(w, pc):
+    if w & 0xFF000010 == 0x54000000 or w & 0x7E000000 == 0x34000000: imm = (w >> 5) & 0x7FFFF; imm -= (imm & 0x40000) << 1; return pc + 4 * imm
+    if w & 0x7E000000 == 0x36000000: imm = (w >> 5) & 0x3FFF; imm -= (imm & 0x2000) << 1; return pc + 4 * imm
+    return None
+win_br = {}
+for a0, hi0 in winend.items():
+    gate = btarget(pat, a0); pre = list(md.disasm(bytes(pat[gate:gate + 24]), gate))
+    assert [x.mnemonic for x in pre] == ['stp', 'mrs', 'adrp', 'ldr', 'add', 'ldr'], f'窗口块前导不是预期形状 {a0:#x}'
+    copy0 = gate + 24; lst = []
+    for c in range(a0, hi0, 4):
+        wo = struct.unpack_from('<I', orig, c)[0]; to = cond_target(wo, c)
+        if to is None: continue
+        cp = copy0 + (c - a0); wp = struct.unpack_from('<I', pat, cp)[0]; tp_ = cond_target(wp, cp)
+        assert tp_ is not None, f'窗口副本里找不到对应的条件分支 {c:#x}'
+        lst.append((c, wo, to, cp, wp, tp_))
+    if lst: win_br[a0] = lst
+def enc_b(pc, tgt): return 0x14000000 | (((tgt - pc) >> 2) & 0x3FFFFFF)
 mut_sites = []
 if A.mutate:
     cand = [a for a in sites if a not in winend and a not in brinfo and plain_block(a)]
@@ -216,6 +239,18 @@ def work(job):
             n += 1; eff += not both
             if not same: diffs.append((kind, fl))
             if mutated and diffs: break
+        if not mutated:
+            for c, wo, to, cp, wp, tp_ in win_br.get(a, ()):
+                for mode in ('不跳', '必跳'):
+                    UO.mem_write(IB + c, struct.pack('<I', 0xD503201F if mode == '不跳' else enc_b(c, to)))
+                    UP.mem_write(IB + cp, struct.pack('<I', 0xD503201F if mode == '不跳' else enc_b(cp, tp_)))
+                    UO.ctl_remove_cache(IB + c, IB + c + 4); UP.ctl_remove_cache(IB + cp, IB + cp + 4)
+                    for kind in (0, 1, 0, 1):
+                        same, both, fl = trial(UO, SO, UP, SP, a, init_state(rng, kind))
+                        n += 1; eff += not both
+                        if not same: diffs.append((f'窗口分支 {c:#x} 强制{mode}', fl))
+                    UO.mem_write(IB + c, struct.pack('<I', wo)); UP.mem_write(IB + cp, struct.pack('<I', wp))
+                    UO.ctl_remove_cache(IB + c, IB + c + 4); UP.ctl_remove_cache(IB + cp, IB + cp + 4)
         out.append((a, n, eff, diffs))
     return out
 
@@ -253,5 +288,5 @@ if __name__ == '__main__':
     ok = not bad and not zero and not miss   # 变异漏抓 = 判据分不出坏改写，判红（早先漏抓只打印不判） | A missed mutation = the criterion cannot tell a bad rewrite apart, so fail (earlier a miss was only printed, not judged)
     print(f'EQUIV {MOD} {"OK" if ok else "FAIL"} 站点={len(res)} 试验={T} 有效试验={E} 双异常={T - E} '
           f'有效≥1站点={len(res) - len(zero)} 有效≥{A.min_eff}站点={len(res) - len(low)} 零有效={len(zero)} 分歧站点={len(bad)} '
-          f'门站点(结构核对)={ngate} 已登记剪口(结构核对)={ncut} 观测门(结构核对)={nobs} 变异={len(mut_sites)}（{mut_by}） 抓到={caught} 漏抓={miss} seed={A.seed}', flush=True)
+          f'窗口={len(winend)} 其中含条件分支={len(win_br)}（{sum(len(v) for v in win_br.values())} 条×2 向强制） 门站点(结构核对)={ngate} 已登记剪口(结构核对)={ncut} 观测门(结构核对)={nobs} 变异={len(mut_sites)}（{mut_by}） 抓到={caught} 漏抓={miss} seed={A.seed}', flush=True)
     sys.exit(0 if ok else 1)
