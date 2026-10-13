@@ -6,7 +6,7 @@
 
 ## Which files
 
-The Switch release of Diablo II: Resurrected **with the Reign of the Warlock expansion**, updated to **3.3.94012**. The base game, the update and the expansion all have to be ones you bought yourself; this project is built for the version with the expansion, and using it without the expansion is not supported and has not been verified. You need two parts of it:
+The Switch release of Diablo II: Resurrected **with the Reign of the Warlock expansion**, updated to **3.3.94012**. That is the game's internal build number; the version shown on the Switch console is **1.0.34.0** (select the game on the HOME menu and press "+" to see it; the `v2228224` that often appears in the file name of a dumped update is the same thing, 2228224 = 34 × 65536). The base game, the update and the expansion all have to be ones you bought yourself; this project is built for the version with the expansion, and using it without the expansion is not supported and has not been verified. You need two parts of it:
 
 | Part | Contents | Size |
 |---|---|---|

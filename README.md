@@ -2,7 +2,7 @@
 
 **Diablo II: Resurrected, running as native code on iPhone and iPad.** You bring the Nintendo Switch release you own, with the Reign of the Warlock expansion. D2R Mobile runs its ARM program on your phone, draws it with Metal, and rebuilds every control for touch. It holds 60 fps, and power saver mode stretches a charge to about 10 hours.
 
-iPhone / iPad (iOS 26 and later) · Switch release with Reign of the Warlock, 3.3.94012 · English / 中文 · MIT · **Bring your own game files**
+iPhone / iPad (iOS 26 and later) · Switch release with Reign of the Warlock, 3.3.94012 (shown as 1.0.34.0 on the console) · English / 中文 · MIT · **Bring your own game files**
 
 中文: [README.zh-CN.md](README.zh-CN.md)
 
@@ -195,7 +195,7 @@ flowchart LR
 
 ## Getting started
 
-Both routes start with **the files of the game you bought**: the Switch release of Diablo II: Resurrected plus the Reign of the Warlock expansion, updated to 3.3.94012. We built the project for the version with that expansion; we have not tested it without the expansion and do not support that. [docs/GAME_FILES.md](docs/GAME_FILES.md) explains how to prepare the files.
+Both routes start with **the files of the game you bought**: the Switch release of Diablo II: Resurrected plus the Reign of the Warlock expansion, updated to 3.3.94012 (the version the console shows is 1.0.34.0). We built the project for the version with that expansion; we have not tested it without the expansion and do not support that. [docs/GAME_FILES.md](docs/GAME_FILES.md) explains how to prepare the files.
 
 | | With a Mac | Without a Mac |
 |---|---|---|

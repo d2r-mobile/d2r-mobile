@@ -2,7 +2,7 @@
 
 **《暗黑破坏神 II：狱火重生》，原生跑在 iPhone 和 iPad 上。** 你提供自己买的 Nintendo Switch 版（含「术士君临」资料片），D2R Mobile 让手机直接执行它的 ARM 程序，用 Metal 出画面，整套操作为触屏重做。稳定 60 帧，开省电模式一次充电能玩约 10 小时。
 
-iPhone / iPad（iOS 26 起）· Switch 版「术士君临」3.3.94012 · 中文 / English · MIT · **需要自备游戏文件**
+iPhone / iPad（iOS 26 起）· Switch 版「术士君临」3.3.94012（主机显示为 1.0.34.0） · 中文 / English · MIT · **需要自备游戏文件**
 
 English: [README.md](README.md)
 
@@ -195,7 +195,7 @@ flowchart LR
 
 ## 开始使用
 
-两条路都要先有**你自己购买的游戏的文件**：Switch 版《暗黑破坏神 II：狱火重生》本体加「术士君临」资料片，更新到 3.3.94012。本项目按带这部资料片的版本做，没有资料片的情况我们没验过，也不支持。怎么准备见 [docs/GAME_FILES.zh-CN.md](docs/GAME_FILES.zh-CN.md)。
+两条路都要先有**你自己购买的游戏的文件**：Switch 版《暗黑破坏神 II：狱火重生》本体加「术士君临」资料片，更新到 3.3.94012（主机上显示的版本号是 1.0.34.0）。本项目按带这部资料片的版本做，没有资料片的情况我们没验过，也不支持。怎么准备见 [docs/GAME_FILES.zh-CN.md](docs/GAME_FILES.zh-CN.md)。
 
 | | 有 Mac | 没有 Mac |
 |---|---|---|
