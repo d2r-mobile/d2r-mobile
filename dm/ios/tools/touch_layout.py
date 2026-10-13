@@ -614,25 +614,21 @@ def _pause_no_help(ys, hide=('Help',), restart_y=None, extra=()):
         return s, n
     return fn
 # 手柄版暂停菜单（「难度、百宝囊存放挂暂停菜单」）：原版布局 + 我们的功能行，放原版路径（gen_romfs_overlay.py 手柄版布局）；触屏插回的关闭钮不带。
-# 行 = 选项 / 保存并退出 / 一键重开 / 切换难度 / 存放 / 编年史（经典版没有）/ 分享诊断日志；帮助、战利品过滤器、消息记录照的裁定不留。
+# 行 = 游戏难度 / 保存并退出 / 一键重开 / 选项 / 存放 / 编年史（经典版没有）/ 分享诊断日志；帮助、战利品过滤器、消息记录照的裁定不留。
+#   「选项」固定在第四行（y 653）：原版手柄版开暂停菜单时自由光标在屏幕正中、压着哪行哪行高亮，直接按确认就点它——正中那行只许是按了没后果的。
 #   「游戏难度：N」= 按一下人数档 +1（8 之后回 1），当前档位写在这一行上；「存放」= 物品栏「存放」钮同一件事（手柄焦点到不了那颗钮），字用原版串 @strGoldDeposit。
-# 按钮图高 120 单位：带编年史那版七行在原版首末两行之间（278–1028）等距 125；经典版原底图只放得下四行，换用带编年史那版的底图（同尺寸），六行等距 150
-# Controller pause menu ("difficulty and pouch Deposit live in the pause menu"): original layout + our feature rows, placed at the original path
-# (gen_romfs_overlay.py controller layouts); the close button re-inserted for touch is not included.
-# Rows = Options / Save and Exit / one-tap restart / change difficulty / Deposit / Chronicle (absent in the classic version) / Share Diagnostics; Help,
-# Loot Filter and Message Log are left out per an earlier decision.
-#   "Game Difficulty: N" = each press raises the /players setting by 1 (wrapping to 1 after 8), with the current setting written on this row;
-#   "Deposit" = the same thing as the inventory "Deposit" button (controller focus cannot reach that button), with its text taken from the original string
-#   @strGoldDeposit.
-# Button image height is 120 units: the seven rows of the version with Chronicle are spaced evenly at 125 between the original first and last rows
-# (278–1028); the classic version's original background only fits four rows, so the background of the version with Chronicle is used instead (same
-# size), six rows spaced evenly at 150
+# 按钮图高 120 单位：带编年史那版七行在原版首末两行之间（278–1028）等距 125；经典版原底图只放得下四行，换用带编年史那版的底图（同尺寸），同一套行距排前六行（少编年史那行，后一行上移）
+# Gamepad pause menu ("difficulty and trove deposit hang on the pause menu"): the original layout + our feature rows, placed at the original path (gamepad layout in gen_romfs_overlay.py); the close button inserted for touch is not included.
+# Rows = Game Difficulty / Save and Exit / Quick Restart / Options / Deposit / Chronicle (absent in the classic version) / Share Diagnostics; Help, Loot Filter and Message Log are not kept, as ruled.
+#   "Options" is fixed on the fourth row (y 653): when the original gamepad UI opens the pause menu the free cursor is at the centre of the screen and highlights whichever row it rests on, and pressing confirm straight away activates it -- the centre row may only be one whose press has no consequence.
+#   "Game Difficulty: N" = one press raises the player-count setting by 1 (back to 1 after 8), with the current setting shown on this row; "Deposit" = the same thing as the "Deposit" button of the inventory (the gamepad focus cannot reach that button), using the original string @strGoldDeposit.
+# Button image height is 120 units: in the version with the Chronicle, seven rows are spaced evenly by 125 between the original first and last rows (278–1028); the classic version's own background only fits four rows, so the background of the Chronicle version (same size) is used and the first six rows are laid out with the same spacing (without the Chronicle row, the following row moves up)
 def pad_pause(s, garden):
-    ex = lambda y0, dy: (('TouchPadDiff', '', y0), ('TouchPadStore', '@strGoldDeposit', y0 + dy))
-    if garden: s, y = _pause_no_help({'Settings': (428, 278), 'Exit': (728, 403), 'Chronicle': (1028, 903), 'MessageLog': (278, 1028)}, hide=('Help', 'LootFilter'), restart_y=528, extra=ex(653, 125))(s)[0], 653
+    ex = (('TouchPadDiff', '', 278), ('TouchPadStore', '@strGoldDeposit', 778)); y = 278
+    if garden: s = _pause_no_help({'Settings': (428, 653), 'Exit': (728, 403), 'Chronicle': (1028, 903), 'MessageLog': (278, 1028)}, hide=('Help', 'LootFilter'), restart_y=528, extra=ex)(s)[0]
     else:
         s = _sub1(s, '"filename": "Controller/Panel/EscapeMenu/EscapeOptionsBGClassic"', '"filename": "Controller/Panel/EscapeMenu/EscapeOptionsBG"')
-        s, y = _pause_no_help({'Settings': (578, 278), 'Exit': (878, 428), 'MessageLog': (428, 1028)}, hide=('Help',), restart_y=578, extra=ex(728, 150))(s)[0], 728
+        s = _pause_no_help({'Settings': (578, 653), 'Exit': (878, 403), 'MessageLog': (428, 903)}, hide=('Help',), restart_y=528, extra=ex)(s)[0]
     # 「游戏难度：N」的字：菜单开着时游戏停拍、原版系统通知要关了菜单才出，所以当前档位直接写在这一行上——按钮自己不带字，上面叠一个同字体的文字控件，宿主写（dm_padmode.c）
     # Text of "Game Difficulty: N": while the menu is open the game stops ticking and the original system notification only appears once the menu is closed,
     # so the current setting is written directly on this row. The button itself carries no text; a text widget with the same font is stacked on top and
