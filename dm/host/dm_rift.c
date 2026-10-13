@@ -69,6 +69,14 @@ static int ground_items(uint64_t G) { int n = 0; for (int b = 0; b < 128; b++) f
 static uint64_t find_unit(uint64_t G, int type, uint32_t id) { for (int b = 0; b < 128; b++) for (uint64_t u = rd(G + 0x2230 + type * 0x400 + 8 * b); u; u = rd(u + 0x158)) if (*(uint32_t *)(uintptr_t)(u + 8) == id) return u; return 0; }
 static int gs(uint64_t u, int st) { return ((int (*)(uint64_t, int, int))(B + 0x5b9290))(u, st, 0); }
 static void ss(uint64_t u, int st, int v) { ((void (*)(uint64_t, int, int, int))(B + 0x5bc1f0))(u, st, v, 0); }
+// 属性的基础项。0x5b9290（gs）在带扩展标志的属性表上读的是合计数组（表 +0xe8：基础 + 各状态 / 光环 / 装备的加成，百分比加成已乘进去），
+// 而 0x5bc1f0（ss）写的是基础数组（表 +0x30，经 0x5bbe20）、写完由 0x5bbcd0 重算合计。「读合计、乘一个数、写回」会把加成乘两遍；要改基础项就得读基础项。
+// 基础数组：{键 = 属性号 << 16 | 层号, 值} 各 4 字节，个数在 +0x38（同 0x5b9290 里的查法，这里层号取 0）
+// The base entry of a stat. On a stat table with the extended flag, 0x5b9290 (gs) reads the totals array (table +0xe8: base plus the bonuses of states / auras / equipment, with percentage bonuses already multiplied in),
+// while 0x5bc1f0 (ss) writes the base array (table +0x30, through 0x5bbe20), after which 0x5bbcd0 recomputes the total. "Read the total, multiply by a number, write back" multiplies the bonus in twice; to change the base entry the base entry must be read.
+// Base array: {key = stat id << 16 | layer, value}, 4 bytes each, count at +0x38 (the same lookup as in 0x5b9290, with layer 0 here)
+static int gsb(uint64_t u, int st) { uint64_t sl = rd(u + 0x88); const uint32_t *a = sl ? (const uint32_t *)(uintptr_t)rd(sl + 0x30) : NULL; uint64_t n = sl ? rd(sl + 0x38) : 0;
+    if (!a || n > 4096) return 0; for (uint64_t i = 0; i < n; i++) if (a[i * 2] == (uint32_t)st << 16) return (int)a[i * 2 + 1]; return 0; }
 static uint64_t free_spot(uint64_t G, uint64_t room, int32_t pos[2]) { uint64_t out = 0; ((void (*)(uint64_t, uint64_t, int32_t *, int, int, uint64_t *, int, int))(B + 0x7160d0))(G, room, pos, 3, 0x400, &out, 4, 100); return out; }
 static void level_origin(uint64_t lv, int *x0, int *y0) { *x0 = *y0 = 1 << 30; int n = 0;
     for (uint64_t r = dm_level_rooms(lv); r && n < 2000; r = rd(r + 0x48), n++) { int x = *(int32_t *)(uintptr_t)(r + 0x60) * 5, y = *(int32_t *)(uintptr_t)(r + 0x64) * 5; if (x < *x0) *x0 = x; if (y < *y0) *y0 = y; } }
@@ -446,6 +454,18 @@ static void pet_file_save(void) { char p[1200], q[1220]; if (!pet_path(p, sizeof
     snprintf(q, sizeof q, "%s.tmp", p); FILE *f = fopen(q, "w"); if (!f) { LOG("【红】秘境：随从基数侧文件写不进 %s", q); return; }
     for (int i = 0; i < g_pfn; i++) fprintf(f, "%u %d %d\n", g_pf[i].cls, g_pf[i].base, g_pf[i].boosted);
     if (fclose(f) || rename(q, p)) LOG("【红】秘境：随从基数侧文件改名失败 %s", p); }
+// 束缚恶魔生命上限的原版封顶，现算：随从表（monpet）那一行的 BoundStat1 须是生命上限（属性 7），用它的算式 BoundCalc1 让游戏自己再算一遍——
+// 就是转化那一刻原版的做法（main+0x7aaf78 起：0x51ea40 取行，行 +0x50 属性号、+0x5c 算式号，0x5285b0 求值，生命类属性左移 8 位）。
+// 算式是 min(现值, 该类封顶)，人数档读恶魔自己身上记的那份（属性 100，转化时定下、随存档走），所以对没被动过的恶魔算出来就是它现在的值。返回原始定点值；取不到 = 0
+// The original's cap on a bound demon's maximum life, computed on the spot: BoundStat1 of its row in the pet table (monpet) must be maximum life (stat 7), and its formula BoundCalc1 is evaluated by the game itself once more -
+// exactly what the original does at the moment of conversion (from main+0x7aaf78: 0x51ea40 fetches the row, row +0x50 stat id, +0x5c formula id, 0x5285b0 evaluates, life-type stats shifted left by 8).
+// The formula is min(current value, cap of this class), and the player-count tier is read from what is recorded on the demon itself (stat 100, fixed at conversion and saved with the save), so for an untouched demon the result is just its current value. Returns the raw fixed-point value; 0 = unavailable
+static int bound_cap(uint64_t u, uint64_t player) {
+    uint8_t ver = *(uint8_t *)(uintptr_t)(u + 0x1bd); if (ver < 1 || ver > 3) return 0;
+    uint64_t row = ((uint64_t (*)(uint64_t))(B + 0x51ea40))(u); if (!row || *(uint16_t *)(uintptr_t)(row + 0x50) != 7) return 0;
+    int v = ((int (*)(int, uint64_t, uint64_t, uint32_t))(B + 0x5285b0))(ver, u, player, *(uint32_t *)(uintptr_t)(row + 0x5c));
+    return v > 0 && v <= 0x7fffff ? v << 8 : 0;
+}
 static void pet_hp_pump(uint64_t G, uint64_t player, uint32_t t) {
     static int dump = -1; if (dump < 0) dump = getenv("DM_RIFT_TEST_PETDUMP") != NULL;
     if (!K.who[0]) return;
@@ -459,21 +479,40 @@ static void pet_hp_pump(uint64_t G, uint64_t player, uint32_t t) {
     int mult = on ? 1000 + (int)((long long)(top - 100) * 10 * (tier - f) / (100 - f)) : 1000, act = top || g_pfn;
     uint64_t pd = rd(player + 0x10), lst = pd ? rd(pd + 0x98) : 0, arr = lst ? rd(lst) : 0, T = tables(G); uint32_t nt = T ? *(uint32_t *)(uintptr_t)(T + 0x1300) : 0; if (!arr || nt > 64) return;
     char line[700]; int lo = 0; line[0] = 0;
-    struct { uint32_t cls; int base, boosted; } now[16]; int nn = 0;
+    struct { uint32_t cls; int base, boosted; } now[16]; int nn = 0, pf_dirty = 0;
     for (uint32_t ty = 1; ty < nt; ty++) { if (ty == 7) continue;   /* 7 = 佣兵，不算 | 7 = mercenary, not counted */
         int guard = 0; for (uint64_t nd = rd(arr + (uint64_t)ty * 0x20); nd && guard < 64; nd = rd(nd + 0x18), guard++) {
             uint32_t id = *(uint32_t *)(uintptr_t)(nd + 4); uint64_t u = find_unit(G, 1, id); if (!u) continue; uint32_t md = *(uint32_t *)(uintptr_t)(u + 0xc); if (md == 0 || md == 12) continue;
-            int cur = gs(u, 7); uint32_t cls = *(uint32_t *)(uintptr_t)(u + 4); if (cur <= 0) continue;
-            if (dump && t % 125 == 0 && lo < (int)sizeof line - 80) lo += snprintf(line + lo, sizeof line - lo, " [类型 %u 类号 %u id %u 等级 %d 生命上限 %d]", ty, cls, id, gs(u, 12), cur >> 8);
+            // cur = 生命上限的基础项（不是 gs 读到的合计）：我们写的是基础项，基数、比较、侧文件全按同一个量走；游戏给随从的百分比生命加成（技能 / 光环）由它自己乘在合计上。
+            // 原先这里读合计：有 +N% 加成的随从，写进去的「合计 × 倍率」又被游戏乘一遍 (1 + N%)，下一轮读回 ≠ 上次写入、被当成新基数再乘——每 10 拍涨 (1 + N%) 倍直到溢出
+            // cur = the base entry of maximum life (not the total gs reads): what we write is the base entry, and base, comparison and sidecar file all use the same quantity; the percentage life bonus the game gives minions (skills / auras) is multiplied onto the total by the game itself.
+            // This used to read the total: for a minion with a +N% bonus, the written "total x multiplier" was multiplied by (1 + N%) again by the game, the next readback != the last write and was taken as a new base and multiplied again - growing by (1 + N%) every 10 ticks until overflow
+            int cur = gsb(u, 7), full = gs(u, 7); uint32_t cls = *(uint32_t *)(uintptr_t)(u + 4); if (cur <= 0 || full <= 0) continue;
+            // 测试开关 DM_RIFT_TEST_PETPCT=<百分数>（造现场用）：给每只随从的基础项加一条「生命上限 +N%」（属性 76），模拟技能 / 光环给随从的常驻生命加成
+            // Test switch DM_RIFT_TEST_PETPCT=<percent> (for staging a scene): add a "maximum life +N%" entry (stat 76) to the base of every minion, imitating a standing life bonus given to minions by a skill / aura
+            { static int pct = -1; static uint32_t done[16]; static unsigned dn; if (pct < 0) { const char *e = getenv("DM_RIFT_TEST_PETPCT"); pct = e ? atoi(e) : 0; }
+              if (pct > 0) { int seen = 0; for (int i = 0; i < 16; i++) seen |= done[i] == id; if (!seen) { done[dn++ % 16] = id; int b0 = gsb(u, 7), f0 = gs(u, 7); ss(u, 76, pct);
+                  LOG("秘境：测试 DM_RIFT_TEST_PETPCT 给随从 id %u（类号 %u）加生命上限 +%d%%：基础 %d、合计 %d → 基础 %d、合计 %d", id, cls, pct, b0 >> 8, f0 >> 8, gsb(u, 7) >> 8, gs(u, 7) >> 8); full = gs(u, 7); } } }
+            if (dump && t % 125 == 0 && lo < (int)sizeof line - 110) lo += snprintf(line + lo, sizeof line - lo, " [类型 %u 类号 %u id %u 等级 %d 生命上限 %d（基础 %d）当前 %d]", ty, cls, id, gs(u, 12), full >> 8, cur >> 8, gs(u, 6) >> 8);
             if (!act) continue;
-            int k = -1; for (int i = 0; i < 64; i++) if (tb[i].id == id && tb[i].cls == cls) { k = i; break; }
+            int k = -1, fresh = 1; for (int i = 0; i < 64; i++) if (tb[i].id == id && tb[i].cls == cls) { k = i; break; }
             if (k < 0) { k = (int)(tw++ % 64); tb[k].id = id; tb[k].cls = cls; tb[k].base = cur; tb[k].last = cur;
                 for (int i = 0; i < g_pfn; i++) if (g_pf[i].cls == cls && g_pf[i].boosted == cur) { tb[k].base = g_pf[i].base; LOG("秘境：随从 id %u（类号 %u）读档带着放大后的生命上限 %d，基数按侧文件取 %d", id, cls, cur >> 8, tb[k].base >> 8); break; } }
             else if (cur != tb[k].last) { tb[k].base = cur; tb[k].last = cur; }   /* 游戏自己改过：新值当基数 | changed by the game itself: the new value becomes the base */
-            long long want = (long long)tb[k].base * mult / 1000; if (want > 0x7fffff00LL) want = 0x7fffff00LL;
-            if ((int)want != cur) { int hp = gs(u, 6); long long nh = (long long)hp * want / cur; if (nh < 256) nh = 256; if (nh > want) nh = want;
+            else fresh = 0;
+            // 一次性修正（留在存档里的值）：束缚恶魔的基数不可能高过原版封顶——高了就是修正前那个循环写进角色档的，设回封顶；
+            // 侧文件里同类号、基数也高过封顶的记录是那条链上的，一并去掉。低于封顶的污染值和正常值分不开，不碰。只在基数刚定下时判（头一次见到 / 游戏改过）
+            // One-time repair (values left in saves): a bound demon's base cannot be higher than the original's cap - if it is, it was written into the character save by the loop that existed before the fix, so set it back to the cap;
+            // records in the sidecar file with the same class id whose base is also above the cap belong to that chain and are removed as well. Polluted values below the cap cannot be told apart from normal ones and are left alone. Checked only when the base has just been established (first seen / changed by the game)
+            if (fresh && ty == 21) { int cap = bound_cap(u, player); if (cap > 0 && tb[k].base > cap) {
+                LOG("秘境：%s 的束缚恶魔（类号 %u）生命基础 %d 超过上限，已设回 %d", K.who, cls, tb[k].base >> 8, cap >> 8); tb[k].base = cap;
+                for (int i = 0; i < g_pfn; ) { if (g_pf[i].cls == cls && g_pf[i].base > cap) { g_pf[i] = g_pf[--g_pfn]; pf_dirty = 1; } else i++; } } }
+            // 封顶按合计算：合计 = 基础 × (合计 ÷ 基础)，合计不能过属性的上限（0x7fffff00 = 8388607 点；再大就溢出成负数，游戏读成 1 点）
+            // The cap is computed on the total: total = base x (total / base), and the total must not exceed the stat's limit (0x7fffff00 = 8388607 points; any larger and it overflows to a negative number, which the game reads as 1 point)
+            long long want = (long long)tb[k].base * mult / 1000, lim = full > cur ? 0x7fffff00LL * cur / full : 0x7fffff00LL; if (want > lim) want = lim;
+            if ((int)want != cur) { int hp = gs(u, 6); long long nf = (long long)full * want / cur, nh = (long long)hp * want / cur; if (nh < 256) nh = 256; if (nh > nf) nh = nf;   /* 当前生命同比例；nf = 写完后的合计 | current life in the same proportion; nf = the total after writing */
                 ss(u, 7, (int)want); ss(u, 6, (int)nh);
-                LOG("秘境：随从 id %u（宠物类型 %u，类号 %u）生命上限 %d → %lld（基数 %d，第 %d 层 ×%d.%02d）", id, ty, cls, cur >> 8, want >> 8, tb[k].base >> 8, K.tier, mult / 1000, mult % 1000 / 10); }
+                LOG("秘境：随从 id %u（宠物类型 %u，类号 %u）生命上限基础项 %d → %lld（基数 %d，第 %d 层 ×%d.%02d）；合计 %d → %d", id, ty, cls, cur >> 8, want >> 8, tb[k].base >> 8, K.tier, mult / 1000, mult % 1000 / 10, full >> 8, gs(u, 7) >> 8); }
             tb[k].last = (int)want;
             if (tb[k].last != tb[k].base && nn < 16) { now[nn].cls = cls; now[nn].base = tb[k].base; now[nn].boosted = tb[k].last; nn++; } } }
     // 侧文件 = 现在放大着的 + 刚设回基数的。设回基数的记录不当场删，留到其后第 2 次存档提交：那一刻若正有一次存盘「已序列化、还没写盘」，
@@ -486,7 +525,7 @@ static void pet_hp_pump(uint64_t G, uint64_t player, uint32_t t) {
             uint64_t gone = g_pf[i].gone ? g_pf[i].gone : cc + 1; if (cc >= gone + 1) continue;   /* 设回之后已经提交过两次：记录可以没了 | two commits have happened since it was set back: the record can go */
             nl[m].cls = g_pf[i].cls; nl[m].base = g_pf[i].base; nl[m].boosted = g_pf[i].boosted; nl[m].gone = gone; m++; }
         int same = m == g_pfn; for (int i = 0; same && i < m; i++) same = nl[i].cls == g_pf[i].cls && nl[i].base == g_pf[i].base && nl[i].boosted == g_pf[i].boosted && !nl[i].gone == !g_pf[i].gone;
-        if (!same) { g_pfn = m; for (int i = 0; i < m; i++) { g_pf[i].cls = nl[i].cls; g_pf[i].base = nl[i].base; g_pf[i].boosted = nl[i].boosted; g_pf[i].gone = nl[i].gone; } pet_file_save(); } }
+        if (!same || pf_dirty) { g_pfn = m; for (int i = 0; i < m; i++) { g_pf[i].cls = nl[i].cls; g_pf[i].base = nl[i].base; g_pf[i].boosted = nl[i].boosted; g_pf[i].gone = nl[i].gone; } pet_file_save(); } }
     if (dump && t % 125 == 0) LOG("秘境：随从读数 拍 %u（%s，第 %d 层，倍率 ×%d.%02d，侧文件 %d 条）：%s", t, atomic_load(&K.st) == ST_RUN ? "秘境进行中" : "不在秘境", K.tier, mult / 1000, mult % 1000 / 10, g_pfn, lo ? line : " 没有随从");
 }
 
@@ -1044,9 +1083,13 @@ void dm_rift_tick(uint64_t G, uint64_t player, uint8_t *main_base) {
     { static int at = -1; if (at < 0) { const char *e = getenv("DM_RIFT_TEST_RESTART"); at = e ? atoi(e) : 0; } if (at > 0 && t >= (uint32_t)at) { at = 0; void dm_restart_request(void); LOG("秘境：测试 DM_RIFT_TEST_RESTART 拍 %u 请求一键重开", t); dm_restart_request(); } }   // 测试：拍 N 替玩家一键重开 | Test: at tick N, do a one-tap restart on the player's behalf
     if (lv != LV_TOWN && atomic_load(&M.menu)) atomic_store(&M.menu, MENU_NONE);   // 离城自动收起 | Closes automatically on leaving town
     { int tq = atomic_exchange(&M.req_start, 0); if (tq > 0 && lv == LV_TOWN && st != ST_RUN) { if (tq > R.unlock) tq = R.unlock; if (tq < 1) tq = 1; LOG("秘境：选层页开始第 %d 层", tq); L.next_door = L.town_door = 0; start_rift(G, player, t, tq); return; } }
+    { static int at = -1; if (at < 0) { const char *e = getenv("DM_RIFT_TEST_SAVE"); at = e ? atoi(e) : 0; } if (at > 0 && t >= (uint32_t)at) { at = 0; int dm_request_save(void); LOG("秘境：测试 DM_RIFT_TEST_SAVE 拍 %u 请游戏存盘 → %d", t, dm_request_save()); } }   // 测试开关 DM_RIFT_TEST_SAVE=<拍>：到这一拍请游戏存一次盘（验放大着的随从生命进不进角色档） | test switch DM_RIFT_TEST_SAVE=<tick>: ask the game to save once at this tick (to check whether boosted minion life gets into the character save)
+    { static int at = -1; if (at < 0) { const char *e = getenv("DM_RIFT_TEST_ABANDON"); at = e ? atoi(e) : 0; } if (at > 0 && t >= (uint32_t)at && st == ST_RUN) { at = 0; LOG("秘境：测试 DM_RIFT_TEST_ABANDON 拍 %u 替玩家放弃本层", t); atomic_store(&M.req_abandon, 1); } }   // 测试开关 DM_RIFT_TEST_ABANDON=<拍>：秘境进行中到这一拍替玩家放弃（裸宿主上点不了「放弃」） | test switch DM_RIFT_TEST_ABANDON=<tick>: during a rift run, abandon on the player's behalf at this tick ("Abandon" cannot be clicked on the bare host)
     if (atomic_exchange(&M.req_abandon, 0) && (st == ST_RUN || st == ST_DONE)) {   // 放弃：本层作废（不涨层、不发奖），写回改过的表，回选层页 | Abandon: this level is void (no level increase, no rewards); write back the modified tables and return to the level selection page
         region_set(G, 0); if (K.players_old) dm_hud_request_players(K.players_old); K.guard = 0; L.next_door = L.town_door = 0; atomic_store(&K.st, ST_IDLE); st = ST_IDLE;
-        LOG("秘境：放弃第 %d 层", K.tier); atomic_store(&M.menu, MENU_SELECT); return; }
+        LOG("秘境：放弃第 %d 层", K.tier); atomic_store(&M.menu, MENU_SELECT);
+        pet_hp_pump(G, player, t);   // 随从生命当拍设回基数，同结算处：放弃后回到选层页会走原版暂停，等下一拍的话要到玩家关掉面板才设回 | minion life is set back to base on this very tick, as at completion: after abandoning, returning to the level-selection page goes through the original's pause, and waiting for the next tick would delay it until the player closes the panel
+        return; }
     if (atomic_exchange(&M.req_cont, 0)) {   // 继续：进行中 = 回到离开时的位置；本层已完成 = 回到守护者处（结算时人站的地方，两扇门就在旁边） | Continue: in progress = back to the position at the time of leaving; this level completed = back to the Guardian's spot (where the player stood at completion, with both portals right beside it)
         // 已完成后点「继续」就该回到战斗终止的地方（从那里捡东西、走红门去下一层）；城门面板不提供「直接开下一层」
         // After completion, tapping "Continue" should return to where the fight ended (pick things up there, take the red portal to the next level); the town

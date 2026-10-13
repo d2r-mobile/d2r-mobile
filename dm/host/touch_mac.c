@@ -42,6 +42,7 @@ static struct {
 #include <stdatomic.h>
 static uint32_t g_live_tick0; static int g_live_based; static uint64_t g_live_btn; static uint32_t g_live_btn_until;
 static struct { _Atomic unsigned head, tail; struct { int op; float nx, ny; } q[64]; } g_live;
+static struct { int down; uint32_t t0, last; float x, y; unsigned tap_seq; float tap_x, tap_y; } g_lm;   // 真鼠标左键在世界上的状态（点地面走用）：按着没有、按下的拍、上次发「朝光标走」的拍、光标位置；等答案的那一笔点按 | state of the real mouse's left button on the world (for click-to-walk): whether it is down, the tick it went down, the tick "walk towards the pointer" was last sent, the pointer position; the click awaiting its answer
 void dm_touch_host_live(int op, float nx, float ny) {   // 前端线程：op 0 按下 1 移动 2 抬起；坐标 = 游戏画面归一化 [0,1] | Front-end thread: op 0 down, 1 move, 2 up; coordinates = normalized to the game picture [0,1]
     if (!g_live_on) return; unsigned t = atomic_load(&g_live.tail); if (t - atomic_load(&g_live.head) >= 64) return;
     g_live.q[t % 64].op = op; g_live.q[t % 64].nx = nx; g_live.q[t % 64].ny = ny; atomic_store(&g_live.tail, t + 1);
@@ -199,8 +200,19 @@ void dm_touch_host_step(uint64_t now, uint64_t *buttons, int32_t *lx, int32_t *l
             if (g_touch.next == g_touch.count) g_touch.next = g_touch.count = 0;   // 表里的都处理完了：从头复用 | Everything in the table has been handled: reuse from the start
             if (g_touch.count >= 256) break;
             touch_event *e = &g_touch.event[g_touch.count++]; e->beat = 0; e->slot = 0; e->op = op == 0 ? TOUCH_DOWN : op == 1 ? TOUCH_MOVE : TOUCH_UP; e->x = px * 2868; e->y = py * 1320;
+            if (op == 0) { g_lm.down = 1; g_lm.t0 = touch_cur_tick(); g_lm.last = 0; } else if (op == 2) g_lm.down = 0;
+            g_lm.x = px; g_lm.y = py;
             atomic_store(&g_live.head, h + 1);
         }
+        // 点地面走（键鼠玩家没有摇杆）。点一下空地：世界点选答「没有目标」后改成走到那一点（下面等答案）；按住不放：0.3 秒后起每 0.2 秒朝光标所在的地面点走一次，
+        // 光标挪到哪跟到哪，松手后走完最后那一段。只在局内、游戏没停、手势层没有面板开着、光标不在任何面板里时做。W A S D / 手柄摇杆在用时让给摇杆（dm_world.c）
+        // Click-to-walk (keyboard-and-mouse players have no stick). A click on empty ground: once the world pick answers "no target" it becomes walking to that point (the answer is awaited below); holding: after 0.3 s, walk towards the ground point under the pointer every 0.2 s,
+        // following the pointer wherever it moves, and finishing the last segment after release. Only in game, with the game not stopped, no panel open in the gesture layer and the pointer not inside any panel. While W A S D / the gamepad stick is in use it yields to the stick (dm_world.c)
+        { void dm_world_walk(float, float); int dm_world_tap_result(unsigned), dm_game_paused(void); uint32_t tk = touch_cur_tick();
+          dm_tc_set_joy_block(&g_touch.state, 1);   // 鼠标不起触屏那个浮动摇杆（左下那片按住拖动原先会变成推摇杆） | the mouse does not start the touch layout's floating stick (holding and dragging in the bottom-left area used to turn into pushing the stick)
+          if (g_lm.tap_seq) { int r = dm_world_tap_result(g_lm.tap_seq); if (r >= 0) { if (r == 0 && in && !dm_game_paused()) dm_world_walk(g_lm.tap_x, g_lm.tap_y); g_lm.tap_seq = 0; } }
+          if (g_lm.down && in && !g_touch.state.navigation_mode && !dm_game_paused() && (int32_t)(tk - g_lm.t0) >= 9 && (!g_lm.last || (int32_t)(tk - g_lm.last) >= 6) && dm_ui_item_at_now(g_lm.x, g_lm.y) != 0) { g_lm.last = tk; dm_world_walk(g_lm.x, g_lm.y); }
+          if (!in) g_lm.down = 0; }
     }
     if (g_live_btn) { if ((int32_t)(g_live_btn_until - touch_cur_tick()) > 0) *buttons |= g_live_btn; else g_live_btn = 0; }
     if (!g_touch.enabled || !g_touch.started) return;
@@ -274,7 +286,8 @@ apply_input:
             if (g_touch.state.world_tap_seq != wt) { unsigned dm_world_tap(float, float); float wx = g_touch.state.world_tap_x / 2868, wy = g_touch.state.world_tap_y / 1320;
                 // 真鼠标：手势层认为没有面板开着（它按名单认面板，大秘境选层页这类借壳的面板不在名单里），这一下却落在某个面板里 → 发界面点击，不当点世界
                 // Real mouse: the gesture layer believes no panel is open (it recognises panels by a list, and panels that borrow another shell, such as the Greater Rift level-selection page, are not on it), yet this click lands inside some panel -> send a UI click instead of a world click
-                if (g_live_on && dm_ui_item_at_now(wx, wy) == 0) { dm_ui_touch(0, wx, wy); dm_ui_touch(2, wx, wy); } else dm_world_tap(wx, wy); }
+                if (g_live_on && dm_ui_item_at_now(wx, wy) == 0) { dm_ui_touch(0, wx, wy); dm_ui_touch(2, wx, wy); }
+                else { unsigned q = dm_world_tap(wx, wy); if (g_live_on) { g_lm.tap_seq = q; g_lm.tap_x = wx; g_lm.tap_y = wy; } } }   // 真鼠标：记下这一笔，答案是「没有目标」就改成走到那一点 | real mouse: remember this click, and if the answer is "no target" turn it into walking to that point
             if (g_touch.state.mouse_click_seq != mc) { float nx = g_touch.state.mouse_click_x / 2868, ny = g_touch.state.mouse_click_y / 1320; dm_ui_touch(0, nx, ny); dm_ui_touch(2, nx, ny); }
         }
     }

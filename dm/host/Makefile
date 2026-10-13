@@ -6,8 +6,63 @@ DM_ROOT ?= $(HOME)/dm-work
 MACOS_MIN ?= 26.0
 CFLAGS=-O1 -g -Wall -Wno-unused-function -mmacosx-version-min=$(MACOS_MIN)
 # 服务层接管 hle_*.c 按通配纳入：新增文件不改这一行（免合并冲突）
-# Service-layer takeover hle_*.c files are included by wildcard: adding a file does not touch this line (avoids merge conflicts)
-SRC=main.c loader.c hle.c crash.c diag.c thread.c memstat.m dm_cursor.c dm_cursor_item.c dm_world.c dm_textinput.c dm_update.c dm_actions.c dm_namegen.c dm_cloudsync.c dm_custom.c dm_elysium.c dm_bossrush.c dm_pages.c dm_vault.c dm_vault_ui.c dm_kills.c dm_textbox.c dm_turnsmooth.c dm_textbox_core.c dm_potpick.c dm_lootfilter.c dm_autobuff.c dm_beltauto.c dm_padmode.c dm_pouch.c dm_drophaptic.c dm_freetp.c dm_townwp.c dm_shoprefresh.c dm_runeword.c dm_rwlv_core.c dm_uiscreen.c dm_dropfilter.c dm_hud.c dm_rift.c dm_rift_ui.c dm_bright.c touch_mac.c romfs_validate.c ../ios/Sources/dm_touch_controls.c $(sort $(wildcard hle_*.c)) front_mac.m app_mac.m ../ios/Sources/dm_gamepad.m ../ios/Sources/cloud_ios.m entry.S dm_i18n.c
+# 一行一个、按字母序（先本目录的，再 ../ 开头的，最后是通配那一项）：加源文件时插到自己的位置，别的分支加的在别的行，变基不再整行冲突
+# The service-layer hle_*.c files are included by wildcard: adding a file does not change this line (no merge conflicts)
+# One per line, in alphabetical order (first those in this directory, then those starting with ../, the wildcard entry last): insert a new source file at its own place; files added on other branches are on other lines, so rebasing no longer conflicts on the whole line
+SRC=\
+	app_mac.m \
+	crash.c \
+	diag.c \
+	entry.S \
+	front_mac.m \
+	hle.c \
+	loader.c \
+	main.c \
+	memstat.m \
+	romfs_validate.c \
+	dm_actions.c \
+	dm_autobuff.c \
+	dm_beltauto.c \
+	dm_bossrush.c \
+	dm_bright.c \
+	dm_cloudsync.c \
+	dm_cursor.c \
+	dm_cursor_item.c \
+	dm_custom.c \
+	dm_dropfilter.c \
+	dm_drophaptic.c \
+	dm_elysium.c \
+	dm_freetp.c \
+	dm_hud.c \
+	dm_i18n.c \
+	dm_kills.c \
+	dm_lootfilter.c \
+	dm_namegen.c \
+	dm_padmode.c \
+	dm_pages.c \
+	dm_potpick.c \
+	dm_pouch.c \
+	dm_rift.c \
+	dm_rift_ui.c \
+	dm_runeword.c \
+	dm_rwlv_core.c \
+	dm_shoprefresh.c \
+	dm_textbox.c \
+	dm_textbox_core.c \
+	dm_textinput.c \
+	dm_townwp.c \
+	dm_turnsmooth.c \
+	dm_uiscreen.c \
+	dm_update.c \
+	dm_vault.c \
+	dm_vault_ui.c \
+	dm_world.c \
+	thread.c \
+	touch_mac.c \
+	../ios/Sources/cloud_ios.m \
+	../ios/Sources/dm_gamepad.m \
+	../ios/Sources/dm_touch_controls.c \
+	$(sort $(wildcard hle_*.c))
 # NVN 空设备 + nn::vi（dm/gfx/）
 # 按通配纳入 dm/gfx 与 dm/gfx/nvn 下的源（tests/ metal/ 不进宿主）：新增文件不改这一行
 # NVN null device + nn::vi (dm/gfx/)

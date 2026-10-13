@@ -15,6 +15,7 @@
 #include <stdatomic.h>
 #include <math.h>
 #include <time.h>
+#include <TargetConditionals.h>
 
 static uint8_t *wb(void) { static uint8_t *b; if (!b) for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) b = (uint8_t *)g_mod[i].base; return b; }
 static uint64_t w_player(void) { uint8_t *b = wb(); return b ? ((uint64_t (*)(uint32_t))(b + 0x45f9d0))(*(uint32_t *)(b + 0x2d20e4c)) : 0; }
@@ -48,6 +49,14 @@ static int w_interact(uint64_t u) {   // 就近交互：游戏的点击入口（
                    // A waypoint (large footprint) appears at offset (3,4); an NPC at 4 cells comes and goes (he is walking, and it is gone again after the player stops). Stopped at 4 cells, tapping the target can interact (we call the click entry with the target), but after closing the dialog pressing the primary button does nothing
                    // (Akara 4 cells 0/5, 2 cells 5/5). So always walk to within 2 cells before interacting; when 2 cells cannot be reached (the target itself occupies the cell, or it is blocked) and the player is already within W_FAR cells, interact in place
 #define W_FAR 4
+#if TARGET_OS_OSX
+#define W_GROUND 99   // g_go.type 的特殊值：目标不是单位，是地面上的一格（Mac 鼠标点空地走过去；只有 macOS 宿主有） | special value of g_go.type: the target is not a unit but a tile on the ground (Mac mouse click-to-walk; macOS host only)
+#define W_NEAREST_OK(t) ((t) == 2 || (t) == W_GROUND)
+static int g_gnd_x, g_gnd_y;   // 地面目标格 | ground target tile
+static uint64_t g_gnd_stick_seen, g_gnd_stick_at;   // 摇杆时间戳上次读到的值、它变化的时刻（本文件的时钟；那个时间戳是别的时钟记的，只能比变没变） | the last value read of the stick timestamp and the moment it changed (this file's clock; that timestamp is recorded by another clock, so only whether it changed can be compared)
+#else
+#define W_NEAREST_OK(t) ((t) == 2)
+#endif
 static struct { uint32_t type, id; uint64_t until_ns, stick, next_fr, still_fr; int on, lx, ly; int n, i, tx, ty, replans, stop_at, empty, direct, alt, alt_on, ax, ay, nearest; uint16_t node[24][2]; } g_go;   // stop_at > 0：只走到这么多格内就停、不交互（测试开关「走到怪旁」用） | stop_at > 0: only walk to within this many cells and stop, without interacting (used by the test switch "walk next to a monster")
 static uint64_t w_find(uint32_t type, uint32_t id) { uint8_t *b = wb(); return type <= 5 ? ((uint64_t (*)(uint64_t, uint32_t, uint32_t, uint32_t))(b + 0x45f5f0))((uint64_t)(uintptr_t)(b + 0x2d603a0 + type * 0x400), id & 0x7f, id, type) : 0; }
 static void w_go(uint64_t u) { uint64_t dm_stick_last_ns(void); g_go.type = *(uint32_t *)u; g_go.nearest = 0; g_go.id = *(uint32_t *)(u + 8); g_go.until_ns = w_now_ns() + 15000000000ull; g_go.stick = dm_stick_last_ns(); g_go.next_fr = 0; g_go.still_fr = 0; g_go.n = g_go.i = g_go.replans = g_go.empty = g_go.direct = g_go.alt = g_go.alt_on = 0; g_go.stop_at = 0; g_go.on = 1; }
@@ -117,7 +126,7 @@ static int w_plan(uint8_t *b, uint64_t pl, int x, int y) {
         // 到了由 w_go_step 就地交互（只对物件）。原版手柄主钮在那个位置就能开这扇门（anc1–anc4：手指 8 下全是「找不到路，取消」，主钮 1 下开）
         // The target cell cannot be reached (the object itself and its surroundings are blocked: a closed gate, such as the one from Arreat Summit to the Worldstone Keep, where the nearest standable spot is 6 cells from it) and the reachable cells have all been searched: walk instead to "the reachable cell closest to it",
         // and on arrival w_go_step interacts in place (objects only). The original game's controller primary button opens this gate from that position (four regression cases: 8 finger taps were all 「找不到路，取消」(no route found, cancel), 1 press of the primary button opened it)
-        g_go.nearest = 0; if (goal < 0 && h >= t && best >= 0 && g_go.type == 2) { g_go.nearest = 1; if (best != syi * WP_W + sxi) goal = best; }
+        g_go.nearest = 0; if (goal < 0 && h >= t && best >= 0 && W_NEAREST_OK(g_go.type)) { g_go.nearest = 1; if (best != syi * WP_W + sxi) goal = best; }
         if (goal >= 0) {   // 回溯成格子序列（复用 q 的尾部），再拉直成几段直线 | backtrack into a cell sequence (reusing the tail of q), then straighten it into a few straight segments
             int n = 0, c = goal; while (from[c] != 9 && n < WP_W * WP_W / 2) { q[WP_W * WP_W - 1 - n++] = (uint32_t)c; int d = from[c] - 1; c -= D[d][1] * WP_W + D[d][0]; }
             uint32_t *path = q + WP_W * WP_W - n; int ax = px, ay = py, k = 0;
@@ -182,8 +191,51 @@ static int w_arrive(uint64_t pl, uint64_t u, int px, int py, int ox, int oy, con
         if (act != u) LOG("世界目标：出口砖 id %u 旁有把守它的物件 cls %u id %u（%d,%d，游戏自己选中的）→ 交互它", g_go.id, *(uint32_t *)(act + 4), *(uint32_t *)(act + 8), nx, ny); }
     g_go.on = 0; int r = w_interact(act); LOG("世界目标：类型 %u id %u %s（玩家 %d,%d 目标 %d,%d%s）→ 交互 %d", g_go.type, g_go.id, how, px, py, ox, oy, ok ? "" : "，四侧都进不了同一房间", r); return 1;
 }
+#if TARGET_OS_OSX
+// ---- Mac 鼠标：点空地走过去 ----
+// 触屏上「除摇杆外触点不触发点地移动」（见文件头）不变；这一段只给 Mac App 的鼠标用：键鼠玩家没有摇杆，点空地 = 走到那一点，按住 = 一直朝光标走（touch_mac.c 每隔几拍重发一次）。
+// 屏幕点 → 地面格：以玩家脚底的屏幕位置（游戏自己的投影）为原点，按等距投影反算——每「经典像素」合屏幕 k = 画面高 × 0.00206 像素（同上面物件占地菱形用的那个数），
+// 一格沿 x 方向在屏幕上是右 16、下 8 经典像素，沿 y 方向是左 16、下 8：格差 dx = (横/16 + 纵/8) / 2、dy = (纵/8 − 横/16) / 2。画面有透视，离人越远偏得越多（验收时量）。
+// 走法复用上面的路线规划与逐段「跑到点」；到点 = 离目标格 1 格内；目标格站不了人（墙里、水里）= 走到能到的最近一格就停；原地 1 秒不动重算一次，再不动就停；15 秒没到停。
+// 摇杆（含键盘 W A S D）一动就让给摇杆：进行中的取消，0.3 秒内的新请求不受理。
+// ---- Mac mouse: click empty ground to walk there ----
+// On touch, "touches other than the stick do not trigger click-to-move" (see the file header) is unchanged; this section is only for the Mac App's mouse: keyboard-and-mouse players have no stick, so a click on empty ground = walk to that point, holding = keep walking towards the pointer (touch_mac.c re-sends every few ticks).
+// Screen point -> ground tile: with the screen position of the player's feet (the game's own projection) as origin, back-compute through the isometric projection - each "classic pixel" is k = picture height x 0.00206 screen pixels (the same number used above for the footprint diamond of objects),
+// one tile along x is 16 right and 8 down in classic pixels on screen, along y 16 left and 8 down: tile difference dx = (horizontal/16 + vertical/8) / 2, dy = (vertical/8 - horizontal/16) / 2. The picture has perspective, so the further from the character the larger the error (measured during acceptance).
+// Walking reuses the route planning above and the segment-by-segment "run to point"; arrived = within 1 tile of the target tile; a target tile that cannot be stood on (inside a wall, in water) = walk to the nearest reachable tile and stop; no movement for 1 second: re-plan once, then stop if still not moving; stop after 15 seconds without arriving.
+// As soon as the stick (including keyboard W A S D) moves, it yields to the stick: a walk in progress is cancelled and new requests within 0.3 s are not accepted.
+static _Atomic uint64_t g_walk;
+void dm_world_walk(float nx, float ny) { if (nx < 0) nx = 0; if (nx > 1) nx = 1; if (ny < 0) ny = 0; if (ny > 1) ny = 1; atomic_store(&g_walk, 1ull << 32 | (uint64_t)(uint32_t)(nx * 65535) << 16 | (uint32_t)(ny * 65535)); }   // 任意线程：排一笔，主线程取手柄处执行；后一笔覆盖前一笔 | any thread: queue one request, executed where the main thread reads the gamepad; a later request overwrites an earlier one
+int dm_world_walking(void) { return g_go.on && g_go.type == W_GROUND; }
+static void w_ground_end(const char *how, int px, int py) { g_go.on = 0; static int lg; if (lg++ < 400) LOG("点地面走：%s（玩家 %d,%d 目标 %d,%d）", how, px, py, g_gnd_x, g_gnd_y); }
+static void w_ground_step(uint8_t *b, uint64_t pl) {
+    uint64_t dm_stick_last_ns(void); uint32_t dm_cur_tick(void); int px = 0, py = 0;
+    if (!pl || !w_unit_xy(pl, &px, &py)) { g_go.on = 0; return; }
+    if (dm_stick_last_ns() != g_go.stick) { w_ground_end("取消（摇杆 / W A S D 动了）", px, py); return; }
+    if (w_now_ns() > g_go.until_ns) { w_ground_end("停下（15 秒没到）", px, py); return; }
+    int x = g_gnd_x, y = g_gnd_y, dx = abs(x - px), dy = abs(y - py); uint64_t f = dm_cur_tick(), fr = dm_guest_frame();
+    if (dx <= 1 && dy <= 1) { w_ground_end("到点", px, py); return; }
+    if (px != g_go.lx || py != g_go.ly || !g_go.still_fr) { g_go.lx = px; g_go.ly = py; g_go.still_fr = f; }
+    else if (g_go.next_fr && f - g_go.still_fr > 25) {   // 发过令而原地 1 秒没动 | an order was issued and it has not moved for 1 second
+        if (g_go.direct || g_go.replans++ >= 1) { w_ground_end(g_go.nearest ? "停在能到的最近处" : "停下（走不动了）", px, py); return; }
+        g_go.n = 0; g_go.next_fr = 0; g_go.still_fr = f; }
+    if (!g_go.direct && !g_go.n) { if (!w_plan(b, pl, x, y)) { w_ground_end("不走（找不到路）", px, py); return; } g_go.next_fr = 0; }
+    while (g_go.i < g_go.n && abs((int)g_go.node[g_go.i][0] - px) <= 1 && abs((int)g_go.node[g_go.i][1] - py) <= 1) { g_go.i++; g_go.next_fr = 0; }
+    int gx, gy;
+    if (g_go.i >= g_go.n) {   // 路线走完：规划的终点在目标 2 格内，最后朝目标格直走一次；目标格本来就站不了人的到此为止 | route finished: the planned end point is within 2 tiles of the target, so walk straight to the target tile once at the end; if the target tile cannot be stood on, stop here
+        if (g_go.nearest || !wp_line(px, py, x, y)) { w_ground_end(g_go.nearest ? "停在能到的最近处" : "到点（目标格旁）", px, py); return; }
+        if (g_go.direct && fr < g_go.next_fr) return; g_go.direct = 1; gx = x; gy = y; }
+    else { gx = g_go.node[g_go.i][0]; gy = g_go.node[g_go.i][1]; }
+    if (fr < g_go.next_fr) return; g_go.next_fr = fr + 20;
+    atomic_store(&g_dm_move_allow_until_ns, w_now_ns() + 500000000ull);
+    ((void (*)(int, uint64_t, int, int))(b + 0x4ad870))(3, pl, gx, gy);
+}
+#endif
 static void w_go_step(void) {
     if (!g_go.on) return; uint64_t dm_stick_last_ns(void); uint8_t *b = wb(); uint64_t pl = w_player(), u = pl ? w_find(g_go.type, g_go.id) : 0; int px, py, x, y;
+#if TARGET_OS_OSX
+    if (g_go.type == W_GROUND) { w_ground_step(b, pl); return; }
+#endif
     const char *why = !u ? "目标没了" : w_now_ns() > g_go.until_ns ? "15 秒没到" : dm_stick_last_ns() != g_go.stick ? "摇杆动了" : !w_unit_xy(pl, &px, &py) || !w_unit_xy(u, &x, &y) ? "读不到坐标" : (g_go.type == 4 && *(uint32_t *)(u + 0xc) != 3) ? "物品已不在地上" : NULL;
     if (why) { g_go.on = 0; LOG("世界目标：类型 %u id %u 取消（%s）", g_go.type, g_go.id, why); return; }
     int ox = x, oy = y; if (g_go.alt_on) { x = g_go.ax; y = g_go.ay; }   // 换侧时走向的是物件旁的那一点；ox / oy 仍是物件自己 | when switching sides the walk goes to the point beside the object; ox / oy are still the object itself
@@ -313,6 +365,24 @@ unsigned dm_world_tap(float nx, float ny) { if (nx < 0) nx = 0; if (nx > 1) nx =
     unsigned seq = atomic_fetch_add(&g_tap_seq, 1) + 1; atomic_store(&g_tap, (uint64_t)seq << 32 | (uint64_t)(uint32_t)(nx * 65535) << 16 | (uint32_t)(ny * 65535)); return seq; }
 int dm_world_tap_result(unsigned seq) { return atomic_load(&g_tap_done) == seq ? atomic_load(&g_tap_res) : -1; }   // -1 还没执行；0 没有目标（什么都没发）；1 物品 2 NPC 3 物件 4 出口 | -1 not executed yet; 0 no target (nothing sent); 1 item 2 NPC 3 object 4 exit
 int dm_world_has_target(void) { return atomic_load(&g_has_target); }   // 按主键会去交互的目标存在（游戏手柄版自己的选择，main+0x2f7a0c）；任意线程读 | a target that the primary button would interact with exists (the game's own controller-version selection, main+0x2f7a0c); read from any thread
+#if TARGET_OS_OSX
+static void w_walk_step(uint8_t *b) {
+    uint64_t t = atomic_exchange(&g_walk, 0); if (!t) return; uint64_t dm_stick_last_ns(void); uint64_t pl = w_player(), scene = *(uint64_t *)(b + 0x2e2a698); int W = 0, H = 0, px = 0, py = 0; float f[2];
+    dm_screen_real(&W, &H); if (!pl || !scene || W <= 0 || H <= 0 || !w_unit_xy(pl, &px, &py) || !w_project(b, scene, pl, f, 0)) return;
+    if (g_go.on && g_go.type != W_GROUND) return;   // 正走向某个目标去交互：不打断 | walking towards some target to interact: do not interrupt
+    if (w_now_ns() - g_gnd_stick_at < 300000000ull) return;   // 摇杆 / W A S D 0.3 秒内动过：让给它 | the stick / W A S D moved within 0.3 s: yield to it
+    float sx = ((t >> 16) & 0xffff) / 65535.0f * W, sy = (t & 0xffff) / 65535.0f * H, k = H * 0.00206f, a = (sx - f[0]) / k / 16, c = (sy - f[1]) / k / 8;
+    int x = px + (int)lroundf((a + c) / 2), y = py + (int)lroundf((c - a) / 2);
+    if (getenv("DM_TEST_WALK_CAL")) { static int n; if (n++ < 3)   // 测试：把画面里各单位的脚底屏幕点按同一条公式反算成格，和它真实所在的格比（量换算误差） | test: back-compute the foot screen points of units on screen into tiles with the same formula and compare with the tiles they are really on (to measure the conversion error)
+        for (int ty = 1; ty <= 2; ty++) for (int kk = 0; kk < 128; kk++) for (uint64_t u = *(uint64_t *)(b + 0x2d603a0 + ty * 0x400 + kk * 8); u; u = *(uint64_t *)(u + 0x158)) { float g[2]; int ux, uy;
+            if (!w_unit_xy(u, &ux, &uy) || !w_project(b, scene, u, g, 0) || g[0] < 0 || g[1] < 0 || g[0] > W || g[1] > H) continue; float a2 = (g[0] - f[0]) / k / 16, c2 = (g[1] - f[1]) / k / 8;
+            LOG("点地面走：[校] 类型 %d cls %u 脚底 (%.0f,%.0f) 真格 %d,%d 反算 %d,%d 差 %d,%d（离人 %d,%d 格）", ty, *(uint32_t *)(u + 4), g[0], g[1], ux, uy, px + (int)lroundf((a2 + c2) / 2), py + (int)lroundf((c2 - a2) / 2), px + (int)lroundf((a2 + c2) / 2) - ux, py + (int)lroundf((c2 - a2) / 2) - uy, ux - px, uy - py); } }
+    if (g_go.on && abs(x - g_gnd_x) <= 1 && abs(y - g_gnd_y) <= 1) return;   // 按住不动时重发的同一格：不重起 | the same tile re-sent while holding still: do not restart
+    static int lg; if (lg++ < 400) LOG("点地面走：点 (%.0f,%.0f)，人脚底在 (%.0f,%.0f) → 格 %d,%d（玩家 %d,%d）", sx, sy, f[0], f[1], x, y, px, py);
+    g_go.type = W_GROUND; g_go.id = 0; g_go.nearest = 0; g_go.until_ns = w_now_ns() + 15000000000ull; g_go.stick = dm_stick_last_ns(); g_go.next_fr = 0; g_go.still_fr = 0;
+    g_go.n = g_go.i = g_go.replans = g_go.empty = g_go.direct = g_go.alt = g_go.alt_on = 0; g_go.stop_at = 0; g_gnd_x = x; g_gnd_y = y; g_go.on = 1;
+}
+#endif
 static void w_tap_step(uint8_t *b) {
     uint64_t t = atomic_exchange(&g_tap, 0); if (!t) return; unsigned seq = (unsigned)(t >> 32); int res = 0;
     int W = 0, H = 0; dm_screen_real(&W, &H);   // 命中框按真实画面算，不能用游戏的「屏幕宽高」全局量（界面改成 16:9 后它的高是界面高，dm_uiscreen.c） | hit boxes are computed against the real picture, not the game's "screen width/height" globals (after the UI was changed to 16:9 its height is the UI height, dm_uiscreen.c)
@@ -578,5 +648,9 @@ void dm_world_pump(void) {   // 取手柄处每帧调 | Called every frame at th
               for (int k = 0; k < 128; k++) for (uint64_t c = *(uint64_t *)(b + 0x2d603a0 + gt * 0x400 + k * 8); c; c = *(uint64_t *)(c + 0x158)) if (*(uint32_t *)(c + 4) == (uint32_t)gi && w_unit_xy(c, &x, &y)) { long dd = (long)(x - px) * (x - px) + (long)(y - py) * (y - py); if (bd < 0 || dd < bd) { bd = dd; u = c; } } }
           if (u) { w_go(u); if (nearonly) g_go.stop_at = nearonly; } LOG("世界目标：DM_TEST_WORLD_GO %s → %s", e, u ? "已发" : "没找到"); if (u) LOG("世界目标：DM_TEST_WORLD_GO 目标 类型 %u 类号 %u id %u", *(uint32_t *)u, *(uint32_t *)(u + 4), *(uint32_t *)(u + 8)); } }
     w_tap_step(b);
+#if TARGET_OS_OSX
+    { uint64_t dm_stick_last_ns(void); uint64_t v = dm_stick_last_ns(); if (v != g_gnd_stick_seen) { g_gnd_stick_seen = v; g_gnd_stick_at = w_now_ns(); } }
+    w_walk_step(b);
+#endif
     { uint64_t pl = w_player(); atomic_store(&g_has_target, pl && ((uint64_t (*)(uint64_t, uint32_t))(b + 0x2f7a0c))(((uint64_t (*)(void))(b + 0x2acecc))(), *(uint32_t *)(b + 0x2d20e4c)) != 0); }
 }

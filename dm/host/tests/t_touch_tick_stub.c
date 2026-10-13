@@ -7,6 +7,7 @@ int dm_loadscreen_down(void) { return 1; }   // 读取画面判定在 diag.c；�
 void dm_world_pump(void) {}
 int dm_world_has_target(void) { return 1; }
 unsigned dm_world_tap(float nx, float ny) { (void)nx; (void)ny; return 0; }
+void dm_world_walk(float nx, float ny) { (void)nx; (void)ny; } int dm_world_tap_result(unsigned q) { (void)q; return -1; }
 void dm_textinput_pump(void) {}   // 文本框接法（dm_textinput.c）：同上，给空桩 | text box hookup (dm_textinput.c): same as above, an empty stub
 void dm_update_pump(void) {}      // 选角页构建号与新版本提示（dm_update.c）：同上，给空桩 | build number and new-version notice on the character select page (dm_update.c): same as above, an empty stub
 void dm_num_set(int n) { (void)n; }

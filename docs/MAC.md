@@ -43,7 +43,7 @@ Language: the first launch follows the system language (Chinese systems start in
 
 ## Keyboard ↔ gamepad
 
-Button prompts on screen show gamepad letters. Where the screen says "A", "B", "X" or "Y", the key to press is **not** the letter of the same name on the keyboard (the keyboard's A walks left) but the one in the right-hand column:
+With a keyboard, the button prompts on screen (the hint bar at the bottom, skill slots, the ends of tab rows) show the keyboard keys directly: J K U I Q E Z C = Tab and so on; press a button on a connected gamepad and they switch back to gamepad letters. The full mapping:
 
 | What you want / gamepad button | Keyboard |
 |---|---|
@@ -67,7 +67,9 @@ A gamepad works as soon as it is connected, alongside the keyboard. The menu bar
 
 What it can do now:
 
-- **Click a target in the world** (monster, NPC, chest, waypoint, item on the ground): the character walks over and interacts.
+- **Click empty ground to walk there**: a left click on empty ground walks the character to that point, finding its way around obstacles; a click inside a wall or water walks to the nearest reachable spot.
+- **Hold to keep walking**: hold the left button and the character keeps walking towards the pointer, following it as it moves. W A S D / the gamepad stick take priority: press a direction key while walking and the keyboard takes over at once.
+- **Click a target in the world** (NPC, chest, waypoint, item on the ground): the character walks over and interacts. With a panel open, a click outside it only closes the panel.
 - **Click the bottom row**: a skill icon = use that skill (the same as pressing the key shown under it), a potion cell = drink it, the middle button = open the inventory group of pages, the run / walk button = toggle.
 - **Click the interface**: buttons, checkboxes and tabs in panels (including the in-page tabs of the skill tree), the pause menu, the settings pages, "Start" on the rift level-selection page.
 - **Click a key hint at the bottom**: clicking an entry presses that key.
@@ -77,8 +79,9 @@ What it can do now:
 
 What it cannot do yet:
 
-- **Clicking empty ground does not walk.** Move with W A S D or a gamepad stick.
-- **Key caps on screen are still gamepad letters**; translate them with the table above.
+- **Clicking a monster does not attack**; attack with the skill keys (J K U I).
+- Click-to-walk was verified only in the camp, on empty ground and the waypoint; complex terrain in the wild and clicking NPCs are unverified.
+- Switching input device (keyboard ↔ gamepad) while the settings page or the stash is open: the prompts change only after the panel closes.
 - **Long press / double click / drag / buying on items do not take the mouse.** Use the keyboard or gamepad cursor: move the cursor onto the item with W A S D and press the key shown in the bottom bar. For example, buying from a vendor: cursor onto the goods (the bottom bar shows "A Buy") → press Space (or J) → press it again in the confirmation.
 - "Hold …" key hints need longer than a click, so hold the key on the keyboard; a hint with two key caps is not recognised.
 - The life orb, mana orb and experience bar do nothing when clicked.
@@ -130,7 +133,8 @@ After a forced quit or a crash, the system's "reopen windows?" dialog no longer 
 ## Known shortcomings
 
 - The five things from the top have not been operated by a person: keyboard keys, a physical gamepad, the resource-folder dialog, ⌘Q and menu clicks, how it feels in the hand. The key mapping was written from the key-code table.
-- Clicking empty ground does not walk; key caps on screen are still gamepad letters; long press / double click / drag / buying on items do not take the mouse (see "Mouse" above).
+- Clicking a monster does not attack; long press / double click / drag / buying on items do not take the mouse; click-to-walk was verified only in the camp (see "Mouse" above).
+- "Prompts switch back to gamepad letters when a gamepad is used" was verified by simulation; no physical gamepad has been connected.
 - The free town portal on ZR + Space of a gamepad is not there.
 - The quest bar on the left in rifts is not there.
 - An App you build yourself has no iCloud save sync; there are no update checks and no sharing of the diagnostic log.

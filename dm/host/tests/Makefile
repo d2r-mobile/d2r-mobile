@@ -4,7 +4,40 @@ DM_ROOT ?= $(HOME)/dm-work
 PY ?= $(DM_ROOT)/build/cache/dm/venv/bin/python
 EXEFS ?= $(DM_ROOT)/data/switch/3.3.94012/Update/ExeFS
 B = build
-run: $(B)/t_thread_leak $(B)/t_rift_clock $(B)/t_textbox $(B)/t_rwlv $(B)/t_padmap $(B)/t_touch $(B)/t_hid_receipt $(B)/t_hid_script $(B)/t_touch_mac $(B)/t_oe $(B)/t_fs $(B)/t_fs_case $(B)/t_romfs_validate $(B)/t_audio $(B)/t_audio_spsc $(B)/t_swkbd $(B)/t_altstack $(B)/t_movie $(B)/t_condvar $(B)/t_condvar_old $(B)/t_target_rank $(B)/t_hud_dead $(B)/t_namegen $(B)/t_modetx $(B)/t_unit_level $(B)/t_widget $(B)/t_doorspot $(B)/t_cloudsync $(B)/t_i18n $(B)/main.orig.bin $(B)/subsdk0.orig.bin
+# 依赖一行一个、按字母序（同 ../Makefile 的 SRC：免得加一个测试就整行冲突）；下面各条命令的先后不变
+# Dependencies one per line in alphabetical order (same as SRC in ../Makefile: so that adding one test does not conflict on the whole line); the order of the commands below is unchanged
+run: \
+	$(B)/main.orig.bin \
+	$(B)/subsdk0.orig.bin \
+	$(B)/t_altstack \
+	$(B)/t_audio \
+	$(B)/t_audio_spsc \
+	$(B)/t_cloudsync \
+	$(B)/t_condvar \
+	$(B)/t_condvar_old \
+	$(B)/t_doorspot \
+	$(B)/t_fs \
+	$(B)/t_fs_case \
+	$(B)/t_hid_receipt \
+	$(B)/t_hid_script \
+	$(B)/t_hud_dead \
+	$(B)/t_i18n \
+	$(B)/t_modetx \
+	$(B)/t_movie \
+	$(B)/t_namegen \
+	$(B)/t_oe \
+	$(B)/t_padmap \
+	$(B)/t_rift_clock \
+	$(B)/t_romfs_validate \
+	$(B)/t_rwlv \
+	$(B)/t_swkbd \
+	$(B)/t_target_rank \
+	$(B)/t_textbox \
+	$(B)/t_thread_leak \
+	$(B)/t_touch \
+	$(B)/t_touch_mac \
+	$(B)/t_unit_level \
+	$(B)/t_widget
 	python3 native_write_scan.py --selftest ..
 	python3 mode_scan.py ../..
 	python3 ../../ios/tools/dm_i18n.py --check

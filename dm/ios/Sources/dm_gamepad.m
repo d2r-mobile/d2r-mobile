@@ -85,7 +85,11 @@ static void apply(void) {
     static int on[2]; static uint64_t prev_b;
     on[0] = stick_on(on[0], ax[0], ax[1]); on[1] = stick_on(on[1], ax[2], ax[3]);
     if (!on[0] && !on[1]) g_need_center = 0;   // 碰过屏幕后摇杆回过中了：之后再推出来算数 | The stick has returned to center since the screen was touched: pushing it out again from now on counts
-    if ((b & ~prev_b) || ((on[0] || on[1]) && !g_need_center)) set_mode(1);
+    if ((b & ~prev_b) || ((on[0] || on[1]) && !g_need_center)) { set_mode(1);
+#if TARGET_OS_OSX
+        { void dm_padmode_request_kbd(int kbd); dm_padmode_request_kbd(0); }   // Mac App：实体手柄有输入，键位图标换回手柄键帽 | Mac App: a physical gamepad had input, switch the key icons back to gamepad key caps
+#endif
+    }
     prev_b = b;
     if (!g_pad_mode || !on[0]) ax[0] = ax[1] = 0; if (!g_pad_mode || !on[1]) ax[2] = ax[3] = 0;   // 触屏模式不交摇杆；手柄模式下没推出来的给 0 | Sticks are not delivered in touch mode; in controller mode a stick that is not pushed out gives 0
     // ZR：原版六个技能格之一。这一格空着（没绑技能）时按它 = 免费回城（手柄玩家也免费回城，与触屏回城钮一致）；绑了技能就整颗交还原版（不再整颗占用）。

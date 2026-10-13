@@ -1,4 +1,5 @@
 host/dmhost
+host/dmhost_m3
 host/*.dSYM/
 *.bin
 *.pkl
