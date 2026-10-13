@@ -246,7 +246,7 @@ Download our prebuilt "shell" package (`D2RMobile-shell.ipa`) from the [Releases
 | Item | Status |
 |---|---|
 | Online play | Out of scope; fully offline |
-| `.nsp` / `.xci` game packages | The tools only check the version of the main program and do not distinguish package formats; we ran the whole path with an `.xci` ourselves |
+| `.nsp` / `.xci` game packages | The tools only check the version of the main program and do not distinguish package formats; we ran the whole path with an `.xci` ourselves, and users have reported that `.nsp` packages work perfectly as well |
 | Signing and installing with a sideloading tool (Sideloadly, AltStore and the like) | Not verified; open an issue and tell us how it went |
 | Making the package on Linux | Not verified (verified on Windows and Mac) |
 | The "one-line verdict" and "legacy Chinese name" entries in item notes | The repository does not ship these two content tables; you can supply your own, see `dm/ios/tools/annot/README.md` |
