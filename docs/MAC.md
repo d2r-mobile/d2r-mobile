@@ -71,7 +71,7 @@ What it can do now:
 - **Hold to keep walking**: hold the left button and the character keeps walking towards the pointer, following it as it moves. W A S D / the gamepad stick take priority: press a direction key while walking and the keyboard takes over at once.
 - **Click a target in the world** (NPC, chest, waypoint, item on the ground): the character walks over and interacts. With a panel open, a click outside it only closes the panel.
 - **Click the bottom row**: a skill icon = use that skill (the same as pressing the key shown under it), a potion cell = drink it, the middle button = open the inventory group of pages, the run / walk button = toggle.
-- **Click the interface**: buttons, checkboxes and tabs in panels (including the in-page tabs of the skill tree), the pause menu, the settings pages, "Start" on the rift level-selection page.
+- **Click the interface**: buttons, checkboxes and tabs in panels (including the in-page tabs of the skill tree), the pause menu, the settings pages, and "Start" and the close X on the rift level-selection page.
 - **Click a key hint at the bottom**: clicking an entry presses that key.
 - **Click a figure when creating a character**: the class you click is selected.
 - **Top-right minimap**: opens automatically on entering a game; Tab toggles it; clicking the area name at its top switches to the full-screen map, and another click returns.
@@ -135,6 +135,7 @@ After a forced quit or a crash, the system's "reopen windows?" dialog no longer 
 - The five things from the top have not been operated by a person: keyboard keys, a physical gamepad, the resource-folder dialog, ⌘Q and menu clicks, how it feels in the hand. The key mapping was written from the key-code table.
 - Clicking a monster does not attack; long press / double click / drag / buying on items do not take the mouse; click-to-walk was verified only in the camp (see "Mouse" above).
 - "Prompts switch back to gamepad letters when a gamepad is used" was verified by simulation; no physical gamepad has been connected.
+- On a few pages (the rift confirmation page and level-selection page) the key cap drawn inside a button is still the gamepad "A"; press J or Space.
 - The free town portal on ZR + Space of a gamepad is not there.
 - The quest bar on the left in rifts is not there.
 - An App you build yourself has no iCloud save sync; there are no update checks and no sharing of the diagnostic log.

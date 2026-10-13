@@ -118,7 +118,7 @@ void dm_rift_ui_pump(void) {
     // Panel state trusts only on-screen facts (the panel visible byte, which the original game itself also reads to tell whether a panel is open), not frame counting (the old implementation had nobody clearing the state after the panel closed, so tapping the door again did not open it):
     //   0 not open -> send OpenPanel -> 1 requested -> (became visible) -> 2 on screen -> (became invisible: close button / tap outside the panel / closed by the game itself, whether or not there was a matching close message) -> clear "page wanted" and return to 0.
     //   If the player taps the door again while stuck at 1 (the door tap count changed), send OpenPanel once more
-    else if (!g_opened || (g_opened == 1 && !up && dm_rift_menu_seq() != g_seq)) { g_opened = 1; g_seq = dm_rift_menu_seq(); g_sel = -1; dm_ui_send("PanelManager", "OpenPanel", "MessageLogPanel"); LOG("大秘境面板：点了门，开面板（%s）", m.menu == 2 ? "继续 / 放弃" : "选层"); return; }
+    else if (!g_opened || (g_opened == 1 && !up && dm_rift_menu_seq() != g_seq)) { g_opened = 1; g_seq = dm_rift_menu_seq(); g_sel = -1; dm_ui_send("PanelManager", "OpenPanel", "MessageLogPanel"); LOG("大秘境面板：点了门，开面板（%s）", m.menu == 3 ? "离开这一场的确认" : m.menu == 2 ? "继续 / 放弃" : "选层"); return; }
     if (g_opened == 1 && up) g_opened = 2;
     if (want && g_opened == 2 && !up) { LOG("大秘境面板：玩家关了面板"); dm_rift_menu_close(); g_opened = 0; g_sel = -1; }
     pause_set(up && !dm_rift_menu_pending()); plate_hide(up);
@@ -126,7 +126,9 @@ void dm_rift_ui_pump(void) {
     if (!want) { m.menu = 1; dm_rift_menu_peek(&m); }   // 玩家自己翻到这一页（没点门）：照样显示选层，只是「开始」要在城里才执行 | The player browsed to this page themselves (no door tap): level selection is shown all the same, but 「开始」(Enter Rift) only executes while in town
     { static const char *au = (const char *)1; static int at; if (au == (const char *)1) au = getenv("DM_RIFT_MENU_AUTO");   // 测试开关 DM_RIFT_MENU_AUTO=<层>[,cont|,abandon]：页显示 90 帧后替玩家点（脚本触点打不到被挡的门 / 按钮另用系统鼠标事件验） | Test switch DM_RIFT_MENU_AUTO=<level>[,cont|,abandon]: taps on the player's behalf 90 frames after the page is shown (scripted touch points cannot hit a blocked door / buttons are verified separately with system mouse events)
       if (au && want) { if (!at) at = (int)fr; if ((int)fr - at > 90) { at = 0; static int lg; if (lg++ < 4) LOG("秘境选层页：测试开关替玩家点 %s（页 %d）", au, m.menu);
-          if (m.menu == 1 && atoi(au) > 0) { g_sel = atoi(au); if (g_sel > m.unlock) g_sel = m.unlock; atomic_store(&g_act, 1); } else if (m.menu == 2 && (strstr(au, "cont") || strstr(au, "abandon"))) atomic_store(&g_act, strstr(au, "abandon") ? 3 : 2); } } else at = 0; }
+          if (m.menu == 3) { static int nth; int cancel = strstr(au, "cancel") && !nth++;   // 确认页：值里带 cancel = 第一次出现时关掉（当作取消），之后带 next 的点「继续」 | confirmation page: when the value contains cancel = close it the first time it appears (treated as cancel), afterwards press "Continue" on the one carrying next
+              if (cancel) dm_ui_send("PanelManager", "ClosePanel", "MessageLogPanel"); else if (strstr(au, "next")) atomic_store(&g_act, 2); }
+          else if (m.menu == 1 && atoi(au) > 0) { g_sel = atoi(au); if (g_sel > m.unlock) g_sel = m.unlock; atomic_store(&g_act, 1); } else if (m.menu == 2 && (strstr(au, "cont") || strstr(au, "abandon"))) atomic_store(&g_act, strstr(au, "abandon") ? 3 : 2); } } else at = 0; }
     // 手柄模式：这一页的按钮原版焦点导航不认识，照积分牌 / 编年史仓库页的做法接管本页的键（dm_padmode_page_keys），走的还是下面同一套动作号：
     //   选层页 左 / 右 = −1 / +1、下 / 上 = −10 / +10、A = 开始；进行中 / 已完成页 A = 继续、X = 放弃 / 重新选层（放弃不可撤销，不放在 A 上）；B 没接管 = 原版关面板。
     //   键位说明走原版底部提示条（动作号 0 = A、2 = X），字用按钮上的同一个串
@@ -136,25 +138,27 @@ void dm_rift_ui_pump(void) {
     //   level (quitting is irreversible, so it is not on A); B is not taken over = the original game closes the panel.
     //   The key legend uses the original bottom button legend (action number 0 = A, 2 = X), with the same strings as on the buttons
     { int dm_padmode_current(void); uint64_t dm_padmode_page_keys(uint64_t); void dm_padmode_legend(int, const char *);
-      { int kx = dm_padmode_current() ? 52 : 99999; rect(find(bw, "TouchRF_KeyA", 0), kx, 1181); rect(find(bw, "TouchRF_KeyA2", 0), kx, 1181); rect(find(bw, "TouchRF_KeyX", 0), kx, 844); }   // 按钮左端的原版键帽：只在手柄模式显示 | The original button glyph at the left end of the button: shown only in controller mode
+      { int kx = dm_padmode_current() ? 52 : 99999; rect(find(bw, "TouchRF_KeyA", 0), kx, 1181); rect(find(bw, "TouchRF_KeyA2", 0), kx, 1181); rect(find(bw, "TouchRF_KeyX", 0), m.menu == 3 ? 99999 : kx, 844); }   // 确认页上面那个钮不在，它的键帽也不显示   // 按钮左端的原版键帽：只在手柄模式显示 | the upper button is absent on the confirmation page, so its key cap is not shown either
       rect(find(panel(), "TouchCloseBox", 1), dm_padmode_current() ? 99999 : -998, 256);   // 右上角的触屏关闭 X（布局同编年史 _chronicle_touch）：手柄模式挪到屏外（按 B 关），触屏模式放回布局里的位置；同 dm_kills.c | the touch close X in the top-right corner (layout same as the Chronicle _chronicle_touch): moved off screen in controller mode (B closes), put back at its layout position in touch mode; same as dm_kills.c
-      if (dm_padmode_current()) { int ch = m.menu == 2;
+      if (dm_padmode_current()) { int ch = m.menu >= 2, cf = m.menu == 3;   // cf：确认页，只有 A = 继续；取消 = B 关面板（原版） | cf: confirmation page, only A = continue; cancel = B closes the panel (as in the original)
           uint64_t ev = dm_padmode_page_keys(DM_BTN_A | DM_BTN_X | DM_BTN_LEFT | DM_BTN_RIGHT | DM_BTN_UP | DM_BTN_DOWN);
-          dm_padmode_legend(0, dm_str(b, ch ? "dmRiftBtnCont" : "dmRiftBtnStart")); if (ch) dm_padmode_legend(2, dm_str(b, m.done ? "dmRiftBtnResel" : "dmRiftBtnAbandon"));
+          dm_padmode_legend(0, dm_str(b, ch ? "dmRiftBtnCont" : "dmRiftBtnStart")); if (ch && !cf) dm_padmode_legend(2, dm_str(b, m.done ? "dmRiftBtnResel" : "dmRiftBtnAbandon"));
           if (!ch) { int st = (ev & DM_BTN_LEFT ? -1 : 0) + (ev & DM_BTN_RIGHT ? 1 : 0) + (ev & DM_BTN_DOWN ? -10 : 0) + (ev & DM_BTN_UP ? 10 : 0); if (st) atomic_fetch_add(&g_step, st); if (ev & DM_BTN_A) atomic_store(&g_act, 1); }
           else if (ev & DM_BTN_A) atomic_store(&g_act, 2);
+          else if (cf) { }
           else if (m.done) { if (ev & DM_BTN_X) atomic_store(&g_act, 3); }   // 已完成页的 X = 重新选层（进度已记，不丢东西）：按一下 | X on the completed page = reselect the level (progress is already recorded, nothing is lost): a single press
           else { static uint64_t t0; uint64_t now_ns(void), dm_padmode_page_held(void), now = now_ns();   // 进行中页的 X = 放弃（本层作废、不可撤销）：按住 0.8 秒才算，防误按 | X on the in-progress page = quit (this level is forfeited, irreversible): it only counts after being held for 0.8 seconds, to prevent accidental presses
               if (!(dm_padmode_page_held() & DM_BTN_X)) t0 = 0; else if (!t0) t0 = now; else if (t0 != 1 && now - t0 >= 800000000ull) { t0 = 1; atomic_store(&g_act, 3); LOG("大秘境面板：手柄按住 X 0.8 秒 → 放弃"); } }
-          if (ev) { atomic_store(&g_dirty, 1); LOG("大秘境面板：手柄键 %#llx（%s页）", (unsigned long long)ev, ch ? "继续 / 放弃" : "选层"); } } }
+          if (ev) { atomic_store(&g_dirty, 1); LOG("大秘境面板：手柄键 %#llx（%s页）", (unsigned long long)ev, cf ? "确认" : ch ? "继续 / 放弃" : "选层"); } } }
     int a = atomic_exchange(&g_act, 0);
     if (g_sel < 0) g_sel = m.def < 1 ? 1 : m.def > m.unlock ? m.unlock : m.def;
     { int st = atomic_exchange(&g_step, 0); if (st) { g_sel += st; if (g_sel < 1) g_sel = 1; if (g_sel > m.unlock) g_sel = m.unlock; } }
     if (a == 1 && m.menu == 1) { dm_rift_menu_start(g_sel); pause_set(0); dm_ui_send("PanelManager", "ClosePanel", "MessageLogPanel"); return; }
     if (a == 2 && m.menu == 2) { dm_rift_menu_continue(); pause_set(0); dm_ui_send("PanelManager", "ClosePanel", "MessageLogPanel"); return; }
+    if (a == 2 && m.menu == 3) { LOG("大秘境面板：确认页点了继续"); dm_rift_menu_next(); pause_set(0); dm_ui_send("PanelManager", "ClosePanel", "MessageLogPanel"); return; }
     if (a == 3 && m.menu == 2) { dm_rift_menu_abandon(); pause_set(0); g_sel = -1; return; }   // 放弃后服务端拍里把页换回选层（面板不关；放开暂停让拍走到） | After abandon, the server tick switches the page back to level selection (the panel stays open; release the pause so the tick gets there)
     static int frame; if (!atomic_exchange(&g_dirty, 0) && ++frame % 15) return;
-    rect(find(bw, "TouchRF_Sel", 0), m.menu == 2 ? 99999 : 0, 0); rect(find(bw, "TouchRF_Cho", 0), m.menu == 2 ? 0 : 99999, 0);
+    rect(find(bw, "TouchRF_Sel", 0), m.menu >= 2 ? 99999 : 0, 0); rect(find(bw, "TouchRF_Cho", 0), m.menu >= 2 ? 0 : 99999, 0);
     char t[128];
     // 英文版：左栏「标签 + 右对齐的值」英文比中文宽，标签写全称用中号字会顶到数值。布局里每行另有一个小一号的标签控件 …LE（缺省在屏外）：
     // 游戏语言不是中文时用它、把中号那个挪出去，数值列再右移 16（右缘 496，离右边列表 530 留 34）。中文：中号标签在原位、数值列不动，画面不变
@@ -170,7 +174,19 @@ void dm_rift_ui_pump(void) {
           snprintf(t, sizeof t, "TouchRF_Gam%dL", i); rect(find(bw, t, 0), en ? 99999 : 0, y); snprintf(t, sizeof t, "TouchRF_Gam%dLE", i); rect(find(bw, t, 0), en ? 0 : 99999, y + (en ? 4 : 0)); } }
     rect(find(bw, "TouchRF_MsN", 0), en ? 99999 : 1030, -24); rect(find(bw, "TouchRF_MsNE", 0), en ? 930 : 99999, -24);   // 右上那句：英文用更宽、字更小的那个控件；纵坐标 −24 = touch_layout.py 的 RF_T0（第一行小标题整体上抬） | the top-right sentence: English uses the wider widget with the smaller font; y coordinate −24 = RF_T0 in touch_layout.py (the first row of small headings is raised as a whole)
     rect(find(bw, "TouchRF_AbT", 0), en ? 99999 : 0, 746); rect(find(bw, "TouchRF_AbTE", 0), en ? 0 : 99999, 746); rect(find(bw, "TouchRF_ContT", 0), en ? 99999 : 0, 1083); rect(find(bw, "TouchRF_ContTE", 0), en ? 0 : 99999, 1083);
-    if (m.menu == 2) {
+    if (m.menu == 3) {
+        // 守护者处那扇门的确认页（公开仓库）：借「继续 / 放弃」那一页的控件，不加新控件——
+        // 标题问一句、三行说明后果、下面那个「继续」钮 = 确认；上面那个钮（放弃 / 重新选层）两个都挪走，说明写「关闭本页 = 留在这里」。取消 = 右上角 X / 手柄 B / 点面板外
+        // Confirmation page of the door at the Guardian: it borrows the widgets of the "Continue / Abandon" page and adds no new widget -
+        // a title that asks the question, three lines explaining the consequence, and the lower "Continue" button = confirm; the upper button (Abandon / choose level again) is moved away in both variants, and the explanation says "closing this page = stay here". Cancel = the X at the top right / gamepad B / a tap outside the panel
+        int retry = m.next <= m.tier;   // 没有更高的层可去（超时未过关，或已在最高层）：那扇门是重打 | no higher level to go to (overtime without passing, or already at the highest level): that door is a replay
+        snprintf(t, sizeof t, dm_str(rb(), "dmRiftTierN"), m.next); text(find(bw, "TouchRF_ChTier", 0), t);
+        text(find(bw, "TouchRF_ChT", 0), dm_str(rb(), retry ? "dmRiftTitleRetry" : "dmRiftTitleNext")); text(find(bw, "TouchRF_ChNote", 0), "");
+        text(find(bw, "TouchRF_ChLeftL", 0), dm_str(rb(), "dmRiftLeaveWarn1")); text(find(bw, "TouchRF_ChLeft", 0), ""); text(find(bw, "TouchRF_ChProgL", 0), dm_str(rb(), "dmRiftLeaveWarn2")); text(find(bw, "TouchRF_ChProg", 0), ""); text(find(bw, "TouchRF_ChNoteL", 0), "");
+        rect(find(bw, "TouchRF_Abandon", 0), 99999, 818); rect(find(bw, "TouchRF_Resel", 0), 99999, 818);
+        text(find(bw, en ? "TouchRF_AbTE" : "TouchRF_AbT", 0), dm_str(rb(), "dmRiftCapStay"));
+        snprintf(t, sizeof t, dm_str(rb(), "dmRiftCapGo"), m.next); text(find(bw, en ? "TouchRF_ContTE" : "TouchRF_ContT", 0), t);
+    } else if (m.menu == 2) {
         snprintf(t, sizeof t, dm_str(rb(), "dmRiftTierN"), m.tier); text(find(bw, "TouchRF_ChTier", 0), t);
         // 已打倒守护者：两句话各占一整行（写进左边的标签控件、值留空）；写进右对齐的值控件会压住标签（Mac 截图）
         // 「本层」三行 + 放弃上方的短句，按守护者打倒没有分两套（已打倒时放弃不丢进度：最高通关照记）。已打倒的三句各占一整行，写进左边的标签控件、值留空

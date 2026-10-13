@@ -195,6 +195,10 @@ dmRiftSayLateTown	超时未过关，回城之门已开启	Not cleared. Town Port
 dmRiftSayLate	超时未过关	Level not cleared	秘境系统提示（dm_rift.c）；超时打倒守护者不算过关；英文：not cleared，不用 Failed（没死也没失败，只是不计）
 dmRiftSayDoneNext	本层完成，下一层之门已开启	Rift complete! Portal opened	秘境系统提示（dm_rift.c）；英文：同上；暗黑 3 结算窗口标题原文「GREATER RIFT COMPLETE」/ Urshi 面板标题「RIFT COMPLETE」（游戏内截图 diablo.fandom.com/wiki/File:New_Completion_Rift.jpg、File:UrshiMenu.jpg）
 dmRiftSayDoneTown	本层完成，回城之门已开启	Complete! Town Portal open	秘境系统提示（dm_rift.c）；英文：Town Portal = 暗黑 2 原版 skills[skillan219]；暗黑 3 结算窗口标题原文「GREATER RIFT COMPLETE」/ Urshi 面板标题「RIFT COMPLETE」（游戏内截图 diablo.fandom.com/wiki/File:New_Completion_Rift.jpg、File:UrshiMenu.jpg）
+dmRiftSayTopBoth	最高层通关，重打与回城之门已开启	Top level done! Portals opened	秘境系统提示（dm_rift.c）：第 100 层限时内通关，没有下一层，那扇门是重打（公开仓库 / #29）；英文：拟
+dmRiftSayTopNext	最高层通关，重打之门已开启	Top level done! Portal opened	同上，只开出重打那扇门时
+dmRiftSayTopTown	最高层通关，回城之门已开启	Top level! Town Portal open	同上，只开出回城门时
+dmRiftSayTop	最高层通关	Top level cleared	同上，两扇门都没开出时
 dmRiftSayDone	本层完成	Rift complete	秘境系统提示（dm_rift.c）；英文：同上；暗黑 3 结算窗口标题原文「GREATER RIFT COMPLETE」/ Urshi 面板标题「RIFT COMPLETE」（游戏内截图 diablo.fandom.com/wiki/File:New_Completion_Rift.jpg、File:UrshiMenu.jpg）
 dmRiftSayErr	秘境出错了，这次没开	The Rift could not be opened	秘境系统提示（dm_rift.c）；英文：拟
 dmRiftSayStart	第 %d 层开始，限时 15 分钟	Level %d: 15 minute time limit	秘境系统提示（dm_rift.c）；英文：Greater Rift level / time limit 取自暗黑 3 官方 2.1.0 补丁说明（news.blizzard.com/en-us/article/14569138）「complete the current Greater Rift level within the designated time limit」
@@ -213,6 +217,12 @@ dmRiftCapVoid	本层作废	Run will be lost	大秘境面板（dm_rift_ui.c）；
 dmRiftCapVoidPad	按住 X，本层放弃	Hold X to quit level	大秘境面板进行中页「放弃」钮上方的说明，手柄模式用（dm_rift_ui.c）；英文：拟（按钮叫 Quit）
 dmRiftTitleDone	本层已完成	Rift Complete	大秘境面板（dm_rift_ui.c）；英文：见 dmRiftSayDoneBoth；暗黑 3 结算窗口标题原文「GREATER RIFT COMPLETE」/ Urshi 面板标题「RIFT COMPLETE」（游戏内截图 diablo.fandom.com/wiki/File:New_Completion_Rift.jpg、File:UrshiMenu.jpg）
 dmRiftTitleLate	超时未过关	Time's Up	大秘境面板（dm_rift_ui.c）超时打倒守护者时的标题；英文：拟
+dmRiftTitleNext	进入下一层？	Next Level?	大秘境面板（dm_rift_ui.c）守护者处那扇门的确认页标题（公开仓库）；英文：拟
+dmRiftTitleRetry	重打这一层？	Retry Level?	同上，没有更高的层可去时（超时未过关 / 已在最高层）；英文：拟
+dmRiftLeaveWarn1	会离开这一场	Leave this Rift	确认页说明第一行；英文：拟（这一栏中号字约 16 个字符宽，同 dmRiftGuardDown）
+dmRiftLeaveWarn2	地上的东西不保留	Drops are lost	确认页说明第二行；英文：拟（同上宽度；drops 指掉落物）
+dmRiftCapStay	关闭本页：留在这里	Close to stay here	确认页上组说明（取消的办法：关面板）；英文：拟
+dmRiftCapGo	进入第 %d 层	Enter Level %d	确认页下组说明（下面的「继续」钮 = 确认）；英文：拟
 dmRiftTitleRun	秘境进行中	Rift in Progress	大秘境面板（dm_rift_ui.c）
 dmRiftGuardDown	已击败守护者	Guardian slain	大秘境面板（dm_rift_ui.c）；英文：slain = 暗黑 2 原版 ui[sysmsg9]「was slain.」；Rift Guardian 见上（此处栏宽放不下全称）
 dmRiftNextOpen	下一层之门已开启	Next portal open	大秘境面板（dm_rift_ui.c）；英文：拟
@@ -246,6 +256,7 @@ dmRiftHudDone	第 %d 层完成	Level %d complete	秘境顶部进度条（dm_rift
 dmRiftHudLate	第 %d 层超时	Level %d overtime	秘境顶部进度条（dm_rift_hud.m，UIKit）；英文：拟
 dmRiftHudGuard	守护者现身	Rift Guardian	秘境顶部进度条（dm_rift_hud.m，UIKit）；英文：见 dmRiftSayGuardian
 dmRiftHudNext	下次第 %d 层	Next: Level %d	秘境顶部进度条（dm_rift_hud.m，UIKit）；英文：拟
+dmRiftHudTop	已通关最高层	Highest level cleared	秘境顶部进度条（dm_rift_hud.m，UIKit）：第 100 层限时内通关，没有下一层了（公开仓库）；英文：拟
 dmRiftHudSame	下次仍是这一层	Next: same level	秘境顶部进度条（dm_rift_hud.m，UIKit）；英文：拟
 dmRiftHudKill	击败守护者	Slay the Rift Guardian	秘境顶部进度条（dm_rift_hud.m，UIKit）；英文：拟；任务目标原句没查到
 dmRiftHudGoal	消灭秘境中的怪物   %d%%	Slay the monsters   %d%%	秘境顶部进度条（dm_rift_hud.m，UIKit）；英文：拟；任务目标原句没查到

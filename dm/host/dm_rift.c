@@ -108,8 +108,8 @@ static struct {
 static struct { uint64_t G, player; uint32_t last_t; int eligible; uint32_t door, next_door, town_door, pend, pend_at; int door_tried, lv_prev, dead; int used[24], nused; int redir; int last_lv, last_x, last_y, nd_lv, nd_x, nd_y, tp_lv, tp_x, tp_y, resume, gift_due; uint32_t tp_until; } L;   // used = 本局秘境用过的图（已生成过的关卡同一局里不会重新生成，下次不抽）   // 本局 | used = maps used by the rift in this run (levels already generated are not regenerated in the same run, so they are not drawn next time)   // This run
 // 选层页 / 继续放弃页（前端 dm_rift_menu.m 画，点按经下面的请求回到服务端拍里执行）
 // Level selection page / continue-abandon page (drawn by the front end dm_rift_menu.m; taps go back through the requests below to be executed in the server tick)
-enum { MENU_NONE, MENU_SELECT, MENU_CHOICE };
-static struct { _Atomic int menu, req_start, req_cont, req_abandon, clvl; } M;
+enum { MENU_NONE, MENU_SELECT, MENU_CHOICE, MENU_NEXT };   // MENU_NEXT：碰了守护者处「下一层」那扇门，先问一句（公开仓库 原先碰一下就开新一场，地上没捡的东西回不去） | MENU_NEXT: the "next level" door at the Guardian was touched; ask first (touching it used to start a new run at once, and uncollected items on the ground could no longer be reached)
+static struct { _Atomic int menu, req_start, req_cont, req_abandon, req_next, clvl; } M;
 
 // 侧文件：<存档工作目录>/<角色名>/<角色名>.sw_rift（同刷怪积分牌的写法：写在工作目录、随存档提交）。一行一项，键在前：
 //   tier N（下次进门打第 N 层）/ best N（通关过的最高层）/ clears N（通关次数）；best / clears 只计 15 分钟内打倒守护者的（超时通关不算过关；旧文件里的数不回溯）/ deaths N（秘境里死亡次数）/
@@ -278,16 +278,21 @@ int dm_rift_active(void) { return atomic_load(&K.st) == ST_RUN; }
 // ---- 界面读数（前端每帧）
 // 挑战计时一律读客体时钟 guest_ns()（hle_os.c）：App 在后台 / 锁屏、系统键盘弹着的时候它不走，倒计时也就不走；
 // 回城、开面板、读取画面这些游戏照常运行的时间照常计入。开局时刻不落盘（侧文件里记的是用时秒数）。公开仓库
+// 本层完成后的下一层层号：限时内完成涨 K.inc 层（封顶 100），超时完成不涨。算下一层只有这一处——守护者处那扇门、结算日志、顶部进度条上的「下次第 N 层」都取它
+// （顶部条原先自己用 tier + inc 算、没封顶，100 层限时通关后写「下次第 103 层」，公开仓库）
 // ---- UI readouts (front end, every frame)
-// All challenge timing reads the guest clock guest_ns() (hle_os.c): it does not advance while the App is in the background / the screen is locked or while the system keyboard is up, so the countdown does not advance either;
-// time during which the game keeps running -- back in town, panels open, loading screens -- counts as usual. The start time is not written to disk (the sidecar file records elapsed seconds).
+// The challenge timer always reads the guest clock guest_ns() (hle_os.c): it does not advance while the App is in the background / the screen is locked / the system keyboard is up, so the countdown does not advance either;
+// time during which the game keeps running - in town, with a panel open, on the loading screen - counts as usual. The start moment is not persisted (the sidecar file records elapsed seconds).
+// The next level after this one is completed: completing within the time limit goes up K.inc levels (capped at 100), completing overtime does not go up. The next level is computed in this one place only - the door at the Guardian, the completion log and "next: level N" on the progress bar at the top all take it from here
+// (the top bar used to compute tier + inc by itself without the cap, and wrote "next: level 103" after a timed clear of level 100)
+static int next_tier(void) { int nt = K.inc ? K.tier + K.inc : K.tier; return nt > 100 ? 100 : nt; }
 static int g_left_done;   // 结算时剩余秒数：打倒守护者后顶部条与面板都显示它，不再往下走 | Seconds left at completion: after the guardian is defeated both the top bar and the panel show it, and it no longer counts down
 int dm_rift_hud(dm_rift_hud_t *o) {
     int st = atomic_load(&K.st); if (st != ST_RUN && st != ST_DONE) return 0;
     uint64_t now = guest_ns();
     int el = K.t0_ns ? (int)((now - K.t0_ns) / 1000000000ull) : 0; int need = atomic_load(&K.need);
     o->tier = K.tier; o->progress = need > 0 ? (float)atomic_load(&K.score) / need : 0; if (o->progress > 1) o->progress = 1;
-    o->secs_left = st == ST_DONE ? g_left_done : RIFT_SECS - el; o->done = st == ST_DONE; o->guardian = K.guard != 0 && !atomic_load(&K.guard_dead); o->inc = K.inc;
+    o->secs_left = st == ST_DONE ? g_left_done : RIFT_SECS - el; o->done = st == ST_DONE; o->guardian = K.guard != 0 && !atomic_load(&K.guard_dead); o->inc = K.inc; o->next = next_tier();
     return 1;
 }
 
@@ -388,12 +393,19 @@ static _Atomic uint32_t g_mlhp[112];   // MonLvl 表的生命列（资料片地�
 int dm_rift_tier_hp_x10(int tier, int clvl) { int p = tier < 8 ? tier : 8, l9 = dm_rift_tier_level(9, clvl); long long v = (long long)(p + 1) * 5; if (tier < 9) return (int)v;
     uint32_t h85 = atomic_load(&g_mlhp[85]), hl = l9 > 0 && l9 < 112 ? atomic_load(&g_mlhp[l9]) : 0; if (h85 && hl && hl > h85) v = v * hl / h85; return (int)(v * tier_total_x1000(tier, 0) / 1000); }
 static uint32_t monlvl(uint64_t G, int lvl, int grp) { uint64_t T = tables(G), a = rd(T + 0x1178), n = rd(T + 0x1180); if (!a || lvl < 0 || (uint64_t)lvl >= n) return 0; return *(uint32_t *)(uintptr_t)(a + (uint64_t)lvl * 0x78 + (grp * 6 + 5) * 4); }   // 组 0 AC、2 HP、3 DM；资料片地狱列 | Group 0 AC, 2 HP, 3 DM; expansion Hell column
+// 生命上限的基础项最多能写到多少：属性上限是 0x7fffff00（8388607 点，×256 定点的 32 位有符号数上限），而游戏给的是合计 = 基础 × (合计 ÷ 基础)——
+// 单位带百分比生命加成时，基础写到上限、合计就溢出成负数、被读成 1 点（里随从回到 1 就是这么来的）。所以按现在的 合计 ÷ 基础 留出余量。
+// base / full = 此刻的基础项与合计（原始定点值）；没有加成（合计不大于基础）或读不到基础项时就是属性上限本身
+// How high the base entry of maximum life may be written: the stat limit is 0x7fffff00 (8388607 points, the limit of a 32-bit signed number in x256 fixed point), while what the game presents is the total = base x (total / base) -
+// for a unit with a percentage life bonus, writing the base up to the limit makes the total overflow to a negative number, which is read as 1 point (this is how minions fell back to 1). So headroom is left according to the current total / base.
+// base / full = the base entry and the total at this moment (raw fixed-point values); with no bonus (total not greater than base) or when the base entry cannot be read, it is the stat limit itself
+static long long hp_base_limit(int base, int full) { return base > 0 && full > base ? 0x7fffff00LL * base / full : 0x7fffff00LL; }
 static void scale_monster(uint64_t G, uint64_t u, int lt, int l9) {   // lt = 本层的等级（守护者 + 3）、l9 = 起算层的等级 | lt = this level's level (Guardian + 3), l9 = the baseline level's level
     int l0 = gs(u, 12); if (l0 <= 0) return; if (lt > lvl_cap()) lt = lvl_cap(); if (l9 > lt) l9 = lt;
     int tx = tier_total_x1000(K.tier, 0), lb = l0 > l9 ? l0 : l9, le = l0 > lt ? l0 : lt;   // lb：「起算层那只怪」的等级；le：写进单位的等级（不降级） | lb: the level of "that monster at the baseline level"; le: the level written into the unit (never lowered)
     if (le == l0 && lb == l0 && tx == 1000) return;   // 9 层、原生等级已不低于目标：什么都不用改 | level 9 and the native level is already no lower than the target: nothing to change
     uint32_t h0 = monlvl(G, l0, 2), hb = monlvl(G, lb, 2), d0 = monlvl(G, l0, 3), db = monlvl(G, lb, 3), a0 = monlvl(G, l0, 0), a1 = monlvl(G, le, 0); if (!h0 || !d0 || !a0) return;
-    long long want = (long long)gs(u, 7) * hb / h0 * tx / 1000, hp = want; if (hp > 0x7fffff00LL) hp = 0x7fffff00LL;   // 定点 ×256；原版上限 2²³ 点 | Fixed point ×256; the original cap is 2²³ points
+    long long want = (long long)gs(u, 7) * hb / h0 * tx / 1000, hp = want, lim = hp_base_limit(gsb(u, 7), gs(u, 7)); if (hp > lim) hp = lim;   // 定点 ×256；原版上限 2²³ 点，带百分比生命加成的怪按比例留余量（hp_base_limit） | fixed point x256; the original's limit is 2^23 points, and monsters with a percentage life bonus get proportional headroom (hp_base_limit)
     // 顶到上限不静默：这只怪（多半是守护者）的生命没按线涨足，只剩伤害在涨。每开一层记前 3 只
     // Hitting the cap is not silent: this monster (most likely the Guardian) did not get its full life according to the line, and only its damage keeps
     // growing. The first 3 are logged for each level opened
@@ -509,7 +521,7 @@ static void pet_hp_pump(uint64_t G, uint64_t player, uint32_t t) {
                 for (int i = 0; i < g_pfn; ) { if (g_pf[i].cls == cls && g_pf[i].base > cap) { g_pf[i] = g_pf[--g_pfn]; pf_dirty = 1; } else i++; } } }
             // 封顶按合计算：合计 = 基础 × (合计 ÷ 基础)，合计不能过属性的上限（0x7fffff00 = 8388607 点；再大就溢出成负数，游戏读成 1 点）
             // The cap is computed on the total: total = base x (total / base), and the total must not exceed the stat's limit (0x7fffff00 = 8388607 points; any larger and it overflows to a negative number, which the game reads as 1 point)
-            long long want = (long long)tb[k].base * mult / 1000, lim = full > cur ? 0x7fffff00LL * cur / full : 0x7fffff00LL; if (want > lim) want = lim;
+            long long want = (long long)tb[k].base * mult / 1000, lim = hp_base_limit(cur, full); if (want > lim) want = lim;
             if ((int)want != cur) { int hp = gs(u, 6); long long nf = (long long)full * want / cur, nh = (long long)hp * want / cur; if (nh < 256) nh = 256; if (nh > nf) nh = nf;   /* 当前生命同比例；nf = 写完后的合计 | current life in the same proportion; nf = the total after writing */
                 ss(u, 7, (int)want); ss(u, 6, (int)nh);
                 LOG("秘境：随从 id %u（宠物类型 %u，类号 %u）生命上限基础项 %d → %lld（基数 %d，第 %d 层 ×%d.%02d）；合计 %d → %d", id, ty, cls, cur >> 8, want >> 8, tb[k].base >> 8, K.tier, mult / 1000, mult % 1000 / 10, full >> 8, gs(u, 7) >> 8); }
@@ -909,14 +921,15 @@ static void milestone(uint64_t G, uint64_t player, int m) {
 static void finish(uint64_t G, uint64_t player, uint64_t guard) {
     uint64_t now = guest_ns();
     int left = RIFT_SECS - (int)((now - K.t0_ns) / 1000000000ull); g_left_done = left;   // 结算这一拍停表 | Stop the clock on the completion tick
-    K.inc = left >= 600 ? 3 : left >= 300 ? 2 : left > 0 ? 1 : 0; int next = K.tier + K.inc; if (next > 100) next = 100; if (!K.inc) next = K.tier;
+    K.inc = left >= 600 ? 3 : left >= 300 ? 2 : left > 0 ? 1 : 0; int next = next_tier();
     if (K.inc) { R.clears++; if (K.tier > R.best) R.best = K.tier; } if (K.inc && (!R.fast[K.tier] || RIFT_SECS - left < R.fast[K.tier])) R.fast[K.tier] = RIFT_SECS - left;
     if (K.inc) pts_grant(player);   // 通关点数：R.best 更新之后、下面 rec_save 之前。只算限时内通关（「超时通关不算过关，15 分钟内才是过关」），与上一行最高通关层同一口径 | clear points: after R.best is updated and before rec_save below. Only clears within the time limit count ("a clear after the time limit does not count as passing; only within 15 minutes does"), same rule as the highest cleared level on the previous line
     if (K.inc) for (int m = 10; m <= 100; m += 10) if (K.tier >= m && !(R.ms & (1u << (m / 10 - 1)))) milestone(G, player, m);   // 限时内通关才算首通 | Only a clear within the time limit counts as a first clear
     R.tier = next; if (next > R.unlock) R.unlock = next; rec_save(); if (GB.on) gamble_apply(G);
     { int dm_request_save(void); LOG("秘境：结算请游戏存盘 → %d", dm_request_save()); }   // 层数进度（侧文件，上一行刚写进工作目录）与刚打到的东西随这次提交落盘，见 start_rift | the level progress (side file, just written into the working directory on the line above) and what was just looted go to disk with this commit, see start_rift
     if (K.inc) { char c[5] = "xa1 "; c[2] = (char)('1' + rnd(5)); give_item(G, player, c, 2, 99); }
-    if (K.inc) LOG("秘境：第 %d 层完成（剩 %d:%02d）→ 下次第 %d 层", K.tier, left > 0 ? left / 60 : 0, left > 0 ? left % 60 : 0, next); else LOG("秘境：第 %d 层超时未过关 → 不涨层、不计最高层与通关数，下次仍第 %d 层", K.tier, next);   // 剩余时间与下次层数在左上角任务条上（dm_rift_hud），不再单发一条提示 | Time left and next level are on the top-left quest bar (dm_rift_hud); no separate notice is sent anymore
+    if (K.inc && next == K.tier) LOG("秘境：第 %d 层完成（剩 %d:%02d）→ 已是最高层，没有下一层", K.tier, left > 0 ? left / 60 : 0, left > 0 ? left % 60 : 0);
+    else if (K.inc) LOG("秘境：第 %d 层完成（剩 %d:%02d）→ 下次第 %d 层", K.tier, left > 0 ? left / 60 : 0, left > 0 ? left % 60 : 0, next); else LOG("秘境：第 %d 层超时未过关 → 不涨层、不计最高层与通关数，下次仍第 %d 层", K.tier, next);   // 剩余时间与下次层数在左上角任务条上（dm_rift_hud），不再单发一条提示 | Time left and next level are on the top-left quest bar (dm_rift_hud); no separate notice is sent anymore
     atomic_store(&K.st, ST_DONE); region_set(G, 1);
     pet_hp_pump(G, player, tick_of(G));   // 随从生命当拍设回基数（结算后紧跟着会存盘，放大着的值不能进角色档） | set minion life back to the base on this very tick (a save follows right after completion, and the boosted value must not go into the character save)
     if (K.players_old) dm_hud_request_players(K.players_old);
@@ -965,36 +978,46 @@ static void finish(uint64_t G, uint64_t player, uint64_t guard) {
         LOG("秘境：结算处门位 人 %d,%d 掩码 %#x 窗口内可达 %d 格；下一层想放 %d,%d（%s，走 %d 步）→ 取 %d,%d（档 %d，走 %d 步）；回城想放 %d,%d（%s，走 %d 步）→ 取 %d,%d（档 %d，走 %d 步）", x, y, mk, dg.reach,
             bx + ox, by + oy, ds_blk(&dg, bx + ox - x + DS_R, by + oy - y + DS_R) ? "挡" : "不挡", ds_dist(&dg, bx + ox - x + DS_R, by + oy - y + DS_R), x + nx, y + ny, t1, ds_dist(&dg, nx + DS_R, ny + DS_R),
             bx - ox, by - oy, ds_blk(&dg, bx - ox - x + DS_R, by - oy - y + DS_R) ? "挡" : "不挡", ds_dist(&dg, bx - ox - x + DS_R, by - oy - y + DS_R), x + tx, y + ty, t2, ds_dist(&dg, tx + DS_R, ty + DS_R));
-        L.next_door = place_door(G, room_at(lvp, x + nx, y + ny), x + nx, y + ny, "结算处下一层", RIFT_OBJ, 1); if (!L.next_door) LOG("【红】秘境：下一层的门开门失败");
+        L.next_door = getenv("DM_RIFT_TEST_NONEXTDOOR") ? 0 : place_door(G, room_at(lvp, x + nx, y + ny), x + nx, y + ny, "结算处下一层", RIFT_OBJ, 1)   /* 测试开关 DM_RIFT_TEST_NONEXTDOOR=1：当作这扇门没开出来（造现场） | test switch DM_RIFT_TEST_NONEXTDOOR=1: act as if this door could not be placed (for staging a scene) */; if (!L.next_door) LOG("【红】秘境：下一层的门开门失败");
         L.town_door = place_door(G, room_at(lvp, x + tx, y + ty), x + tx, y + ty, "结算处回城", TOWN_OBJ, 1); if (!L.town_door) LOG("【红】秘境：回城门开门失败"); }
-      { int nt = K.inc ? K.tier + K.inc : K.tier;   // 一条提示说清两扇门，长度与原先那句相当、系统提示框不多换行 | One notice explains both doors; about as long as the previous sentence, with no extra line wrap in the system notice box
+      {   // 一条提示说清两扇门，长度与原先那句相当、系统提示框不多换行 | One notice explains both doors; about as long as the previous sentence, with no extra line wrap in the system notice box
         // 结算只发这一条（原先「第 N 层完成…」「门已开启」各一条，加上首通奖励那条，原版系统提示框一条一条放，连着通关时会落后一层）
         // 文字控制在 16 个字以内（加上「秘境」前缀与「初入秘境…」那句等长，提示框里是一行）；层数、剩余时间、下次层数都在左上角任务条上
-        // Completion sends only this one notice (previously 「第 N 层完成…」(Level N complete...) and 「门已开启」(The door is open) were one notice each, plus the first-clear reward one; the original system notice box shows them one at a time, so with back-to-back clears it would lag one level behind)
-        // Text kept within 16 characters (with the 「秘境」(Rift) prefix it is as long as the 「初入秘境…」(First time in the rift...) sentence, one line in the notice box); the level, time left and next level are all on the top-left quest bar
-        (void)nt; if (L.next_door && L.town_door) say(K.inc ? "dmRiftSayDoneBoth" : "dmRiftSayLateBoth");
-        else if (L.next_door) say(K.inc ? "dmRiftSayDoneNext" : "dmRiftSayLateNext"); else if (L.town_door) say(K.inc ? "dmRiftSayDoneTown" : "dmRiftSayLateTown"); else say(K.inc ? "dmRiftSayDone" : "dmRiftSayLate"); } }
+        // 已在最高层（限时内通关但没有下一层）：那扇门是「重打」，不说「下一层」
+        // Completion sends only this one message (it used to be one each for "level N complete..." and "the doors are open", plus the first-clear reward one; the original's system message box shows them one at a time, so on consecutive clears it fell a level behind)
+        // The text is kept within 16 characters (with the "Rift" prefix it is as long as the "first time in a rift..." line, one line in the message box); level, time left and next level are all on the quest bar at the top left
+        // Already at the highest level (cleared within the time limit but with no next level): that door is "replay", not "next level"
+        int top = K.inc && next_tier() == K.tier;
+        if (L.next_door && L.town_door) say(top ? "dmRiftSayTopBoth" : K.inc ? "dmRiftSayDoneBoth" : "dmRiftSayLateBoth");
+        else if (L.next_door) say(top ? "dmRiftSayTopNext" : K.inc ? "dmRiftSayDoneNext" : "dmRiftSayLateNext"); else if (L.town_door) say(top ? "dmRiftSayTopTown" : K.inc ? "dmRiftSayDoneTown" : "dmRiftSayLateTown"); else say(top ? "dmRiftSayTop" : K.inc ? "dmRiftSayDone" : "dmRiftSayLate"); } }
 }
 
-// 本层完成后的下一层层号：限时内完成涨 K.inc 层（封顶 100），超时完成不涨。守护者处那扇门取这个数（结算日志、任务条上的「下次第 N 层」同源）
-// Level number of the next level after this one is completed: completing within the time limit raises it by K.inc levels (capped at 100), completing
-// over time does not raise it.
-// The portal at the Guardian's spot uses this number (same source as the completion log and the "Next: level N" on the quest bar)
-static int next_tier(void) { int nt = K.inc ? K.tier + K.inc : K.tier; return nt > 100 ? 100 : nt; }
 static void menu_fill(dm_rift_menu_t *o, int m) {
     uint64_t now = guest_ns();
     int need = atomic_load(&K.need); o->menu = m; o->best = R.best; o->unlock = R.unlock < 1 ? 1 : R.unlock; o->def = R.tier; o->ms = R.ms; o->clvl = atomic_load(&M.clvl);
-    o->tier = K.tier; o->done = atomic_load(&K.st) == ST_DONE; o->inc = K.inc; o->secs_left = o->done ? g_left_done : K.t0_ns ? RIFT_SECS - (int)((now - K.t0_ns) / 1000000000ull) : RIFT_SECS; if (o->secs_left < 0) o->secs_left = 0;
+    o->tier = K.tier; o->done = atomic_load(&K.st) == ST_DONE; o->inc = K.inc; o->next = next_tier(); o->secs_left = o->done ? g_left_done : K.t0_ns ? RIFT_SECS - (int)((now - K.t0_ns) / 1000000000ull) : RIFT_SECS; if (o->secs_left < 0) o->secs_left = 0;
     o->progress = need > 0 ? (float)atomic_load(&K.score) / need : 0; if (o->progress > 1) o->progress = 1;
 }
 int dm_rift_menu(dm_rift_menu_t *o) { int m = atomic_load(&M.menu); if (m == MENU_NONE) return 0; menu_fill(o, m); return 1; }
 int dm_rift_stats(dm_rift_stats_t *o) {   // 积分牌「秘境」页（dm_kills.c）：本局角色的侧文件读数；没资格 / 没读过返回 0 | Kill board 「秘境」(Rift) page (dm_kills.c): sidecar file readout for this run's character; returns 0 if not eligible / not read yet
     if (!K.who[0]) return 0; o->best = R.best; o->clears = R.clears; o->deaths = R.deaths; o->tier = R.tier; o->unlock = R.unlock; o->ms = R.ms; memcpy(o->fast, R.fast, sizeof o->fast); return 1; }
 void dm_rift_menu_close(void) { atomic_store(&M.menu, MENU_NONE); }
-void dm_rift_menu_peek(dm_rift_menu_t *o) { int m = atomic_load(&K.st) == ST_RUN || (atomic_load(&K.st) == ST_DONE && L.next_door) ? MENU_CHOICE : MENU_SELECT; menu_fill(o, m); }   // 没点门时也给页面读数（玩家自己翻到编年史「秘境」页） | Provide page readouts even when the door was not tapped (the player browsed to the chronicle 「秘境」(Rift) page themselves)
+// 城里入口该给哪一页：有一场可以回去（正在打，或打完了、旧场位置还记着）→ 继续 / 放弃，否则选层。
+// 打完那种情况按「旧场位置在不在」（L.nd_lv，结算时记、开新场 / 放弃时清）判，不按守护者处那扇门的单位号：门是开在那张图上的一个物件，
+// 没开出来（place_door 失败，有【红】日志）时单位号是 0，原先就只给选层页——玩家回不去捡地上的东西（公开仓库 里与玩法无关的那部分）
+// Which page the town entrance should give: when there is a run to go back to (in progress, or finished with the old run's position still recorded) -> Continue / Abandon, otherwise level selection.
+// The finished case is decided by "whether the old run's position is there" (L.nd_lv, recorded at completion, cleared when a new run starts / on abandon), not by the unit id of the door at the Guardian: the door is an object placed on that map,
+// and when it could not be placed (place_door failed, with a red log line) its unit id is 0, and only the level-selection page used to be given - the player could not go back to pick up what was on the ground
+static int town_menu(int st) { return st == ST_RUN || (st == ST_DONE && L.nd_lv) ? MENU_CHOICE : MENU_SELECT; }
+// 新一局开始时清掉上一局留下的页面状态与请求（开始 / 继续 / 放弃）：这几个请求由界面线程置位、服务端拍里取走，上一局结束前没被取走的不能带进新局
+// When a new game starts, clear the page state and requests left by the previous game (start / continue / abandon): these requests are set by the UI thread and taken on a server tick, and any not taken before the previous game ended must not be carried into the new game
+static void menu_reset(void) { int a = atomic_exchange(&M.req_start, 0), b = atomic_exchange(&M.req_cont, 0), c = atomic_exchange(&M.req_abandon, 0), m = atomic_exchange(&M.menu, MENU_NONE);
+    if (a || b || c || m) LOG("秘境：新局，清掉上一局留下的请求（开始 %d / 继续 %d / 放弃 %d / 页 %d）", a, b, c, m); }
+void dm_rift_menu_peek(dm_rift_menu_t *o) { menu_fill(o, town_menu(atomic_load(&K.st))); }   // 没点门时也给页面读数（玩家自己翻到编年史「秘境」页） | Provide page readouts even when the door was not tapped (the player browsed to the chronicle 「秘境」(Rift) page themselves)
 void dm_rift_menu_start(int tier) { atomic_store(&M.req_start, tier); atomic_store(&M.menu, MENU_NONE); }
 void dm_rift_menu_continue(void) { atomic_store(&M.req_cont, 1); atomic_store(&M.menu, MENU_NONE); }
 void dm_rift_menu_abandon(void) { atomic_store(&M.req_abandon, 1); atomic_store(&M.menu, MENU_NONE); }
+void dm_rift_menu_next(void) { atomic_store(&M.req_next, 1); atomic_store(&M.menu, MENU_NONE); }
 static _Atomic int g_menu_seq; int dm_rift_menu_seq(void) { return atomic_load(&g_menu_seq); }   // 点城里的门的次数（面板据此认「又点了一次」） | Number of taps on the town door (the panel uses it to recognize "tapped again")
 int dm_rift_menu_pending(void) { return atomic_load(&M.req_abandon) != 0; }   // 放弃还没在服务端拍里执行（大秘境面板据此放开暂停） | Abandon has not yet been executed in the server tick (the greater rift panel releases the pause based on this)
 
@@ -1030,6 +1053,7 @@ static int start_rift(uint64_t G, uint64_t player, uint32_t t, int tier) {
     K.players_old = dm_hud_requested_players(); if (!K.players_old) K.players_old = 1;
     dm_quiet_difficulty_msg(1);   // 本局原版「游戏难度设为 N」提示不弹（观测门 15，diag.c；换局关） | The original 「游戏难度设为 N」(Game difficulty set to N) notice is not shown this run (observation gate 15, diag.c; turned off on run change)
     dm_hud_request_players(K.tier < 8 ? K.tier : 8);
+    L.nd_lv = 0;   // 旧场位置到此作废（这一场结算时重记；结算读不到玩家位置时不记，那时不能回到更早那一场的位置） | the old run's position is void from here (recorded again when this run is completed; not recorded when the player's position cannot be read at completion, in which case returning to an even earlier run's position must not happen)
     atomic_store(&K.st, ST_RUN); say("dmRiftSayStart", K.tier);   // 一行放得下（原句在提示框和聊天栏里折行，把「15 分钟」拆开；攒进度 / 打守护者在左上角任务条上有） | Fits on one line (the original sentence wrapped in the notice box and chat bar, splitting 「15 分钟」(15 minutes); building progress / fighting the guardian are on the top-left quest bar)
     LOG("秘境：拍 %u 开局 第 %d 层，图 %d → %d → %d（共 %d 张），/players %d", t, K.tier, K.maps[0], K.maps[1], K.maps[2], K.nmaps, K.tier < 8 ? K.tier : 8);
     // 进秘境 / 换层前请游戏存一次盘（dm_request_save：下一拍它走自己的定时存盘）：秘境是连着换图的高风险转场，这里崩了不该回退到 5 分钟一次的定时存盘那一刻
@@ -1052,7 +1076,12 @@ void dm_rift_tick(uint64_t G, uint64_t player, uint8_t *main_base) {
         int st = atomic_load(&K.st);
         maze_restore(G, player);
         if (st == ST_RUN || st == ST_DONE) { region_set(G, 0); if (K.players_old) dm_hud_request_players(K.players_old); atomic_store(&K.st, ST_IDLE); LOG("秘境：换局，%s", st == ST_RUN ? "本次秘境作废" : "结束"); }
-        dm_quiet_difficulty_msg(0); GS.bm_on = 0; shelf_restore(); gamble_restore(); memset(&L, 0, sizeof L); L.G = G; L.player = player; L.eligible = -1; L.lv_prev = -1; L.resume = K.resume_tier; K.resume_tier = 0;   // resume：图用完走的一键重开，到新局才接着开；GS.bm_on = 0：位图属于上一局（已释放），不写回 | resume: the one-tap restart taken when maps ran out continues only once in the new run; GS.bm_on = 0: the bitmap belongs to the previous run (already freed), not written back
+        dm_quiet_difficulty_msg(0); GS.bm_on = 0; shelf_restore(); gamble_restore(); memset(&L, 0, sizeof L);
+        // 测试开关 DM_RIFT_TEST_STALE=1（造现场）：进程里第二局起，换局这一刻先置上「开始第 7 层 / 继续」两个请求，当作上一局结束前界面刚点下、没来得及被取走
+        // Test switch DM_RIFT_TEST_STALE=1 (for staging a scene): from the second game in the process on, set the two requests "start level 7 / continue" at the moment of the game change, as if the UI had just pressed them before the previous game ended and they had not been taken yet
+        { static int games; if (games++ && getenv("DM_RIFT_TEST_STALE")) { atomic_store(&M.req_start, 7); atomic_store(&M.req_cont, 1); LOG("秘境：测试 DM_RIFT_TEST_STALE 换局时置上残留请求（开始 7 / 继续 1）"); } }
+        if (!getenv("DM_RIFT_TEST_STALE_KEEP")) menu_reset();   // 测试开关 DM_RIFT_TEST_STALE_KEEP=1（对照）：不清，重现修正前的行为 | test switch DM_RIFT_TEST_STALE_KEEP=1 (control): do not clear, reproducing the behaviour before the fix
+        L.G = G; L.player = player; L.eligible = -1; L.lv_prev = -1; L.resume = K.resume_tier; K.resume_tier = 0;   // resume：图用完走的一键重开，到新局才接着开；GS.bm_on = 0：位图属于上一局（已释放），不写回 | resume: the one-tap restart taken when maps ran out continues only once in the new run; GS.bm_on = 0: the bitmap belongs to the previous run (already freed), not written back
     }
     L.last_t = t; built_scan(player);
     int lv = unit_level(player); if (!lv || !unit_room(player)) return;
@@ -1081,12 +1110,23 @@ void dm_rift_tick(uint64_t G, uint64_t player, uint8_t *main_base) {
     { static int at = -1, tr; if (at < 0) { const char *e = getenv("DM_RIFT_TEST_START"); at = e ? atoi(e) : 0; const char *c = e ? strchr(e, ':') : NULL; tr = c ? atoi(c + 1) : 1; }   // 测试开关 DM_RIFT_TEST_START=<拍>[:<层>]：人在哈洛加斯时到这一拍直接开这一层（裸宿主上选层页点不了；走的是一键重开后续局的同一句） | Test switch DM_RIFT_TEST_START=<tick>[:<floor>]: while the player is in Harrogath, start that floor directly at that tick (the floor selection page cannot be tapped on the bare host; this goes through the same statement as the follow-up run after a quick restart)
       if (at > 0 && t >= (uint32_t)at && lv == LV_TOWN && L.eligible > 0 && atomic_load(&K.st) == ST_IDLE) { at = 0; LOG("秘境：测试 DM_RIFT_TEST_START 拍 %u 直接开第 %d 层", t, tr); start_rift(G, player, t, tr); return; } }
     { static int at = -1; if (at < 0) { const char *e = getenv("DM_RIFT_TEST_RESTART"); at = e ? atoi(e) : 0; } if (at > 0 && t >= (uint32_t)at) { at = 0; void dm_restart_request(void); LOG("秘境：测试 DM_RIFT_TEST_RESTART 拍 %u 请求一键重开", t); dm_restart_request(); } }   // 测试：拍 N 替玩家一键重开 | Test: at tick N, do a one-tap restart on the player's behalf
-    if (lv != LV_TOWN && atomic_load(&M.menu)) atomic_store(&M.menu, MENU_NONE);   // 离城自动收起 | Closes automatically on leaving town
+    // 离城自动收起；确认页例外——它开在守护者处那张图上，人离开那张图、或这一场已不是「打完待走」才收
+    // Closes automatically on leaving town; the confirmation page is the exception - it opens on the Guardian's map, and closes only when the player leaves that map or this run is no longer "finished, waiting to leave"
+    { int mm = atomic_load(&M.menu); if (mm == MENU_NEXT ? (st != ST_DONE || lv != L.nd_lv || !L.next_door) : (mm && lv != LV_TOWN)) atomic_store(&M.menu, MENU_NONE); }
+    // 确认页点了「继续」：到这里才真的离开这一场。条件再核一遍（面板开着时游戏是暂停的，正常不会变）
+    // "Continue" was pressed on the confirmation page: only here does the player really leave this run. The conditions are checked once more (the game is paused while the panel is open, so they normally do not change)
+    if (atomic_exchange(&M.req_next, 0) && st == ST_DONE && L.next_door && lv == L.nd_lv) { L.next_door = L.town_door = 0; int nt = next_tier(); LOG("秘境：确认离开这一场，开第 %d 层（此刻地上物品 %d 件，不保留）", nt, ground_items(G)); start_rift(G, player, t, nt); return; }
+    // 测试开关 DM_RIFT_TEST_NEXTDOOR=<拍数>[,<拍数>…]：本层结算后过这么多拍，当作玩家碰了守护者处「下一层」那扇门（裸宿主上没法点门）。日志带此刻地上的物品数（验取消后东西还在）
+    // Test switch DM_RIFT_TEST_NEXTDOOR=<ticks>[,<ticks>...]: this many ticks after this level is completed, act as if the player touched the "next level" door at the Guardian (the door cannot be clicked on the bare host). The log includes the number of items on the ground at that moment (to verify they are still there after a cancel)
+    { static uint32_t at[8]; static int n = -1; if (n < 0) { n = 0; const char *e = getenv("DM_RIFT_TEST_NEXTDOOR"); char bf[96]; if (e) { strlcpy(bf, e, sizeof bf); for (char *sv, *k = strtok_r(bf, ",", &sv); k && n < 8; k = strtok_r(NULL, ",", &sv)) at[n++] = (uint32_t)atoi(k); } }
+      static uint32_t d0; if (st != ST_DONE) d0 = 0; else if (!d0) d0 = t;
+      for (int i = 0; i < n; i++) if (at[i] && d0 && t - d0 >= at[i] && L.next_door && lv == L.nd_lv && !atomic_load(&M.menu)) { at[i] = 0; atomic_store(&M.menu, MENU_NEXT); atomic_fetch_add(&g_menu_seq, 1);
+          LOG("秘境：测试 DM_RIFT_TEST_NEXTDOOR 拍 %u（结算后 %u 拍）当作碰了守护者处的门 → 确认页；地上物品 %d 件", t, t - d0, ground_items(G)); break; } }
     { int tq = atomic_exchange(&M.req_start, 0); if (tq > 0 && lv == LV_TOWN && st != ST_RUN) { if (tq > R.unlock) tq = R.unlock; if (tq < 1) tq = 1; LOG("秘境：选层页开始第 %d 层", tq); L.next_door = L.town_door = 0; start_rift(G, player, t, tq); return; } }
     { static int at = -1; if (at < 0) { const char *e = getenv("DM_RIFT_TEST_SAVE"); at = e ? atoi(e) : 0; } if (at > 0 && t >= (uint32_t)at) { at = 0; int dm_request_save(void); LOG("秘境：测试 DM_RIFT_TEST_SAVE 拍 %u 请游戏存盘 → %d", t, dm_request_save()); } }   // 测试开关 DM_RIFT_TEST_SAVE=<拍>：到这一拍请游戏存一次盘（验放大着的随从生命进不进角色档） | test switch DM_RIFT_TEST_SAVE=<tick>: ask the game to save once at this tick (to check whether boosted minion life gets into the character save)
     { static int at = -1; if (at < 0) { const char *e = getenv("DM_RIFT_TEST_ABANDON"); at = e ? atoi(e) : 0; } if (at > 0 && t >= (uint32_t)at && st == ST_RUN) { at = 0; LOG("秘境：测试 DM_RIFT_TEST_ABANDON 拍 %u 替玩家放弃本层", t); atomic_store(&M.req_abandon, 1); } }   // 测试开关 DM_RIFT_TEST_ABANDON=<拍>：秘境进行中到这一拍替玩家放弃（裸宿主上点不了「放弃」） | test switch DM_RIFT_TEST_ABANDON=<tick>: during a rift run, abandon on the player's behalf at this tick ("Abandon" cannot be clicked on the bare host)
     if (atomic_exchange(&M.req_abandon, 0) && (st == ST_RUN || st == ST_DONE)) {   // 放弃：本层作废（不涨层、不发奖），写回改过的表，回选层页 | Abandon: this level is void (no level increase, no rewards); write back the modified tables and return to the level selection page
-        region_set(G, 0); if (K.players_old) dm_hud_request_players(K.players_old); K.guard = 0; L.next_door = L.town_door = 0; atomic_store(&K.st, ST_IDLE); st = ST_IDLE;
+        region_set(G, 0); if (K.players_old) dm_hud_request_players(K.players_old); K.guard = 0; L.next_door = L.town_door = 0; L.nd_lv = 0; atomic_store(&K.st, ST_IDLE); st = ST_IDLE;
         LOG("秘境：放弃第 %d 层", K.tier); atomic_store(&M.menu, MENU_SELECT);
         pet_hp_pump(G, player, t);   // 随从生命当拍设回基数，同结算处：放弃后回到选层页会走原版暂停，等下一拍的话要到玩家关掉面板才设回 | minion life is set back to base on this very tick, as at completion: after abandoning, returning to the level-selection page goes through the original's pause, and waiting for the next tick would delay it until the player closes the panel
         return; }
@@ -1113,16 +1153,16 @@ void dm_rift_tick(uint64_t G, uint64_t player, uint8_t *main_base) {
     if ((st == ST_RUN || st == ST_DONE) && in_rift_map(lv)) { int x, y; if (unit_xy(player, &x, &y)) { L.last_lv = lv; L.last_x = x; L.last_y = y; } }
     if (L.gift_due && st == ST_RUN && in_rift_map(lv) && !R.gift) { L.gift_due = 0; R.gift = 1; rec_save(); give_item2(G, player, "jew ", 7, 99, 392 + rnd(8), 0); say("dmRiftSayGift"); }
     { static uint32_t at[16]; static int n = -1; if (n < 0) { n = 0; const char *e = getenv("DM_RIFT_TEST_OPEN"); char b[160]; if (e) { strlcpy(b, e, sizeof b); for (char *sv, *k = strtok_r(b, ",", &sv); k && n < 16; k = strtok_r(NULL, ",", &sv)) at[n++] = (uint32_t)atoi(k); } }
-      for (int i = 0; i < n; i++) if (at[i] && t >= at[i] && lv == LV_TOWN) { at[i] = 0; atomic_store(&M.menu, (st == ST_RUN || (st == ST_DONE && L.next_door)) ? MENU_CHOICE : MENU_SELECT); atomic_fetch_add(&g_menu_seq, 1); LOG("秘境：测试 DM_RIFT_TEST_OPEN 拍 %u 当作点了城里的门 → %s", t, atomic_load(&M.menu) == MENU_CHOICE ? "继续 / 放弃" : "选层页"); } }   // 测试：拍 N 在城里当作点了门（脚本点门会被 NPC / 营地遮挡） | Test: at tick N in town, act as if the door was tapped (a scripted tap on the door gets blocked by NPCs / the camp)
+      for (int i = 0; i < n; i++) if (at[i] && t >= at[i] && lv == LV_TOWN) { at[i] = 0; atomic_store(&M.menu, town_menu(st)); atomic_fetch_add(&g_menu_seq, 1); LOG("秘境：测试 DM_RIFT_TEST_OPEN 拍 %u 当作点了城里的门 → %s", t, atomic_load(&M.menu) == MENU_CHOICE ? "继续 / 放弃" : "选层页"); } }   // 测试：拍 N 在城里当作点了门（脚本点门会被 NPC / 营地遮挡） | Test: at tick N in town, act as if the door was tapped (a scripted tap on the door gets blocked by NPCs / the camp)
     if (L.pend) { uint64_t du = find_unit(G, 2, L.pend); int px, py, dx, dy;
         if (!du || t - L.pend_at > 250) L.pend = 0;
         else if (unit_xy(player, &px, &py) && unit_xy(du, &dx, &dy) && abs(px - dx) <= 4 && abs(py - dy) <= 4) { L.pend = 0;
             int is_next = du && *(uint32_t *)(uintptr_t)(du + 8) == L.next_door;
             if (du && *(uint32_t *)(uintptr_t)(du + 8) == L.town_door) { LOG("秘境：点了守护者处的回城门 → 回哈洛加斯"); L.lv_prev = LV_TOWN; warp(G, player, LV_TOWN); return; }
-            if (is_next) { L.next_door = L.town_door = 0; int nt = next_tier(); LOG("秘境：点了守护者处的门，直接开第 %d 层", nt); start_rift(G, player, t, nt); return; }
+            if (is_next) { atomic_store(&M.menu, MENU_NEXT); atomic_fetch_add(&g_menu_seq, 1); LOG("秘境：点了守护者处的门 → 确认页（要进第 %d 层；门与地上的东西先不动）", next_tier()); return; }
             // 城里的门：没有进行中的秘境 → 选层页；进行中（正在打，或打完还没进下一层）→ 继续 / 放弃
             // The door in town: no rift in progress -> level selection page; in progress (fighting, or finished but not yet entered the next level) -> continue / abandon
-            atomic_store(&M.menu, (st == ST_RUN || (st == ST_DONE && L.next_door)) ? MENU_CHOICE : MENU_SELECT); atomic_fetch_add(&g_menu_seq, 1); LOG("秘境：点城里的门 → %s", atomic_load(&M.menu) == MENU_CHOICE ? "继续 / 放弃" : "选层页"); return; } }
+            atomic_store(&M.menu, town_menu(st)); atomic_fetch_add(&g_menu_seq, 1); LOG("秘境：点城里的门 → %s", atomic_load(&M.menu) == MENU_CHOICE ? "继续 / 放弃" : "选层页"); return; } }
     // 守护者处的两扇门按「类号 + 位置」认、并保持开着：人回城再回来，那张图的房间卸载重建，门还在但单位号变了、模式也回到关着（不可点）——
     // Mac 实测回来后点下一层的门「没有目标，不发令」，就是玩家说的「回去的门也不动」。在这张图里每拍核一遍：单位号对上、模式不是 2 就再开
     // The two doors at the guardian are identified by "class id + position" and kept open: when the player goes back to town and returns, that map's rooms are unloaded and rebuilt; the doors are still there but their unit ids have changed and their mode is back to closed (not clickable) --
