@@ -91,7 +91,7 @@ static void say(const char *key, ...) { char line[160], full[180]; va_list ap; v
 enum { ST_IDLE, ST_RUN, ST_DONE };
 static struct {
     _Atomic int st; int tier, maps[3], nmaps, cur;                    // 本次层数、串起来的图、正在第几张 | This rift's level, the chained maps, which map we are on
-    _Atomic int score, need; uint64_t t0_ns; _Atomic int timeout, guard_dead;    // 分数（客户端加）、开局墙钟、超时、守护者已死 | Score (added by the client), wall clock at rift start, timeout, guardian dead
+    _Atomic int score, need; uint64_t t0_ns; _Atomic int timeout, guard_dead;    // 分数（客户端加）、开局时刻（客体时钟）、超时、守护者已死 | Score (added by the client), start time (guest clock), timed out, guardian dead
     uint32_t guard; int guard_cls, inc;                                 // 守护者单位 id；成功涨了几层 | Guardian unit id; how many levels were gained on success
     int players_old;                                                    // 开局前的 /players 档 | The /players setting from before the start of the run
     char who[64];                                                       // 角色名（层数侧文件） | Character name (level sidecar file)
@@ -268,11 +268,15 @@ static int in_rift_map(int lv) { for (int i = 0; i < K.nmaps; i++) if (K.maps[i]
 int dm_rift_active(void) { return atomic_load(&K.st) == ST_RUN; }
 
 // ---- 界面读数（前端每帧）
+// 挑战计时一律读客体时钟 guest_ns()（hle_os.c）：App 在后台 / 锁屏、系统键盘弹着的时候它不走，倒计时也就不走；
+// 回城、开面板、读取画面这些游戏照常运行的时间照常计入。开局时刻不落盘（侧文件里记的是用时秒数）。公开仓库
 // ---- UI readouts (front end, every frame)
+// All challenge timing reads the guest clock guest_ns() (hle_os.c): it does not advance while the App is in the background / the screen is locked or while the system keyboard is up, so the countdown does not advance either;
+// time during which the game keeps running -- back in town, panels open, loading screens -- counts as usual. The start time is not written to disk (the sidecar file records elapsed seconds).
 static int g_left_done;   // 结算时剩余秒数：打倒守护者后顶部条与面板都显示它，不再往下走 | Seconds left at completion: after the guardian is defeated both the top bar and the panel show it, and it no longer counts down
 int dm_rift_hud(dm_rift_hud_t *o) {
     int st = atomic_load(&K.st); if (st != ST_RUN && st != ST_DONE) return 0;
-    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); uint64_t now = (uint64_t)ts.tv_sec * 1000000000ull + ts.tv_nsec;
+    uint64_t now = guest_ns();
     int el = K.t0_ns ? (int)((now - K.t0_ns) / 1000000000ull) : 0; int need = atomic_load(&K.need);
     o->tier = K.tier; o->progress = need > 0 ? (float)atomic_load(&K.score) / need : 0; if (o->progress > 1) o->progress = 1;
     o->secs_left = st == ST_DONE ? g_left_done : RIFT_SECS - el; o->done = st == ST_DONE; o->guardian = K.guard != 0 && !atomic_load(&K.guard_dead); o->inc = K.inc;
@@ -864,7 +868,7 @@ static void milestone(uint64_t G, uint64_t player, int m) {
     R.ms |= 1u << (N - 1); say("dmRiftSayFirst", m);
 }
 static void finish(uint64_t G, uint64_t player, uint64_t guard) {
-    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); uint64_t now = (uint64_t)ts.tv_sec * 1000000000ull + ts.tv_nsec;
+    uint64_t now = guest_ns();
     int left = RIFT_SECS - (int)((now - K.t0_ns) / 1000000000ull); g_left_done = left;   // 结算这一拍停表 | Stop the clock on the completion tick
     K.inc = left >= 600 ? 3 : left >= 300 ? 2 : left > 0 ? 1 : 0; int next = K.tier + K.inc; if (next > 100) next = 100; if (!K.inc) next = K.tier;
     if (K.inc) { R.clears++; if (K.tier > R.best) R.best = K.tier; } if (K.inc && (!R.fast[K.tier] || RIFT_SECS - left < R.fast[K.tier])) R.fast[K.tier] = RIFT_SECS - left;
@@ -939,7 +943,7 @@ static void finish(uint64_t G, uint64_t player, uint64_t guard) {
 // The portal at the Guardian's spot uses this number (same source as the completion log and the "Next: level N" on the quest bar)
 static int next_tier(void) { int nt = K.inc ? K.tier + K.inc : K.tier; return nt > 100 ? 100 : nt; }
 static void menu_fill(dm_rift_menu_t *o, int m) {
-    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); uint64_t now = (uint64_t)ts.tv_sec * 1000000000ull + ts.tv_nsec;
+    uint64_t now = guest_ns();
     int need = atomic_load(&K.need); o->menu = m; o->best = R.best; o->unlock = R.unlock < 1 ? 1 : R.unlock; o->def = R.tier; o->ms = R.ms; o->clvl = atomic_load(&M.clvl);
     o->tier = K.tier; o->done = atomic_load(&K.st) == ST_DONE; o->inc = K.inc; o->secs_left = o->done ? g_left_done : K.t0_ns ? RIFT_SECS - (int)((now - K.t0_ns) / 1000000000ull) : RIFT_SECS; if (o->secs_left < 0) o->secs_left = 0;
     o->progress = need > 0 ? (float)atomic_load(&K.score) / need : 0; if (o->progress > 1) o->progress = 1;
@@ -982,7 +986,7 @@ static int start_rift(uint64_t G, uint64_t player, uint32_t t, int tier) {
     atomic_fetch_add(&g_run_seq, 1);
     rift_setup(G); K.cur = 0; atomic_store(&K.score, getenv("DM_RIFT_TEST_SCORE") ? atoi(getenv("DM_RIFT_TEST_SCORE")) : 0);   // 测试：初始分数（看进度条） | Test: initial score (to see the progress bar)
     atomic_store(&K.guard_dead, 0); atomic_store(&K.timeout, 0); K.guard = 0; K.inc = 0;
-    struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); K.t0_ns = (uint64_t)ts.tv_sec * 1000000000ull + ts.tv_nsec;
+    K.t0_ns = guest_ns();
     if (getenv("DM_RIFT_TEST_LATE")) { K.t0_ns -= (uint64_t)RIFT_SECS * 1000000000ull; LOG("秘境：测试 DM_RIFT_TEST_LATE 开局即超时"); }   // 造「超时打倒守护者」现场 | set up the "Guardian defeated after time ran out" test case
     K.players_old = dm_hud_requested_players(); if (!K.players_old) K.players_old = 1;
     dm_quiet_difficulty_msg(1);   // 本局原版「游戏难度设为 N」提示不弹（观测门 15，diag.c；换局关） | The original 「游戏难度设为 N」(Game difficulty set to N) notice is not shown this run (observation gate 15, diag.c; turned off on run change)
@@ -1035,6 +1039,8 @@ void dm_rift_tick(uint64_t G, uint64_t player, uint8_t *main_base) {
     if (lv == LV_TOWN && !L.door && !L.door_tried) { L.door_tried = 1; L.door = make_rift_door(G, player); if (!L.door) L.door_tried = 0; }
     if (L.eligible > 0) atomic_store(&M.clvl, gs(player, 12));
     if (L.resume && L.eligible > 0 && lv == LV_TOWN && t > 50) { int tq = L.resume; L.resume = 0; LOG("秘境：一键重开后的新局 → 直接开第 %d 层", tq); start_rift(G, player, t, tq); return; }
+    { static int at = -1, tr; if (at < 0) { const char *e = getenv("DM_RIFT_TEST_START"); at = e ? atoi(e) : 0; const char *c = e ? strchr(e, ':') : NULL; tr = c ? atoi(c + 1) : 1; }   // 测试开关 DM_RIFT_TEST_START=<拍>[:<层>]：人在哈洛加斯时到这一拍直接开这一层（裸宿主上选层页点不了；走的是一键重开后续局的同一句） | Test switch DM_RIFT_TEST_START=<tick>[:<floor>]: while the player is in Harrogath, start that floor directly at that tick (the floor selection page cannot be tapped on the bare host; this goes through the same statement as the follow-up run after a quick restart)
+      if (at > 0 && t >= (uint32_t)at && lv == LV_TOWN && L.eligible > 0 && atomic_load(&K.st) == ST_IDLE) { at = 0; LOG("秘境：测试 DM_RIFT_TEST_START 拍 %u 直接开第 %d 层", t, tr); start_rift(G, player, t, tr); return; } }
     { static int at = -1; if (at < 0) { const char *e = getenv("DM_RIFT_TEST_RESTART"); at = e ? atoi(e) : 0; } if (at > 0 && t >= (uint32_t)at) { at = 0; void dm_restart_request(void); LOG("秘境：测试 DM_RIFT_TEST_RESTART 拍 %u 请求一键重开", t); dm_restart_request(); } }   // 测试：拍 N 替玩家一键重开 | Test: at tick N, do a one-tap restart on the player's behalf
     if (lv != LV_TOWN && atomic_load(&M.menu)) atomic_store(&M.menu, MENU_NONE);   // 离城自动收起 | Closes automatically on leaving town
     { int tq = atomic_exchange(&M.req_start, 0); if (tq > 0 && lv == LV_TOWN && st != ST_RUN) { if (tq > R.unlock) tq = R.unlock; if (tq < 1) tq = 1; LOG("秘境：选层页开始第 %d 层", tq); L.next_door = L.town_door = 0; start_rift(G, player, t, tq); return; } }
@@ -1139,7 +1145,7 @@ void dm_rift_tick(uint64_t G, uint64_t player, uint8_t *main_base) {
               int ok = dm_teleport(B, G, player, rr, pos[0], pos[1]); static int ln; if (ln++ < 5) LOG("秘境：测试拉人 → %d,%d（最近的怪 %d 格）%s", pos[0], pos[1], bd, ok ? "成" : "不成"); } } }
     // 计时
     // Timer
-    { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); uint64_t now = (uint64_t)ts.tv_sec * 1000000000ull + ts.tv_nsec;
+    { uint64_t now = guest_ns();
       if (!atomic_load(&K.timeout) && now - K.t0_ns > (uint64_t)RIFT_SECS * 1000000000ull) { atomic_store(&K.timeout, 1); say("dmRiftSayTimeout"); } }
     // 守护者
     // Guardian
