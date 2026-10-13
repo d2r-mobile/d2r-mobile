@@ -28,6 +28,19 @@ static struct {
     dm_tc_state state;
 } g_touch;
 
+// ---- 真鼠标（Mac App，front_mac.m）：事件来自前端而不是脚本表，进同一套状态机。界面用原版手柄 HUD，屏上没有触屏圆钮与摇杆：
+// 非面板态一个按钮目标都不开、左下角不起摇杆（点哪里都只是「点世界」：点到目标走过去交互，点空地不动）；面板态照旧（点控件、页签、物品格）。
+// 前端页（主菜单 / 选角 / 建角，不在局内）不经状态机，触点直接当界面点击（同 iOS 前端的 frontendMode）。
+// ---- Real mouse (Mac App, front_mac.m): events come from the front end rather than the script table and enter the same state machine. The UI is the original gamepad HUD, with no touch buttons or stick on screen:
+// outside panels no button target is opened and no stick is raised at the bottom left (a click anywhere is just "click the world": clicking a target walks over and interacts, clicking empty ground does nothing); in panels it works as before (clicking controls, tabs, item cells).
+// Front-end pages (main menu / character select / character creation, not in a game) bypass the state machine and the touch point is taken directly as a UI click (same as frontendMode in the iOS front end).
+#include <stdatomic.h>
+static int g_live_on; static uint32_t g_live_tick0; static int g_live_based;
+static struct { _Atomic unsigned head, tail; struct { int op; float nx, ny; } q[64]; } g_live;
+void dm_touch_host_live(int op, float nx, float ny) {   // 前端线程：op 0 按下 1 移动 2 抬起；坐标 = 游戏画面归一化 [0,1] | Front-end thread: op 0 down, 1 move, 2 up; coordinates = normalized to the game picture [0,1]
+    if (!g_live_on) return; unsigned t = atomic_load(&g_live.tail); if (t - atomic_load(&g_live.head) >= 64) return;
+    g_live.q[t % 64].op = op; g_live.q[t % 64].nx = nx; g_live.q[t % 64].ny = ny; atomic_store(&g_live.tail, t + 1);
+}
 static void touch_uimsg(const char *cat, const char *act, const char *arg) {
     static dm_tc_scene scene;
     if (!strcmp(cat, "DM") && !strcmp(act, "ReplayDone") && g_touch.prefix)
@@ -37,7 +50,7 @@ static void touch_uimsg(const char *cat, const char *act, const char *arg) {
     if (g_touch.enabled) {
         dm_tc_set_navigation_mode(&g_touch.state, navigation);
         static int pad = -1; if (pad < 0) { const char *e = getenv("DM_TOUCH_NAV_PAD"); pad = e && e[0] == '1'; }   // 缺省不给圆钮（同 front_ios.m） | no round button by default (same as front_ios.m)
-        uint32_t mask = navigation ? (dm_tc_nav_mask(pad && !dm_tc_scene_dead()) | (dm_tc_scene_dialog_only(&scene) ? 1u << DM_TC_MENU : 0)) : ((1u << DM_TC_COUNT) - 1);
+        uint32_t mask = navigation ? (dm_tc_nav_mask(pad && !dm_tc_scene_dead()) | (dm_tc_scene_dialog_only(&scene) ? 1u << DM_TC_MENU : 0)) : g_live_on ? 0 : ((1u << DM_TC_COUNT) - 1);
         dm_tc_enable_targets(&g_touch.state, mask);
     }
     if (!strcmp(cat, "DM") && !strcmp(act, "ReplayDone") && g_touch.prefix && !g_touch.started) {
@@ -108,6 +121,30 @@ static void touch_init(uint64_t now) {
     fprintf(stderr, "[dm] DM_TOUCH_SCRIPT ← %s：%d 条，按服务端游戏拍推进（脚本 25 拍/秒）%s\n", path, g_touch.count, g_touch.drop ? "（测试丢弃输出）" : "");
 }
 
+#include <pthread.h>
+#include <unistd.h>
+static void *live_test_thread(void *arg) {
+    FILE *f = fopen((const char *)arg, "r"); if (!f) { fprintf(stderr, "[dm] 【红】DM_TEST_LIVE 打不开 %s\n", (const char *)arg); return NULL; }
+    char line[160]; double t0 = (double)now_ns() / 1e9; int n = 0;
+    while (fgets(line, sizeof line, f)) { double sec; char op[8]; float x = 0, y = 0; if (line[0] == '#' || sscanf(line, "%lf %7s %f,%f", &sec, op, &x, &y) < 2) continue;
+        double wait = sec - ((double)now_ns() / 1e9 - t0); if (wait > 0) usleep((useconds_t)(wait * 1e6));
+        dm_touch_host_live(!strcmp(op, "down") ? 0 : !strcmp(op, "move") ? 1 : 2, x / 2868, y / 1320); n++; }
+    fclose(f); fprintf(stderr, "[dm] DM_TEST_LIVE：%d 条发完\n", n); return NULL;
+}
+void dm_touch_host_step(uint64_t now, uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry);
+void dm_touch_host_live_enable(void) {   // 前端开窗后、客体线程起来之前调一次 | Called once after the front end opens the window and before the guest threads start
+    if (g_live_on) return;
+    if (!g_touch.ready) touch_init(0);   // 同时带了触点脚本（测试）就照常装载 | If a touch script (test) is given as well, it is loaded as usual
+    if (!g_touch.enabled) { dm_tc_init(&g_touch.state, 2868, 1320); g_touch.state.mouse_click_mode = 1; g_touch.enabled = 1;
+        void uimsg_subscribe(void (*fn)(const char *, const char *, const char *)); uimsg_subscribe(touch_uimsg); }
+    dm_tc_set_joy_block(&g_touch.state, 1); dm_tc_enable_targets(&g_touch.state, 0);
+    g_live_on = 1; dm_pad_hook = dm_touch_host_step; fprintf(stderr, "[dm] 鼠标：接到触屏状态机（点目标 / 点界面；没有触屏圆钮与摇杆）\n");
+    // 测试开关 DM_TEST_LIVE=<文件>（没人操作窗口时验这条路）：每行「秒 down|move|up x,y」，坐标按 2868×1320，秒 = 从这里起的墙钟；到点调上面的 dm_touch_host_live，
+    // 与真鼠标只差「系统鼠标事件 → 归一化坐标」那三行
+    // Test switch DM_TEST_LIVE=<file> (to verify this path when nobody operates the window): each line is "seconds down|move|up x,y", coordinates on a 2868×1320 basis, seconds = wall clock from here; at that time the dm_touch_host_live above is called,
+    // differing from a real mouse only by the three lines "system mouse event -> normalized coordinates"
+    if (getenv("DM_TEST_LIVE")) { pthread_t th; pthread_create(&th, NULL, live_test_thread, strdup(getenv("DM_TEST_LIVE"))); pthread_detach(th); }
+}
 int dm_touch_host_enabled(void) {
     return getenv("DM_TOUCH_SCRIPT") && *getenv("DM_TOUCH_SCRIPT");
 }
@@ -119,6 +156,19 @@ void dm_touch_host_game_start(uint64_t now) {
 
 void dm_touch_host_step(uint64_t now, uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry) {
     if (!g_touch.ready) touch_init(now);
+    if (g_live_on) {   // 真鼠标：前端页直通界面点击；局内并进事件表（拍 = 此刻），与脚本事件同一段处理 | Real mouse: on front-end pages it goes straight to a UI click; in game it joins the event table (tick = now) and is handled in the same pass as script events
+        int dm_uiscreen_ingame(void); int in = dm_uiscreen_ingame(); static float px, py; unsigned h;
+        if (in && !g_live_based) { g_live_based = 1; g_live_tick0 = touch_cur_tick(); if (!g_touch.based) { g_touch.started = 1; g_touch.based = 1; g_touch.loaded = 1; g_touch.tick_set = 1; g_touch.start_tick = g_live_tick0; g_touch.to_game_tick = g_live_tick0; } }
+        if (!in) g_live_based = 0;
+        while ((h = atomic_load(&g_live.head)) != atomic_load(&g_live.tail)) {
+            int op = g_live.q[h % 64].op; float nx = g_live.q[h % 64].nx, ny = g_live.q[h % 64].ny; if (op != 2) { px = nx; py = ny; }
+            if (!in) { dm_ui_touch(op, px, py); atomic_store(&g_live.head, h + 1); continue; }
+            if (g_touch.next == g_touch.count) g_touch.next = g_touch.count = 0;   // 表里的都处理完了：从头复用 | Everything in the table has been handled: reuse from the start
+            if (g_touch.count >= 256) break;
+            touch_event *e = &g_touch.event[g_touch.count++]; e->beat = 0; e->slot = 0; e->op = op == 0 ? TOUCH_DOWN : op == 1 ? TOUCH_MOVE : TOUCH_UP; e->x = px * 2868; e->y = py * 1320;
+            atomic_store(&g_live.head, h + 1);
+        }
+    }
     if (!g_touch.enabled || !g_touch.started) return;
     uint32_t tick = touch_cur_tick();
     if (!g_touch.prefix && !g_touch.tick_set) { g_touch.to_game_tick = tick; g_touch.tick_set = 1; }

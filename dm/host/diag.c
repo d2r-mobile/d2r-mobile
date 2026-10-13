@@ -1183,6 +1183,15 @@ int dm_request_save(void) {
     *(volatile uint64_t *)(uintptr_t)(g_lastG + 0x5800) = 1;
     return 1;
 }
+// 退出前存盘用（Mac App）：单机暂停着（暂停菜单 / 大秘境面板开着，原版界面状态字节 [main+0x2d5ff51] | [main+0x2d5ff67] 非 0，见 dm_rift_ui.c）时游戏不跑拍，
+// 上面拨的那次存盘等不到。把这两个字节清掉让拍接着走；只在进程马上要退出时调（不写回）。返回清之前是否暂停着
+// For saving before exit (Mac App): while single-player is paused (pause menu / rift panel open, original UI state bytes [main+0x2d5ff51] | [main+0x2d5ff67] non-zero, see dm_rift_ui.c) the game does not tick,
+// so the save requested above would never happen. Clear these two bytes so the ticks continue; called only when the process is about to exit (not written back). Returns whether it was paused before clearing
+int dm_unpause_for_exit(void) {
+    uint8_t *b = NULL; for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) b = (uint8_t *)g_mod[i].base;
+    if (!b || !in_game()) return 0;
+    volatile uint8_t *f = b + 0x2d5ff51, *g = b + 0x2d5ff67; int was = *f || *g; *f = 0; *g = 0; return was;
+}
 // 测试用：按 id 取服务端物品单位（物品表 G+0x2e30，128 桶、next=+0x158）；不在局内 / 没找到返回 0
 // For tests: get a server item unit by id (item table G+0x2e30, 128 buckets, next=+0x158); returns 0 when not in a run / not found
 uint64_t dm_diag_srv_item(uint32_t id) { if (!in_game()) return 0; uint64_t u = 0; tk_rd(g_lastG + 0x2e30 + 8 * (id & 0x7f), &u, 8); for (int k = 0; u && k < 4096; k++) { uint32_t ty = 0, uid = 0; if (!tk_rd(u, &ty, 4) || !tk_rd(u + 8, &uid, 4)) return 0; if (ty == 4 && uid == id) return u; if (!tk_rd(u + 0x158, &u, 8)) return 0; } return 0; }

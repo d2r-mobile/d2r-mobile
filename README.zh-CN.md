@@ -2,7 +2,7 @@
 
 **《暗黑破坏神 II：狱火重生》，原生跑在 iPhone 和 iPad 上。** 你提供自己买的 Nintendo Switch 版（含「术士君临」资料片），D2R Mobile 让手机直接执行它的 ARM 程序，用 Metal 出画面，整套操作为触屏重做。稳定 60 帧，开省电模式一次充电能玩约 10 小时。
 
-iPhone / iPad（iOS 26 起）· Switch 版「术士君临」1.0.34.0（对应 PC 版 3.3.94012） · 中文 / English · MIT · **需要自备游戏文件**
+平台：iPhone / iPad（iOS 26 起）· Mac（Apple 芯片，macOS 13 起，第一版）· 游戏版本：Switch 版「术士君临」1.0.34.0（对应 PC 版 3.3.94012）· 中文 / English · 许可证：MIT · **需要自备游戏文件**
 
 English: [README.md](README.md)
 
@@ -237,6 +237,17 @@ flowchart LR
 
 `./setup.sh check` 是体检：逐项报告这台电脑、工具、游戏文件、签名配置的状态，缺的每一项都给出去哪拿和下一步命令，不做任何改动。手上是一整个游戏包（`.xci` / `.nsp`）时，`./setup.sh <游戏包> <prod.keys>` 会先把游戏文件取出来放到位再接着准备（要先装 hactool）。每次拉了新提交都再跑一遍 `./setup.sh`：它按当前源码重出改写产物与着色器库，已是最新的步骤会跳过。它还会改写仓库里三个随工具指纹变化的文件（`dm/gfx/tools/dmsh_chain.lock`、`dm/gfx/nvn/dmsh_chain.h`、`dm/gfx/nvn/c1_full.tsv`），这是预期的，不要提交它们。
 
+### 在 Mac 上直接玩
+
+同一份 `./setup.sh` 做完之后，再跑一条命令就能出一个原生的 macOS App，双击启动，键盘、鼠标、手柄都能用，不需要开发者账号：
+
+```bash
+source ~/dm-work/build/cache/dm/venv/bin/activate
+dm/tools/mac_app.sh        # 产出 ~/dm-work/out/macapp/D2R Mobile.app
+```
+
+这是第一版：界面用原版的手柄版界面，键盘对应整套手柄键位。它还没有人真的坐下来玩过——键位、已知的不足和第一次打开时要做的事，见 [docs/MAC.zh-CN.md](docs/MAC.zh-CN.md)。
+
 ### 没有 Mac：壳 + 做包工具
 
 从本仓库的[发布页](https://github.com/d2r-mobile/d2r-mobile/releases)下载我们预先做好的「壳」安装包（`D2RMobile-shell.ipa`），里面不含游戏内容。加上你自己的游戏文件，在 Windows 或 Linux 上做出安装包，再用自签工具签名装机。走这条路时做包的电脑上没有苹果的着色器编译器，所以手机**第一次启动**要花约 7 分钟把着色器编完（一次性，带进度条）；用 Xcode 构建的包没有这一步。步骤与每一步的验证现状见 [docs/NO_XCODE.zh-CN.md](docs/NO_XCODE.zh-CN.md)。
@@ -270,6 +281,7 @@ flowchart LR
 | [docs/GAME_FILES.zh-CN.md](docs/GAME_FILES.zh-CN.md) | 游戏文件：要哪些、怎么从自己的主机取、放到哪 |
 | [docs/DEPENDENCIES.zh-CN.md](docs/DEPENDENCIES.zh-CN.md) | 依赖清单与第三方许可证 |
 | [docs/NO_XCODE.zh-CN.md](docs/NO_XCODE.zh-CN.md) | 不用 Xcode、不用 Mac 的做法 |
+| [docs/MAC.zh-CN.md](docs/MAC.zh-CN.md) | 在 Mac 上玩：构建 macOS App、键位、已知不足 |
 | [docs/DERIVED.zh-CN.md](docs/DERIVED.zh-CN.md) | 仓库里与游戏有关的东西：有什么、没有什么、为什么 |
 
 ## 声明
