@@ -9,7 +9,7 @@ Everything the build needs is on this page: what each item is, what it is for, w
 | What | Used for | Notes |
 |---|---|---|
 | An Apple silicon Mac | Building, and running the host tools | Needs macOS and the Xcode version below |
-| Your own game files | The game program and all game data | This repository contains no game files. You need the program files (ExeFS) and the update data (RomFS) of the Switch release 3.3.94012, dumped from a copy you bought and own. See [GAME_FILES.md](GAME_FILES.md) |
+| Your own game files | The game program and all game data | This repository contains no game files. You need the program files (ExeFS) and the update data (RomFS) of the Switch release 1.0.34.0 (corresponding to PC version 3.3.94012), dumped from a copy you bought and own. See [GAME_FILES.md](GAME_FILES.md) |
 | An Apple developer account | Signing the app and installing it on your own device | A paid account gives you everything. A free account (personal team) cannot sign iCloud, sustained execution or the increased memory limit: building with `DM_FREE_ACCOUNT=1` removes them; what you lose is iCloud save sync, and the game runs as usual. Apps signed with a free account must be reinstalled every 7 days. With a free account: before building, connect the phone by cable and unlock it, and set `DM_IOS_UDID` in the local configuration (the build targets this phone, which is what makes Apple generate a provisioning profile for a free team); after installing, before the first launch, trust your developer account on the phone under Settings → General → VPN & Device Management. This mode has been signed with an actual free account, installed and played (on a 12 GB device); 6 GB / 8 GB devices have not been verified |
 
 ## Build tools

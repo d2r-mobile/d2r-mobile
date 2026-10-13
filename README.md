@@ -2,7 +2,7 @@
 
 **Diablo II: Resurrected, running as native code on iPhone and iPad.** You bring the Nintendo Switch release you own, with the Reign of the Warlock expansion. D2R Mobile runs its ARM program on your phone, draws it with Metal, and rebuilds every control for touch. It holds 60 fps, and power saver mode stretches a charge to about 10 hours.
 
-iPhone / iPad (iOS 26 and later) · Switch release with Reign of the Warlock, 3.3.94012 (shown as 1.0.34.0 on the console) · English / 中文 · MIT · **Bring your own game files**
+iPhone / iPad (iOS 26 and later) · Switch release with Reign of the Warlock, 1.0.34.0 (corresponds to PC version 3.3.94012) · English / 中文 · MIT · **Bring your own game files**
 
 中文: [README.zh-CN.md](README.zh-CN.md)
 
@@ -195,7 +195,9 @@ flowchart LR
 
 ## Getting started
 
-Both routes start with **the files of the game you bought**: the Switch release of Diablo II: Resurrected plus the Reign of the Warlock expansion, updated to 3.3.94012 (the version the console shows is 1.0.34.0). We built the project for the version with that expansion; we have not tested it without the expansion and do not support that. [docs/GAME_FILES.md](docs/GAME_FILES.md) explains how to prepare the files.
+Both routes start with **the files of the game you bought**: the Switch release of Diablo II: Resurrected plus the Reign of the Warlock expansion, updated to 1.0.34.0 (the version the console shows; it corresponds to PC version 3.3.94012, and the directory names and tools in this repository use the latter number). This project is built for the version with that expansion; using it without the expansion is not supported and has not been verified. How to prepare them is in [docs/GAME_FILES.md](docs/GAME_FILES.md).
+
+This project is implemented and verified on the Switch release 1.0.34.0 (which corresponds to PC version 3.3.94012), and by default the tools accept only that version. Community users have reported adapting other versions on their own by following the structure of this repository, and running them successfully. The rule tables are grouped by game version (in `dm/tools/patch_nso.py`, keyed by the build ID of the main program); you are welcome to contribute the version you adapted.
 
 | | With a Mac | Without a Mac |
 |---|---|---|
@@ -244,7 +246,7 @@ Download our prebuilt "shell" package (`D2RMobile-shell.ipa`) from the [Releases
 | Item | Status |
 |---|---|
 | Online play | Out of scope; fully offline |
-| Game packages in `.nsp` format | Not verified (we tested `.xci` only) |
+| `.nsp` / `.xci` game packages | The tools only check the version of the main program and do not distinguish package formats; we ran the whole path with an `.xci` ourselves |
 | Signing and installing with a sideloading tool (Sideloadly, AltStore and the like) | Not verified; open an issue and tell us how it went |
 | Making the package on Linux | Not verified (verified on Windows and Mac) |
 | The "one-line verdict" and "legacy Chinese name" entries in item notes | The repository does not ship these two content tables; you can supply your own, see `dm/ios/tools/annot/README.md` |

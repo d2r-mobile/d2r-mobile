@@ -191,7 +191,7 @@ The repository contains no images, tables or text derived from the original game
 
 **Which files are needed**
 
-- Required: the update package RomFS of Switch version 3.3.94012 (`Update/RomFS`, which contains `data/build_manifest.psv`). If the version is wrong, the generation scripts report an error based on the registered checksums ("原件和冻结的不一样", i.e. "the original differs from the frozen one"; "原文变了", i.e. "the original text has changed").
+- Required: the update package RomFS of the Switch release 1.0.34.0 (corresponding to PC version 3.3.94012) (`Update/RomFS`, which contains `data/build_manifest.psv`). If the version is wrong, the generation scripts report an error based on the registered checksums ("原件和冻结的不一样", i.e. "the original differs from the frozen one"; "原文变了", i.e. "the original text has changed").
 - Optional: an unpacked directory of the PC version of D2R (containing `hd/global/ui/...`, the raw `.sprite` files). With it, the bottom UI uses the PC version's 2x original images; without it, the bottom UI uses upscaled Switch assets and will be slightly blurry, and generation prints "没找到 PC 版文件……底栏用 Switch 素材放大，会略糊" ("PC version files not found … the bottom bar uses upscaled Switch assets and will be slightly blurry").
 
 **Where to put them**

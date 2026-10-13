@@ -21,7 +21,7 @@ English: [NO_XCODE.md](NO_XCODE.md)
 
 ## 你需要准备的
 
-- 你自己购买的游戏的文件：Switch 版 3.3.94012 的 `ExeFS` 与 `RomFS`，见 [GAME_FILES.zh-CN.md](GAME_FILES.zh-CN.md)
+- 你自己购买的游戏的文件：Switch 版 1.0.34.0（对应 PC 版 3.3.94012）的 `ExeFS` 与 `RomFS`，见 [GAME_FILES.zh-CN.md](GAME_FILES.zh-CN.md)
 - 这个仓库的源码，版本要与壳是同一个发布版本（工具会核对，不一致会直说）
 - Python 3.9 以上，以及这几个包：`python3 -m pip install pillow numpy lz4 capstone unicorn`
 - 一个 C 编译器（`clang`；Windows 上装 LLVM 即可）、.NET SDK。**不需要**苹果的 Metal 着色器编译器：有它（装了 Xcode 的 Mac）就在电脑上把着色器编成库，没有就走手机上现编

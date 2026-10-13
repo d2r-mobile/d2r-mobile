@@ -191,7 +191,7 @@ DM_ROMFS=<Update/RomFS 目录> DM_SAVE=<存档目录> DM_TEMP=<临时目录> DM_
 
 **要哪些文件**
 
-- 必需：Switch 版 3.3.94012 的更新包 RomFS（`Update/RomFS`，里面有 `data/build_manifest.psv`）。版本不对时，生成脚本会按登记的校验值报错（「原件和冻结的不一样」「原文变了」）。
+- 必需：Switch 版 1.0.34.0（对应 PC 版 3.3.94012）的更新包 RomFS（`Update/RomFS`，里面有 `data/build_manifest.psv`）。版本不对时，生成脚本会按登记的校验值报错（「原件和冻结的不一样」「原文变了」）。
 - 可选：PC 版 D2R 的解包目录（下面是 `hd/global/ui/...`，原始 `.sprite`）。有它，底部 UI 用 PC 版的 2 倍原图；没有它，底部 UI 用 Switch 版素材放大，会略糊，生成时打印「没找到 PC 版文件……底栏用 Switch 素材放大，会略糊」。
 
 **放哪**

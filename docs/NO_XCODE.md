@@ -21,7 +21,7 @@ The shell cannot start by itself: on launch it tells you that this package has n
 
 ## What you need
 
-- The files of the game you bought: `ExeFS` and `RomFS` of the Switch version 3.3.94012, see [GAME_FILES.md](GAME_FILES.md)
+- The files of the game you bought: `ExeFS` and `RomFS` of the Switch release 1.0.34.0 (corresponding to PC version 3.3.94012), see [GAME_FILES.md](GAME_FILES.md)
 - The source of this repository, at the same release as the shell (the tool checks and says so if they differ)
 - Python 3.9 or later, plus: `python3 -m pip install pillow numpy lz4 capstone unicorn`
 - A C compiler (`clang`; on Windows, installing LLVM is enough) and the .NET SDK. Apple's Metal shader compiler is **not** required: if it is there (a Mac with Xcode) the shaders are compiled into libraries on the computer, otherwise they are compiled on the phone
