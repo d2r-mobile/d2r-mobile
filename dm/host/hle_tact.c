@@ -54,6 +54,16 @@ static void chk_log(const uint8_t *in, uint32_t n, const uint8_t *out, size_t go
 }
 
 static __thread struct libdeflate_decompressor *t_dec;   // 每线程一个（解压器不可跨线程并用） | One per thread (a decompressor must not be shared across threads)
+// 随线程退出释放（键析构，同 crash.c 备用栈）：原先不放，做过解码又退出的线程每条漏一个解压器（约 11.5 KB）
+// Freed when the thread exits (key destructor, same as the alternate stack in crash.c): it used not to be freed, so every thread that decoded something and then exited leaked one decompressor (about 11.5 KB)
+static pthread_key_t g_dec_key; static pthread_once_t g_dec_once = PTHREAD_ONCE_INIT;
+static void dec_free(void *p) { libdeflate_free_decompressor(p); }
+static void dec_key_init(void) { if (pthread_key_create(&g_dec_key, dec_free)) die("libdeflate 解压器键创建失败"); }
+static struct libdeflate_decompressor *thread_dec(void) {
+    if (t_dec) return t_dec;
+    if (!(t_dec = libdeflate_alloc_decompressor())) die("libdeflate 分配解压器失败");
+    pthread_once(&g_dec_once, dec_key_init); pthread_setspecific(g_dec_key, t_dec); return t_dec;
+}
 
 // ---------- DM_TACT_PREFETCH=<启动块清单>：后台预解码（性能提示，正确性不依赖它）----------
 // 清单（dm/tools/tact_bootlist.py 由一局 DM_TACTCHK 生成）：选角前会请求的块，每行「数据文件 偏移 压缩长 解码长 开头16字节 发起线程」，
@@ -243,7 +253,7 @@ static uint32_t tact_decode_zlib(uint64_t *r) {
         if (n < 2 || in[0] != 'Z') { LOG("tact：zlib 块编码字节不是 'Z'（%#x）", n ? in[0] : 0); return 8; }
         in++; n--;
     }
-    if (!t_dec && !(t_dec = libdeflate_alloc_decompressor())) die("libdeflate 分配解压器失败");
+    thread_dec();
     size_t got = 0; uint64_t t0 = now_ns();
     if (pf_take(in, n, out, cap, &got)) { dm_prof_add(PROF_TACT, now_ns() - t0, got); chk_log(in, n, out, got); return 0; }
     enum libdeflate_result rc = libdeflate_zlib_decompress(t_dec, in, n, out, cap, &got);

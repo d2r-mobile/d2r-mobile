@@ -17,6 +17,8 @@ static int g_nofile_was, g_nofile_now;   // 启动时的文件描述符软上限
 #include <dirent.h>
 #include <libkern/OSCacheControl.h>
 #include <sys/sysctl.h>
+#include <os/proc.h>
+#include <mach/mach.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -689,6 +691,8 @@ static void host_start(void) {
     { extern int dm_shader_prep_begin(void (^)(void)); static int asked; if (!asked) { asked = 1; if (dm_shader_prep_begin(^{ host_start(); })) return; } }
 #endif
     g_host_up = 1; plog("boot: 场景到前台，起宿主（进程已活 %.1f ms）", since_start());
+    { const char *mw = getenv("DM_TEST_MEMWARN");   // 测试开关 DM_TEST_MEMWARN=<秒>：起宿主后这么多秒，照系统的调法调一次内存告警回调（验那一行日志；系统真发告警的时机造不出来） | test switch DM_TEST_MEMWARN=<seconds>: this many seconds after the host starts, call the memory-warning callback once the way the system does (to check that log line; the moment the system really sends a warning cannot be staged)
+      if (mw && atof(mw) > 0) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(atof(mw) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ UIApplication *app = UIApplication.sharedApplication; [app.delegate applicationDidReceiveMemoryWarning:app]; }); }
     boot_begin();                    // 覆盖层、宿主装载与预取：也等到这里才做（在后台线程，和后面的界面收尾并行） | overlay, host loading and prefetch: also deferred until here (on a background thread, in parallel with the UI wrap-up that follows)
     front_ios_lifecycle_install();   // 过热 / 不自动锁屏 / 亮度（窗口与焦点在 SceneDelegate） | overheating / no auto-lock / brightness (window and focus are in SceneDelegate)
     run_boot();                      // 宿主线程自己写 DONE | The host thread writes DONE itself
@@ -948,6 +952,19 @@ static void bg_relaunch_test(void) {
 
 @implementation App
 - (void)applicationWillTerminate:(UIApplication *)a { if (g_host_up) dm_host_shutdown("iOS App 终止"); }
+// 系统内存告警：只记一行，不放任何缓存。用途：玩家被系统按内存终止前不会有任何通知，上一局日志里至少留下前兆与当时的几项读数
+// （常驻、显卡已分配、游戏主堆余量是上次每 300 帧读到的值、离系统内存上限还有多少）。一局最多记 50 行
+// System memory warning: log one line only, release no cache. Purpose: a player gets no notice before the system terminates the app for memory, so the previous session's log at least keeps the precursor and a few readouts at that moment
+// (resident size, GPU allocated, main-heap free space as last read every 300 frames, and how far from the system memory limit). At most 50 lines per session
+- (void)applicationDidReceiveMemoryWarning:(UIApplication *)a {
+    static int n; if (++n > 50) return;
+    task_vm_info_data_t vi; mach_msg_type_number_t cnt = TASK_VM_INFO_COUNT; unsigned long long fp = 0;
+    if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vi, &cnt) == KERN_SUCCESS) fp = vi.phys_footprint >> 20;
+    unsigned long long h[3] = {0, 0, 0}, gpu = 0; void dm_guest_heap_last(unsigned long long *); unsigned long long mtl_gpu_allocated_mb(void);
+    if (g_host_up) { dm_guest_heap_last(h); gpu = mtl_gpu_allocated_mb(); }
+    plog("【内存告警】系统发来内存告警（本局第 %d 次，进程已活 %.0f 秒，applicationState=%ld）：常驻 %llu MB，显卡已分配 %llu MB，游戏堆 %llu MB 余量 %llu MB 最大可分配块 %llu KB，离系统内存上限还有 %llu MB",
+         n, since_start() / 1000.0, (long)a.applicationState, fp, gpu, h[0], h[1], h[2], (unsigned long long)(os_proc_available_memory() >> 20));
+}
 - (void)application:(UIApplication *)a handleEventsForBackgroundURLSession:(NSString *)ident completionHandler:(void (^)(void))done {
     plog("boot: 系统交来后台下载会话 %s 的事件（applicationState=%ld，宿主%s）", ident.UTF8String, (long)a.applicationState, g_host_up ? "在跑" : "没起");
     if ([ident hasSuffix:@".bgtest"]) { plog("后台测试会话：接回"); (void)bg_test_session(); done(); return; }

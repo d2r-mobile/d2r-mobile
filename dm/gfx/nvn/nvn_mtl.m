@@ -358,10 +358,12 @@ void mtl_pool_add(const void *mem, uint64_t size) {
 
 void mtl_pool_del(const void *mem) {
     g_reg_gen++;
+    id<MTLBuffer> gone = nil;
     pthread_mutex_lock(&g_mu);
     for (int i = 0; i < g_npool; i++)
-        if (g_pools[i].key == mem) { [g_keep removeObject:g_pools[i].buf]; g_pools[i] = g_pools[--g_npool]; break; }
+        if (g_pools[i].key == mem) { gone = g_pools[i].buf; [g_keep removeObject:gone]; g_pools[i] = g_pools[--g_npool]; break; }
     pthread_mutex_unlock(&g_mu);
+    defer_obj_release(gone);   // 退役：等用过它的提交完成后放掉，并移出驻留集（原先只从 g_keep 摘掉——驻留集强持有它，零拷贝缓冲对象永远不销毁） | retire: release after the submissions that used it complete, and remove from the residency set (it used to be only removed from g_keep - the residency set holds it strongly, so the zero-copy buffer object was never destroyed)
 }
 
 int mtl_addr(uint64_t addr, uint64_t len, void **buf, uint64_t *off) {
@@ -405,6 +407,7 @@ typedef struct { int n; vis_slot s[]; } vis_list;
 typedef struct { __strong id<MTLBuffer> buf; uint64_t fence; } vis_buf;
 static vis_buf g_vis_ring[4]; static int g_vis_ring_n, g_vis_ring_i = -1;
 static id<MTLBuffer> g_vis; static uint32_t g_vis_n;   // 本次提交的可见性缓冲与已用槽数 | This submission's visibility buffer and number of slots used
+static int vis_in_ring(id<MTLBuffer> b) { for (int i = 0; i < g_vis_ring_n; i++) if (g_vis_ring[i].buf == b) return 1; return 0; }
 static int g_vis_on, g_vis_counting, g_vis_cur = -1; static uint64_t g_vis_cur_pass;
 static vis_slot *g_vs; static int g_nvs, g_vscap;      // 自上次清零以来的槽 | Slots since the last reset
 static uint64_t g_cnt_report[32], g_cnt_reset[32];       // 各计数器类型的报告 / 清零次数（诊断） | Report / reset counts per counter type (diagnostics)
@@ -496,6 +499,7 @@ void mtl_sub_begin(void) {
     if (pick < 0) { uint64_t oldest = UINT64_MAX; for (int i = 0; i < 4; i++) if (g_vis_ring[i].fence < oldest) { oldest = g_vis_ring[i].fence; pick = i; } if (oldest > g_done) mtl_wait(oldest, UINT64_MAX); }
     g_vis_ring_i = pick; g_vis_ring[pick].fence = UINT64_MAX;
     if (!g_vis_ring[pick].buf) { g_vis_ring[pick].buf = [g_dev newBufferWithLength:VIS_SLOTS * 8 options:MTLResourceStorageModeShared]; res_add(g_vis_ring[pick].buf); }
+    if (g_vis && !vis_in_ring(g_vis)) defer_obj_release(g_vis);   // 上次提交留下的溢出缓冲（见 g_vis_n >= VIS_SLOTS 那一处）：退役，否则它一直留在驻留集里 | the overflow buffer left by the previous submission (see the place with g_vis_n >= VIS_SLOTS): retire it, otherwise it stays in the residency set forever
     g_vis = g_vis_ring[pick].buf;
     void pg_sub_begin_ext(uint64_t fence); pg_sub_begin_ext(g_fence + 1);
     void arena_begin(void); arena_begin();
@@ -1243,6 +1247,7 @@ static void res_census(unsigned long long frame, unsigned long long rss_mb) {
              nl[0], bl[0] >> 20, nl[1], bl[1] >> 20, nr[0], br[0] >> 20, nr[1], br[1] >> 20);
     }
 }
+unsigned long long mtl_gpu_allocated_mb(void) { id<MTLDevice> d = g_dev; return d ? (unsigned long long)(d.currentAllocatedSize >> 20) : 0; }   // 显卡已分配（图形层还没起时 0）；任何线程可调 | GPU allocated (0 before the graphics layer starts); callable from any thread
 void mtl_mem_stat(unsigned long long frame, unsigned long long rss_mb, int heap_ok, unsigned long long heap_mb, unsigned long long heap_free_mb, unsigned long long heap_maxblk_kb) {
     if (g_res_census > 0) res_census(frame, rss_mb);
     static unsigned long long last_rss, last_gpu, last_frame, last_hfree, last_hmax; static int lines; unsigned long long gpu = (unsigned long long)(g_dev.currentAllocatedSize >> 20);
@@ -1799,7 +1804,11 @@ static id<MTL4RenderCommandEncoder> rp_begin_ex(int clear_only) {
         g_enc_pso = nil; g_enc_dss = nil;
     }
     if (g_vis_on) {
-        if (!g_vis || g_vis_n >= VIS_SLOTS) { if (g_vis) defer_obj_release(g_vis); g_vis = [g_dev newBufferWithLength:VIS_SLOTS * 8 options:MTLResourceStorageModeShared]; res_add(g_vis); g_vis_n = 0; }
+        // 槽用满（单次提交超过 VIS_SLOTS 个计数通道）：另建一块溢出缓冲接着用。环里的缓冲不许交去退役（它还要轮着用，退役会把它移出驻留集）；
+        // 退役的只能是上一块溢出缓冲。溢出缓冲本身在下次提交换回环里的缓冲时退役（mtl_sub_begin）
+        // Slots used up (one submission exceeds VIS_SLOTS counting passes): create an overflow buffer and continue with it. Buffers in the ring must not be handed to retirement (they are still used in rotation, and retiring would remove them from the residency set);
+        // only the previous overflow buffer may be retired. The overflow buffer itself is retired when the next submission switches back to a ring buffer (mtl_sub_begin)
+        if (!g_vis || g_vis_n >= VIS_SLOTS) { if (g_vis && !vis_in_ring(g_vis)) defer_obj_release(g_vis); g_vis = [g_dev newBufferWithLength:VIS_SLOTS * 8 options:MTLResourceStorageModeShared]; res_add(g_vis); g_vis_n = 0; }
         pd.visibilityResultBuffer = g_vis;
     }
     g_enc_vis = 0; g_enc_has_vis = g_vis_on;
@@ -4142,7 +4151,7 @@ static int bloomq_make_pipeline(MTLPixelFormat fmt) {
 static int bloomq_capture(void) {
     uint64_t ser; int lv, sl; if (!bloomq_target(&ser, &lv, &sl) || !g_bloomq.s_tex) return 0;
     id<MTLTexture> base = tex_mtl(R.rt.color[0]), src = tex_mtl(g_bloomq.s_tex); if (!base || !src) return 0;
-    id<MTLTexture> dst = base; if (lv || sl) { static id<MTLTexture> vb; static int vl, vs; if (vb != base || vl != lv || vs != sl) { g_bloomq_view = [base newTextureViewWithPixelFormat:base.pixelFormat textureType:base.textureType levels:NSMakeRange(lv, 1) slices:NSMakeRange(sl, 1)]; if (g_bloomq_view) res_add(g_bloomq_view); vb = base; vl = lv; vs = sl; } dst = g_bloomq_view; }
+    id<MTLTexture> dst = base; if (lv || sl) { static id<MTLTexture> vb; static int vl, vs; if (vb != base || vl != lv || vs != sl) { defer_obj_release(g_bloomq_view);   /* 旧视图退役（原先直接被覆盖：留在驻留集里，连带钉住旧底图） | retire the old view (it used to be overwritten directly: it stayed in the residency set and pinned the old base texture with it) */ g_bloomq_view = [base newTextureViewWithPixelFormat:base.pixelFormat textureType:base.textureType levels:NSMakeRange(lv, 1) slices:NSMakeRange(sl, 1)]; if (g_bloomq_view) res_add(g_bloomq_view); vb = base; vl = lv; vs = sl; } dst = g_bloomq_view; }
     if (!dst || !bloomq_make_pipeline(dst.pixelFormat)) return 0;
     rp_end();
     MTL4RenderPassDescriptor *rp = [MTL4RenderPassDescriptor new]; rp.colorAttachments[0].texture = dst; rp.colorAttachments[0].loadAction = MTLLoadActionDontCare; rp.colorAttachments[0].storeAction = MTLStoreActionStore;
@@ -5200,6 +5209,40 @@ static void grab_present(id<MTLTexture> src, const int crop[4], CGSize sz) {
         CGImageRelease(img); CGContextRelease(ctx); CGColorSpaceRelease(cs); }];
     [cb2 commit];
 }
+// ---------- 测试：连拍（量画面连续性用，缺省不动；触点脚本步骤「<时刻> burst <帧数> <目录名>」触发，目录建在 Documents 下）----------
+// 连续 N 帧（上限 BURST_MAX）各拷一块上屏前的游戏画面（屏幕中心、边长 = 画面高 × 0.6 的方块，原始像素）：抓的那一帧只多一次显存拷贝、不等显卡，
+// 帧间隔不受影响（Mac 实测 16.5–16.9 ms）；全部抓完后台线程写盘：f000.raw…（宽 × 高 × 4 字节）+ meta.txt（每帧的出图帧号、墙钟、客体时钟、本地玩家逻辑位置）。
+// 分析：dm/ios/tools/burst_sad.py <目录>（逐帧画面位移与逻辑位移对照）
+// ---------- Test: burst capture (for measuring picture continuity, inactive by default; triggered by the touch-script step "<time> burst <frames> <directory name>", directory created under Documents) ----------
+// For N consecutive frames (limit BURST_MAX) copy a block of the game picture before presentation (a square at the screen centre with side = picture height x 0.6, raw pixels): a captured frame costs only one more GPU memory copy and does not wait for the GPU,
+// so the frame interval is unaffected (16.5–16.9 ms measured on a Mac); after all frames are captured a background thread writes to disk: f000.raw... (width x height x 4 bytes) + meta.txt (presented frame number, wall clock, guest clock and logical position of the local player for each frame).
+// Analysis: dm/ios/tools/burst_sad.py <directory> (per-frame picture displacement compared with logical displacement)
+__attribute__((weak)) int dm_diag_player_fixed(uint32_t *x, uint32_t *y) { (void)x; (void)y; return 0; }   // 宿主 diag.c 提供强定义 | the strong definition is provided by the host's diag.c
+#define BURST_MAX 512   /* 512 帧约 415 MB（450×450×4 一帧），只在 Mac 上给这么大；真机别超过 128 | 512 frames is about 415 MB (450x450x4 per frame), this much only on a Mac; do not exceed 128 on a device */
+static int g_burst_left, g_burst_n; static char g_burst_dir[700];
+static id<MTLBuffer> g_burst_buf[BURST_MAX]; static id<MTLCommandBuffer> g_burst_cb[BURST_MAX]; static uint64_t g_burst_fr[BURST_MAX], g_burst_ns[BURST_MAX], g_burst_gns[BURST_MAX]; static uint32_t g_burst_px[BURST_MAX], g_burst_py[BURST_MAX];
+static size_t g_burst_w, g_burst_h; static unsigned long g_burst_fmt;
+void dm_gfx_burst(int n, const char *dir) { if (g_burst_left > 0 || n <= 0) return; if (n > BURST_MAX) n = BURST_MAX; strlcpy(g_burst_dir, dir, sizeof g_burst_dir); g_burst_n = n; g_burst_left = n; }
+static void burst_grab(id<MTLTexture> src) {
+    uint64_t guest_ns(void);
+    int i = g_burst_n - g_burst_left; size_t dm_ = src.width, sh_ = src.height, c = sh_ * 6 / 10; if (c > dm_) c = dm_;
+    g_burst_w = c; g_burst_h = c; g_burst_fmt = (unsigned long)src.pixelFormat;
+    id<MTLBuffer> buf = [g_dev newBufferWithLength:c * c * 4 options:MTLResourceStorageModeShared]; id<MTLCommandBuffer> cb = q_cb(); id<MTLBlitCommandEncoder> b = [cb blitCommandEncoder];
+    [b copyFromTexture:src sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake((dm_ - c) / 2, (sh_ - c) / 2, 0) sourceSize:MTLSizeMake(c, c, 1) toBuffer:buf destinationOffset:0 destinationBytesPerRow:c * 4 destinationBytesPerImage:c * c * 4];
+    [b endEncoding]; [cb commit];
+    g_burst_buf[i] = buf; g_burst_cb[i] = cb; g_burst_fr[i] = g_present_n; g_burst_ns[i] = now_ns(); g_burst_gns[i] = guest_ns(); g_burst_px[i] = g_burst_py[i] = 0; dm_diag_player_fixed(&g_burst_px[i], &g_burst_py[i]);
+    if (--g_burst_left == 0) { int n = g_burst_n; size_t w = g_burst_w, h = g_burst_h; unsigned long fmt = g_burst_fmt; NSString *dir = [NSString stringWithUTF8String:g_burst_dir];
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+            [[NSFileManager defaultManager] createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
+            NSMutableString *meta = [NSMutableString stringWithFormat:@"w %zu h %zu fmt %lu n %d\n", w, h, fmt, n];
+            for (int k = 0; k < n; k++) { [g_burst_cb[k] waitUntilCompleted];
+                [[NSData dataWithBytes:g_burst_buf[k].contents length:w * h * 4] writeToFile:[dir stringByAppendingPathComponent:[NSString stringWithFormat:@"f%03d.raw", k]] atomically:NO];
+                [meta appendFormat:@"%d frame %llu ns %llu guest_ns %llu px %.4f py %.4f\n", k, (unsigned long long)g_burst_fr[k], (unsigned long long)g_burst_ns[k], (unsigned long long)g_burst_gns[k], g_burst_px[k] / 65536.0, g_burst_py[k] / 65536.0];
+                g_burst_buf[k] = nil; g_burst_cb[k] = nil; }
+            [meta writeToFile:[dir stringByAppendingPathComponent:@"meta.txt"] atomically:YES encoding:NSUTF8StringEncoding error:nil];
+            MLOG("测试：连拍 %d 帧写完 %s（%zux%zu 格式 %lu）", n, dir.UTF8String, w, h, fmt); });
+    }
+}
 void dm_gfx_shot_at(long k, const char *path) {
     pthread_mutex_lock(&g_shotq_mu);
     if (g_nshotq < SHOTQ_MAX) { g_shotq[g_nshotq].frame = g_present_n + (uint64_t)(k > 0 ? k : 0); strlcpy(g_shotq[g_nshotq].path, path, sizeof g_shotq[0].path); g_nshotq++; }
@@ -5550,6 +5593,7 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
     for (int i = 0; i < g_nshotq;) if (g_present_n >= g_shotq[i].frame) { mtl_finish_gpu(); shot(src, g_shotq[i].path, 1, crop); g_shotq[i] = g_shotq[--g_nshotq]; } else i++;
     pthread_mutex_unlock(&g_shotq_mu);
 
+    if (g_burst_left > 0) burst_grab(src);   // 测试：连拍 | test: burst capture
     CAMetalLayer *layer = (__bridge CAMetalLayer *)front_metal_layer();
     if (!layer) return 0;
     if (g_present_layer_resident != layer) { [g_q4 addResidencySet:layer.residencySet]; g_present_layer_resident = layer; }

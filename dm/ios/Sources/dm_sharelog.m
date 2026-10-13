@@ -51,7 +51,8 @@ static NSDate *g_t0;   // 本次启动时刻（dm_sharelog_boot） | Time of thi
 static NSURL *build_file(void) {
     NSFileManager *fm = NSFileManager.defaultManager;
     NSString *doc = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)[0];
-    NSData *cur = [NSData dataWithContentsOfFile:[doc stringByAppendingPathComponent:@"boot.txt"]], *prev = [NSData dataWithContentsOfFile:[doc stringByAppendingPathComponent:@"boot.previous.txt"]];
+    NSData *(^rd)(NSString *) = ^NSData *(NSString *n) { return [NSData dataWithContentsOfFile:[doc stringByAppendingPathComponent:n] options:NSDataReadingMappedIfSafe error:nil]; };   // 映射着读：日志没有字节封顶，整读进内存再拼、再洗各拷一遍，峰值是日志的四倍 | read through a mapping: the log has no byte cap, and reading it whole into memory, then joining and scrubbing with one copy each, peaks at four times the log size
+    NSData *cur = rd(@"boot.txt"), *prev = rd(@"boot.previous.txt");
     NSDictionary *inf = NSBundle.mainBundle.infoDictionary; NSString *build = [inf[@"CFBundleVersion"] description] ?: @"未知";
     NSDateFormatter *df = [NSDateFormatter new]; df.dateFormat = @"yyyy-MM-dd HH:mm:ss ZZZ";
     char hw[64] = "未知"; size_t hn = sizeof hw; sysctlbyname("hw.machine", hw, &hn, NULL, 0);
@@ -73,11 +74,11 @@ static NSURL *build_file(void) {
     [fm removeItemAtPath:dir error:nil]; [fm createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
     df.dateFormat = @"yyyyMMdd_HHmmss";
     NSString *p = [dir stringByAppendingPathComponent:[NSString stringWithFormat:@(dm_ui("dmShareLogFile")), build, [df stringFromDate:NSDate.date]]];
-    out = [scrub_home(out) mutableCopy];
-    if (![out writeToFile:p atomically:YES]) { plog("诊断日志：【红】导出文件写不进 %s", p.UTF8String); return nil; }
-    plog("诊断日志：已打包 %s（%lu 字节：本局 %lu、上一局 %s）", p.lastPathComponent.UTF8String, (unsigned long)out.length, (unsigned long)cur.length,
+    NSData *fin = scrub_home(out);
+    if (![fin writeToFile:p atomically:YES]) { plog("诊断日志：【红】导出文件写不进 %s", p.UTF8String); return nil; }
+    plog("诊断日志：已打包 %s（%lu 字节：本局 %lu、上一局 %s）", p.lastPathComponent.UTF8String, (unsigned long)fin.length, (unsigned long)cur.length,
          prev ? [NSString stringWithFormat:@"%lu", (unsigned long)prev.length].UTF8String : "没有");
-    if (getenv("DM_TEST_SHARELOG_CLOSE")) [out writeToFile:[doc stringByAppendingPathComponent:@"sharelog_test.txt"] atomically:YES];
+    if (getenv("DM_TEST_SHARELOG_CLOSE")) [fin writeToFile:[doc stringByAppendingPathComponent:@"sharelog_test.txt"] atomically:YES];
     return [NSURL fileURLWithPath:p];
 }
 static UIViewController *top_vc(void) {   // 同 front_ios.m 系统输入框找宿主的顺序：主窗口 → 前台活跃场景的窗口 → 任一窗口，再顺着已弹出的往上找 | Same order as front_ios.m's system input box uses to find its host: main window → a window of the foreground active scene → any window, then walk up through what is already presented

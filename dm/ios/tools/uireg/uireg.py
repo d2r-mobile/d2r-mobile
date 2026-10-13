@@ -668,6 +668,13 @@ def groups():
     g.item("「综合技能」页长按另一个技能","开绑定框",r"OpenPanel ButtonBindingModal"); g.hold(301,114,1.3); g.shot()
     g.tap(P(120,200),1.5); g.tap(P(615,17),1.2)
     gs.append(g)
+    # shl 局：暂停菜单「分享诊断日志」。测试开关让分享面板弹出 3 秒后自己收起（真机截不到系统弹层，只读日志）；导出的文件另拷一份到容器 Documents/sharelog_test.txt
+    # shl run: pause menu "Share diagnostic log". A test switch lets the share sheet dismiss itself 3 seconds after it appears (system overlays cannot be captured on a device, only the log is read); the exported file is also copied to Documents/sharelog_test.txt in the container
+    g=G("shl","DM_TEST_SHARELOG_CLOSE=3"); g.sect("sharelog",0); g.enter(); g.tap("@menu",1.4); g.tap(P(551,17))
+    g.item("暂停菜单点「分享诊断日志」","两份日志打成一个文件（本局那份非空）、分享面板弹出",r"诊断日志：已打包 \S+（\d+ 字节：本局 [1-9]\d*、[^\n]*\n(?:[^\n]*\n){0,40}?[^\n]*诊断日志：分享面板已弹出"); g.at("tap_ui MessageLog@PauseLayoutGarden 3",2.5); g.shot()
+    g.item("等 3 秒","分享面板到点自己收起",r"到点收起分享面板"); g.wait(3.0); g.shot()
+    g.item("再点一次「分享诊断日志」","又能打包（上一次收起后没卡在忙状态）",r"诊断日志：已打包"); g.at("tap_ui MessageLog@PauseLayoutGarden 3",5.5); g.shot()
+    gs.append(g)
     # i 局：雇佣兵（第一幕卡夏；第二幕格雷兹是同一个雇佣面板）。最小步骤来自一条真问题：雇佣名单里同一行连点几下、雇成之后面板栈的计数没清，摇杆和技能钮回不来
     # i run: hiring a mercenary (Act 1 Kashya; Act 2 Greiz is the same hire panel). The minimal steps come from a real problem: tapping the same row of the hire list several times, the panel stack count was not cleared after the hire succeeded, and the stick and skill buttons did not come back
     g=G("i","DM_TEST_GOLD=200000 DM_TEST_WORLD_GO=near2:1:c150@200"); g.sect("hire",0); g.enter(1)

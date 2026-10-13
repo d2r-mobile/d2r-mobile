@@ -34,6 +34,7 @@
 // verified one by one, and nothing is written on a mismatch (wrong game version).
 #include "hle.h"
 #include "dm_hud.h"
+#include "dm_input.h"
 #include "dm_i18n.h"
 #include "dm_modetx.h"
 #include "dm_mode_items.h"
@@ -294,6 +295,40 @@ static uint64_t legend_find(uint8_t *b, uint64_t lg, int act) {   // 提示条�
     return 0;
 }
 static int legend_ours(uint64_t e, const char *text) { size_t n = strlen(text); return rd8(e + 0x18) == n && !memcmp((const void *)(uintptr_t)rd8(e + 0x10), text, n); }
+// 鼠标点在按键提示条的某一条上 = 按它那个键（Mac App：手柄版布局里底部的「ⓧ 默认　ⓑ 关闭菜单」是提示、不是按钮，鼠标点它没有任何响应）。
+// 提示条控件（局内底部那条虚表 main+0x20b7960，前端各页的 main+0x20b7a30）自己画、没有子控件，读不到每一条的矩形：点落在控件里时按它的排法估——整排居中，每条 = 键帽 + 字，
+// 字宽按字数算（全角 1 个字宽、半角约半个），条与条之间留空。量自 1600×900 截图：字宽约屏高的 2.8%，键帽连间隔约 1.3 个字宽，条间约 0.4–0.95 个字宽（取 0.67）。
+// 返回要按的手柄键（DM_BTN_*，0 = 没点在提示条的条目上）。只许游戏主线程调
+// A mouse click on one entry of the key-hint bar = pressing that key (Mac App: in the gamepad layout the bottom "X Default  B Close Menu" is a hint, not a button, and clicking it does nothing).
+// The hint-bar widget (vtable main+0x20b7960 for the in-game bottom bar, main+0x20b7a30 for the front-end pages) draws itself and has no child widgets, so the rectangle of each entry cannot be read: when the click lands inside the widget, estimate by its layout - the whole row is centred, each entry = key cap + text,
+// text width counted by characters (one glyph width for full-width, about half for half-width), with a gap between entries. Measured on 1600x900 screenshots: glyph width about 2.8% of screen height, key cap plus spacing about 1.3 glyph widths, gap between entries about 0.4–0.95 glyph widths (0.67 used).
+// Returns the gamepad key to press (DM_BTN_*, 0 = the click is not on an entry of the hint bar). Call only from the game main thread
+static uint64_t legend_at(uint8_t *b, uint64_t w, uint64_t xy, int dep) {
+    if (!w || dep > 8 || !*(uint8_t *)(uintptr_t)(w + 0x50) || !*(uint8_t *)(uintptr_t)(w + 0x51)) return 0;
+    uint64_t vt = rd8(w) - (uint64_t)(uintptr_t)b; if (vt == 0x20b7960 || vt == 0x20b7a30) return   /* 局内底部那条（会滚的）/ 前端各页自己的那条，条目数组同一个位置 | the in-game bottom bar (the scrolling one) / each front-end page's own bar: the entry array is at the same position */ rd8(w + 0x90) && (((int (*)(uint64_t, uint64_t))rd8(rd8(w) + 0x48))(w, xy) & 1) ? w : 0;
+    uint64_t ch = rd8(w + 0x58), n = rd8(w + 0x60); for (uint64_t i = n < 256 ? n : 0; ch && i-- > 0; ) { uint64_t r = legend_at(b, rd8(ch + 8 * i), xy, dep + 1); if (r) return r; }
+    return 0;
+}
+uint64_t dm_padmode_legend_click(float nx, float ny) {
+    extern module_t g_mod[]; extern int g_nmod; uint8_t *b = NULL; for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) b = (uint8_t *)g_mod[i].base;
+    if (!b || !g_cur) return 0; int W = *(int32_t *)(b + 0x211da38), H = *(int32_t *)(b + 0x211da3c); uint64_t root = rd8((uint64_t)(uintptr_t)(b + 0x2f05458)); if (!root || W <= 0 || H <= 0) return 0;
+    int x = (int)(nx * W), y = (int)(ny * H); uint64_t lg = legend_at(b, root, (uint64_t)(uint32_t)x | ((uint64_t)(uint32_t)y << 32), 0); if (!lg) return 0;
+    uint64_t arr = rd8(lg + 0x88), n = rd8(lg + 0x90); if (!arr || n > 12) return 0;
+    float em = H * 0.0281f, gap = 0.67f * em, wd[12], tot = 0;
+    for (uint64_t i = 0; i < n; i++) { const uint8_t *t = (const uint8_t *)(uintptr_t)rd8(arr + 0x40 * i + 0x10); uint64_t tn = rd8(arr + 0x40 * i + 0x18); float tw = 0;
+        for (uint64_t k = 0; t && k < tn && k < 96; k++) { if ((t[k] & 0xc0) == 0x80) continue; tw += t[k] < 0x80 ? (t[k] == ' ' ? 0.3f : 0.55f) : 1.0f; }
+        wd[i] = (1.3f + tw) * em; tot += wd[i] + (i ? gap : 0); }
+    float x0 = W / 2.0f - tot / 2; int hit = -1; for (uint64_t i = 0; i < n; i++) { if (x >= x0 - gap / 2 && x < x0 + wd[i] + gap / 2) hit = (int)i; x0 += wd[i] + gap; }
+    if (hit < 0) return 0;
+    uint64_t e = arr + 0x40 * (uint64_t)hit; uint32_t gl = *(uint32_t *)(uintptr_t)e; uint64_t btn = 0;
+    static const struct { int act; uint64_t btn; } km[] = { { 0, DM_BTN_A }, { 1, DM_BTN_Y }, { 2, DM_BTN_X }, { 4, DM_BTN_RS }, { 7, DM_BTN_ZL }, { 8, DM_BTN_ZR }, { 10, DM_BTN_MINUS }, { 11, DM_BTN_LEFT }, { 14, DM_BTN_RIGHT }, { 12, DM_BTN_UP }, { 13, DM_BTN_DOWN }, { 19, DM_BTN_L }, { 20, DM_BTN_R }, { 23, DM_BTN_B } };
+    if (*(int32_t *)(uintptr_t)(e + 8) == 1) for (unsigned k = 0; k < sizeof km / sizeof *km && !btn; k++) {   // 键帽 → 键：照 legend_find 的比法，拿动作号建一个空字条目取它的键帽来比 | key cap -> key: the same comparison as legend_find, build an entry with empty text from the action number and take its key cap to compare
+        uint64_t ent[8] = { 0 }; struct { const char *p; uint64_t n; } sv = { "", 0 }; ((void (*)(void *, int, int, void *))(b + 0xaa9358))(ent, km[k].act, 0, &sv); legend_free(b, ent);
+        if ((int32_t)ent[1] == 1 && (uint32_t)ent[0] == gl) btn = km[k].btn; }
+    if (!btn && gl == 0xe005) btn = DM_BTN_PLUS;   // ＋ 键没有对应的动作号可比（主菜单「＋ 新角色」）：直接认它的键帽码（实测 e005） | the + key has no action number to compare with (main menu "+ New Character"): recognise its key-cap code directly (measured e005)
+    LOG("手柄提示条：鼠标点在第 %d 条（共 %llu 条，键帽 %x）→ %s", hit + 1, (unsigned long long)n, gl, btn ? "按它那个键" : "认不出是哪个键，不按");
+    return btn;
+}
 static void legend_pump(uint8_t *b, uint64_t frame) {   // 游戏主线程每帧 | Game main thread, every frame
     static int miss, tot; static uint64_t logged; int test = getenv("DM_TEST_LEGEND") != NULL;
     // 测试开关 DM_TEST_LEGEND=<动作号>:<字>[,…]：手柄模式下一直声明这些条目；DM_TEST_LEGEND_OFF=<帧>：到这一帧起不再声明。DM_TEST_LEGEND_LOG=1：每 120 帧记一行提示条现状（不声明条目）

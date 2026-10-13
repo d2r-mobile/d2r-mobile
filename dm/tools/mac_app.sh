@@ -3,22 +3,26 @@
 # 包里有：宿主程序、改写后的游戏程序（产物目录，种类 DM_MAC_PRODUCT，缺省 touch）、有界面覆盖层就带上（DM_MAC_OVERLAY=<目录>）。
 # DM_MAC_LINK=1：不带派生物的出法——改写后的游戏程序、着色器库、界面覆盖层都是从游戏内容派生的，公开发布的包不能带；
 #   这样出的包里只有宿主程序和 Resources/paths.txt（三项各指向本机构建产物的路径），只在构建它的这台机器上能跑。
+# 版本：给人看的版本号 DM_MAC_VERSION（缺省 1.0，与 iOS 包同叫法）；构建号 DM_MAC_BUILD（缺省取当前月日时分，同 iOS 包格式）。产物代号与提交号写在包里的 Resources/build.txt。
 # 游戏资源不进包：第一次启动请玩家选资源文件夹（host/app_mac.m）。签名用本地临时签名，本机直接能跑。
-# Package the Mac host as a macOS App that starts on double-click: mac_app.sh [output dir]   produces <output dir>/D2R Mobile.app (default $DM_ROOT/out/macapp)
-# The package holds: the host program, the rewritten game program (build output directory, kind DM_MAC_PRODUCT, default touch), and the UI overlay when there is one (DM_MAC_OVERLAY=<dir>).
-# DM_MAC_LINK=1: the build without derived content -- the rewritten game program, the shader library and the UI overlay are all derived from game content and must not be in a publicly released package;
-#   a package built this way holds only the host program and Resources/paths.txt (three entries, each pointing at a build output on this machine) and runs only on the machine that built it.
-# Game resources never go into the package: on first launch the player is asked to choose the resource folder (host/app_mac.m). Signing is local ad-hoc signing, which runs on this machine directly.
+# Wrap the Mac host into a macOS App that starts on double-click: mac_app.sh [output directory]   produces <output directory>/D2R Mobile.app (default $DM_ROOT/out/macapp)
+# The package holds: the host program, the rewritten game program (build output directory, kind DM_MAC_PRODUCT, default touch), and the UI overlay when there is one (DM_MAC_OVERLAY=<directory>).
+# DM_MAC_LINK=1: build without derived content - the rewritten game program, the shader libraries and the UI overlay are all derived from game content and must not be in a publicly released package;
+#   a package built this way holds only the host program and Resources/paths.txt (three entries, each pointing at a build output on this machine), and runs only on the machine that built it.
+# Version: the human-readable version DM_MAC_VERSION (default 1.0, named the same way as the iOS package); the build number DM_MAC_BUILD (default: current month-day-hour-minute, same format as the iOS package). The build output generation and the commit are written to Resources/build.txt in the package.
+# Game resources do not go into the package: on first launch the player is asked to choose the resource folder (host/app_mac.m). Signing is local ad-hoc signing, which runs directly on this machine.
 set -eu
 HERE=$(cd "$(dirname "$0")" && pwd); DM=$HERE/..; ROOT=${DM_ROOT:-$HOME/dm-work}
 OUT=${1:-$ROOT/out/macapp}; KIND=${DM_MAC_PRODUCT:-touch}; BID=${DM_MAC_BUNDLE_ID:-org.d2rmobile.mac}
 P=$(bash "$HERE/product.sh" path "$KIND"); [ -f "$P/main.patched.bin" ] || { echo "🔴 没有产物 ${P}（先跑 product.sh build）"; exit 2; }
 make -C "$DM/host" > /dev/null
+MIN=$(make -s -C "$DM/host" print-macos-min)   # 最低系统版本：与编译宿主用的是同一个数（host/Makefile 的 MACOS_MIN） | minimum system version: the same number the host is compiled with (MACOS_MIN in host/Makefile)
 APP="$OUT/D2R Mobile.app"; rm -rf "$APP"; mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$DM/host/dmhost" "$APP/Contents/MacOS/D2RMobile"
 LINK=${DM_MAC_LINK-1}; [ "$LINK" != 0 ] || LINK=; RES="$APP/Contents/Resources"; : > "$RES/paths.txt"
 if [ -n "$LINK" ]; then echo "product=$P" >> "$RES/paths.txt"; else cp -R "$P" "$RES/product"; fi
 cp "$DM/gfx/nvn/shader_map.tsv" "$APP/Contents/Resources/shader_map.tsv"
+cp "$DM/gfx/nvn/pso_manifest.tsv" "$APP/Contents/Resources/pso_manifest.tsv"   # 管线预热的种子清单：图形后端按「与映射表同目录」找它（两种出法都带；漏带的包开局边画边现编管线——的日志里现编了 102 条） | seed list for pipeline warm-up: the graphics backend looks for it "in the same directory as the mapping table" (both ways of building carry it; a package without it compiles pipelines on the fly while drawing at the start of a game - 102 of them in one log)
 [ ! -f "$DM/gfx/nvn/c1_full.tsv" ] || cp "$DM/gfx/nvn/c1_full.tsv" "$APP/Contents/Resources/c1_full.tsv"   # 图形后端按「与映射表同目录」找它 | The graphics backend looks for it "in the same directory as the mapping table"
 # 编好的着色器库（Mac 版，dmsh_build.py 出的）：只带运行要用的 .metallib 与反射 .json，源码 .metal 不带
 # The compiled shader library (Mac variant, produced by dmsh_build.py): only the .metallib and reflection .json needed at run time are included, not the .metal sources
@@ -34,7 +38,8 @@ if [ "${DM_MAC_OVERLAY:-}" != none ]; then
   else DM_OVERLAY_MAC=1 python3 "$DM/ios/tools/gen_romfs_overlay.py" "${DM_ROMFS_SRC:-$ROOT/data/switch/3.3.94012/Update/RomFS}" "$OVD" > /dev/null || { echo "🔴 界面覆盖层生成失败"; exit 2; }; fi
 fi
 [ -s "$RES/paths.txt" ] || rm -f "$RES/paths.txt"
-VER=$(cat "$DM/PRODUCT")
+VER=${DM_MAC_VERSION:-1.0}; BUILD=${DM_MAC_BUILD:-$(date +%m%d%H%M)}
+echo "版本 ${VER} 构建 ${BUILD} 产物 $(basename "$P") 提交 $(git -C "$DM" rev-parse --short HEAD 2>/dev/null || echo 未知)" > "$RES/build.txt"
 cat > "$APP/Contents/Info.plist" <<PL
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -45,12 +50,20 @@ cat > "$APP/Contents/Info.plist" <<PL
 <key>CFBundleExecutable</key><string>D2RMobile</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>$VER</string>
-<key>CFBundleVersion</key><string>$(git -C "$DM" rev-parse --short HEAD 2>/dev/null || echo 0)</string>
-<key>LSMinimumSystemVersion</key><string>13.0</string>
+<key>CFBundleVersion</key><string>$BUILD</string>
+<key>LSMinimumSystemVersion</key><string>$MIN</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>LSApplicationCategoryType</key><string>public.app-category.role-playing-games</string>
 <key>GCSupportsControllerUserInteraction</key><true/>
 </dict></plist>
 PL
+# 自检：管线预热的种子清单在包里、与映射表同目录、不是空的
+# Self-check: the seed list for pipeline warm-up is in the package, in the same directory as the mapping table, and not empty
+[ -s "$RES/pso_manifest.tsv" ] && [ -s "$RES/shader_map.tsv" ] || { echo "🔴 包里缺管线预热种子清单或着色器映射表（Resources/pso_manifest.tsv、shader_map.tsv）"; exit 3; }
+# 自检：程序本体里记的最低系统版本要与 Info.plist 写的相等（不等时老系统上双击只会得到一句「不能与此版本的 macOS 配合使用」）；只许有 arm64 一个架构
+# Self-check: the minimum system version recorded in the executable must equal the one written in Info.plist (if they differ, double-clicking on an older system only yields "cannot be used with this version of macOS"); only the single arm64 architecture is allowed
+BIN_MIN=$(otool -l "$APP/Contents/MacOS/D2RMobile" | awk '$1=="minos"{print $2; exit}'); PL_MIN=$(/usr/libexec/PlistBuddy -c "Print :LSMinimumSystemVersion" "$APP/Contents/Info.plist")
+[ -n "$BIN_MIN" ] && [ "$BIN_MIN" = "$PL_MIN" ] || { echo "🔴 最低系统版本对不上：程序本体 ${BIN_MIN:-读不到}，Info.plist ${PL_MIN}"; exit 3; }
+ARCHS=$(lipo -archs "$APP/Contents/MacOS/D2RMobile"); [ "$ARCHS" = arm64 ] || { echo "🔴 程序本体的架构不是只有 arm64：${ARCHS}"; exit 3; }
 codesign --force -s - "$APP" > /dev/null 2>&1 || { echo "🔴 本地签名失败"; exit 3; }
-echo "MACAPP ${APP}（产物 $(basename "$P")，$(du -sh "$APP" | cut -f1)${LINK:+，不带派生物：只能在本机跑}）"
+echo "MACAPP ${APP}（版本 ${VER} 构建 ${BUILD}，最低系统 macOS ${MIN}，产物 $(basename "$P")，$(du -sh "$APP" | cut -f1)${LINK:+，不带派生物：只能在本机跑}）"

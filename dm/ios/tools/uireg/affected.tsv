@@ -61,6 +61,7 @@ dm/host/dm_cursor*	a c f g h j m n p q s t u sb cb sl1 sl2 me1 me2 pg2 vt1 rw1 b
 dm/host/hle_touch*	a c f g h j m n p q s t u sb cb sl1 sl2 me1 me2 pg2 vt1 rw1 bd
 dm/host/touch_mac.c	a c j s sb pg2 vt1 rw1
 dm/ios/tools/touch_layout.py	a c f g h j k m n p q s t u sb cb sl1 me1 me2 pg2 vt1 vf1 vf2 rw1 rw2 kba bd pk pvb
+dm/ios/Sources/dm_sharelog.m	shl
 dm/ios/Sources/front_ios.m	a c f g h j m n p q s t u sb cb sl1 sl2 me1 me2 pg2 vt1 rw1 bd pk
 dm/ios/Sources/*	a e pk rf2
 dm/ios/NativeHUD/*	a f pk bd g q

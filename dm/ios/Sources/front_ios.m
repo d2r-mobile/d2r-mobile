@@ -1055,7 +1055,7 @@ int front_text_input(const char *title, const char *sub, const char *guide, cons
                 tf.text = [tf.text substringWithRange:keep];
             }] forControlEvents:UIControlEventEditingChanged];
         }];
-        void (^finish)(int) = ^(int ok) { g_text_alert = nil; g_text_alert_finish = nil; if (ok) text = a.textFields.firstObject.text;
+        void (^finish)(int) = ^(int ok) { UIAlertController *sa = wa; g_text_alert = nil; g_text_alert_finish = nil; if (ok) text = sa.textFields.firstObject.text;   // 弱引用对话框：按钮回调 → finish → 对话框 → 按钮 是个环，对话框每弹一次留一个 | weak reference to the dialog: button callback -> finish -> dialog -> button is a cycle, leaving one dialog behind every time it is shown
             // 名字留空点确定 = 随机取名：我们自己抽一个（dm_namegen.c，约 1.8 万种、与已有角色重名就再抽），当作玩家输入的名字返回，走游戏原本的起名校验；只填进名字框不自动接受（同原版「随机名字」键，玩家看到再点创建）。
             // 原先发原版「随机名字」键，那是按职业在 12 个名字里依次轮，容易撞
             // Leaving the name empty and tapping OK = random naming: we draw one ourselves (dm_namegen.c, about 18,000 variants; redraw if it collides with an existing character), return it as the name the player typed, and go through the game's original name validation; it is only filled into the name field and not auto-accepted (same as the original game's 「随机名字」(Random Name) key: the player sees it and then taps create).
@@ -1353,6 +1353,7 @@ static void touch_script_start(void) {
         while(next<steps.count && [steps[next][0] doubleValue]<=now) {
             NSArray *f=steps[next++]; NSString *op=f.count>1?f[1]:@""; aw_on=0;
             if([op isEqualToString:@"shot"]) window_shot(f[2]);
+            else if([op isEqualToString:@"burst"] && f.count>=4) { void dm_gfx_burst(int, const char *); dm_gfx_burst([f[2] intValue], [doc stringByAppendingPathComponent:f[3]].UTF8String); LOG("[script] burst %d 帧 → %s", [f[2] intValue], [f[3] UTF8String]); }
             else if([op isEqualToString:@"tshot"]) [g_touch_view captureTouchLayer:[doc stringByAppendingPathComponent:f[2]]];   // 操作层 PNG + 控件/当前技能元数据 JSON | Control layer PNG + JSON metadata of widgets / current skills
             // type <文字>：往弹着的输入对话框里敲字——走 UITextField 的 insertText:（系统键盘上屏走的同一个入口，照样触发输入规则的拦截）；
             // alert ok|cancel：点对话框的「确定」/「取消」。两者都只在对话框弹着时有效，没弹着就记一行日志

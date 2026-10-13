@@ -94,6 +94,7 @@ int dm_app_bootstrap(int *argc, char ***argv) {
             if (!rom) { LOG("App：没有选资源文件夹，退出"); exit(0); }
             [ud setObject:rom forKey:kRomfsKey];
         }
+        { void dm_custom_init(const char *dir); dm_custom_init(sup.fileSystemRepresentation); }   // 自定义设置文件的目录现在就给（同 iOS 壳）：不给的话要等存档挂上才知道在哪，而语言开关正是在挂存档那一刻读它改游戏语言的——晚了开关就不生效 | the directory of the custom settings file is given right now (same as the iOS shell): otherwise it is only known once the save is mounted, and the language switch is read to change the game language at exactly that moment - too late and the switch has no effect
         setenv("DM_WINDOW", "1", 1); setenv("DM_APP", "1", 1);
         setenv("DM_SAVE", save.fileSystemRepresentation, 1); setenv("DM_TEMP", temp.fileSystemRepresentation, 1);
         setenv("DM_ROMFS", rom.fileSystemRepresentation, 1); setenv("DM_ROOT", sup.fileSystemRepresentation, 1);

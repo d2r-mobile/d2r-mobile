@@ -585,6 +585,10 @@ void inflate_bench_maybe(void) {
 // 5 unit tables (128 buckets, next=+0x158) + global seed G+0x1a8, merged in stable ascending (type, id) order into each cell's FNV-1a 64. Unreadable pointers follow the ground-truth Reader semantics (failed read = None).
 // One JSON line per tick (fields in the same order and with the same separators as swtick.py's json.dumps); each tick number is taken only once, a gap reports a failure; exits normally once DM_TICKS_N ticks are recorded. When off, no callback is attached to the observation gate.
 static int tk_rd(uint64_t a, void *buf, size_t n);
+static _Atomic uint64_t g_player_path;   // 本地玩家的路径头（状态泵每拍更新） | path head of the local player (updated by the state pump every tick)
+// 本地玩家的逻辑位置（16.16 定点，格）：给图形层的连拍逐帧记一份，好和画面位移对照。读不到返回 0
+// Logical position of the local player (16.16 fixed point, tiles): the graphics layer's burst capture records one per frame so it can be compared with on-screen displacement. Returns 0 when it cannot be read
+int dm_diag_player_fixed(uint32_t *x, uint32_t *y) { uint64_t pp = atomic_load(&g_player_path); uint32_t c[2]; if (!pp || !tk_rd(pp, c, 8)) return 0; *x = c[0]; *y = c[1]; return 1; }
 static FILE *g_tkfp; static int g_tkfull; static long g_tkleft = -1; static int64_t g_tklast = -1; static uint64_t g_tkt0; static unsigned g_tkreads;
 static FILE *g_spfp;
 // ---- 难度档位与 HUD 数字（dm_hud.h）：都在拍入口（游戏线程）读写客体，前端经 dm_hud_get / dm_hud_request_players 交互 ----
@@ -808,6 +812,7 @@ static void hud_tick(uint64_t G) {        // 每拍：受控玩家等级 / 本�
         h.level = (int)lv;
         { uint64_t pp = 0, r1 = 0, r2 = 0, lvl = 0; uint16_t c[4] = {0}; uint32_t no = 0;   // 坐标：单位 +0x38 → 路径头 4 个 16 位（x 小数 / x / y 小数 / y） | Coordinates: unit +0x38 → 4 16-bit values at the head of the path (x fraction / x / y fraction / y)
           if (tk_rd(player + 0x38, &pp, 8) && tk_rd(pp, c, 8)) { h.x = c[1]; h.y = c[3]; }
+          atomic_store(&g_player_path, pp);   // 连拍（dm_gfx_burst）逐帧读位置用 | used by burst capture (dm_gfx_burst) to read the position per frame
           // 区域号（levels.txt 的 Id：1 = 罗格营地，2 = 鲜血荒地…）：路径 +0x20 → 所在房间 +0x18 → 区域房间 +0x90 → 区域 +0x1f8
           // Area number (Id in levels.txt: 1 = Rogue Encampment, 2 = Blood Moor...): path +0x20 → current room +0x18 → area room +0x90 → area +0x1f8
           if (pp && tk_rd(pp + 0x20, &r1, 8) && tk_rd(r1 + 0x18, &r2, 8) && tk_rd(r2 + 0x90, &lvl, 8) && tk_rd(lvl + 0x1f8, &no, 4) && no < 200) h.area = (int)no; }
@@ -1890,6 +1895,7 @@ void ticks_install(void) {
     if (gate_obs_present(OBS_TICK)) gate_obs_set(OBS_TICK, tick_gate_product);
     else LOG("【红】产物没有拍入口观测门 OBS_TICK：底栏数字 / 难度条 / 动态 3D 比例（dm_ingame_now）都不工作");
     { module_t *tm = main_mod(); void dm_textbox_install(uint8_t *); if (tm) dm_textbox_install((uint8_t *)tm->base); }   // 普通文字框里的注释颜色码（dm_textbox.c，观测门 14） | Annotation color codes in ordinary text boxes (dm_textbox.c, observation gate 14)
+    { module_t *tm = main_mod(); void dm_turnsmooth_install(uint8_t *); if (tm) dm_turnsmooth_install((uint8_t *)tm->base); }   // 转向回跳平滑 / 模型转身参数读取（dm_turnsmooth.c，观测门 19 / 20） | turn snap-back smoothing / reading the model turning parameters (dm_turnsmooth.c, observation gates 19 / 20)
     if (e || rp || lg || sp) {                              // DM_C2S_LOG 也挂拍入口：系统类消息的拍号要从 G 读 | DM_C2S_LOG also hooks the tick entry: the tick number of system-class messages has to be read from G
         if (!gate_obs_present(OBS_TICK)) die("DM_TICKS / DM_STATE / DM_C2S_REPLAY / DM_C2S_LOG：产物没有拍入口观测门 OBS_TICK（需 r8 起的产物）");
         gate_obs_set(OBS_TICK, tick_gate);

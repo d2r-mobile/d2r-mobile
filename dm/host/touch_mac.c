@@ -12,7 +12,12 @@ uint64_t now_ns(void);
 uint64_t guest_ns(void);
 uint32_t dm_cur_tick(void);
 int dm_loadscreen_down(void);
-static uint32_t touch_cur_tick(void) { return dm_cur_tick(); }
+// 拍号：脚本回放按服务端拍（确定性）；真鼠标（App 形态）按墙钟折成每秒 30 拍——暂停菜单 / 设置页 / 大秘境面板开着时游戏停拍，
+// 按服务端拍的话鼠标事件排在队里不处理，这些页一下都点不进去
+// Tick number: script playback goes by server ticks (deterministic); a real mouse (App form) converts wall clock into 30 ticks per second - the game stops ticking while the pause menu / settings page / Greater Rift panel is open,
+// and with server ticks the mouse events would sit in the queue unprocessed, so nothing on those pages could be clicked
+static int g_live_on;
+static uint32_t touch_cur_tick(void) { return g_live_on ? (uint32_t)(now_ns() / 33333333ull) : dm_cur_tick(); }
 
 typedef struct { uint64_t beat; int op, slot; float x, y; } touch_event;
 enum { TOUCH_DOWN, TOUCH_MOVE, TOUCH_UP };
@@ -35,7 +40,7 @@ static struct {
 // outside panels no button target is opened and no stick is raised at the bottom left (a click anywhere is just "click the world": clicking a target walks over and interacts, clicking empty ground does nothing); in panels it works as before (clicking controls, tabs, item cells).
 // Front-end pages (main menu / character select / character creation, not in a game) bypass the state machine and the touch point is taken directly as a UI click (same as frontendMode in the iOS front end).
 #include <stdatomic.h>
-static int g_live_on; static uint32_t g_live_tick0; static int g_live_based;
+static uint32_t g_live_tick0; static int g_live_based; static uint64_t g_live_btn; static uint32_t g_live_btn_until;
 static struct { _Atomic unsigned head, tail; struct { int op; float nx, ny; } q[64]; } g_live;
 void dm_touch_host_live(int op, float nx, float ny) {   // 前端线程：op 0 按下 1 移动 2 抬起；坐标 = 游戏画面归一化 [0,1] | Front-end thread: op 0 down, 1 move, 2 up; coordinates = normalized to the game picture [0,1]
     if (!g_live_on) return; unsigned t = atomic_load(&g_live.tail); if (t - atomic_load(&g_live.head) >= 64) return;
@@ -162,13 +167,21 @@ void dm_touch_host_step(uint64_t now, uint64_t *buttons, int32_t *lx, int32_t *l
         if (!in) g_live_based = 0;
         while ((h = atomic_load(&g_live.head)) != atomic_load(&g_live.tail)) {
             int op = g_live.q[h % 64].op; float nx = g_live.q[h % 64].nx, ny = g_live.q[h % 64].ny; if (op != 2) { px = nx; py = ny; }
-            if (!in) { dm_ui_touch(op, px, py); atomic_store(&g_live.head, h + 1); continue; }
+            // 按在按键提示条的某一条上：这一下不当点击，改成按那个键 4 拍（dm_padmode.c）；吞到抬起为止
+            // Pressed on an entry of the key-hint bar: this is not treated as a click but as pressing that key for 4 ticks (dm_padmode.c); swallowed until release
+            { uint64_t dm_padmode_legend_click(float, float); static int eat; uint64_t lb = op == 0 ? dm_padmode_legend_click(px, py) : 0;
+              if (lb) { eat = 1; g_live_btn = lb; g_live_btn_until = touch_cur_tick() + 4; }
+              if (eat) { if (op == 2) eat = 0; atomic_store(&g_live.head, h + 1); continue; } }
+            if (!in) {   // 前端页：抬起时先问一次命中——落在页签上就走「点页签 = 按对应的手柄键」（页签不认鼠标点击；局内由手势层做同一件事），其余照旧发鼠标点击 | front-end pages: on release, hit-test once first - landing on a tab goes through "clicking a tab = pressing the corresponding gamepad key" (tabs do not take mouse clicks; in game the gesture layer does the same), everything else sends a mouse click as before
+                if (op == 2 && dm_ui_item_at_now(px, py) == 2) { dm_ui_touch(3, px, py); dm_ui_tab_go(); } else dm_ui_touch(op, px, py);
+                atomic_store(&g_live.head, h + 1); continue; }
             if (g_touch.next == g_touch.count) g_touch.next = g_touch.count = 0;   // 表里的都处理完了：从头复用 | Everything in the table has been handled: reuse from the start
             if (g_touch.count >= 256) break;
             touch_event *e = &g_touch.event[g_touch.count++]; e->beat = 0; e->slot = 0; e->op = op == 0 ? TOUCH_DOWN : op == 1 ? TOUCH_MOVE : TOUCH_UP; e->x = px * 2868; e->y = py * 1320;
             atomic_store(&g_live.head, h + 1);
         }
     }
+    if (g_live_btn) { if ((int32_t)(g_live_btn_until - touch_cur_tick()) > 0) *buttons |= g_live_btn; else g_live_btn = 0; }
     if (!g_touch.enabled || !g_touch.started) return;
     uint32_t tick = touch_cur_tick();
     if (!g_touch.prefix && !g_touch.tick_set) { g_touch.to_game_tick = tick; g_touch.tick_set = 1; }
@@ -237,7 +250,10 @@ apply_input:
             if (g_touch.state.item_tap_seq != its) dm_ui_item_tap();
             if (g_touch.state.ident_seq != ids) dm_ui_identify_hovered();
             if (g_touch.state.use_seq != us) dm_ui_use_item();
-            if (g_touch.state.world_tap_seq != wt) { unsigned dm_world_tap(float, float); dm_world_tap(g_touch.state.world_tap_x / 2868, g_touch.state.world_tap_y / 1320); }
+            if (g_touch.state.world_tap_seq != wt) { unsigned dm_world_tap(float, float); float wx = g_touch.state.world_tap_x / 2868, wy = g_touch.state.world_tap_y / 1320;
+                // 真鼠标：手势层认为没有面板开着（它按名单认面板，大秘境选层页这类借壳的面板不在名单里），这一下却落在某个面板里 → 发界面点击，不当点世界
+                // Real mouse: the gesture layer believes no panel is open (it recognises panels by a list, and panels that borrow another shell, such as the Greater Rift level-selection page, are not on it), yet this click lands inside some panel -> send a UI click instead of a world click
+                if (g_live_on && dm_ui_item_at_now(wx, wy) == 0) { dm_ui_touch(0, wx, wy); dm_ui_touch(2, wx, wy); } else dm_world_tap(wx, wy); }
             if (g_touch.state.mouse_click_seq != mc) { float nx = g_touch.state.mouse_click_x / 2868, ny = g_touch.state.mouse_click_y / 1320; dm_ui_touch(0, nx, ny); dm_ui_touch(2, nx, ny); }
         }
     }
