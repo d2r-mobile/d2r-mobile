@@ -1,6 +1,8 @@
 # D2R Mobile
 
-**Diablo II: Resurrected, running as native code on iPhone and iPad.** You bring the Nintendo Switch release you own, with the Reign of the Warlock expansion. D2R Mobile runs its ARM program on your phone, draws it with Metal, and rebuilds every control for touch. It holds 60 fps, and power saver mode stretches a charge to about 10 hours.
+**An open-source iOS compatibility layer for Diablo II: Resurrected with the Reign of the Warlock expansion.** It brings the Nintendo Switch release you bought, expansion included, to iPhone and iPad in full: the original game code runs natively, every control is rebuilt for touch, the frame rate holds at 60 fps, and you are in a game one second after the main menu. There is now a native macOS version as well (first version): on an Apple silicon Mac it starts on double-click and works with keyboard, mouse and gamepad.
+
+This is not a tech demo that "sort of runs". It is a mobile version polished for daily play, from your first character all the way through the endgame.
 
 Platforms: iPhone / iPad (iOS 26 and later) · Mac (Apple silicon, macOS 13 and later, first version) · Game version: Switch release with Reign of the Warlock, 1.0.34.0 (corresponds to PC version 3.3.94012) · English / 中文 · License: MIT · **Bring your own game files**
 
@@ -268,7 +270,7 @@ Download our prebuilt "shell" package (`D2RMobile-shell.ipa`) from the [Releases
 - For the items marked not verified, tell us whether they worked. Either answer helps.
 - To change the code, get the test entry points above passing first. Every change has to pass the regression gates.
 
-**Other platforms:** Apple silicon Macs run the same package; our daily regression tests use them. Android phones use the same family of ARM processors, so the game program can run natively there too. An Android port needs new platform-facing sides for the host and the graphics layer, and nothing else. The author has no Android phone. If you have one, the route is open.
+**Taking it to other platforms:** this approach is not limited to iPhone and iPad. Apple silicon Macs already have a native version (see "Playing directly on a Mac" above), built from the same game program and the same host. Android phones use the same class of processor, so the game program executes natively there as well, and the route is fully open: the only parts to replace are the sides of the host and the graphics layer that face the platform. The author has no Android phone at hand, and would love to see someone bring it to Android.
 
 ## Documentation by part
 
