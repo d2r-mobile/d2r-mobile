@@ -38,15 +38,17 @@ EN_LIMITS = (
     (r'dmKbRiftUnlock', 9), (r'dmKbRift(Best|Total)', 16),
 )
 # 键只许字母数字：布局里「@键」的解析遇到 _ 就断（@dmCustom_auto_mana 显示成「丢失字符串_auto_mana」，Mac 上的 iOS 包实测）
-# Keys may contain only letters and digits: parsing of "@key" in layouts stops at _ (@dmCustom_auto_mana is displayed as "<missing string>_auto_mana",
-# measured on the iOS app on Mac)
+# 英文界面下也要写汉字的键（自定义页语言那一行：切错语言的人得看得懂）。只许用在指定了全球字体 BlizzardGlobal 的文字控件上——英文界面缺省字体没有汉字
+# Keys may only contain letters and digits: the layout's "@key" parsing stops at _ (@dmCustom_auto_mana was shown as "missing string_auto_mana", measured in the iOS package on a Mac)
+# Keys that must show Chinese characters in the English UI as well (the language row of the Custom page: someone who switched to the wrong language has to be able to read it). Only allowed on text controls that specify the global font BlizzardGlobal -- the default font of the English UI has no Chinese characters
+EN_HAS_ZH = {'dmCustomLang', 'dmCustomLangZh', 'dmCustomLangHintZh'}
 def rows():
     out = []
     with open(TABLE, encoding='utf-8') as f:
         for r in csv.DictReader(f, delimiter='\t'):
             k, zh, en = r['键'], r['中文'].replace('\\n', '\n'), r['English'].replace('\\n', '\n')
             if not re.fullmatch(r'dm[A-Za-z0-9]+', k) or not zh or not en: raise SystemExit('dm_i18n：表里这一行不对：%r' % r)
-            if re.search(r'[　-鿿＀-￯]', re.sub(PROPER, '', en)): raise SystemExit('dm_i18n：%s 的英文里有中文字符：%r' % (k, en))
+            if k not in EN_HAS_ZH and re.search(r'[　-鿿＀-￯]', re.sub(PROPER, '', en)): raise SystemExit('dm_i18n：%s 的英文里有中文字符：%r' % (k, en))
             if FMT.findall(zh) != FMT.findall(en): raise SystemExit('dm_i18n：%s 的中英占位符不一致：%s / %s' % (k, FMT.findall(zh), FMT.findall(en)))
             lim = next((n for pat, n in EN_LIMITS if re.fullmatch(pat, k)), None)   # 英文字数闸（见 EN_LIMITS） | English length gate (see EN_LIMITS)
             if lim is not None and len(FMT.sub('000', en).split('\n')[0]) > lim: raise SystemExit('dm_i18n：%s 的英文「%s」%d 个字符，超过这一栏的上限 %d（会顶框 / 被截断；压短，或给这一栏做英文专用的小字号控件后再改上限）' % (k, en, len(FMT.sub('000', en)), lim))

@@ -77,8 +77,11 @@ dmCustomStoreBtn	背包「存放」按钮	Inventory Deposit button	自定义页�
 dmCustomEcoFps	省电模式（30 帧）	Power saver (30 fps)	自定义页开关
 dmCustomLootFilter	掉落过滤（噩梦起自动隐藏杂物）	Loot Filter (auto, Nightmare+)	自定义页开关；Loot Filter 是原版过滤器的英文名
 dmCustomAutoBuff	自动补上增益技能（站着不动时）	Auto-recast buffs when idle	自定义页开关
-dmCustomLangEn	语言 / Language：English	Language: English	自定义页标题行右侧的语言开关（中文界面写中英两个词；英文界面的字体没有汉字，只写英文——English 这个词两种界面下都认得；勾上 = 英文界面 + 英文语音）
-dmCustomLangHint	重启游戏后生效 / Restart to apply	Restart to apply	语言开关勾选与当前语言不一致时显示在它下面
+dmCustomLang	语言 / Language	语言 / Language	自定义页语言那一行的标签。两种界面写同样的中英两个词：这一行的文字控件指定原版的全球字体 BlizzardGlobal（英文界面缺省的 Formal 字体没有汉字，全球字体有；原版标题页、队伍名、合规提示同样按控件指定它）
+dmCustomLangZh	中文	中文	语言行的选项一（两种界面都写「中文」，同上用全球字体）
+dmCustomLangEnOpt	English	English	语言行的选项二
+dmCustomLangHintZh	点「应用」，然后把 App 关掉重开	点「应用」，然后把 App 关掉重开	语言行选了「中文」而当前不是中文界面时显示在这一行下半（提示用选中的那种语言写；两种界面同文，全球字体）
+dmCustomLangHintEn	Tap Apply, then close and reopen the app	Tap Apply, then close and reopen the app	语言行选了 English 而当前不是英文界面时显示
 dmTabGameSettings	游戏设定	Settings	触屏设置页第三个子页签（原版英文 Game Settings 放不进页签；中文取原版串原文）
 dmVaultPart0	头盔	Helms	编年史暗金页部位页签（wide_stash.py）
 dmVaultPart1	盔甲	Armor	编年史暗金页部位页签（wide_stash.py）
