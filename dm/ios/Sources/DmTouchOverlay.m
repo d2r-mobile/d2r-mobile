@@ -6,7 +6,7 @@
 #include "dm_input.h"
 #include "../../host/dm_i18n.h"
 
-#define DM_SKILL_IDLE_ALPHA .6   // 五个技能钮、回城钮、技能组切换钮没按着时的不透明度（底圈、圆环、图标同乘；要调浓淡只改这一处） | opacity of the five skill buttons, town portal button and skill set switch button when not held (base circle, ring and icon are all multiplied; this is the one place to tune it)
+#define DM_SKILL_IDLE_ALPHA .6   // 五个技能钮、回城钮、技能组切换钮没按着时底圈与圆环的不透明度（图标、切换钮上的「Ⅰ / Ⅱ」不乘，保持清晰；要调浓淡只改这一处） | Opacity of the base circles and rings of the five skill buttons, the town portal button and the skill set switch button when not held (the icons and the "Ⅰ / Ⅱ" on the switch button are not multiplied and stay clear; to adjust the fade, change only this one place)
 static UIColor *bronze(CGFloat a) { return [UIColor colorWithRed:.66 green:.53 blue:.32 alpha:a]; }
 static void caption(NSString *s, CGRect rect, CGFloat size, CGFloat alpha) {
     NSMutableParagraphStyle *p = [NSMutableParagraphStyle new]; p.alignment = NSTextAlignmentCenter;
@@ -176,8 +176,8 @@ static void v4text(NSString *str, NSDictionary *glyphs, CGFloat x, CGFloat basel
         BOOL skillKey=!self.navigationMode && (i<=DM_TC_SKILL4 || i==DM_TC_PORTAL);   // 回城钮（圆形、和技能图标一样） | Town portal button (round, same as the skill icons)
         if (skillKey) {   // PC 定稿演示图同款：深色圆底 + 古铜圆环（外亮内暗两道） | Same as the finalized PC demo image: dark round base + bronze ring (two strokes, bright outside and dark inside)
             CGFloat lw=MAX(1.5,t->r*0.075);
-            // 五个技能钮与回城钮平时淡一些（DM_SKILL_IDLE_ALPHA，少挡画面），按住时恢复原样给手感；角标、标签、充能用完的灰态不跟着变
-            // The five skill buttons and the town portal button are faded when idle (DM_SKILL_IDLE_ALPHA, to block less of the view) and return to normal while held for feedback; badges, labels and the grey out-of-charges state do not change
+            // 五个技能钮与回城钮平时底圈、圆环淡一些（DM_SKILL_IDLE_ALPHA，少挡画面），按住时恢复原样给手感；图标、角标、标签、充能用完的灰态不跟着变
+            // The base circles and rings of the five skill buttons and the town portal button are faded when idle (DM_SKILL_IDLE_ALPHA, to block less of the view) and return to normal while held for feedback; icons, badges, labels and the grey out-of-charges state do not follow
             CGFloat fr=held?1:DM_SKILL_IDLE_ALPHA;
             CGContextSetFillColorWithColor(c,[UIColor colorWithRed:.086 green:.067 blue:.047 alpha:held?.92:.80*fr].CGColor); CGContextFillEllipseInRect(c,b);
             CGContextSetLineWidth(c,lw); CGContextSetStrokeColorWithColor(c,[UIColor colorWithRed:.60 green:.47 blue:.28 alpha:held?1:.9*fr].CGColor);
@@ -215,7 +215,7 @@ static void v4text(NSString *str, NSDictionary *glyphs, CGFloat x, CGFloat basel
                 if(spent) { CGContextSetFillColorWithColor(c,[UIColor colorWithWhite:.30 alpha:1].CGColor); CGContextFillEllipseInRect(c,CGRectInset(b,t->r*.14,t->r*.14));
                     [icon drawInRect:ir blendMode:kCGBlendModeLuminosity alpha:.55];
                     CGContextSetFillColorWithColor(c,[UIColor colorWithWhite:0 alpha:.35].CGColor); CGContextFillEllipseInRect(c,b); }
-                else [icon drawInRect:ir blendMode:kCGBlendModeNormal alpha:held?1:.92*DM_SKILL_IDLE_ALPHA]; }
+                else [icon drawInRect:ir blendMode:kCGBlendModeNormal alpha:held?1:.92]; }   // 图标不淡：淡的只是底圈与圆环 | The icon is not faded: only the base circle and the ring are
             // 副手组技能角标：右上「Ⅱ」= 技能在另一组武器上，按下先换武器；右下剩余次数 = 充能技能，字用腰带药水件数那套（ui.json badge）
             // Secondary weapon set skill badges: top right "Ⅱ" = the skill is on the other weapon set, pressing swaps weapons first; bottom right remaining count = charged skill, the text uses the same style as the belt potion count (ui.json badge)
             if(ssKind&1) { CGFloat br=t->r*.30, bx=t->x+t->r*.74, by=t->y-t->r*.74; CGRect bb=CGRectMake(bx-br,by-br,br*2,br*2), lw2=CGRectInset(bb,MAX(1,br*.08),MAX(1,br*.08));
