@@ -71,7 +71,7 @@ int main(void) { @autoreleasepool {
     NVNT_nvnQueuePresentTexture present=(NVNT_nvnQueuePresentTexture)get(NULL,"nvnQueuePresentTexture");
     tex_t tex={.serial=10001};tex.d.width=tex.d.height=8;tex.d.depth=tex.d.levels=1;tex.d.format=NVN_FORMAT_RGBA8;tex.d.target=NVN_TEXTURE_TARGET_2D;serial_put(tex.serial,src);
     win_t win={.ntex=1};win.tex[0]=(NVNtexture *)&tex;set((NVNwindow *)&win,4,4,4,4);
-    mtl_present_test_stall(100000000);present(NULL,(NVNwindow *)&win,0);uint64_t tk=win.ticket[0];set((NVNwindow *)&win,0,0,8,8);
+    mtl_present_test_stall(100000000);present(NULL,(NVNwindow *)&win,0);set((NVNwindow *)&win,0,0,8,8);uint64_t tk=x_present_ticket(win.ticket[0]);   // ticket 存翻译队列任务号，换成出图线程票号 | ticket holds the translation queue's job number; swap it for the present thread's ticket
 #ifdef CROP_LEGACY_HEADER
     EXPECT("旧队列结构没有四参数副本空间（结构检查）",1,sizeof(pq_item)>=sizeof(tex_t)+sizeof(double)+sizeof(uint64_t)+sizeof br);
 #else

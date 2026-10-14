@@ -302,7 +302,7 @@ int main(void) {
         for (int i = 0; i < 24; i++) P(nvnCommandBufferCopyBufferToBuffer)(&cb, (NVNbufferAddress)heap, (NVNbufferAddress)(heap + big), big, 0);
         NVNcommandHandle hbusy = P(nvnCommandBufferEndRecording)(&cb);
         P(nvnQueueSubmitCommands)(&q, 1, &hbusy);
-        uint64_t f = mtl_last_fence();
+        uint64_t f = x_fence();   // 游戏经 FenceSync 拿到的栅栏值（翻译异步：可能还没翻译到） | Fence value the game gets from FenceSync (translation is asynchronous: it may not have been translated yet)
         int busy_before = !mtl_wait(f, 0);
         dm_gfx_suspend(1);
         EXPECT("挂起前 GPU 确实在忙（零超时等待未完成）", 1, busy_before);
@@ -357,6 +357,52 @@ int main(void) {
         P(nvnWindowAcquireTexture)(&w3, NULL, &ix);
         EXPECT("取到的是第 0 张", 0, ix);
         mtl_present_test_stall(0); mtl_present_flush();
+    }
+
+    // 8. 对象副本：录完命令后游戏 Finalize 并在同址重建贴图 / 换程序着色器，已录命令里读到的仍是录制时的内容；退役副本过 SNAP_KEEP 次提交才回收
+    // 8. Object snapshots: after commands are recorded the game Finalizes and rebuilds a texture at the same address / swaps a program's shaders; recorded commands still read what was there at record time; retired snapshots are reclaimed only after SNAP_KEEP submits
+    {
+        NVNtextureBuilder b; NVNtexture tx; P(nvnTextureBuilderSetDevice)(&b, &dev); P(nvnTextureBuilderSetDefaults)(&b);
+        P(nvnTextureBuilderSetWidth)(&b, 8); P(nvnTextureBuilderSetHeight)(&b, 4); P(nvnTextureBuilderSetFormat)(&b, NVN_FORMAT_RGBA8); P(nvnTextureInitialize)(&tx, &b);
+        NVNprogram pg; NVNshaderData sd[2]; memset(sd, 0, sizeof sd); P(nvnProgramInitialize)(&pg, &dev); P(nvnProgramSetShaders)(&pg, 1, sd);
+        const NVNtexture *ct[1] = {&tx};
+        P(nvnCommandBufferBeginRecording)(&cb);
+        P(nvnCommandBufferSetRenderTargets)(&cb, 1, ct, NULL, NULL, NULL);
+        P(nvnCommandBufferBindProgram)(&cb, &pg, NVN_SHADER_STAGE_VERTEX_BIT);
+        NVNcommandHandle hs = P(nvnCommandBufferEndRecording)(&cb);
+        const p_set_rt *rt = NULL; const p_bind_program *bp = NULL;
+        for (const uint8_t *p = (const uint8_t *)hs; p;) {   // 按记录格式走：JUMP 跟到下一段，END 结束 | Walk the record format: follow JUMP to the next segment, stop at END
+            op_hdr h; memcpy(&h, p, sizeof h);
+            if (h.op == OP_END) break;
+            if (h.op == OP_JUMP) { memcpy(&p, p + 8, 8); continue; }
+            if (h.op == OP_SET_RT) rt = (const p_set_rt *)(p + 8);
+            if (h.op == OP_BIND_PROGRAM) bp = (const p_bind_program *)(p + 8);
+            p += h.size;
+        }
+        EXPECT("录到 SET_RT 与 BIND_PROGRAM", 2, (rt != NULL) + (bp != NULL));
+        if (rt && bp) {
+            const tex_t *s0 = rt->color[0];
+            EXPECT("SET_RT 存的不是游戏对象地址", 1, (const void *)s0 != (const void *)&tx);
+            EXPECT("副本宽 8", 8, s0->d.width);
+            NVNtexture cp; memcpy(&cp, &tx, sizeof cp);
+            EXPECT("按值拷来的同序号对象共用同一副本", 1, snap_tex(&cp) == s0);
+            uint64_t ser0 = s0->serial;
+            P(nvnTextureFinalize)(&tx); P(nvnTextureBuilderSetWidth)(&b, 16); P(nvnTextureBuilderSetHeight)(&b, 16); P(nvnTextureInitialize)(&tx, &b);
+            EXPECT("同址重建后已录命令仍读到宽 8", 8, rt->color[0]->d.width);
+            EXPECT("同址重建后已录命令仍是旧序号", 1, rt->color[0]->serial == ser0);
+            const tex_t *s1 = snap_tex(&tx);
+            EXPECT("重建后再录取到新副本、宽 16", 16, s1 != s0 ? (long long)s1->d.width : -1);
+            P(nvnProgramSetShaders)(&pg, 2, sd);
+            EXPECT("换着色器后已录命令的程序仍是 1 段", 1, bp->prog->nstage);
+            x_drain(); uint64_t s_at = atomic_load(&g_x_subs);   // 退役盖戳 = 当时已入队的提交数；回收按已执行数 | Retire stamp = number of submits enqueued at that time; reclaim goes by the number executed
+            for (int k = 1; k < SNAP_KEEP; k++) snap_tick(s_at + k);
+            EXPECT("退役后 SNAP_KEEP−1 次提交：副本还在", 8, s0->d.width);
+            snap_tick(s_at + SNAP_KEEP);
+            EXPECT("退役后 SNAP_KEEP 次提交：副本已回收（序号清零）", 0, s0->serial);
+            const tex_t *s2 = snap_tex(&cp);
+            EXPECT("回收后旧拷贝对象再取副本：宽 8、序号是它自己的", 8, s2->serial == ((const tex_t *)&cp)->serial ? (long long)s2->d.width : -1);
+        }
+        P(nvnTextureFinalize)(&tx); P(nvnProgramFinalize)(&pg);
     }
 
     // 7. 未实现函数：返回 0、报红、只报一次

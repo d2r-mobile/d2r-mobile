@@ -680,7 +680,15 @@ static int inside_walk(uint64_t w, uint64_t xy, int dep, uint64_t vt_catch) {
     { const char *nm = (const char *)*(uint64_t *)(w + 8);   // 不画东西、只占位的辅助控件不算（名字来自实测：整屏命中、与面板无关） | Helper widgets that draw nothing and only occupy space do not count (names from measurement: full-screen hit, unrelated to panels)
       static const char *skip[] = { "PanelBordersPanel", "ControllerCursorBounds", "ShowItemsPanel", "MiniMenuPanel", "TooltipsPanel", "EmoteWheelPanel", "TransparentBG", "SpriteColoringHelper", "LanguageFontRemapper", "ShowItemsParameters", "ControllerCursorParameters", "MoviePlayer", "AutoMap", "TooltipTextBox" };   // TooltipTextBox：说明框伸到面板外时不算面板（点它 = 点面板外 = 关；mini 技能树页 2/5 被它挡住）   // AutoMap：小地图面板整屏占位（进局后常开） | TooltipTextBox: when the tooltip box extends outside the panel it does not count as a panel (tapping it = tapping outside the panel = close; on the second Mac it blocked 2/5 on the skill tree page)   // AutoMap: the minimap panel is a full-screen placeholder (always open after entering a run)
       if (nm) for (unsigned i = 0; i < sizeof skip / sizeof *skip; i++) if (!strcmp(nm, skip[i])) return 0; }
-    { uint64_t rel = vt - (vt_catch - 0x20c1328);   // 叶子控件，或带子控件的底板类（九宫格底板 0x20b9580、对话框边框 0x20bc048：设置页的 Background 就是带子控件的底板） | A leaf widget, or a backing-type widget with children (nine-slice backing 0x20b9580, dialog border 0x20bc048: the settings page's Background is a backing with children)
+    { uint64_t rel = vt - (vt_catch - 0x20c1328);   // 叶子控件，或带子控件的底板类（九宫格底板 0x20b9580、对话框边框 0x20bc048：设置页的 Background 就是带子控件的底板； | Leaf widgets, or backing classes with children (nine-slice backing 0x20b9580, dialog frame 0x20bc048: the Background of the settings page is a backing with children;
+      // 带子控件的图片 0x20b8650：编年史「查看奖励」页的整页底板 RewardsBg 就是它，原先不算，卡片之间的空处判成「奖励页没盖住」，
+      // 点下去穿到底下的编年史列表 / 分类 / 页签上，列表容器拿到焦点、金框画在奖励页上面（iPhone 15 Pro 截图）。按它自己的矩形算，同叶子图片；
+      // 先查它的子控件、都没中才算它自己——名字要报到最里层（关闭钮按 TouchClose / close 的名字认）
+      // Image widget with children 0x20b8650: the full-page backing RewardsBg of the Chronicle "View Rewards" page is one. It used to be ignored, so empty space between cards was judged "not covered by the rewards page",
+      // and a tap fell through to the Chronicle list / categories / tabs underneath; the list container got focus and its gold frame was drawn over the rewards page (iPhone 15 Pro screenshot). It now counts with its own rect, like a leaf image;
+      // its children are checked first and only if none is hit does it count itself, so the name is reported down to the innermost widget (the close button is recognized by the names TouchClose / close)
+      if (rel == 0x20b8650 && n && ch && n <= 256) { for (uint64_t i = 0; i < n; i++) if (inside_walk(*(uint64_t *)(ch + 8 * i), xy, dep + 1, vt_catch)) return 1;
+          uint64_t fn = *(uint64_t *)(vt + 0x48); if (((int (*)(uint64_t, uint64_t))fn)(w, xy) & 1) { g_inside_name = *(uint64_t *)(w + 8) ? (const char *)*(uint64_t *)(w + 8) : "?"; return 1; } return 0; }
       if (!n || !ch || rel == 0x20b9580 || rel == 0x20bc048) { uint64_t fn = *(uint64_t *)(vt + 0x48); int h = ((int (*)(uint64_t, uint64_t))fn)(w, xy) & 1; if (h) { g_inside_name = *(uint64_t *)(w + 8) ? (const char *)*(uint64_t *)(w + 8) : "?"; return 1; } if (!n || !ch) return 0; } }
     if (n > 256) return 0;
     for (uint64_t i = 0; i < n; i++) if (inside_walk(*(uint64_t *)(ch + 8 * i), xy, dep + 1, vt_catch)) return 1;
@@ -710,6 +718,7 @@ static int ui_inside_panel(module_t *m, uint64_t root, uint64_t xy) {   // 从�
     for (int i = (int)n - 1; i >= 0; i--) { uint64_t p = *(uint64_t *)(ch + 8 * i); if (!p || !*(uint8_t *)(p + 0x50)) continue; const char *nm = (const char *)*(uint64_t *)(p + 8);
         if (nm && !strncmp(nm, "HUD", 3)) continue;   // HUD 各层属于游戏画面，不算面板 | HUD layers belong to the game screen and do not count as panels
         if (nm && !strcmp(nm, "NotificationPanel")) continue;   // 系统提示框不接点击（同 panel_skip） | system notifications do not take taps (same as panel_skip)
+        if (nm && !strcmp(nm, "FocusManager")) continue;   // 焦点金框只是画在被选中控件上的框，不是可点的东西（同 panel_skip）：原先点到金框画着的地方命中「FocusIndicator@FocusManager」，那一下落空 | The focus gold frame is only a frame drawn on the selected widget, not something you can tap (same as panel_skip): before, tapping where the gold frame was drawn hit "FocusIndicator@FocusManager" and the tap went nowhere
         if (inside_walk(p, xy, 1, (uint64_t)m->base + 0x20c1328)) { g_inside_owner = nm ? nm : "?"; return 1; } }
     return 0;
 }
@@ -2341,6 +2350,72 @@ int dm_ui_panel_resident(const char *name) {
         "CandidateListPanel" };
     if (!name) return 0; for (unsigned i = 0; i < sizeof k / sizeof *k; i++) if (!strcmp(name, k[i])) return 1; return 0;
 }
+// 面板开合栈（前端「面板模式」的依据，原在 front_ios.m hud_stack_message；搬来，iOS 前端与 Mac touch_mac.c 在各自的界面消息回调里调同一份）。
+// 底部 UI v4 的 UIKit 底栏只在「局内常态」画：维护面板开合栈，常驻 HUD 层（dm_ui_panel_resident）之外任何面板开着就不画、前端进面板态。
+// 返回栈读数：开着的非常驻面板数；只开着 NPC 对话菜单 / 说话框时 -1。日志字样「[hud] 面板栈 …」保持原样（回归脚本按它认）
+// Panel open/close stack (the basis of the front end's "panel mode"; formerly front_ios.m hud_stack_message, moved here so the iOS front end and Mac touch_mac.c call the same one from their UI message callbacks).
+// The UIKit bottom bar of bottom UI v4 is only drawn in the normal in-game state: maintain the panel stack; whenever any panel other than the resident HUD layers (dm_ui_panel_resident) is open, it is not drawn and the front end enters panel mode.
+// Returns the stack reading: number of open non-resident panels; -1 when only the NPC dialog menu / speech box is open. The log text "[hud] 面板栈 ..." is kept as is (regression scripts match on it)
+enum { HUD_STACK_MAX = 64 };
+static struct { char name[64]; int open; } g_hud_stack[HUD_STACK_MAX];
+static void hud_stack_update(const char *act, const char *arg) {
+    // 读取画面撤下：清掉此刻在游戏面板树里已经看不见的记录（防只开不关的漏配），屏上还在的照记——
+    // 通关页是读取画面撤下前 0.5 秒开的（OpenExclusivePanel EndScreenPanelExpansion → UnloadPanel LoadScreenPanel），原先整栈清零把它也清了：
+    // 底栏和技能钮盖在通关页上、点「好」变成点世界
+    // Loading screen removed: clear the records no longer visible in the game's panel tree at this moment (guards against open-without-close mismatches), and keep those still on screen --
+    // the game-completion page is opened 0.5 seconds before the loading screen is removed (OpenExclusivePanel EndScreenPanelExpansion → UnloadPanel LoadScreenPanel); previously the whole stack was zeroed, clearing it too:
+    // the bottom bar and skill buttons covered the game-completion page, and tapping 「好」(OK) became a world tap
+    if(!strcmp(act,"UnloadPanel") && !strcmp(arg,"LoadScreenPanel")) {
+        for(int i=0;i<HUD_STACK_MAX;i++) {
+            if(g_hud_stack[i].open>0 && strcmp(g_hud_stack[i].name,"LoadScreenPanel") && dm_ui_panel_shown(g_hud_stack[i].name)) fprintf(stderr,"[hud] 面板栈 读取画面撤下：%s 屏上还在，照记\n",g_hud_stack[i].name);
+            else memset(&g_hud_stack[i],0,sizeof g_hud_stack[i]);
+        }
+    }
+    else if(!strcmp(act,"UnloadAll")) memset(g_hud_stack,0,sizeof g_hud_stack);
+    else {
+        // PanelManager 的面板动作全集（读码：它的消息分发 main+0xb1dc60 只认这 8 个，与全部日志里出现过的一致）：
+        //   OpenPanel / OpenExclusivePanel = 开；ClosePanel / UnloadPanel = 关（读取画面那条见上）；TogglePanel = 按当前记录翻转（高级属性页走它）；
+        //   UnloadAll = 全清（见上）；LoadPanel = 预载、不上屏，不算开关；HideGameInfo = 隐藏游戏信息层，与面板开关无关
+        // Full set of PanelManager panel actions (from reading the code: its message dispatch main+0xb1dc60 only recognizes these 8, matching what has appeared across all logs):
+        //   OpenPanel / OpenExclusivePanel = open; ClosePanel / UnloadPanel = close (for the loading screen one see above); TogglePanel = flip according to the current record (the advanced stats page uses it);
+        //   UnloadAll = clear all (see above); LoadPanel = preload without showing, not counted as open or close; HideGameInfo = hide the game info layer, unrelated to panel open / close
+        int tog=!strcmp(act,"TogglePanel");
+        int open=!strcmp(act,"OpenPanel")||!strcmp(act,"OpenExclusivePanel"), close=!strcmp(act,"ClosePanel")||!strcmp(act,"UnloadPanel");
+        if(!open && !close && !tog) return;
+        if(dm_ui_panel_resident(arg)) return;
+        int slot=-1; for(int i=0;i<HUD_STACK_MAX;i++) if(!strcmp(g_hud_stack[i].name,arg)) { slot=i; break; }
+        if(slot<0) for(int i=0;i<HUD_STACK_MAX;i++) if(!g_hud_stack[i].name[0]) { slot=i; strlcpy(g_hud_stack[i].name,arg,sizeof g_hud_stack[i].name); break; }
+        if(slot<0) return;
+        if(tog) { open=g_hud_stack[slot].open<=0; close=!open; }
+        // 没开着就收到关闭 = 空操作，不是漏配：游戏开功能页 / 切页签时对一批互斥面板（仓库、方块、商店、小站、对话…）统一发 ClosePanel，不管开没开；
+        // 启动时选角页也是先关再开（读界面消息流水；之前记成红，玩家路径每次启动 14 条假红）。真漏接了打开的后果是底栏不让开，由下面 60 秒巡检兜
+        // A close received while not open = no-op, not a missing mapping: when opening a function page / switching tabs the game sends ClosePanel to a batch of mutually exclusive panels (storage, cube, shop, waypoint, dialog…) regardless of whether they are open;
+        // at launch the character select page is also closed first and then opened (from reading the UI message log; previously logged as a failure, 14 false failures per launch on the player path). The consequence of really missing an open is the bottom bar not yielding, which the 60-second patrol below covers
+        if(close && g_hud_stack[slot].open<=0) return;
+        // 按「开 / 没开」记，不按次数累加：游戏对已经开着的面板再发一次 OpenPanel 是常态——雇佣列表上的替换确认框每被关掉一次，
+        // 就重发一次 OpenPanel HireMenuPanel（中间没有关闭），而整段对话结束时只发固定次数的关闭。按次数加的话多出确认框两回再雇成，计数留在 1：
+        // 屏上已没有面板，前端却一直按面板态（没摇杆、没技能钮、点哪里都是「面板外」）。809 份日志里计数到过 2 以上的只有 4 个面板
+        // （主菜单链接、选角页、起名候选栏、雇佣列表），没有一个是真叠两层要关两次的。dm_tc_navigation 那一路本来就是幂等位图，两路口径一致了
+        // Recorded as "open / not open", not accumulated by count: the game sending OpenPanel again for an already open panel is normal -- each time the replacement confirmation box on the hire list is dismissed,
+        // OpenPanel HireMenuPanel is sent again (with no close in between), while at the end of the whole dialog only a fixed number of closes is sent. Adding by count, when the confirmation box comes up two extra times and the hire then succeeds, leaves the count at 1:
+        // no panel left on screen, yet the front end stays in panel mode (no stick, no skill buttons, every tap is "outside the panel"). Across 809 logs only 4 panels ever reached a count of 2 or more
+        // (main menu links, character select page, naming candidate bar, hire list), and none of them was a real two-layer stack needing two closes. The dm_tc_navigation path was already an idempotent bitmap, so the two paths now agree
+        if(open && g_hud_stack[slot].open>0) { fprintf(stderr,"[hud] 面板栈 %s %s：已经开着，不重复计\n",act,arg); return; }
+        g_hud_stack[slot].open=open?1:0;
+        fprintf(stderr,"[hud] 面板栈 %s %s → %d\n",act,arg,g_hud_stack[slot].open);
+    }
+}
+int dm_hud_stack_msg(const char *act, const char *arg) {
+    hud_stack_update(act, arg);
+    // NPC 对话菜单（交谈 / 交易…那一小列）不挡底栏：只开着它时底栏照常显示（否则 UIKit 层让开、露出游戏层那份底栏，难度格和回城书不见、腰带样子也变）。
+    // 编码进同一个数：对话菜单开着且没有别的面板 → -1（底栏不让开、且免除导航态的隐藏）
+    // The NPC dialog menu (the small column of Talk / Trade…) does not block the bottom bar: with only it open the bottom bar shows as usual (otherwise the UIKit layer yields and exposes the game layer's bottom bar; the difficulty cell and Tome of Town Portal disappear and the belt looks different too).
+    // Encoded into the same number: dialog menu open with no other panel → -1 (the bottom bar does not yield, and navigation-mode hiding is waived)
+    int n=0, dlg=0; for(int i=0;i<HUD_STACK_MAX;i++) { if(!strcmp(g_hud_stack[i].name,"NpcDialogPanel")||!strcmp(g_hud_stack[i].name,"ScrollSpeechPanel")) dlg|=g_hud_stack[i].open>0; else n+=g_hud_stack[i].open; }   // ScrollSpeechPanel = NPC 说话的滚动文字框（屏幕上方一小块），同样不挡底栏 | ScrollSpeechPanel = the scrolling text box of NPC speech (a small block at the top of the screen); it likewise does not block the bottom bar
+    if(!n && dlg) n=-1;
+    return n;
+}
+void dm_hud_stack_dump(void) { for (int i = 0; i < HUD_STACK_MAX; i++) if (g_hud_stack[i].open) fprintf(stderr, "%s×%d ", g_hud_stack[i].name, g_hud_stack[i].open); }   // 开着的记录（巡检日志用） | Records currently open (for the patrol log)
 static struct { char name[48]; int open; } g_pm[48];   // 界面消息上开着的非常驻面板 | Non-persistent panels that are open per the UI messages
 static void ui_panel_note(const char *act, const char *arg) {   // 界面消息回调里调（游戏主线程） | Called from the UI message callback (game main thread)
     if (!strcmp(act, "UnloadAll")) { memset(g_pm, 0, sizeof g_pm); return; }
@@ -2502,25 +2577,31 @@ static void ui_panel_state_pump(uint64_t root) {   // 游戏主线程，每帧 |
 // 物品说明框停靠（观测门 OBS_TOOLTIP，挂在说明框面板的「提交一条说明」函数入口 main+0xb0d560(面板, 文字, 目标矩形左上 x2, 目标矩形宽高 x3, 样式, 文字 2)）。
 // 说明框是即时式的：悬停着的控件每帧重新提交、画完就清，宿主在自己的时机读面板里的记录数一直是 0，所以只能在提交那一刻改输入。
 // 原版把框摆在目标矩形（被点的那一格）正下 / 正上方：长说明（暗金、符文之语，十几行）盖住腰带、戒指、背包中间几列和「存放」钮，要点被盖住的格子得先点别处。
-// 触屏、只开着物品栏一个面板（它居中，左右各有一条「屏幕边到面板内框」的空带，约 0.6 个屏高宽）、光标下是物品时：把目标矩形换成对侧空带顶上的一个点——
-// 物品在面板右半停左带、在左半停右带，框从上往下排；量字、摆放、推回屏内仍是游戏自己做（离屏幕边的距离走布局里的 screenEdgePadding）。
+// 触屏、只开着物品栏一个面板、光标下是物品时：把目标矩形换成对侧那块暗格空板（物品栏外框里、中间区域左右各一块）顶上的一个点——
+// 物品在面板右半停左空板、在左半停右空板，框从上往下排；量字、摆放、推回屏内仍是游戏自己做（离屏幕边的距离走布局里的 screenEdgePadding）。
+// 空板位置按屏高定（面板按屏高缩放）：空板中线离屏幕中线 0.617 × 屏高、顶边 0.117 × 屏高（iPhone 15 Pro 档 2556×1179 截图量：
+// 667 点宽视图里空板 108–180 / 487–558、屏高 307；拿 16:9 截图验算中线 102 落在那张图的空板 60–145 里）。
+// 原先按「屏幕边到面板内框的带子正中」算，只在 16:9 碰巧落在空板里，2.17:1 的 iPhone 上落到面板外框外、贴着屏幕边（iPhone 15 Pro 视频）。
 // 其余一律原样放行：手柄 / 键鼠模式；并排两个面板的页（储藏箱 / 商人 / 魔盒 / 单件槽 / 佣兵页——没有空带）；技能、属性、按钮的说明（光标下不是物品）；世界里的名牌。
-// 面板内框的半宽 = 0.484 × 屏高（真机截图量：2868×1320 上内框 x 795–2073）；顶上让开关闭 X 那一行（0.10 × 屏高）。只许游戏主线程（门回调就在）。
+// 只许游戏主线程（门回调就在）。
 // 测试开关 DM_TEST_TIPDOCK=1：不看模式（Mac 宿主是手柄版，用它看效果）；=0：整个关掉
-// The per-frame pumps fall into two kinds by mode (the long line in dm_ui_mouse_pump below; tests/mode_scan.py checks: each pump on that line either carries if (tm) or is on this "runs in both modes" list, and a new pump on neither list is red).
-//   Touch only (with if (tm)): all requests come from touch gestures - tapping the world / the mercenary portrait, long press to take, double tap to use, tap goods to buy, drag and drop, tap to bind a skill, the off-hand set tab, opening the mercenary page.
-//     Not run in gamepad mode or while a switching transaction is in progress; requests in flight are voided by the switch cleanup (dm_ui_cache_mode_leave).
-//   Run in both modes: ui_target_pump (identify target, including holding A on a gamepad), ui_item_pump (hit queries, also asked by the host itself), ui_ptr_pump (pointer events, also used by clicks synthesised by the host),
+// The per-frame pumps fall into two classes by mode (the long line in dm_ui_mouse_pump below; tests/mode_scan.py checks that every pump on that line either has if (tm) or is on this "runs in both modes" list; a newly added pump that is in neither is red).
+//   Touch only (with if (tm)): requests all come from touch gestures: tapping the world / mercenary portrait, long-press to pick up, double-tap to use, tap to buy, drag and drop, tapping to bind a skill, the off-hand set tab, opening the mercenary page.
+//     Not run in gamepad mode or while a switch transaction is in progress; requests in flight are cancelled by the switch cleanup (dm_ui_cache_mode_leave).
+//   Run in both modes: ui_target_pump (identify target, including holding A on the gamepad), ui_item_pump (hit queries, the host asks too), ui_ptr_pump (pointer events, host-synthesized clicks go through it as well),
 //     ui_safe_pump / ui_lift_pump / ui_note_dock_pump / ui_trove_tabs_pump / ui_minimap_pump / ui_map_pump / ui_map_geom_pump / ui_map_center (screen geometry, independent of input method), ui_boss_pct_pump, ui_npcdlg_pump,
-//     ui_widestash_pump, mv_audit_pump, ui_pages_pump (including gamepad L / R paging), ui_watch_pump, ui_panel_heal, ui_panel_state_pump, rs_pump (one-tap restart, called in the front-end pump)
-// Item tooltip docking (observation gate OBS_TOOLTIP, hooked at the entry of the tooltip panel's "submit one tooltip" function main+0xb0d560(panel, text, top-left of target rect x2, size of target rect x3, style, text 2)).
-// The tooltip is immediate-mode: the hovered widget resubmits it every frame and it is cleared once drawn, so the record count in the panel is always 0 whenever the host reads it; the input can only be changed at the moment of submission.
-// The original places the box directly below / above the target rectangle (the tapped cell): a long description (uniques, runewords, a dozen lines) covers the belt, rings, the middle columns of the inventory and the "Store" button, and a covered cell can only be tapped after tapping elsewhere first.
-// With touch, only the inventory panel open (it is centred, with a free band on each side "from the screen edge to the panel's inner frame", about 0.6 of the screen height wide), and an item under the cursor: the target rectangle is replaced by a point at the top of the opposite free band -
-// an item in the right half of the panel docks to the left band, one in the left half to the right band, the box running downwards; measuring the text, placing it and pushing it back on screen are still done by the game (the distance from the screen edge follows screenEdgePadding in the layout).
-// Everything else passes through unchanged: gamepad / keyboard-and-mouse mode; pages with two panels side by side (stash / vendor / cube / single-item slots / mercenary page - no free band); tooltips of skills, stats and buttons (not an item under the cursor); name plates in the world.
-// Half width of the panel's inner frame = 0.484 x screen height (measured from device screenshots: inner frame x 795–2073 on 2868x1320); the top leaves room for the row with the close X (0.10 x screen height). Game main thread only (where the gate callback runs).
-// Test switch DM_TEST_TIPDOCK=1: ignore the mode (the Mac host uses the gamepad layout; use it to see the effect); =0: turn it off entirely
+//     ui_widestash_pump, mv_audit_pump, ui_pages_pump (including L / R page turning on the gamepad), ui_watch_pump, ui_panel_heal, ui_panel_state_pump, rs_pump (one-tap restart, called from the front end pump)
+// Item description box docking (observation gate OBS_TOOLTIP, on the entry of the description panel's "submit one description" function main+0xb0d560(panel, text, target rect top-left x2, target rect size x3, style, text 2)).
+// The description box is immediate-mode: the hovered widget resubmits it every frame and it is cleared after drawing, so when the host reads the panel at its own time the record count is always 0; the input can only be changed at the moment of submission.
+// The original places the box directly below / above the target rect (the slot that was tapped): long descriptions (uniques, runewords, a dozen lines) cover the belt, rings, the middle columns of the inventory and the Stash button, and you have to tap elsewhere before you can tap a covered slot.
+// On touch, with only the inventory panel open and an item under the cursor: replace the target rect with a point at the top of the dark empty side panel on the opposite side (inside the inventory frame, one on each side of the middle area):
+// an item in the right half of the panel docks on the left panel and vice versa, and the box is laid out downward; measuring the text, placing it and pushing it back on screen are still done by the game (the distance from the screen edge uses screenEdgePadding from the layout).
+// The side panels are positioned by screen height (the panel scales with screen height): panel center line 0.617 x screen height from the screen center line, top edge 0.117 x screen height (measured on an iPhone 15 Pro 2556x1179 screenshot:
+// in a 667-point-wide view the panels span 108–180 / 487–558 with screen height 307; cross-checked on a 16:9 screenshot, center line 102 falls inside that image's panel at 60–145).
+// This used to be computed as "the middle of the band between the screen edge and the panel's inner frame", which only happened to land in the side panel on 16:9; on 2.17:1 iPhones it landed outside the panel frame against the screen edge (iPhone 15 Pro video).
+// Everything else passes through unchanged: gamepad / keyboard and mouse mode; pages with two panels side by side (stash / vendor / Horadric Cube / single-item slot / mercenary page, which have no empty band); descriptions of skills, attributes and buttons (no item under the cursor); name plates in the world.
+// Game main thread only (the gate callback runs there).
+// Test switch DM_TEST_TIPDOCK=1: ignore the mode (the Mac host is the gamepad version; use it to see the effect); =0: turn it off entirely
 static int ui_touch_mode(void);
 void dm_ui_tooltip_obs(const uint64_t *regs) {
     static int force = -2; if (force == -2) { const char *e = getenv("DM_TEST_TIPDOCK"); force = e ? atoi(e) : -1; }
@@ -2530,11 +2611,11 @@ void dm_ui_tooltip_obs(const uint64_t *regs) {
     if (!ui_panel(root, "PlayerInventoryExpansionLayout") || ui_panel(root, "HirelingInventoryPanel")) return;
     dm_cursor_item_info ci; if (!dm_cursor_item(&ci)) return;
     int W = *(int32_t *)(m->base + 0x211da38), H = *(int32_t *)(m->base + 0x211da3c); if (W <= 0 || H <= 0) return;
-    int tx = (int32_t)regs[2], tw = (int32_t)regs[3], half = (int)(0.484f * H), strip = W / 2 - half; if (strip < H / 4) return;   // 空带太窄（窄屏）就不挪 | free band too narrow (narrow screen): do not move it
-    int left = tx + tw / 2 >= W / 2, cx = left ? strip / 2 : W - strip / 2, y = (int)(0.10f * H);
+    int tx = (int32_t)regs[2], tw = (int32_t)regs[3], off = (int)lroundf(0.617f * H); if (W / 2 - off < H / 10) return;   // 空板贴到屏幕边（比 16:9 还窄的屏）就不挪 | If the side panel would touch the screen edge (screens narrower than 16:9), do not move the box
+    int left = tx + tw / 2 >= W / 2, cx = left ? W / 2 - off : W / 2 + off, y = (int)(0.117f * H);
     uint64_t *r = (uint64_t *)(uintptr_t)regs;   // 门只回写 x0–x8：改 x2 / x3 | the gate writes back only x0-x8: change x2 / x3
     r[2] = (uint64_t)(uint32_t)cx | (uint64_t)(uint32_t)y << 32; r[3] = 0;
-    static int lg; static int ll = -1; if (ll != left && lg < 40) { ll = left; lg++; LOG("说明框停靠：物品 %s 在面板%s半 → 说明框停到%s侧空带（中线 x %d，顶 y %d；画面 %dx%d）", ci.code, left ? "右" : "左", left ? "左" : "右", cx, y, W, H); }
+    static int lg; static int ll = -1; if (ll != left && lg < 40) { ll = left; lg++; LOG("说明框停靠：物品 %s 在面板%s半 → 说明框停到%s侧空板（中线 x %d，顶 y %d；画面 %dx%d）", ci.code, left ? "右" : "左", left ? "左" : "右", cx, y, W, H); }
 }
 static int ui_touch_mode(void) { int dm_padmode_current(void), dm_padmode_busy(void); return !dm_padmode_current() && !dm_padmode_busy(); }
 // Mac App：界面是手柄版（上面答「不是触屏模式」），但真鼠标走的是触屏那套物品手势（touch_mac.c 把鼠标事件喂给触屏状态机）。

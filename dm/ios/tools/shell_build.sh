@@ -3,26 +3,26 @@
 # 做进去，再用自签工具整包签名装机——全程不需要 Xcode，也不需要 Mac。
 #   shell_build.sh [ios|mac]      ios（缺省）= 真机用的壳；mac = 「Mac 上跑的 iOS 包」变体，只给我们自己在 Mac 上验这条路用
 # 产物（$DM_ROOT/build/shell/<ios|mac>/）：
-#   D2RMobile-shell.ipa      壳。里面没有：游戏程序、着色器库、覆盖层、界面素材、任何从游戏文件生成的表
+#   D2RMobile-shell-build-input.zip  壳（构建原料，不能直接安装：不用 .ipa 扩展名，自签工具认不出来；装上去缺游戏内容也只会弹框说明）。里面没有：游戏程序、着色器库、覆盖层、界面素材、任何从游戏文件生成的表
 #   shell_manifest.txt       壳里缺的东西的清单（安装包内路径，一行一个；以 / 结尾 = 整个目录）。d2rm_pack.py 照它核对做全了没有
 #   ref/                     对照：用本机游戏文件生成的那些内容（不发布，只用来核对工具的产出）
 # 做法：把源码树拷到临时副本里构建，不动当前工作树（三份「从游戏文件生成、编进代码」的文件要换成替身，换在副本里）。
 # 出壳的这台机器要有游戏文件与全套构建环境（和平时出包一样）：要用真实的生成结果定表的大小、定清单。
-# Build the "shell": an unsigned install package with no game content at all. Users use their own game files (dm/tools/d2rm_pack.py) to put the game program and derived content
-# into it, then sign the whole package with a sideloading tool and install it -- no Xcode and no Mac needed at any point.
-#   shell_build.sh [ios|mac]      ios (default) = the shell for real devices; mac = the "iOS app running on Mac" variant, only for ourselves to verify this path on a Mac
-# Build outputs ($DM_ROOT/build/shell/<ios|mac>/):
-#   D2RMobile-shell.ipa      The shell. Not inside: game program, shader libraries, overlay, UI assets, any table generated from the game files
-#   shell_manifest.txt       Manifest of what the shell lacks (paths inside the install package, one per line; ending with / = a whole directory). d2rm_pack.py checks against it whether everything has been made
-#   ref/                     Reference: the content generated from this machine's game files (not published, only used to check the tool's output)
-# Approach: copy the source tree to a temporary copy and build there, leaving the current worktree untouched (the three files "generated from the game files and compiled into the code" have to be replaced with stubs, and the replacing is done in the copy).
-# The machine that builds the shell must have the game files and the full build environment (same as for a normal package build): the real generation results are needed to fix the table sizes and the manifest.
+# Build the "shell": an unsigned install package with no game content. Users build the game program and derived content into it from their own game files (dm/tools/d2rm_pack.py),
+# then sign the whole package with a sideloading tool and install it, with no Xcode and no Mac needed.
+#   shell_build.sh [ios|mac]      ios (default) = the shell for devices; mac = the "iOS package running on Mac" variant, only for us to check this path on a Mac
+# Output ($DM_ROOT/build/shell/<ios|mac>/):
+#   D2RMobile-shell-build-input.zip  the shell (build input, not installable: it does not use the .ipa extension so sideloading tools do not recognize it; installed as is, it lacks the game content and only shows a message). It does not contain: the game program, shader library, overlay, UI art, or any table generated from the game files
+#   shell_manifest.txt       list of what the shell lacks (paths inside the package, one per line; a trailing / = a whole directory). d2rm_pack.py checks against it that everything was built in
+#   ref/                     reference: that content generated from the local game files (not published, only used to check the tool's output)
+# Method: copy the source tree to a temporary copy and build there, leaving the current work tree alone (three files that are generated from the game files and compiled into the code are replaced with stand-ins, in the copy).
+# The machine that builds the shell needs the game files and the full build environment (same as a normal build): the real generated results determine the table sizes and the manifest.
 set -u
 KIND=${1:-ios}; case $KIND in ios|mac) ;; *) echo "用法：shell_build.sh [ios|mac]"; exit 2;; esac
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd); SRC=$(cd "$HERE/../.." && pwd)        # SRC = dm/
 ROOT=${DM_ROOT:-$HOME/dm-work}; O=$ROOT/build/shell/$KIND; W=$O/tree; DD=$O/dd
 t() { echo "[$(date +%T)] $*"; }; die() { t "🔴 $*"; exit 1; }
-mkdir -p "$O" && rm -rf "$W" "$O/ref" "$O/app" "$O/D2RMobile-shell.ipa" "$O/shell_manifest.txt" && mkdir -p "$W" "$O/ref" || die "建不了 $O"
+mkdir -p "$O" && rm -rf "$W" "$O/ref" "$O/app" "$O/D2RMobile-shell-build-input.zip" "$O/shell_manifest.txt" && mkdir -p "$W" "$O/ref" || die "建不了 $O"
 rsync -a --exclude '/ios/Gen' --exclude '/ios/DmIOS.xcodeproj' --exclude '.iosdd*' --exclude '/ios/local.env' "$SRC/" "$W/dm/" || die "拷源码树失败"
 # 壳的包名只是占位：自签工具装机时会换成使用者自己的。团队号同理（不签名，用不到）
 # The shell's package name is only a placeholder: the sideloading tool replaces it with the user's own at install time. Same for the team ID (not signed, so it is not used)
@@ -104,5 +104,5 @@ for d, _, fs in os.walk(app):
 print('内容核对：%d 个特征串（另有 %d 个是源码里本来就有的，不算）× %d 个文件，命中 %d 个文件' % (len(needles), len(own), sum(len(fs) for _, _, fs in os.walk(app)), bad)); sys.exit(1 if bad else 0)
 PYEOF
 ( cd "$A" && find . -type f | sort | while read -r f; do printf '%s\t%s\n' "$(stat -f %z "$f")" "$f"; done ) > "$O/shell_files.tsv"
-( cd "$O" && rm -rf Payload && mkdir Payload && cp -R app Payload/DmIOS.app && zip -qry D2RMobile-shell.ipa Payload && rm -rf Payload ) || die "打包失败"
-t "壳：$O/D2RMobile-shell.ipa（$(du -h "$O/D2RMobile-shell.ipa" | cut -f1)，$(wc -l < "$O/shell_files.tsv" | tr -d ' ') 个文件）；缺的内容 $(wc -l < "$O/shell_manifest.txt" | tr -d ' ') 项，清单 $O/shell_manifest.txt"
+( cd "$O" && rm -rf Payload && mkdir Payload && cp -R app Payload/DmIOS.app && zip -qry D2RMobile-shell-build-input.zip Payload && rm -rf Payload ) || die "打包失败"
+t "壳：$O/D2RMobile-shell-build-input.zip（$(du -h "$O/D2RMobile-shell-build-input.zip" | cut -f1)，$(wc -l < "$O/shell_files.tsv" | tr -d ' ') 个文件）；缺的内容 $(wc -l < "$O/shell_manifest.txt" | tr -d ' ') 项，清单 $O/shell_manifest.txt"

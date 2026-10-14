@@ -241,6 +241,76 @@ NVN(nvnTextureBuilderGetStorageAlignment, size_t, const NVNtextureBuilder *b) {
 }
 #define TX(t) ((tex_t *)(t))
 #define CTX(t) ((const tex_t *)(t))
+// ---------- 对象副本：录制时按序号留一份贴图 / 程序对象，命令载荷存副本地址 ----------
+// 同一序号的对象内容不变（Initialize / SetShaders 才换序号），游戏提交后可以改写或重建自己的对象（真机上 GPU 只看录进命令内存的值），
+// 回放层读副本就不受影响。游戏对象里记着副本地址，按值拷来的对象序号相同、直接共用。副本在对象 Finalize / 换序号后再过 SNAP_KEEP 次提交才回收；
+// 槽位内存只增不还给系统，回收时清零（序号 0 不与任何有效序号相等），过期的副本地址只会读到不相等的序号、重新取副本。
+// ---------- Object snapshots: when recording, keep one copy of each texture / program object per serial; command payloads store the snapshot address ----------
+// An object with the same serial has the same content (only Initialize / SetShaders change the serial); after submitting, the game may rewrite or rebuild its own objects (on the real device the GPU only sees the values recorded into command memory),
+// and the replay layer reading snapshots is unaffected. The game object records the snapshot address, and objects copied by value have the same serial and share it directly. A snapshot is reclaimed only SNAP_KEEP submits after the object is Finalized / changes serial;
+// slot memory only grows and is never returned to the system; reclaimed slots are zeroed (serial 0 never equals a valid serial), so a stale snapshot address only reads a non-matching serial and takes a new snapshot.
+typedef union snap_slot { tex_t t; prog_t p; union snap_slot *next; } snap_slot;
+#define SNAP_KEEP 8
+static pthread_mutex_t g_snap_mu = PTHREAD_MUTEX_INITIALIZER;
+static snap_slot *g_snap_free;
+static struct { snap_slot *s; uint64_t at; } *g_snap_ret; static size_t g_snap_nret, g_snap_capret, g_snap_live, g_snap_slots;
+static uint64_t g_snap_sub;   // 已执行（翻译完）的提交数：回收时刻 | Number of submits executed (translated): the reclaim clock
+static _Atomic uint64_t g_x_subs;   // 已入队的提交数（翻译队列，见 nvnQueueSubmitCommands 前）：退役盖戳用它，回收按已执行数，翻译线程落后时副本不会提前回收 | Number of submits enqueued (translation queue, see before nvnQueueSubmitCommands): used for the retire stamp, while reclaim goes by the number executed, so snapshots are not reclaimed early when the translation thread falls behind
+static snap_slot *snap_alloc(void) {   // 持 g_snap_mu | Holds g_snap_mu
+    if (!g_snap_free) {
+        snap_slot *c = calloc(256, sizeof *c); if (!c) { LOG("【红】对象副本分配失败"); abort(); }
+        for (int i = 255; i >= 0; i--) { c[i].next = g_snap_free; g_snap_free = &c[i]; }
+        g_snap_slots += 256;   // 读数：槽位只在在用 + 待回收占满时才扩，扩槽停住即有上界 | Reading: slots grow only when in-use + pending-reclaim fill them all; slot growth stops, so there is an upper bound
+        LOG("[nvn] 对象副本槽位扩到 %zu 个（%zu KB）：在用 %zu，其中待回收 %zu，第 %llu 次提交", g_snap_slots, g_snap_slots * sizeof *c >> 10, g_snap_live, g_snap_nret, (unsigned long long)g_snap_sub);
+    }
+    snap_slot *n = g_snap_free; g_snap_free = n->next; memset(n, 0, sizeof *n); g_snap_live++;
+    return n;
+}
+static void snap_retire(const void *s) {   // 持 g_snap_mu | Holds g_snap_mu
+    if (g_snap_nret == g_snap_capret) { g_snap_capret = g_snap_capret ? g_snap_capret * 2 : 256; g_snap_ret = realloc(g_snap_ret, g_snap_capret * sizeof *g_snap_ret); }
+    g_snap_ret[g_snap_nret].s = (snap_slot *)s; g_snap_ret[g_snap_nret++].at = atomic_load(&g_x_subs);
+}
+static void snap_tick(uint64_t done) {   // 翻译线程每执行完一次提交：回收退役时已入队的提交都执行完、且又过了 SNAP_KEEP 次提交的副本 | Each time the translation thread finishes a submit: reclaim snapshots whose submits enqueued at retirement have all executed and that have passed SNAP_KEEP more submits
+    pthread_mutex_lock(&g_snap_mu);
+    g_snap_sub = done; size_t k = 0;
+    for (size_t i = 0; i < g_snap_nret; i++) {
+        if (g_snap_ret[i].at + SNAP_KEEP <= g_snap_sub) { snap_slot *n = g_snap_ret[i].s; memset(n, 0, sizeof *n); n->next = g_snap_free; g_snap_free = n; g_snap_live--; }
+        else g_snap_ret[k++] = g_snap_ret[i];
+    }
+    g_snap_nret = k;
+    pthread_mutex_unlock(&g_snap_mu);
+}
+static const tex_t *snap_tex(const NVNtexture *t) {
+    tex_t *o = TX(t); if (!o || !o->serial) return o;   // 没初始化过的对象没有可留的内容，照旧存原址 | An object that was never initialized has no content to keep; store the original address as before
+    const tex_t *s = __atomic_load_n((const tex_t **)&o->snap, __ATOMIC_ACQUIRE);
+    if (s && s->serial == o->serial) return s;
+    pthread_mutex_lock(&g_snap_mu);
+    s = o->snap;
+    if (!s || s->serial != o->serial) { snap_slot *n = snap_alloc(); n->t = *o; n->t.snap = NULL; s = &n->t; __atomic_store_n((const tex_t **)&o->snap, s, __ATOMIC_RELEASE); }
+    pthread_mutex_unlock(&g_snap_mu);
+    return s;
+}
+static const prog_t *snap_prog(const NVNprogram *p) {
+    prog_t *o = (prog_t *)p; if (!o || !o->serial) return o;
+    const prog_t *s = __atomic_load_n((const prog_t **)&o->snap, __ATOMIC_ACQUIRE);
+    if (s && s->serial == o->serial) return s;
+    pthread_mutex_lock(&g_snap_mu);
+    s = o->snap;
+    if (!s || s->serial != o->serial) { snap_slot *n = snap_alloc(); n->p = *o; n->p.snap = NULL; s = &n->p; __atomic_store_n((const prog_t **)&o->snap, s, __ATOMIC_RELEASE); }
+    pthread_mutex_unlock(&g_snap_mu);
+    return s;
+}
+static void x_drain(void);
+static uint64_t x_fence(void);
+// 对象 Finalize / 换序号前调：本序号的副本退役（按值拷来的同序号对象之后再录会重新取副本）
+// Called before an object is Finalized / changes serial: retire this serial's snapshot (an object with the same serial copied by value takes a new snapshot when recorded later)
+static void snap_drop(const void **pp, uint64_t ser, uint64_t snap_ser_off) {
+    pthread_mutex_lock(&g_snap_mu);
+    const uint8_t *s = *pp; uint64_t ss; if (s) memcpy(&ss, s + snap_ser_off, 8);
+    if (s && ser && ss == ser) snap_retire(s);
+    *pp = NULL;
+    pthread_mutex_unlock(&g_snap_mu);
+}
 NVN(nvnTextureInitialize, NVNboolean, NVNtexture *t, const NVNtextureBuilder *b) {
     const tex_builder_t *s = (const tex_builder_t *)b; tex_t *o = TX(t);
     memset(o, 0, sizeof *o);
@@ -253,7 +323,7 @@ NVN(nvnTextureInitialize, NVNboolean, NVNtexture *t, const NVNtextureBuilder *b)
          o->d.levels, o->d.format, o->d.target, o->d.flags, o->L.size);
     return 1;
 }
-NVN(nvnTextureFinalize, void, NVNtexture *t) { mtl_tex_release(TX(t)); TX(t)->magic = 0; }
+NVN(nvnTextureFinalize, void, NVNtexture *t) { snap_drop(&TX(t)->snap, TX(t)->serial, offsetof(tex_t, serial)); mtl_tex_release(TX(t)); TX(t)->magic = 0; }
 NVN(nvnTextureGetFlags, NVNtextureFlags, const NVNtexture *t) { return (NVNtextureFlags)CTX(t)->d.flags; }
 NVN(nvnTextureGetWidth, int, const NVNtexture *t) { return (int)CTX(t)->d.width; }
 NVN(nvnTextureGetHeight, int, const NVNtexture *t) { return (int)CTX(t)->d.height; }
@@ -290,6 +360,7 @@ static void read_texels(const tex_t *o, const view_t *v, const NVNcopyRegion *r,
     if (!row) row = wb;
     if (!img) img = row * hb;
     unsigned level = v && v->set_levels ? (unsigned)v->base_level : 0, layer0 = v && v->set_layers ? (unsigned)v->min_layer : 0;
+    x_drain();   // CPU 读贴图：已入队的提交先翻译完 | CPU texture read: submits already enqueued are translated first
     mtl_read_texels(o, level, layer0, r, dst, (size_t)row, (size_t)img);
 }
 NVN(nvnTextureReadTexels, void, const NVNtexture *t, const NVNtextureView *v, const NVNcopyRegion *r, void *dst) {
@@ -335,11 +406,11 @@ NVN(nvnSamplerFinalize, void, NVNsampler *s) { ((samp_t *)s)->magic = 0; }
 NVN(nvnProgramInitialize, NVNboolean, NVNprogram *p, NVNdevice *d) {
     (void)d; memset(p, 0, sizeof(prog_t)); ((prog_t *)p)->magic = MAGIC('P', 'R', 'O', 'G'); return 1;
 }
-NVN(nvnProgramFinalize, void, NVNprogram *p) { mtl_prog_release((prog_t *)p); ((prog_t *)p)->magic = 0; }
+NVN(nvnProgramFinalize, void, NVNprogram *p) { prog_t *o = (prog_t *)p; snap_drop(&o->snap, o->serial, offsetof(prog_t, serial)); mtl_prog_release(o); o->magic = 0; }
 NVN(nvnProgramSetShaders, NVNboolean, NVNprogram *p, int n, const NVNshaderData *sd) {
     prog_t *o = (prog_t *)p;
     if (n < 0 || n > 6) { LOG("【红】ProgramSetShaders 阶段数 %d", n); return 0; }
-    mtl_prog_release(o); o->nstage = n; memcpy(o->sd, sd, n * sizeof *sd); o->serial = nvn_new_serial();
+    snap_drop(&o->snap, o->serial, offsetof(prog_t, serial)); mtl_prog_release(o); o->nstage = n; memcpy(o->sd, sd, n * sizeof *sd); o->serial = nvn_new_serial();
     OLOG("ProgramSetShaders %p n=%d data0=%#llx", (void *)p, n, n ? (unsigned long long)sd[0].data : 0ull);
     return 1;
 }
@@ -350,7 +421,7 @@ NVN(nvnSyncInitialize, NVNboolean, NVNsync *s, NVNdevice *d) { (void)d; *(sync_t
 NVN(nvnSyncFinalize, void, NVNsync *s) { ((sync_t *)s)->magic = 0; }
 // 围栏 = 「此前提交到队列的命令全部完成」：记下最近一次提交的栅栏值
 // Fence = "all commands previously submitted to the queue have completed": record the fence value of the most recent submit
-NVN(nvnQueueFenceSync, void, NVNqueue *q, NVNsync *s, NVNsyncCondition c, int f) { (void)q; (void)c; (void)f; ((sync_t *)s)->fenced = 1; ((sync_t *)s)->fence = mtl_last_fence(); }
+NVN(nvnQueueFenceSync, void, NVNqueue *q, NVNsync *s, NVNsyncCondition c, int f) { (void)q; (void)c; (void)f; ((sync_t *)s)->fenced = 1; ((sync_t *)s)->fence = x_fence(); }
 // 没围栏过的同步对象按真机行为等到超时；已围栏的只在 GPU 真正完成到该栅栏值后放行
 // A sync object that was never fenced waits until timeout, as on a real device; a fenced one is released only after the GPU has actually completed up to that fence value
 NVN(nvnSyncWait, NVNsyncWaitResult, const NVNsync *s, uint64_t timeout) {
@@ -400,7 +471,7 @@ NVN(nvnQueueGetError, NVNqueueGetErrorResult, NVNqueue *q, NVNqueueErrorInfo *in
     (void)q; if (info) memset(info, 0, sizeof *info); return NVN_QUEUE_GET_ERROR_RESULT_GPU_NO_ERROR;
 }
 NVN(nvnQueueFlush, void, NVNqueue *q) { (void)q; }
-NVN(nvnQueueFinish, void, NVNqueue *q) { (void)q; mtl_finish(); }
+NVN(nvnQueueFinish, void, NVNqueue *q) { (void)q; x_drain(); mtl_finish(); }
 
 // ---------- 命令缓冲：录进游戏的命令内存，提交时执行 CPU 可见副作用 ----------
 // ---------- Command buffer: record into the game's command memory, perform CPU-visible side effects at submit ----------
@@ -545,8 +616,8 @@ NVN(nvnCommandBufferSetRenderTargets, void, NVNcommandBuffer *c, int n, const NV
     const NVNtexture *dt, const NVNtextureView *dv) {
     if (n < 0 || n > 8) { LOG("【红】SetRenderTargets 数量 %d", n); n = n < 0 ? 0 : 8; }
     p_set_rt *r = REC(c, OP_SET_RT, p_set_rt); r->n = n;
-    for (int i = 0; i < n; i++) { r->color[i] = ct ? (const tex_t *)ct[i] : NULL; copy_view(&r->cview[i], &r->has_cview[i], cv ? cv[i] : NULL); }
-    r->depth = (const tex_t *)dt; copy_view(&r->dview, &r->has_dview, dv);
+    for (int i = 0; i < n; i++) { r->color[i] = ct ? snap_tex(ct[i]) : NULL; copy_view(&r->cview[i], &r->has_cview[i], cv ? cv[i] : NULL); }
+    r->depth = snap_tex(dt); copy_view(&r->dview, &r->has_dview, dv);
 }
 NVN(nvnCommandBufferClearColor, void, NVNcommandBuffer *c, int index, const float *rgba, int mask) {
     p_clear_color *r = REC(c, OP_CLEAR_COLOR, p_clear_color); r->index = index; r->mask = mask; memcpy(r->rgba, rgba, 16);
@@ -562,7 +633,7 @@ NVN(nvnCommandBufferSetViewports, void, NVNcommandBuffer *c, int first, int n, c
 NVN(nvnCommandBufferSetScissor, void, NVNcommandBuffer *c, int x, int y, int w, int h) { *REC(c, OP_SCISSOR, p_scissor) = (p_scissor){x, y, w, h}; }
 NVN(nvnCommandBufferSetDepthRange, void, NVNcommandBuffer *c, float n, float f) { *REC(c, OP_DEPTH_RANGE, p_depth_range) = (p_depth_range){n, f}; }
 NVN(nvnCommandBufferBindProgram, void, NVNcommandBuffer *c, const NVNprogram *p, int stages) {
-    *REC(c, OP_BIND_PROGRAM, p_bind_program) = (p_bind_program){(const prog_t *)p, stages};
+    *REC(c, OP_BIND_PROGRAM, p_bind_program) = (p_bind_program){snap_prog(p), stages};
 }
 static void bind_state(NVNcommandBuffer *c, int kind, const void *st, size_t n) { p_bind_state *r = REC(c, OP_BIND_STATE, p_bind_state); r->kind = kind; memcpy(r->bytes, st, n); }
 NVN(nvnCommandBufferBindBlendState, void, NVNcommandBuffer *c, const NVNblendState *st) { bind_state(c, 0, st, sizeof(blend_st)); }
@@ -635,23 +706,23 @@ NVN(nvnCommandBufferSetSamplerPool, void, NVNcommandBuffer *c, const NVNsamplerP
 
 NVN(nvnCommandBufferCopyBufferToTexture, void, NVNcommandBuffer *c, NVNbufferAddress src, const NVNtexture *t, const NVNtextureView *v,
     const NVNcopyRegion *r, int flags) {
-    p_copy_b2t *o = REC(c, OP_COPY_B2T, p_copy_b2t); o->src = src; o->tex = (const tex_t *)t; copy_view(&o->view, &o->has_view, v); o->r = *r; o->flags = flags;
+    p_copy_b2t *o = REC(c, OP_COPY_B2T, p_copy_b2t); o->src = src; o->tex = snap_tex(t); copy_view(&o->view, &o->has_view, v); o->r = *r; o->flags = flags;
 }
 NVN(nvnCommandBufferCopyTextureToBuffer, void, NVNcommandBuffer *c, const NVNtexture *t, const NVNtextureView *v, const NVNcopyRegion *r,
     NVNbufferAddress dst, int flags) {
-    p_copy_b2t *o = REC(c, OP_COPY_T2B, p_copy_b2t); o->src = dst; o->tex = (const tex_t *)t; copy_view(&o->view, &o->has_view, v); o->r = *r; o->flags = flags;
+    p_copy_b2t *o = REC(c, OP_COPY_T2B, p_copy_b2t); o->src = dst; o->tex = snap_tex(t); copy_view(&o->view, &o->has_view, v); o->r = *r; o->flags = flags;
 }
 // 用给定值清贴图区域（浮点 / 无符号整数两版；mask = 通道写掩码）
 // Clear a texture region with the given value (float / unsigned integer versions; mask = channel write mask)
 NVN(nvnCommandBufferClearTexture, void, NVNcommandBuffer *c, const NVNtexture *t, const NVNtextureView *v, const NVNcopyRegion *r, const float *rgba, int mask) {
-    p_clear_tex *o = REC(c, OP_CLEAR_TEX, p_clear_tex); o->tex = (const tex_t *)t; copy_view(&o->view, &o->has_view, v); o->r = *r; o->mask = mask; o->is_uint = 0; memcpy(o->c.f, rgba, 16);
+    p_clear_tex *o = REC(c, OP_CLEAR_TEX, p_clear_tex); o->tex = snap_tex(t); copy_view(&o->view, &o->has_view, v); o->r = *r; o->mask = mask; o->is_uint = 0; memcpy(o->c.f, rgba, 16);
 }
 NVN(nvnCommandBufferClearTextureui, void, NVNcommandBuffer *c, const NVNtexture *t, const NVNtextureView *v, const NVNcopyRegion *r, const uint32_t *rgba, int mask) {
-    p_clear_tex *o = REC(c, OP_CLEAR_TEX, p_clear_tex); o->tex = (const tex_t *)t; copy_view(&o->view, &o->has_view, v); o->r = *r; o->mask = mask; o->is_uint = 1; memcpy(o->c.u, rgba, 16);
+    p_clear_tex *o = REC(c, OP_CLEAR_TEX, p_clear_tex); o->tex = snap_tex(t); copy_view(&o->view, &o->has_view, v); o->r = *r; o->mask = mask; o->is_uint = 1; memcpy(o->c.u, rgba, 16);
 }
 NVN(nvnCommandBufferCopyTextureToTexture, void, NVNcommandBuffer *c, const NVNtexture *s, const NVNtextureView *sv, const NVNcopyRegion *sr,
     const NVNtexture *d, const NVNtextureView *dv, const NVNcopyRegion *dr, int flags) {
-    p_copy_t2t *o = REC(c, OP_COPY_T2T, p_copy_t2t); o->src = (const tex_t *)s; o->dst = (const tex_t *)d;
+    p_copy_t2t *o = REC(c, OP_COPY_T2T, p_copy_t2t); o->src = snap_tex(s); o->dst = snap_tex(d);
     copy_view(&o->sv, &o->has_sv, sv); copy_view(&o->dv, &o->has_dv, dv); o->sr = *sr; o->dr = *dr; o->flags = flags;
 }
 NVN(nvnCommandBufferSetCopyRowStride, void, NVNcommandBuffer *c, ptrdiff_t st) { REC(c, OP_COPY_STRIDE, p_copy_stride)->stride = st; }
@@ -747,23 +818,109 @@ void dm_gfx_suspend(int on) {
     if (on) while (g_inflight_api) pthread_cond_wait(&g_susp_cv, &g_susp_mu);
     else pthread_cond_broadcast(&g_susp_cv);
     pthread_mutex_unlock(&g_susp_mu);
-    if (on) { mtl_drain(); LOG("[nvn] 图形挂起：在途 GPU 工作已清空"); } else LOG("[nvn] 图形恢复");
+    if (on) { x_drain(); mtl_drain(); LOG("[nvn] 图形挂起：在途 GPU 工作已清空"); } else LOG("[nvn] 图形恢复");
 }
-NVN(nvnQueueSubmitCommands, void, NVNqueue *q, int n, const NVNcommandHandle *h) {
-    gfx_enter();
+// 一条实时线程的声明状态：游戏主线程（取图处）与翻译线程（帧边界）各一份，按各自每帧 CPU 自动调整（见 set_time_constraint_comp）
+// Declaration state of one real-time thread: one each for the game main thread (at acquire) and the translation thread (at frame boundaries), each adjusted automatically from its own per-frame CPU (see set_time_constraint_comp)
+typedef struct { const char *who; double comp_ms, period_ms; uint64_t last; double win[120]; int n; } rt_decl;   // comp_ms：当前声明的计算量（0 = 未声明） | comp_ms: currently declared computation (0 = not declared)
+static rt_decl g_rt_main = {"出图线程"}, g_rt_xlat = {"翻译线程"};
+static void set_time_constraint(rt_decl *d, uint64_t period_ns);
+static void rt_comp_tick(rt_decl *d, uint64_t period_ns);
+// ---------- 翻译队列（B 方案第二期）：提交 / 出图 / 设帧号按序排给翻译线程，游戏线程只登记、立刻返回 ----------
+// 游戏逻辑与上一帧的翻译（回放 + Metal 编码）重叠。栅栏值 = 已入队的提交数：Metal 层每次提交恰好 ++g_fence、g_done 只在已提交的命令缓冲
+// 完成时推进，所以等栅栏 f 就是等「f 翻译完且 GPU 做完」——游戏按栅栏回收命令内存、改写对象时翻译线程早已读完。
+// 出图票号换成本队列的任务号：取图处先等该任务执行完，再按它换来的出图线程票号等。设帧号也排队：回放按帧号重置泛光取样等状态，
+// 不能在翻译途中被游戏线程改掉。DM_NVN_SYNC=1：任务在调用线程上当场执行（同一个执行函数），作对照与量测基准。
+// ---------- Translation queue (plan B, phase 2): submit / present / set-frame-number are queued in order to the translation thread; the game thread only records them and returns at once ----------
+// Game logic overlaps the previous frame's translation (replay + Metal encoding). Fence value = number of submits enqueued: the Metal layer does ++g_fence exactly once per submit and g_done advances only when a committed command buffer
+// completes, so waiting for fence f means waiting until "f is translated and the GPU is done"; by the time the game reclaims command memory or rewrites objects by fence, the translation thread has long finished reading them.
+// Present tickets become this queue's job numbers: acquire first waits for that job to run, then waits on the present thread ticket it was swapped for. Setting the frame number is queued too: replay resets bloom sampling and other state by frame number,
+// which must not be changed by the game thread in the middle of translation. DM_NVN_SYNC=1: jobs run in place on the calling thread (the same execution function), as the control and measurement baseline.
+enum { XJ_SUBMIT, XJ_PRESENT, XJ_FRAME };
+typedef struct { int kind, n; uint64_t *h; const tex_t *tex; double period; int crop[4]; uint64_t frame, sub, host; } xjob;   // host：入队时锁存的宿主画法开关 | host: host drawing switches latched at enqueue
+#define XQ 32
+#define XTK 1024
+static xjob g_xq[XQ]; static uint64_t g_xq_in, g_xq_done;   // 入队任务数 / 已执行任务数（任务号从 1 计） | Jobs enqueued / jobs executed (job numbers start at 1)
+static struct { uint64_t job, tk; } g_xtk[XTK];               // 出图任务号 → 出图线程票号 | Present job number -> present thread ticket
+static pthread_mutex_t g_xmu = PTHREAD_MUTEX_INITIALIZER; static pthread_cond_t g_xcv = PTHREAD_COND_INITIALIZER;
+static int g_x_sync; static pthread_t g_x_thr; static mach_port_t g_x_port;   // 翻译线程（策略读数用） | Translation thread (for policy readings)
+static void x_submit(const uint64_t *h, int n, uint64_t sub, uint64_t host) {
+    mtl_host_apply(host);
     uint64_t t0 = now_ns(), c0 = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID), i0, y0, s0 = thr_sys_ns(); thr_counts(&i0, &y0);
-    ((queue_t *)q)->submits++;
     mtl_sub_begin();
-    mtl_sub_index((const uint64_t *)h, n);
-    for (int i = 0; i < n; i++) { mtl_exec_rest((const uint64_t *)h + i + 1, n - i - 1); mtl_exec((const uint8_t *)h[i]); }
+    mtl_sub_index(h, n);
+    for (int i = 0; i < n; i++) { mtl_exec_rest(h + i + 1, n - i - 1); mtl_exec((const uint8_t *)h[i]); }
     mtl_exec_rest(NULL, 0);
-    mtl_sub_commit();
+    uint64_t f = mtl_sub_commit();
+    if (f != sub) { static int red; if (!red++) LOG("【红】翻译队列：第 %llu 次提交的 Metal 栅栏是 %llu，栅栏与提交数对不上，游戏等同步会提前 / 推迟放行", (unsigned long long)sub, (unsigned long long)f); }
+    snap_tick(sub);
     uint64_t dw = now_ns() - t0;
     atomic_fetch_add(&g_nvn_ns, dw); atomic_fetch_add(&g_sub_wall_ns, dw);
     uint64_t i1, y1; thr_counts(&i1, &y1); uint64_t dc = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID) - c0, di = i1 - i0;
     atomic_fetch_add(&g_cum_sub_cyc, y1 - y0); atomic_fetch_add(&g_cum_sub_sys_ns, thr_sys_ns() - s0); atomic_fetch_add(&g_cum_sub_wall_ns, dw);
     atomic_fetch_add(&g_sub_cpu_ns, dc); atomic_fetch_add(&g_cum_sub_cpu_ns, dc);
     atomic_fetch_add(&g_sub_instr, di); atomic_fetch_add(&g_cum_sub_instr, di);
+}
+static void x_run(const xjob *j, uint64_t job) {
+    if (j->kind == XJ_SUBMIT) { x_submit(j->h, j->n, j->sub, j->host); free(j->h); }
+    else if (j->kind == XJ_PRESENT) { uint64_t tk = mtl_present(j->tex, j->period, j->crop); pthread_mutex_lock(&g_xmu); g_xtk[job % XTK].job = job; g_xtk[job % XTK].tk = tk; pthread_mutex_unlock(&g_xmu); }
+    else {
+        mtl_set_frame(j->frame);
+        // 翻译线程与游戏主线程同级：时间约束（实时）线程，周期 = 出图周期，计算量按本线程每帧 CPU 的 p90 自动声明（同取图处的主线程；确定性时钟下不声明）
+        // The translation thread has the same standing as the game main thread: a time-constraint (real-time) thread, period = present period, computation declared automatically from the p90 of this thread's per-frame CPU (same as the main thread at acquire; not declared under the deterministic clock)
+        uint64_t pn = (uint64_t)(j->period * 1e9); static uint64_t rt_p;
+        if (!g_x_sync && !dm_detclock_enabled()) { if (pn && rt_p != pn) { rt_p = pn; set_time_constraint(&g_rt_xlat, pn); } rt_comp_tick(&g_rt_xlat, pn); }
+    }
+}
+static void *x_thread(void *a) {
+    (void)a; pthread_setname_np("nvn-translate"); g_x_port = pthread_mach_thread_np(pthread_self());
+    pthread_mutex_lock(&g_xmu);
+    for (;;) {
+        while (g_xq_done == g_xq_in) pthread_cond_wait(&g_xcv, &g_xmu);
+        uint64_t job = g_xq_done + 1; xjob j = g_xq[job % XQ];
+        pthread_mutex_unlock(&g_xmu);
+        x_run(&j, job);
+        pthread_mutex_lock(&g_xmu);
+        g_xq_done = job; pthread_cond_broadcast(&g_xcv);
+    }
+    return NULL;
+}
+static void x_start(void) {
+    const char *e = getenv("DM_NVN_SYNC"); g_x_sync = e && atoi(e);
+    if (g_x_sync) { LOG("[nvn] DM_NVN_SYNC=1：翻译在提交线程上同步做（对照档）"); return; }
+    pthread_attr_t at; pthread_attr_init(&at); pthread_attr_set_qos_class_np(&at, QOS_CLASS_USER_INTERACTIVE, 0); pthread_attr_setstacksize(&at, 8 << 20);
+    pthread_t t; if (pthread_create(&g_x_thr, &at, x_thread, NULL)) { LOG("【红】翻译线程起不来，改为同步翻译"); g_x_sync = 1; } else LOG("[nvn] 翻译线程已起：提交 / 出图在翻译线程上按序执行（队列 %d 项）", XQ);
+    pthread_attr_destroy(&at);
+}
+static uint64_t x_push(xjob *j) {   // 返回任务号 | Returns the job number
+    static pthread_once_t once = PTHREAD_ONCE_INIT; pthread_once(&once, x_start);
+    pthread_mutex_lock(&g_xmu);
+    while (g_xq_in - g_xq_done >= XQ) pthread_cond_wait(&g_xcv, &g_xmu);
+    if (j->kind == XJ_SUBMIT) j->sub = atomic_fetch_add(&g_x_subs, 1) + 1;
+    uint64_t job = ++g_xq_in;
+    if (g_x_sync) {   // 当场执行：单线程提交时与旧路径同序 | Run in place: with single-thread submission the order is the same as the old path
+        pthread_mutex_unlock(&g_xmu); x_run(j, job); pthread_mutex_lock(&g_xmu);
+        g_xq_done = job; pthread_cond_broadcast(&g_xcv);
+    } else { g_xq[job % XQ] = *j; pthread_cond_broadcast(&g_xcv); }
+    pthread_mutex_unlock(&g_xmu);
+    return job;
+}
+static void x_wait(uint64_t job) { pthread_mutex_lock(&g_xmu); while (g_xq_done < job) pthread_cond_wait(&g_xcv, &g_xmu); pthread_mutex_unlock(&g_xmu); }
+static void x_drain(void) { pthread_mutex_lock(&g_xmu); uint64_t job = g_xq_in; pthread_mutex_unlock(&g_xmu); x_wait(job); }
+static uint64_t x_fence(void) { return atomic_load(&g_x_subs); }
+static uint64_t x_present_ticket(uint64_t job) {   // 出图任务执行完后换来的出图线程票号（0 = 那次出图被丢弃，不用等） | Present thread ticket obtained after the present job runs (0 = that present was dropped, nothing to wait for)
+    x_wait(job);
+    pthread_mutex_lock(&g_xmu); uint64_t tk = g_xtk[job % XTK].job == job ? g_xtk[job % XTK].tk : 0; int lost = g_xtk[job % XTK].job != job; pthread_mutex_unlock(&g_xmu);
+    if (lost) { static int red; if (!red++) LOG("【红】翻译队列：出图任务 %llu 的票号已被覆盖（票号表 %d 项不够），这次取图不等出图线程", (unsigned long long)job, XTK); }
+    return tk;
+}
+NVN(nvnQueueSubmitCommands, void, NVNqueue *q, int n, const NVNcommandHandle *h) {
+    gfx_enter();
+    ((queue_t *)q)->submits++;
+    xjob j = {XJ_SUBMIT, n, n > 0 ? malloc((size_t)n * sizeof *h) : NULL};   // 句柄数组是游戏的，入队时拷一份 | The handle array belongs to the game; copy it when enqueuing
+    if (n > 0) memcpy(j.h, h, (size_t)n * sizeof *h);
+    j.host = mtl_host_latch();
+    x_push(&j);
     gfx_leave();
 }
 
@@ -833,10 +990,6 @@ NVN(nvnWindowSetCrop, void, NVNwindow *w, int x, int y, int ww, int hh) {
     memcpy(o->crop, v, sizeof v);
 }
 static void trow(uint64_t f, const char *name, double v);
-static void set_time_constraint(uint64_t period_ns);
-static void rt_comp_tick(uint64_t period_ns);
-static double g_rt_comp_ms;   // 当前声明的实时计算量（ms；0 = 未声明） | Currently declared real-time computation amount (ms; 0 = not declared)
-static double g_rt_period_ms;
 static void sleep_until_ns(uint64_t dl);
 static uint64_t present_period(const win_t *o);
 __attribute__((weak)) void dm_main_yield_stats(uint64_t *n, uint64_t *ns) { *n = 0; *ns = 0; }   // 宿主 hle_thread.c 提供真值；图形单测里为 0 | The host's hle_thread.c provides the ground truth; 0 in graphics unit tests
@@ -854,8 +1007,8 @@ NVN(nvnWindowAcquireTexture, NVNwindowAcquireTextureResult, NVNwindow *w, NVNsyn
     uint64_t at = *idx < 4 ? o->avail[*idx] : 0, now = dm_detclock_enabled() ? guest_ns() : now_ns(), wait = at > now ? at - now : 0;
     if (!dm_detclock_enabled()) {   // 取图线程登记为时间约束线程（不再只在「来早了」时才登记：热态一直落后时也要声明） | Register the acquire thread as a time-constraint thread (no longer registered only when it "arrived early": it must also declare itself when it is constantly behind in the hot state)
         static uint64_t rt_period; uint64_t period = present_period(o);
-        if (period && rt_period != period) { rt_period = period; set_time_constraint(period); }
-        rt_comp_tick(period);
+        if (period && rt_period != period) { rt_period = period; set_time_constraint(&g_rt_main, period); }
+        rt_comp_tick(&g_rt_main, period);
         if (mtl_link_active()) { if (!mtl_link_wait_tick(period ? 2 * period : 33333333ull) && wait) sleep_until_ns(at); }   // DM_PRESENT_LINK：节拍完全跟显示节拍（跑得快就等下一拍，落后立刻走）；自己的 60 Hz 时钟只作等不到节拍时的兜底 | DM_PRESENT_LINK: pacing fully follows the display link (wait for the next display-link tick when running fast, go immediately when behind); our own 60 Hz clock is only the fallback when no display-link tick arrives
         else if (wait) sleep_until_ns(at);
     } else {   // DM_DETCLOCK_PACE=1（画面闸门用）：客体时钟按帧走的同时，每帧墙钟不短于一个步长——帧数与游戏内时间确定，后台加载线程每帧至少有一个步长的墙钟可用； | DM_DETCLOCK_PACE=1 (used by the screenshot gate): while the guest clock advances per frame, each frame's wall clock is no shorter than one step -- frame count and in-game time are deterministic, and the background loading thread has at least one step of wall clock available per frame;
@@ -869,8 +1022,8 @@ NVN(nvnWindowAcquireTexture, NVNwindowAcquireTextureResult, NVNwindow *w, NVNsyn
     // 该张上一次出图还没被出图线程处理完（显示跟不上、落后一整轮交换链）：等它归还，再交给游戏画
     // The previous present of this texture has not yet been processed by the present thread (display cannot keep up, a whole swapchain round behind): wait for it to be returned, then hand it to the game to draw
     uint64_t tk = *idx < 4 ? o->ticket[*idx] : 0;
-    if (tk) { uint64_t w0 = now_ns(); mtl_present_wait(tk); g_pq_wait_ns += now_ns() - w0; }
-    if (s) { ((sync_t *)s)->fenced = 1; ((sync_t *)s)->fence = mtl_last_fence(); }   // 交换链贴图在此前的提交完成后可用 | The swapchain texture becomes available once the commits before this point have completed
+    if (tk) { uint64_t w0 = now_ns(), rt = x_present_ticket(tk); if (rt) mtl_present_wait(rt); g_pq_wait_ns += now_ns() - w0; }   // tk 是翻译队列的出图任务号 | tk is the translation queue's present job number
+    if (s) { ((sync_t *)s)->fenced = 1; ((sync_t *)s)->fence = x_fence(); }   // 交换链贴图在此前的提交完成后可用 | The swapchain texture becomes available once the commits before this point have completed
     return NVN_WINDOW_ACQUIRE_TEXTURE_RESULT_SUCCESS;
 }
 
@@ -968,10 +1121,16 @@ static void tsummary(uint64_t frame) {
           uint64_t aw = 0, ag = 0; int an = 0; void mtl_alloc_stats(uint64_t *, uint64_t *, int *); mtl_alloc_stats(&aw, &ag, &an);
           static uint64_t pyn, pyns; uint64_t yn = 0, yns = 0; dm_main_yield_stats(&yn, &yns);
           LOG("[nvn] 翻译细项 至帧 %llu：每帧提交 周期 %.2f M（每条指令 %.2f 周期）、CPU %.3f ms 其中内核态 %.3f ms、墙钟 %.3f ms；平均主频 %.2f GHz（周期 / CPU 时间）；本线程 QoS %#x；分配器池 %d 个、累计等 GPU %llu 次；实时声明计算 %.2f ms；主线程让出 每帧 %.0f 次 / %.3f ms", frame,
-              cyc / 1e6 / nf, cyc / (double)(ci - pi), cpu / 1e6 / nf, (double)(ck - pk) / 1e6 / nf, (double)(cw - pw) / 1e6 / nf, cpu > 0 ? cyc / cpu : 0, (unsigned)qc, an, (unsigned long long)aw, g_rt_comp_ms, (double)(yn - pyn) / nf, (double)(yns - pyns) / 1e6 / nf); pyn = yn; pyns = yns; }
+              cyc / 1e6 / nf, cyc / (double)(ci - pi), cpu / 1e6 / nf, (double)(ck - pk) / 1e6 / nf, (double)(cw - pw) / 1e6 / nf, cpu > 0 ? cyc / cpu : 0, (unsigned)qc, an, (unsigned long long)aw, g_rt_main.comp_ms, (double)(yn - pyn) / nf, (double)(yns - pyns) / 1e6 / nf); pyn = yn; pyns = yns; }
         if (frame % 300 == 0) { unsigned wn = 0; uint32_t wq = dm_guest_work_qos(&wn); thread_extended_info_data_t xi; mach_msg_type_number_t xc = THREAD_EXTENDED_INFO_COUNT; int okx = thread_info(pthread_mach_thread_np(pthread_self()), THREAD_EXTENDED_INFO, (thread_info_t)&xi, &xc) == KERN_SUCCESS;
             thread_time_constraint_policy_data_t tp; mach_msg_type_number_t tc = THREAD_TIME_CONSTRAINT_POLICY_COUNT; boolean_t def = 0; int rt_live = thread_policy_get(pthread_mach_thread_np(pthread_self()), THREAD_TIME_CONSTRAINT_POLICY, (thread_policy_t)&tp, &tc, &def) == KERN_SUCCESS && !def;   // def = 1：实时策略没在生效（没设上 / 被撤） | def = 1: the real-time policy is not in effect (never set / revoked)
-            LOG("[nvn] 线程策略：主线程 实时 计算 %.2f ms / 周期 %.2f ms，实时策略%s，当前优先级 %d（基础 %d，调度类 %d）；工作线程 %u 条 QoS %#x；出图 QoS %#x", g_rt_comp_ms, g_rt_period_ms, rt_live ? "在生效" : "未生效", okx ? xi.pth_curpri : -1, okx ? xi.pth_priority : -1, okx ? xi.pth_policy : -1, wn, wq, mtl_present_qos()); }
+            LOG("[nvn] 线程策略：主线程 实时 计算 %.2f ms / 周期 %.2f ms，实时策略%s，当前优先级 %d（基础 %d，调度类 %d）；工作线程 %u 条 QoS %#x；出图 QoS %#x", g_rt_main.comp_ms, g_rt_main.period_ms, rt_live ? "在生效" : "未生效", okx ? xi.pth_curpri : -1, okx ? xi.pth_priority : -1, okx ? xi.pth_policy : -1, wn, wq, mtl_present_qos());
+            if (g_x_port) {   // 翻译线程：声明、实时策略在不在生效、当前 / 基础优先级、QoS（降级看这几项；在不在大核看「翻译细项」行的平均主频） | Translation thread: declaration, whether the real-time policy is in effect, current / base priority, QoS (check these for demotion; for whether it is on a performance core, see the average clock on the "translation detail" line)
+                thread_extended_info_data_t yi; mach_msg_type_number_t yc = THREAD_EXTENDED_INFO_COUNT; int oky = thread_info(g_x_port, THREAD_EXTENDED_INFO, (thread_info_t)&yi, &yc) == KERN_SUCCESS;
+                thread_time_constraint_policy_data_t yp; mach_msg_type_number_t ytc = THREAD_TIME_CONSTRAINT_POLICY_COUNT; boolean_t ydef = 0; int y_live = thread_policy_get(g_x_port, THREAD_TIME_CONSTRAINT_POLICY, (thread_policy_t)&yp, &ytc, &ydef) == KERN_SUCCESS && !ydef;
+                qos_class_t yq = QOS_CLASS_UNSPECIFIED; int yr = 0; pthread_get_qos_class_np(g_x_thr, &yq, &yr);
+                LOG("[nvn] 线程策略：翻译线程 实时 计算 %.2f ms / 周期 %.2f ms，实时策略%s，当前优先级 %d（基础 %d，调度类 %d）；QoS %#x", g_rt_xlat.comp_ms, g_rt_xlat.period_ms, y_live ? "在生效" : "未生效",
+                    oky ? yi.pth_curpri : -1, oky ? yi.pth_priority : -1, oky ? yi.pth_policy : -1, (unsigned)yq); } }
         py = cy; pk = ck; pw = cw; }
       pi = ci; pc = cc; pd = dr_; pf = frame; }
     uint64_t up, re, fa, pr; mtl_pkg_stats(&up, &re); nvn_dirty_stats(&fa, &pr);
@@ -1022,29 +1181,28 @@ static void slow_emit(uint64_t f) {
 // The computation used to be hard-coded at 2 ms, while the game main thread (game logic + recording + submit replay) takes about 10 ms per frame when hot - a 5× gap between declared and actual:
 // a real-time thread that exceeds its declared computation gets demoted by the system, and the performance controller also sets frequency from the declaration (this declaration is how the system learns the frame deadline and the workload).
 // DM_RT_COMP=<ms> fixes the declaration; default auto = every 120 frames take the p90 of this thread's per-frame CPU time and re-declare if it differs from the declared value by > 15% (capped at 0.9 × period).
-static void set_time_constraint_comp(uint64_t period_ns, uint64_t comp_ns) {
+static void set_time_constraint_comp(rt_decl *d, uint64_t period_ns, uint64_t comp_ns) {
     static mach_timebase_info_data_t tb; if (!tb.denom) mach_timebase_info(&tb);
     if (comp_ns < 1000000ull) comp_ns = 1000000ull; if (comp_ns > period_ns * 9 / 10) comp_ns = period_ns * 9 / 10;
     thread_time_constraint_policy_data_t p = {
         .period = (uint32_t)(period_ns * tb.denom / tb.numer), .computation = (uint32_t)(comp_ns * tb.denom / tb.numer),
         .constraint = (uint32_t)(period_ns * tb.denom / tb.numer), .preemptible = 1};
     kern_return_t kr = thread_policy_set(pthread_mach_thread_np(pthread_self()), THREAD_TIME_CONSTRAINT_POLICY, (thread_policy_t)&p, THREAD_TIME_CONSTRAINT_POLICY_COUNT);
-    if (kr == KERN_SUCCESS) { g_rt_comp_ms = comp_ns / 1e6; g_rt_period_ms = period_ns / 1e6; }
-    LOG("[nvn] 出图线程时间约束策略（周期 %.3f ms、计算 %.3f ms）%s", period_ns / 1e6, comp_ns / 1e6, kr == KERN_SUCCESS ? "已设" : "设置失败");
+    if (kr == KERN_SUCCESS) { d->comp_ms = comp_ns / 1e6; d->period_ms = period_ns / 1e6; }
+    LOG("[nvn] %s时间约束策略（周期 %.3f ms、计算 %.3f ms）%s", d->who, period_ns / 1e6, comp_ns / 1e6, kr == KERN_SUCCESS ? "已设" : "设置失败");
 }
 static int rt_comp_fixed_ms(void) { static int v = -2; if (v == -2) { const char *e = getenv("DM_RT_COMP"); v = e && *e && strcmp(e, "auto") ? atoi(e) : -1; } return v; }   // −1 = auto
-static void set_time_constraint(uint64_t period_ns) { int f = rt_comp_fixed_ms(); set_time_constraint_comp(period_ns, f > 0 ? (uint64_t)f * 1000000ull : 2000000ull); }   // 首次：固定值，或 auto 的起始值 2 ms | first time: the fixed value, or auto's starting value of 2 ms
+static void set_time_constraint(rt_decl *d, uint64_t period_ns) { int f = rt_comp_fixed_ms(); set_time_constraint_comp(d, period_ns, f > 0 ? (uint64_t)f * 1000000ull : 2000000ull); }   // 首次：固定值，或 auto 的起始值 2 ms | first time: the fixed value, or auto's starting value of 2 ms
 // 每帧在取图处调：记本线程自上次以来的 CPU 时间；auto 模式下按 p90 重新声明
 // Called every frame at acquire: records this thread's CPU time since the last call; in auto mode re-declares based on p90
-static void rt_comp_tick(uint64_t period_ns) {
-    if (rt_comp_fixed_ms() > 0 || !period_ns || !g_rt_comp_ms) return;
-    static uint64_t last; static double win[120]; static int n;
-    uint64_t c = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID); if (!last) { last = c; return; }
-    win[n++] = (double)(c - last) / 1e6; last = c;
-    if (n < 120) return;
-    double v[120]; memcpy(v, win, sizeof v); qsort(v, 120, sizeof *v, dcmp); n = 0;
+static void rt_comp_tick(rt_decl *d, uint64_t period_ns) {   // 在被声明的那条线程上调（读本线程 CPU 时钟） | Call on the thread being declared (reads this thread's CPU clock)
+    if (rt_comp_fixed_ms() > 0 || !period_ns || !d->comp_ms) return;
+    uint64_t c = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID); if (!d->last) { d->last = c; return; }
+    d->win[d->n++] = (double)(c - d->last) / 1e6; d->last = c;
+    if (d->n < 120) return;
+    double v[120]; memcpy(v, d->win, sizeof v); qsort(v, 120, sizeof *v, dcmp); d->n = 0;
     double p90 = v[107], comp = p90 * 1.25, cap = period_ns * 0.9 / 1e6; if (comp > cap) comp = cap; if (comp < 1) comp = 1;
-    if (comp > g_rt_comp_ms * 1.15 || comp < g_rt_comp_ms * 0.85) set_time_constraint_comp(period_ns, (uint64_t)(comp * 1e6));
+    if (comp > d->comp_ms * 1.15 || comp < d->comp_ms * 0.85) set_time_constraint_comp(d, period_ns, (uint64_t)(comp * 1e6));
 }
 static void sleep_until_ns(uint64_t dl) {   // 单调时钟上的绝对时刻 | absolute time on the monotonic clock
     static mach_timebase_info_data_t tb; if (!tb.denom) mach_timebase_info(&tb);
@@ -1094,7 +1252,9 @@ NVN(nvnQueuePresentTexture, void, NVNqueue *q, NVNwindow *w, int idx) {
     present_cfg(o);
     gfx_enter();
     uint64_t t0 = now_ns();
-    if (idx >= 0 && idx < o->ntex && idx < 4) o->ticket[idx] = mtl_present(CTX(o->tex[idx]), present_period(o) / 1e9, o->crop);   // 只入队，立即返回 | enqueue only, return immediately
+    if (idx >= 0 && idx < o->ntex && idx < 4) {   // 只入队，立即返回；ticket 存翻译队列的任务号 | Enqueue only and return at once; ticket holds the translation queue's job number
+        xjob j = {XJ_PRESENT, 0, NULL, snap_tex(o->tex[idx]), present_period(o) / 1e9}; memcpy(j.crop, o->crop, sizeof j.crop);
+        o->ticket[idx] = x_push(&j); }
     gfx_leave();
     atomic_fetch_add(&g_nvn_ns, now_ns() - t0);
     uint64_t f = g_frame, ps, dr; mtl_stats(&ps, &dr);
@@ -1180,7 +1340,9 @@ NVN(nvnQueuePresentTexture, void, NVNqueue *q, NVNwindow *w, int idx) {
     prev_in = t0; prev_pass = ps; prev_draw = dr;
     dump_frame();
     if (g_frame % TWIN == 0) tsummary(g_frame);
-    mtl_set_frame(g_frame);
+    { static uint64_t pc, py, pf; uint64_t i_, y_, c_ = clock_gettime_nsec_np(CLOCK_THREAD_CPUTIME_ID); thr_counts(&i_, &y_);   // 主线程（游戏线程）的每帧 CPU 与平均主频：与「翻译细项」行的翻译线程对照，分「整机降频」还是「翻译线程被放小核」 | Per-frame CPU and average clock of the main (game) thread: compared with the translation thread on the "translation detail" line, to tell "whole-chip downclocking" from "translation thread placed on an efficiency core"
+      if (g_frame % TWIN == 0) { if (pf && g_frame > pf && c_ > pc) LOG("[nvn] 主线程 至帧 %llu：每帧 CPU %.2f ms，平均主频 %.2f GHz（周期 / CPU 时间）", g_frame, (c_ - pc) / 1e6 / (double)(g_frame - pf), (double)(y_ - py) / (double)(c_ - pc)); pc = c_; py = y_; pf = g_frame; } }
+    { xjob j = {XJ_FRAME}; j.frame = g_frame; j.period = present_period(o) / 1e9; x_push(&j); }   // 帧号随队列生效（见翻译队列说明） | The frame number takes effect in queue order (see the translation queue notes)
     // 真机语义：出图只入队、立即返回；本帧显示时刻按节拍器排，该贴图到「显示时刻 + 一个周期」才可再获取（阻塞在 AcquireTexture）
     // Real-device semantics: present only enqueues and returns immediately; this frame's display time is scheduled by the pacer, and the texture can be acquired again only at "display time + one period" (blocking in AcquireTexture)
     uint64_t period = present_period(o), now = dm_detclock_enabled() ? guest_ns() : now_ns();

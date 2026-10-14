@@ -15,9 +15,11 @@ The normal route is to build the whole app with Xcode on a Mac (see "Building" o
 
 ## What the shell contains and does not contain
 
-Download the shell from this repository's [Releases page](https://github.com/d2r-mobile/d2r-mobile/releases). There are two on the Releases page: `D2RMobile-shell.ipa` for iOS 26 and later, `D2RMobile-shell-ios18.ipa` for iOS 18 – 25 ([OLDER_SYSTEMS.md](OLDER_SYSTEMS.md)); pick the one for your phone's system, the steps after that are the same. The shell (about 4 MB) contains only our own host program, the icon and two tables that are public in this repository. It does **not** contain: the game program, shaders, the overlay, UI art, or any data table generated from game files. The script that builds the shell (`dm/ios/tools/shell_build.sh`) finishes by searching every file in the shell for real game content, and refuses to produce a shell if it finds any.
+Download the shell from this repository's [Releases page](https://github.com/d2r-mobile/d2r-mobile/releases). There are two on the Releases page: `D2RMobile-shell-build-input.zip` for iOS 26 and later, `D2RMobile-shell-ios18-build-input.zip` for iOS 18 – 25 ([OLDER_SYSTEMS.md](OLDER_SYSTEMS.md)); pick the one for your phone's system, the steps after that are the same. The shell (about 4 MB) contains only our own host program, the icon and two tables that are public in this repository. It does **not** contain: the game program, shaders, the overlay, UI art, or any data table generated from game files. The script that builds the shell (`dm/ios/tools/shell_build.sh`) finishes by searching every file in the shell for real game content, and refuses to produce a shell if it finds any.
 
-The shell cannot start by itself: on launch it tells you that this package has no game program in it yet.
+**The shell is build input, not an app to install** (which is why it is a `.zip`, not an `.ipa`). If you rename it and install it as is, the app shows a "This Package Is Not Ready" dialog on launch, lists what is missing and points you back to step 1 below; it does not start the game.
+
+**Every time you move to a new release, redo step 1 with the new shell and the source of the same release**, then install the package you just made. The resource archives you put on the phone in step 3 do not depend on the version and do not need to be copied again.
 
 ## What you need
 
@@ -41,7 +43,7 @@ The tool lists whatever is missing, item by item, when it starts.
 ## Step 1: put the game content into the shell
 
 ```
-python3 dm/tools/d2rm_pack.py <D2RMobile-shell.ipa> <your game files directory> <output.ipa>
+python3 dm/tools/d2rm_pack.py <D2RMobile-shell-build-input.zip> <your game files directory> <output.ipa>
 ```
 
 `<your game files directory>` is the level that contains `ExeFS/` and `RomFS/`. In order, the tool: rewrites the game program and writes it out as a dynamic library → generates UI art and a few data tables from the game files → generates the overlay → translates the game's shaders to Metal → checks against the list inside the shell that nothing is missing → writes the new package (about 130 MB). The first run takes a bit over ten minutes, mostly translating shaders; every step is skipped once done.

@@ -36,8 +36,8 @@ The Releases page has two shells. Pick the one for your system; every other step
 
 | Shell | For |
 |---|---|
-| `D2RMobile-shell.ipa` | iOS 26 and later |
-| `D2RMobile-shell-ios18.ipa` | iOS 18 – 25 |
+| `D2RMobile-shell-build-input.zip` | iOS 26 and later |
+| `D2RMobile-shell-ios18-build-input.zip` | iOS 18 – 25 |
 
 The packaging tool accepts both shells with the same command. For A16 and earlier devices add `D2RM_ASTC_PACK` as well (see the "Older devices" section of NO_XCODE) — the texture pack depends only on the chip, and both shells use the same pack.
 

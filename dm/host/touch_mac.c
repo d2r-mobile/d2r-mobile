@@ -60,11 +60,17 @@ static void touch_uimsg(const char *cat, const char *act, const char *arg) {
         scene.game = 1;
     dm_tc_set_panel_state(dm_ui_panel_state());
     int navigation = dm_tc_navigation(&scene, cat, act, arg);
-    // 真全屏（16:10 的 Mac，front_mac.m）：局内开大面板时界面整块移到正中、上下留同样宽的边，关掉回落贴底——iPad 的做法，判据同 front_ios.m 的 nmode == 1：
-    // 面板模式，且不是只开着 NPC 对话菜单（菜单跟着 NPC 摆，留在贴底）、不是死亡页。没开真全屏时宿主不动
-    // True full screen (16:10 Mac, front_mac.m): in game with a large panel open the interface moves as a block to the centre with equal bars above and below, and drops back to the bottom when closed - the iPad approach, same criterion as nmode == 1 in front_ios.m:
-    // panel mode, and not only the NPC dialogue menu open (the menu follows the NPC and stays at the bottom), and not the death page. Without true full screen the host does nothing
-    dm_uiscreen_set_panel(navigation && !dm_tc_scene_dead() && !dm_tc_scene_dialog_only(&scene));
+    // 面板模式与 iOS 同一个量：面板开合栈（宿主 dm_hud_stack_msg）与算式（dm_tc_panel_mode）两端共用。栈里还开着非常驻面板就算面板态——
+    // 大秘境确认页这类借壳面板不在手势层的名单里，原先 Mac 上它开着时界面不居中（iPad 居中）。
+    // 用途只有一个：真全屏（16:10 的 Mac，front_mac.m）下面板态界面整块移到正中、关掉回落贴底（iPad 的做法）；没开真全屏时宿主不动。
+    // 手势层自己的导航态（下面 dm_tc_set_navigation_mode）仍按 navigation，鼠标的点击分流不变
+    // Panel mode is the same quantity as on iOS: the panel stack (host dm_hud_stack_msg) and the formula (dm_tc_panel_mode) are shared by both ends. While a non-resident panel is still open in the stack, it is panel mode.
+    // Borrowed panels such as the Greater Rift confirmation page are not on the gesture layer's list, so before, with one of them open, the UI was not centered on Mac (it was on iPad).
+    // It has only one use: in true fullscreen (16:10 Macs, front_mac.m), panel-mode UI moves as a whole to the center and drops back to the bottom when closed (the iPad behavior); without true fullscreen the host does nothing.
+    // The gesture layer's own navigation state (dm_tc_set_navigation_mode below) still follows navigation, and mouse click routing is unchanged
+    { int dm_hud_stack_msg(const char *, const char *); static int blocked;
+      if (!strcmp(cat, "PanelManager")) blocked = dm_hud_stack_msg(act, arg ? arg : "");
+      dm_uiscreen_set_panel(dm_tc_panel_mode(navigation || (scene.game && blocked > 0), &scene, blocked) == 1); }
     if (g_touch.enabled) {
         dm_tc_set_navigation_mode(&g_touch.state, navigation);
         static int pad = -1; if (pad < 0) { const char *e = getenv("DM_TOUCH_NAV_PAD"); pad = e && e[0] == '1'; }   // 缺省不给圆钮（同 front_ios.m） | no round button by default (same as front_ios.m)

@@ -298,6 +298,9 @@ static _Atomic int g_imbue_open;   /* 单件任务槽面板开着（灌魔 / 打
 static _Atomic int g_cube_open;   /* 赫拉迪克方块页开着：双击 = 按住 Y（原版「移到另一侧」：背包 → 方块 / 方块 → 背包），不是「使用 / 装备」 | Horadric Cube page open: double tap = hold Y (the original game's "move to the other side": inventory → cube / cube → inventory), not "use / equip" */
 static _Atomic int g_vault_open;   /* 储藏箱开在第六页「编年史」：双击背包物品 = 存进编年史仓库（走 use_seq，宿主 ui_use_pump 判页），不发原版「按住 Y」——那一页游戏当魔盒页 | Stash open on page six 「编年史」(Chronicle): double-tapping an inventory item = store it in the Chronicle vault (goes through use_seq; the host's ui_use_pump determines the page); do not send the original game's "hold Y" -- the game treats that page as the cube page */
 static _Atomic int g_bank_open;   /* 储藏箱开着（前端从宿主读游戏面板树的结果设进来，不靠开关消息）：双击 = 按住 Y（移到另一侧） | Stash open (set by the front end from the host's reading of the game panel tree, not from open/close messages): double tap = hold Y (move to the other side) */
+int dm_tc_panel_mode(int nav, const dm_tc_scene *scene, int blocked) {   /* 原在 front_ios.m（nmode）；菜单上又开了雇佣列表这类页时读数 > 0，不算「只开着对话菜单」 | formerly in front_ios.m (nmode); when a page such as the hire list is also open over the menu the reading is > 0, which does not count as "only the dialog menu open" */
+    return nav ? (dm_tc_scene_dead() ? 2 : dm_tc_scene_dialog_only(scene) && blocked <= 0 ? 3 : 1) : 0;
+}
 void dm_tc_set_panel_state(int bits) { atomic_store(&g_bank_open, (bits & 1) != 0); atomic_store(&g_vendor_open, (bits & 2) != 0); atomic_store(&g_dead_modal, (bits & 4) != 0); atomic_store(&g_imbue_open, (bits & 16) != 0); atomic_store(&g_cube_open, (bits & 32) != 0); atomic_store(&g_vault_open, (bits & 64) != 0); }   /* 位同 dm_cursor.h 的 DM_PS_*；宿主读游戏状态得来 | Bits are the same as DM_PS_* in dm_cursor.h; obtained by the host reading the game state */
 
 static void pointer_drag_begin(dm_tc_state *s, dm_tc_finger *f) {

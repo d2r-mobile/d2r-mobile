@@ -197,12 +197,15 @@ flowchart LR
 
 ## Which devices are supported
 
+Minimum: **an A14 / M1 chip or later** — the graphics layer needs Metal 3, which Apple supports from A14 / M1 on (see Apple's [Metal support on Apple devices](https://support.apple.com/102894) and [Metal Feature Set Tables](https://developer.apple.com/metal/Metal-Feature-Set-Tables.pdf)).
+
 | Device | Playable? | How | How sure we are |
 |---|---|---|---|
 | **iPhone / iPad, A17 Pro and later** (iPhone 15 Pro and later, iPhone 16 and later, iPads with M-series chips) | Yes | iOS 26 or later: the default shell / default build; iOS 18 – 25: the iOS 18 shell / [older-API build](docs/OLDER_SYSTEMS.md) | Main devices, played daily |
 | **iPhone / iPad, A16 and earlier** (all iPhone 14 models, iPhone 15 / 15 Plus, iPhone 13 series and so on) | Yes, with one extra step | Make a Legacy Device Pack from your own game files as in [docs/LEGACY_DEVICES.md](docs/LEGACY_DEVICES.md) and include it when making the install package; the system split is the same as the row above | Played by players: iPhone 14 Pro Max (A16, 6 GB) at 60 fps; iPhone 13 Pro Max (A15, 6 GB) in the 30 fps mode |
 | **Devices with 4 GB of RAM** (such as the 4th-generation iPad Air) | Not supported yet (we are reducing memory use and will update this when there is progress) | — | Tested by a player: on an iPad Air 4 (A14, 4 GB) with the Legacy Device Pack, the system ends the app a few seconds after launch because the device runs out of memory |
-| **Chips older than A15 with 6 GB of RAM or more** | No reports yet | Same as the A16-and-earlier row | If you have tried, please open an Issue and tell us |
+| **A14 chips with 6 GB of RAM or more** (such as iPhone 12 Pro / 12 Pro Max) | No reports yet | Same as the A16-and-earlier row | If you have tried, please open an Issue and tell us |
+| **A13 and earlier chips** (such as the iPhone 11 series and the 2020 iPad Pro) | Not supported | — | The graphics chip does not support Metal 3 (tested by a player on an iPad Pro with A12Z; Apple's references are above the table); the app says so at launch instead of crashing |
 | **Mac, Apple silicon** | Yes (native macOS App) | macOS 26 or later: the default build; macOS 15 – 25: the [older-API build](docs/OLDER_SYSTEMS.md). Keyboard, mouse and gamepad all work; what each can do is in [docs/MAC.md](docs/MAC.md) | A player has played the older-API build on macOS 15.7.7 |
 | **Intel Macs** | Not supported | — | — |
 
@@ -275,7 +278,7 @@ The interface is the original's gamepad interface. Keyboard: Space confirms, Esc
 
 ### Without a Mac: the shell plus the packaging tool
 
-Download our prebuilt "shell" package (`D2RMobile-shell.ipa`; `D2RMobile-shell-ios18.ipa` for iOS 18 – 25), which contains no game content, from this repository's [Releases page](https://github.com/d2r-mobile/d2r-mobile/releases), add your own game files, make the install package on Windows or Linux, then sign and install it with a sideloading tool. On this route only, because the computer making the package has no Apple shader compiler, the **first launch** on the phone spends about 7 minutes compiling shaders (once, with a progress bar); a package built with Xcode has no such step. The steps, and how far each one has been verified, are in [docs/NO_XCODE.md](docs/NO_XCODE.md).
+Download our prebuilt "shell" package (`D2RMobile-shell-build-input.zip`; `D2RMobile-shell-ios18-build-input.zip` for iOS 18 – 25), which contains no game content, from this repository's [Releases page](https://github.com/d2r-mobile/d2r-mobile/releases), add your own game files, make the install package on Windows or Linux, then sign and install it with a sideloading tool. The shell is build input, not an app to install (installed as is, it only shows a dialog and does not start the game); when you move to a new release, make the install package again with the new shell. On this route only, because the computer making the package has no Apple shader compiler, the **first launch** on the phone spends about 7 minutes compiling shaders (once, with a progress bar); a package built with Xcode has no such step. The steps, and how far each one has been verified, are in [docs/NO_XCODE.md](docs/NO_XCODE.md).
 
 ## Known limitations
 

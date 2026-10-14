@@ -1191,15 +1191,6 @@ int dm_request_save(void) {
     *(volatile uint64_t *)(uintptr_t)(g_lastG + 0x5800) = 1;
     return 1;
 }
-// 退出前存盘用（Mac App）：单机暂停着（暂停菜单 / 大秘境面板开着，原版界面状态字节 [main+0x2d5ff51] | [main+0x2d5ff67] 非 0，见 dm_rift_ui.c）时游戏不跑拍，
-// 上面拨的那次存盘等不到。把这两个字节清掉让拍接着走；只在进程马上要退出时调（不写回）。返回清之前是否暂停着
-// For saving before exit (Mac App): while single-player is paused (pause menu / rift panel open, original UI state bytes [main+0x2d5ff51] | [main+0x2d5ff67] non-zero, see dm_rift_ui.c) the game does not tick,
-// so the save requested above would never happen. Clear these two bytes so the ticks continue; called only when the process is about to exit (not written back). Returns whether it was paused before clearing
-int dm_unpause_for_exit(void) {
-    uint8_t *b = NULL; for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) b = (uint8_t *)g_mod[i].base;
-    if (!b || !in_game()) return 0;
-    volatile uint8_t *f = b + 0x2d5ff51, *g = b + 0x2d5ff67; int was = *f || *g; *f = 0; *g = 0; return was;
-}
 // 游戏是不是停着（暂停菜单 / 大秘境选层页这类开着：同上两个界面状态字节）。不在局内返回 0
 // Whether the game is stopped (pause menu / Greater Rift level-selection page and the like open: the same two UI state bytes as above). Returns 0 when not in a game
 int dm_game_paused(void) { uint8_t *b = NULL; for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) b = (uint8_t *)g_mod[i].base; return b && in_game() && (*(volatile uint8_t *)(b + 0x2d5ff51) | *(volatile uint8_t *)(b + 0x2d5ff67)); }
@@ -1635,18 +1626,70 @@ void dm_freeze_frame(int want) { static int idle;
     if (!atomic_load(&g_dm_frozen) || !atomic_load(&g_frz_by_panel) || want) { idle = 0; return; }
     if (++idle < 10) return; idle = 0; atomic_store(&g_dm_frozen, 0); atomic_store(&g_frz_by_panel, 0); if (mtl_world_frozen) mtl_world_frozen(0);
     LOG("面板冻结：解冻（面板已不在屏上而拍入口没在走：原版暂停 / 退出 / 换角色）"); }
+static int g_frz_on;   // 四个冻结入口门已挂上（freeze_attach） | The four freeze entry gates are attached (freeze_attach)
+static int freeze_attach(void) {   // 挂冻结用的四个入口门（产物里有门 10–13 才行），挂过就不再挂。返回 1 = 能冻 | Attach the four entry gates used for freezing (needs gates 10–13 in the product); attached only once. Returns 1 = can freeze
+    static int tried; if (tried) return g_frz_on; tried = 1;
+    g_frz_on = gate_obs_present(OBS_FREEZE_WORLD) && gate_obs_present(OBS_FREEZE_CLIENT) && gate_obs_present(OBS_FREEZE_ANIM) && gate_obs_present(OBS_FREEZE_RENDER);
+    if (g_frz_on) { gate_obs_set(OBS_FREEZE_WORLD, freeze_world_obs); gate_obs_set(OBS_FREEZE_CLIENT, freeze_client_obs); gate_obs_set(OBS_FREEZE_ANIM, freeze_anim_obs); gate_obs_set(OBS_FREEZE_RENDER, freeze_render_obs); }
+    return g_frz_on;
+}
+// 暂停菜单开着进后台时存一次盘：原版单机暂停时游戏不走拍，前端请的那次存盘要等下一拍，进后台 2.5 秒等不到（10142104 日志 4 次），
+// 上次自动存盘到开暂停之间的进度在后台被系统回收时会丢。做法：先冻住世界（同面板冻结：世界 / 客户端 / 动画 / 渲染四个入口换成空跑，拍号不前进——怪不动、时间不走），
+// 再临时放开原版暂停的两个界面状态字节让拍走起来、执行那次存盘；等到提交（前端 background_wait_save）后写回两个字节、解冻。前端在主线程调
+// Save once when going to the background with the pause menu open: in single-player pause the original game does not tick, so the save the front end asks for waits for the next tick and the 2.5 s background wait never sees it (seen 4 times in a player's log);
+// progress between the last autosave and opening the pause menu is lost if the system reclaims the app in the background. Method: first freeze the world (same as panel freezing: the world / client / animation / render entry points become no-ops and the tick number does not advance, so monsters do not move and time does not pass),
+// then temporarily release the two UI state bytes of the original pause so ticks run and perform the save; after the commit (front end background_wait_save) write the two bytes back and unfreeze. Called by the front end on the main thread
+static _Atomic int g_bgsave; static uint8_t g_bg_pause[2];
+static int save_unpause_begin(void) {   // 1 = 冻住世界并放开了暂停；0 = 游戏没停着（不用做）；-1 = 产物没有冻结门，做不了 | 1 = froze the world and released the pause; 0 = the game is not stopped (nothing to do); -1 = the product has no freeze gates, cannot do it
+    uint8_t *b = NULL; for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) b = (uint8_t *)g_mod[i].base;
+    if (!b || !in_game()) return 0; volatile uint8_t *f = b + 0x2d5ff51, *g = b + 0x2d5ff67; if (!*f && !*g) return 0;
+    if (!freeze_attach()) { LOG("【红】停着存盘：游戏停着，但产物里没有冻结门 10–13，不放开暂停（这次存不了）"); return -1; }
+    atomic_store(&g_frz_by_panel, 0); atomic_store(&g_bgsave, 1); atomic_store(&g_dm_frozen, 1);   // 先冻、后放开：放开后的第一拍世界就已经是空跑 | Freeze first, then release: the world is already idle on the first tick after release
+    int nm = 0, hp = 0; uint32_t h = g_lastG ? frz_snapshot(g_lastG, &nm, &hp) : 0;
+    g_bg_pause[0] = *f; g_bg_pause[1] = *g; *f = 0; *g = 0;
+    LOG("停着存盘：游戏停着 → 冻住世界、临时放开原版暂停（怪 / 佣兵 %d 个，快照 %08x，玩家生命 %d）", nm, h, hp);
+    return 1;
+}
+static void save_unpause_end(void) {
+    if (!atomic_load(&g_bgsave)) return;
+    uint8_t *b = NULL; for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) b = (uint8_t *)g_mod[i].base;
+    if (b) { *(volatile uint8_t *)(b + 0x2d5ff51) = g_bg_pause[0]; *(volatile uint8_t *)(b + 0x2d5ff67) = g_bg_pause[1]; }   // 先恢复暂停、后解冻：解冻后的拍不再走 | Restore the pause first, then unfreeze: ticks after unfreezing no longer advance
+    int nm = 0, hp = 0; uint32_t h = g_lastG ? frz_snapshot(g_lastG, &nm, &hp) : 0;
+    atomic_store(&g_bgsave, 0); atomic_store(&g_dm_frozen, 0);
+    LOG("停着存盘：恢复原版暂停、解冻（怪 / 佣兵 %d 个，快照 %08x，玩家生命 %d）", nm, h, hp);
+}
+// 前端要进程马上可能没了之前（iOS 进后台、Mac 退出）请游戏存一次盘并等提交：游戏停着（暂停菜单 / 大秘境面板开着）就先冻住世界、
+// 临时放开原版暂停让拍走起来执行这次存盘，等完写回暂停、解冻——玩家回来时世界与暂停都和离开前一样。等到「出现过存档提交、之后 0.2 秒没有新的提交」
+// （角色与共享箱是两个容器，可能分两次），最多 max_s 秒；还没进局（读取画面）就每 20 ms 再试，进了局再请。返回 1 = 请到了存盘。
+// *commits = 期间存档提交次数，*froze = 是否冻结放开过暂停，*ms = 用时。在前端主线程调（游戏拍在客体线程照跑）
+// Before the process may go away at any moment (iOS going to the background, quitting on Mac), the front end asks the game to save once and waits for the commit. If the game is stopped (pause menu / Greater Rift panel open), it first freezes the world,
+// temporarily releases the original pause so ticks run and perform this save, and after waiting writes the pause back and unfreezes, so when the player returns both the world and the pause are as they left them. It waits until "a save commit has happened and no new commit for 0.2 s"
+// (character and shared stash are two containers and may commit separately), at most max_s seconds; before entering a game (loading screen) it retries every 20 ms and asks once in game. Returns 1 = the save was requested.
+// *commits = number of save commits in the meantime, *froze = whether it froze and released the pause, *ms = time taken. Called on the front end's main thread (game ticks keep running on the guest thread)
+uint64_t dm_fs_commit_count(void);
+int dm_save_wait(double max_s, uint64_t *commits, int *froze, double *ms) {
+    uint64_t c0 = dm_fs_commit_count(), t0 = now_ns(), last = c0, last_t = 0, lim = (uint64_t)(max_s * 1e9); int asked = 0, bg = 0;
+    for (;;) {
+        if (!bg && in_game()) bg = save_unpause_begin();   // 先冻、放开暂停，再请存盘 | Freeze first, release the pause, then ask for the save
+        if (!asked) asked = dm_request_save();
+        usleep(20000); uint64_t c = dm_fs_commit_count(), t = now_ns();
+        if (c != last) { last = c; last_t = t; }
+        if ((asked && last_t && t - last_t >= 200000000ull) || t - t0 >= lim) break;
+    }
+    if (bg > 0) save_unpause_end();
+    *commits = last - c0; *froze = bg > 0; *ms = (now_ns() - t0) / 1e6;
+    return asked;
+}
 static void freeze_tick(uint64_t G) {   // 拍入口：定这一拍冻不冻，冻就把拍号先减 1 | Tick entry: decide whether this tick is frozen; if so, decrement the tick number by 1 first
-    static struct { uint32_t at, n; int st; } w[8]; static int nw = -1, panel, cur = -1, on; static uint32_t left, calls;
+    static struct { uint32_t at, n; int st; } w[8]; static int nw = -1, panel, cur = -1; static uint32_t left, calls;
     if (nw < 0) { nw = 0; const char *e = getenv("DM_TEST_FREEZE"); char buf[160]; if (e) { strlcpy(buf, e, sizeof buf); for (char *sv, *t = strtok_r(buf, ";", &sv); t && nw < 8; t = strtok_r(NULL, ";", &sv)) if (sscanf(t, "%u:%u", &w[nw].at, &w[nw].n) == 2) nw++; }
         e = getenv("DM_PANEL_FREEZE"); panel = e && e[0] != '0';
-        if (nw || panel) { on = gate_obs_present(OBS_FREEZE_WORLD) && gate_obs_present(OBS_FREEZE_CLIENT) && gate_obs_present(OBS_FREEZE_ANIM) && gate_obs_present(OBS_FREEZE_RENDER);
-            if (on) { gate_obs_set(OBS_FREEZE_WORLD, freeze_world_obs); gate_obs_set(OBS_FREEZE_CLIENT, freeze_client_obs); gate_obs_set(OBS_FREEZE_ANIM, freeze_anim_obs); gate_obs_set(OBS_FREEZE_RENDER, freeze_render_obs); LOG("面板冻结：四个入口门已挂（按面板 %d，时间窗 %d 个）", panel, nw); }
-            else LOG("【红】面板冻结：产物里没有观测门 10–13，不生效"); } }
-    if (!on) return;
+        if (nw || panel) { if (freeze_attach()) LOG("面板冻结：四个入口门已挂（按面板 %d，时间窗 %d 个）", panel, nw); else LOG("【红】面板冻结：产物里没有观测门 10–13，不生效"); } }
+    if (!g_frz_on) return;
     uint32_t t = 0; if (!tk_rd(G + 0x170, &t, 4)) return; int frozen = atomic_load(&g_dm_frozen);
     if (cur < 0 && !frozen) for (int i = 0; i < nw; i++) if (!w[i].st && t >= w[i].at) { cur = i; w[i].st = 1; left = w[i].n; break; }
     if (cur >= 0 && frozen && left && !--left) { w[cur].st = 2; cur = -1; }
-    int want = cur >= 0 || (panel && atomic_load(&g_dm_frz_want));
+    int want = cur >= 0 || (panel && atomic_load(&g_dm_frz_want)) || atomic_load(&g_bgsave);
     if (want && !frozen) { if (t % 20 == 0 || t % 12 == 0 || t % 11 == 0 || t % 1500 == 0) return;   // 晚一拍 | One tick later
         int nm = 0, hp = 0; uint32_t h = frz_snapshot(G, &nm, &hp); atomic_store(&g_frz_by_panel, cur < 0); atomic_store(&g_dm_frozen, 1); frozen = 1; calls = 0; if (mtl_world_frozen) mtl_world_frozen(1); LOG("面板冻结：拍 %u 冻结（%s）；怪 %d 只 校验 %08x 玩家生命 %d", t, cur >= 0 ? "时间窗" : "面板开着", nm, h, hp); }
     else if (!want && frozen) { int nm = 0, hp = 0; uint32_t h = frz_snapshot(G, &nm, &hp); atomic_store(&g_dm_frozen, 0); frozen = 0; if (mtl_world_frozen) mtl_world_frozen(0); LOG("面板冻结：拍 %u 解冻（冻了 %u 次拍入口）；怪 %d 只 校验 %08x 玩家生命 %d", t, calls, nm, h, hp); }

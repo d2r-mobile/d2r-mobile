@@ -135,6 +135,11 @@ typedef struct { int game; uint64_t panels; } dm_tc_scene;
 int dm_tc_navigation(dm_tc_scene *scene, const char *cat, const char *act, const char *arg);
 int dm_tc_scene_dialog_only(const dm_tc_scene *scene);   /* 只开着 NPC 对话菜单 | Only the NPC dialog menu is open */
 int dm_tc_scene_dead(void);   /* 死亡弹窗开着（导航态，但不给手柄圆钮） | Death popup open (navigation state, but no controller round buttons) */
+/* 面板模式（前端两端共用一个算式，iOS front_ios.m 与 Mac touch_mac.c）：0 = 游戏态；1 = 面板态；2 = 死亡页；3 = 只开着 NPC 对话菜单。
+   nav = 手势层的导航判断（dm_tc_navigation，再并上「面板栈里还开着非常驻面板」）；blocked = 面板栈读数（dm_hud_stack_msg：只开着对话菜单时 -1）
+   Panel mode (one formula shared by both front ends, iOS front_ios.m and Mac touch_mac.c): 0 = game; 1 = panel; 2 = death screen; 3 = only the NPC dialog menu open.
+      nav = the gesture layer's navigation judgment (dm_tc_navigation, combined with "a non-resident panel is still open in the panel stack"); blocked = the panel stack reading (dm_hud_stack_msg: -1 when only the dialog menu is open) */
+int dm_tc_panel_mode(int nav, const dm_tc_scene *scene, int blocked);
 
 /* 坐标使用 UIKit 点；布局本身不画球、不声称游戏已绑定回城/腰带。 | Coordinates use UIKit points; the layout itself does not draw the orbs and does not claim the game has bound town portal/belt. */
 /* 安全区左右内缩（点）；在 init / resize 之前设，之后的布局按它把右侧技能键组与左摇杆移进安全区。缺省 0。 | Left/right safe-area insets (points); set before init / resize, and the layout afterwards uses them to move the right-side skill key group and the left stick into the safe area. Default 0. */

@@ -163,6 +163,12 @@ dmOldWhySuffix	\n（%s）	\n(%s)	老机型弹框正文末尾的原因
 dmOldDl	直接下载	Download	老机型弹框按钮
 dmOldCopied	已经拷好了	Already Copied	老机型弹框按钮
 dmOldQuit	退出	Quit	老机型弹框按钮
+dmPackBadTitle	这个安装包还不能玩	This Package Is Not Ready	安装包自检弹框标题（main.m pack_check：装了没做过第一步的壳 / 拼装的包）
+dmPackBadMiss	安装包里缺游戏内容（缺 %d 项，如 %@）。	The package is missing game content (%d items, e.g. %@).	安装包自检弹框正文第一句：缺壳清单里的项
+dmPackBadProd	安装包是用不同版本拼成的（壳是 %@，做进去的内容是 %@）。	The package mixes versions (shell %@, built-in content %@).	安装包自检弹框正文第一句：打包记录的产物代号与壳不一致
+dmPackBadHow	发布页上的壳是做安装包的原料，不能直接装来玩。\n\n怎么做：在电脑上打开 github.com/d2r-mobile/d2r-mobile，照 docs/NO_XCODE 的第一步用 d2rm_pack.py 把你的游戏内容做进同一版本的壳，再装它输出的那个安装包。	The shell on the releases page is build input, not an app to install.\n\nWhat to do: on a computer, open github.com/d2r-mobile/d2r-mobile and follow step 1 of docs/NO_XCODE — run d2rm_pack.py to build your game content into the shell of the same release, then install the package it outputs.	安装包自检弹框正文后段（缺项与版本不一致共用）
+dmGpuOldTitle	这台设备玩不了	This Device Is Not Supported	图形芯片不支持 Metal 3 时的弹框标题（main.m）
+dmGpuOldMsg	这台设备的图形芯片不支持 Metal 3，本游戏的图形层需要它。\n\n需要 A14 / M1 及以后的芯片（iPhone 12 及以后、2021 年及以后的 iPad Pro 等）；A13 及更早的芯片（包括 2020 年的 iPad Pro）玩不了。	This device's graphics chip does not support Metal 3, which the game's graphics layer needs.\n\nAn A14 / M1 chip or later is required (iPhone 12 and later, iPad Pro from 2021 and later, and so on); A13 and earlier chips, including the 2020 iPad Pro, cannot run it.	图形芯片不支持 Metal 3 时的弹框正文（main.m）
 dmOldConnecting	正在连接下载服务器…	Connecting to the download server…	老机型补充包下载页
 dmOldDlFail	下载失败：%s	Download failed: %s	老机型补充包：没用上的原因
 dmOldProgress	正在下载老机型补充包\n%.2f / %.2f GB（%.0f%%）%@	Downloading the supplementary pack\n%.2f / %.2f GB (%.0f%%)%@	老机型补充包下载页进度

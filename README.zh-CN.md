@@ -197,12 +197,15 @@ flowchart LR
 
 ## 支持哪些设备
 
+最低要求：**A14 / M1 及以后的芯片**——本项目的图形层要用 Metal 3，苹果从 A14 / M1 起才支持（依据：苹果的[Metal 支持的设备](https://support.apple.com/102894)、[Metal 功能表](https://developer.apple.com/metal/Metal-Feature-Set-Tables.pdf)）。
+
 | 设备 | 能不能玩 | 怎么做 | 把握程度 |
 |---|---|---|---|
 | **iPhone / iPad，A17 Pro 及以后**（iPhone 15 Pro 起、iPhone 16 起、M 系列芯片的 iPad） | 直接玩 | iOS 26 及以上用缺省的壳 / 缺省构建；iOS 18 – 25 用 iOS 18 的壳 / [老接口版](docs/OLDER_SYSTEMS.zh-CN.md) | 主力机型，日常在玩 |
 | **iPhone / iPad，A16 及更早**（iPhone 14 全系、iPhone 15 / 15 Plus、iPhone 13 系列等） | 可以玩，多一步 | 按 [docs/LEGACY_DEVICES.zh-CN.md](docs/LEGACY_DEVICES.zh-CN.md) 用自己的游戏文件做一份老机型补充包，做安装包时带上它；系统同上一行分 iOS 26 / iOS 18 – 25 | 已有玩家实测：iPhone 14 Pro Max（A16，6 GB）60 帧；iPhone 13 Pro Max（A15，6 GB）30 帧档 |
 | **4 GB 内存的设备**（如 iPad Air 第 4 代） | 暂不支持（在优化内存，有进展更新） | — | 已有玩家实测：iPad Air 4（A14，4 GB）带上老机型补充包后，启动几秒即因整机内存不足被系统结束 |
-| **比 A15 更老的芯片、6 GB 及以上内存** | 尚无报告 | 同 A16 及更早那一行 | 欢迎试过的人开 Issue 告诉我们结果 |
+| **A14 芯片、6 GB 及以上内存**（如 iPhone 12 Pro / 12 Pro Max） | 尚无报告 | 同 A16 及更早那一行 | 欢迎试过的人开 Issue 告诉我们结果 |
+| **A13 及更早的芯片**（如 iPhone 11 系列、2020 年的 iPad Pro） | 不支持 | — | 图形芯片不支持 Metal 3（玩家在 iPad Pro A12Z 上实测；苹果依据见表上方）；App 启动时会直接提示，不会闪退 |
 | **Mac，Apple 芯片** | 直接玩（原生 macOS App） | macOS 26 及以上用缺省出法；macOS 15 – 25 用[老接口出法](docs/OLDER_SYSTEMS.zh-CN.md)。键盘、鼠标、手柄都能玩，各自能做什么见 [docs/MAC.zh-CN.md](docs/MAC.zh-CN.md) | 已有玩家在 macOS 15.7.7 上实际玩过老接口版 |
 | **Intel 芯片的 Mac** | 不支持 | — | — |
 
@@ -275,7 +278,7 @@ DM_MAC_M3=1 dm/tools/mac_app.sh      # macOS 15 – 25：产出 D2R Mobile M3.ap
 
 ### 没有 Mac：壳 + 做包工具
 
-从本仓库的[发布页](https://github.com/d2r-mobile/d2r-mobile/releases)下载我们预先做好的、不含游戏内容的「壳」安装包（`D2RMobile-shell.ipa`；iOS 18 – 25 用 `D2RMobile-shell-ios18.ipa`），加上你自己的游戏文件，在 Windows 或 Linux 上做出安装包，再用自签工具签名装机。只有走这条路时，因为做包的电脑上没有苹果的着色器编译器，手机**第一次启动**要花约 7 分钟把着色器编完（一次性，带进度条）；用 Xcode 构建的包没有这一步。步骤与每一步的验证现状见 [docs/NO_XCODE.zh-CN.md](docs/NO_XCODE.zh-CN.md)。
+从本仓库的[发布页](https://github.com/d2r-mobile/d2r-mobile/releases)下载我们预先做好的、不含游戏内容的「壳」安装包（`D2RMobile-shell-build-input.zip`；iOS 18 – 25 用 `D2RMobile-shell-ios18-build-input.zip`），加上你自己的游戏文件，在 Windows 或 Linux 上做出安装包，再用自签工具签名装机。壳是做安装包的原料，不能直接装来玩（直接装上去只会弹框说明、不会进游戏）；换新版本时要用新版的壳重新做一次安装包。只有走这条路时，因为做包的电脑上没有苹果的着色器编译器，手机**第一次启动**要花约 7 分钟把着色器编完（一次性，带进度条）；用 Xcode 构建的包没有这一步。步骤与每一步的验证现状见 [docs/NO_XCODE.zh-CN.md](docs/NO_XCODE.zh-CN.md)。
 
 ## 已知限制
 

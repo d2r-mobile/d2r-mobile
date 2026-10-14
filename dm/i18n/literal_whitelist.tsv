@@ -116,3 +116,5 @@ ios/Sources/dm_shader_prep.m	*	公开版壳专用的「首次准备着色器」�
 host/dm_rift.c	（第 1 波）	只进日志：刷守护者那行标第几波（分波时）
 host/dm_rift.c	（第 2 波）	同上
 host/dm_rift.c	（第 3 波）	同上
+ios/Sources/main.m	安装包自检没过	拦下原因只进日志（弹框文字走中英表）
+ios/Sources/main.m	图形芯片不支持 Metal 3	拦下原因只进日志（弹框文字走中英表）

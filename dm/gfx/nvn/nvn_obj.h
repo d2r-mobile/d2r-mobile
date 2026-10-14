@@ -33,6 +33,7 @@ typedef struct {
 typedef struct {
     uint32_t magic; nvn_texdesc d; nvn_texlayout L; uint8_t *mem; pool_t *pool; int64_t off; uint8_t has_layout, layout[8];
     uint64_t serial;                     // 初始化序号：回放层按它在宿主表里找 MTLTexture（游戏可能按值拷贝对象，不能存对象指针） | Initialization serial: the replay layer uses it to find the MTLTexture in the host table (the game may copy the object by value, so object pointers cannot be stored)
+    const void *snap;                    // 本序号的不可变副本（hle_nvn.c snap_tex）：命令载荷存它，不存游戏对象地址 | This serial's immutable snapshot (hle_nvn.c snap_tex): command payloads store it, not the game object's address
 } tex_t;                                                                                     FITS(tex_t, NVNtexture);
 typedef struct { uint8_t set_levels, set_layers, set_format, set_target; int32_t base_level, nlevels, min_layer, nlayers, format, target; } view_t;
 FITS(view_t, NVNtextureView);
@@ -43,7 +44,7 @@ typedef struct { uint8_t minf, magf, ws, wt, wr, cmp_mode, cmp_func; float lod_m
 typedef struct { NVNdevice *dev; samp_par p; } samp_builder_t;                                FITS(samp_builder_t, NVNsamplerBuilder);
 typedef struct { uint32_t magic; samp_par p; } samp_t;                                        FITS(samp_t, NVNsampler);
 
-typedef struct { uint32_t magic, nstage; NVNshaderData sd[6]; uint64_t serial; } prog_t;     FITS(prog_t, NVNprogram);   // serial：回放层解析结果的表键 | serial: table key for the replay layer's resolved result
+typedef struct { uint32_t magic, nstage; NVNshaderData sd[6]; uint64_t serial; const void *snap; } prog_t;     FITS(prog_t, NVNprogram);   // serial：回放层解析结果的表键；snap：本序号的不可变副本（同 tex_t） | serial: table key for the replay layer's resolved results; snap: this serial's immutable snapshot (same as tex_t)
 
 typedef struct { uint32_t magic, fenced; uint64_t fence; } sync_t;                            FITS(sync_t, NVNsync);
 typedef struct { const pool_t *pool; int64_t off; } ev_builder_t;                             FITS(ev_builder_t, NVNeventBuilder);
@@ -94,8 +95,8 @@ enum {
     OP_STENCIL, OP_POLY_OFFSET, OP_DRAW, OP_DRAW_IDX, OP_DISPATCH, OP_BARRIER,
     OP_SET_TEX_POOL, OP_SET_SAMP_POOL, OP_COPY_B2T, OP_COPY_STRIDE, OP_BLEND_COLOR, OP_COPY_T2B, OP_BIND_IMG, OP_COPY_T2T, OP_RESET_COUNTER, OP_CLEAR_TEX, OP_COUNT_
 };
-// 载荷（紧跟 op_hdr）
-// Payload (immediately follows op_hdr)
+// 载荷（紧跟 op_hdr）。贴图 / 程序指针都指向录制时按序号留下的不可变副本（snap_tex / snap_prog），游戏之后改写或重建对象不影响已录的命令
+// Payload (right after op_hdr). Texture / program pointers point to the immutable snapshots kept by serial at record time (snap_tex / snap_prog); later rewrites or rebuilds of the object by the game do not affect recorded commands
 typedef struct { int32_t n; const tex_t *color[8]; view_t cview[8]; uint8_t has_cview[8]; const tex_t *depth; view_t dview; uint8_t has_dview; } p_set_rt;
 typedef struct { int32_t index, mask; float rgba[4]; } p_clear_color;
 typedef struct { float depth; int32_t depth_mask, stencil, stencil_mask; } p_clear_ds;
@@ -136,6 +137,8 @@ void mtl_set_tex_pool_n(int n);                            // 贴图描述符池
 // 计时埋点（Mac / iOS 共用）：提交按帧号打标；GPU 时间 = 该帧全部命令缓冲 GPUEnd−GPUStart 之和，全部完成后才可读（否则 −1）
 // Timing instrumentation (shared by Mac / iOS): submissions are tagged with the frame number; GPU time = sum of GPUEnd−GPUStart over all of that frame's command buffers, readable only after all complete (otherwise −1)
 void mtl_set_frame(uint64_t f);
+uint64_t mtl_host_latch(void);   // 游戏线程提交入队时锁存宿主写的画法开关（冻结位 / 强制全画），随任务带到翻译线程 | When the game thread enqueues a submit it latches the host-written drawing switches (freeze bit / force full draw), carried with the job to the translation thread
+void mtl_host_apply(uint64_t v);   // 翻译线程执行那次提交前生效 | Takes effect before the translation thread runs that submit
 void mtl_ub_present(double iv_ms);   // 同进程交替测量（DM_NVN_UB）：出图线程每帧报实际上屏间隔 | Same-process alternating measurement (DM_NVN_UB): the present thread reports the actual present interval every frame
 double mtl_gpu_ms(uint64_t f);
 void mtl_sub_index(const uint64_t *h, int n);   // 提交开始：按回放顺序建写回前瞻索引（nvn_mtl.m） | Start of submission: build the store lookahead index in replay order (nvn_mtl.m)

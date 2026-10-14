@@ -76,6 +76,20 @@ static const char *envdir(const char *var, const char *rel, char *buf, size_t n)
     snprintf(buf, n, "%s%s/%s", getenv("DM_ROOT") ?: getenv("HOME"), getenv("DM_ROOT") ? "" : "/dm-work", rel); return buf;
 }
 
+// 测试注入 DM_TEST_FS_FAILAT=<点>[:<次数>][,…]：存档事务里写失败收场的几步（mountclone 挂载时克隆工作目录、reclone 提交被拒后重新克隆、
+// guestname 改名后写客体名、renameback 改名回退）前 <次数> 次（缺省 1）按 ENOSPC 失败，验「不退出、已提交版本不变、下次提交照常」（tests/t_fs.c）
+// Test injection DM_TEST_FS_FAILAT=<point>[:<count>][,...]: the steps of a save transaction that end in a failed write (mountclone = clone the work directory at mount, reclone = reclone after a refused commit,
+// guestname = write the guest name after a rename, renameback = rename rollback) fail with ENOSPC for the first <count> times (default 1), to check "no exit, committed version unchanged, next commit works" (tests/t_fs.c)
+static int dm_fs_test_fail(const char *pt) {
+    static char spec[256]; static int cnt[8]; const char *e = getenv("DM_TEST_FS_FAILAT"); if (!e || !e[0]) return 0;
+    if (strcmp(spec, e)) { strlcpy(spec, e, sizeof spec); memset(cnt, 0, sizeof cnt); }   // 换了一组注入就从头数 | A new set of injections starts counting from zero
+    size_t L = strlen(pt); int k = 0;
+    for (const char *q = spec; *q && k < 8; k++) { const char *end = strchr(q, ','); size_t n = end ? (size_t)(end - q) : strlen(q);
+        if (n >= L && !strncmp(q, pt, L) && (n == L || q[L] == ':')) { int lim = n > L ? atoi(q + L + 1) : 1; if (cnt[k] < lim) { cnt[k]++; errno = ENOSPC; LOG("DM_TEST_FS_FAILAT：%s 第 %d 次按 ENOSPC 失败", pt, cnt[k]); return 1; } return 0; }
+        q = end ? end + 1 : q + n; }
+    return 0;
+}
+static int in_txn_dir(const char *hp) { for (int i = 0; i < g_nmnt; i++) { size_t n = strlen(g_mnt[i].dir); if (g_mnt[i].commit[0] && !strncmp(hp, g_mnt[i].dir, n) && (hp[n] == '/' || !hp[n])) return 1; } return 0; }
 static int rm_tree(const char *p);
 static Result mount_ex(const char *name, const char *dir, int ro, int txn) {
     PATH_LOCK(); pthread_mutex_lock(&g_lock);
@@ -86,20 +100,26 @@ static Result mount_ex(const char *name, const char *dir, int ro, int txn) {
     g_mnt[g_nmnt].ro = ro; g_mnt[g_nmnt].overlay[0] = 0; g_mnt[g_nmnt].commit[0] = 0;
     if (!strcmp(name, "rom") && getenv("DM_ROMFS_OVERLAY"))
         strlcpy(g_mnt[g_nmnt].overlay, getenv("DM_ROMFS_OVERLAY"), sizeof g_mnt[0].overlay);
+    int txn_err = 0;   // 事务目录建不起来（清不掉残留 / 克隆失败，盘满时真实可能）：不退出，改成只读挂载已提交目录——角色照常读得到，写一律失败、提交为空操作，已提交版本一个字节不动 | The transaction directory cannot be set up (leftovers cannot be cleared / clone failed, which really happens on a full disk): do not exit; mount the committed directory read-only instead. Characters still load, every write fails, commits are no-ops, and not one byte of the committed version changes
     if (txn) {
         char work[1100], neu[1100]; snprintf(work, sizeof work, "%s.work", dir); snprintf(neu, sizeof neu, "%s.new", dir);
         mkdir(dir, 0755);
-        if (!access(work, F_OK) && rm_tree(work)) die("存档事务：清不掉上次残留的工作目录 %s", work);
-        if (!access(neu, F_OK) && rm_tree(neu)) die("存档事务：清不掉上次残留的 %s", neu);
-        if (clonefile(dir, work, 0)) die("存档事务：clonefile %s → %s 失败 errno=%d", dir, work, errno);
-        strlcpy(g_mnt[g_nmnt].commit, dir, sizeof g_mnt[0].commit);
-        atomic_store(&g_save_poison, 0);                                // 工作目录刚从已提交版克隆，完好 | the working directory was just cloned from the committed version, intact
-        strlcpy(g_mnt[g_nmnt].dir, work, sizeof g_mnt[0].dir);
+        const char *why = NULL;
+        if (!access(work, F_OK) && rm_tree(work)) why = "清不掉上次残留的工作目录";
+        else if (!access(neu, F_OK) && rm_tree(neu)) why = "清不掉上次残留的 .new";
+        else if (dm_fs_test_fail("mountclone") || clonefile(dir, work, 0)) why = "克隆工作目录失败";
+        if (why) { txn_err = errno ? errno : EIO; g_mnt[g_nmnt].ro = 1; strlcpy(g_mnt[g_nmnt].dir, dir, sizeof g_mnt[0].dir);
+            LOG("【红】存档事务：%s（%s，errno=%d）——改为只读挂载已提交目录 %s：本局存档写不进去，已提交版本不变", why, work, txn_err, dir); }
+        else {
+            strlcpy(g_mnt[g_nmnt].commit, dir, sizeof g_mnt[0].commit);
+            atomic_store(&g_save_poison, 0);                                // 工作目录刚从已提交版克隆，完好 | the working directory was just cloned from the committed version, intact
+            strlcpy(g_mnt[g_nmnt].dir, work, sizeof g_mnt[0].dir); }
     } else strlcpy(g_mnt[g_nmnt].dir, dir, sizeof g_mnt[0].dir);
     g_nmnt++;
     pthread_mutex_unlock(&g_lock);
+    if (txn_err) front_save_failed(txn_err);
     if (!ro && !txn) mkdir(dir, 0755);
-    LOG("fs 挂载 %s: → %s%s%s", name, txn ? g_mnt[g_nmnt - 1].dir : dir, ro ? "（只读）" : txn ? "（事务式存档：工作目录，Commit 原子换入）" : "", g_mnt[g_nmnt - 1].overlay[0] ? "（overlay 优先）" : "");
+    LOG("fs 挂载 %s: → %s%s%s", name, txn ? g_mnt[g_nmnt - 1].dir : dir, ro || txn_err ? "（只读）" : txn ? "（事务式存档：工作目录，Commit 原子换入）" : "", g_mnt[g_nmnt - 1].overlay[0] ? "（overlay 优先）" : "");
     return RES_OK;
 }
 static Result mount(const char *name, const char *dir, int ro) { return mount_ex(name, dir, ro, 0); }
@@ -239,6 +259,9 @@ static Result err_res(const char *op, const char *path) {
 #define HP_EX(path, create) PATH_LOCK(); char hp[1024]; int ro = 0; if (!host_path_ex(path, hp, sizeof hp, &ro, create)) return err_res("path", path)
 #define HP(path) HP_EX(path, 0)
 #define RW() if (ro) { LOG("fs 写只读挂载：%s", hp); return RES_FAIL; }
+// 建目录 / 建文件：目标已存在就照可写挂载的语义回「已存在」——游戏只认得这一种失败（原版存档盘不会写失败），回通用失败它会拿空句柄继续走（iOS 只读回退局在 CloseDirectory 崩）
+// Create directory / create file: if the target exists, answer "already exists" as a writable mount would. That is the only failure the game understands (the original save storage never fails to write); with a generic failure it carries on with a null handle (the iOS read-only fallback crashed in CloseDirectory)
+#define RW_CREATE() if (ro) { if (!access(hp, F_OK)) return RES_PATH_EXISTS; LOG("fs 写只读挂载：%s", hp); return RES_FAIL; }
 
 // ---------- 挂载 ----------
 // ---------- Mount ----------
@@ -415,9 +438,18 @@ HLE_FORCE("_ZN2nn2fs6CommitEPKc", "fsp-srv；事务式存档：工作目录整�
         }
         if (d0) closedir(d0);
         int nopen = 0; for (int k = 0; k < 65536; k++) nopen += g_fsave[k];   // 仍开着的存档文件：重新克隆后这些句柄指向被删的旧工作目录 | save files still open: after re-cloning, these handles point into the deleted old working directory
-        if (rm_tree(g_mnt[i].dir) || clonefile(g_mnt[i].commit, g_mnt[i].dir, 0)) die("存档事务：丢弃工作目录 %s 后重新克隆失败 errno=%d", g_mnt[i].dir, errno);
+        // 先把已提交版克隆到同级临时目录，成了再与被污染的工作目录原子互换、删掉换下来的；任一步失败都不退出：工作目录留着、「已污染」标记放回去
+        // （下次提交照样拒绝、再试一次重新克隆），已提交版本不变（原先先删工作目录再克隆，克隆失败就 die，盘满时进程直接退出、工作目录也没了）
+        // First clone the committed version into a sibling temporary directory; once that succeeds, atomically swap it with the tainted work directory and delete the swapped-out one. If any step fails, do not exit: the work directory stays and the "tainted" mark is put back
+        // (the next commit is refused again and recloning is retried); the committed version is unchanged (before, the work directory was deleted first and then recloned, and a failed clone called die, so with a full disk the process exited and the work directory was gone)
+        char re[1100]; snprintf(re, sizeof re, "%s.re", g_mnt[i].dir); int rerr = 0;
+        if (!access(re, F_OK) && rm_tree(re)) rerr = errno ? errno : EIO;
+        else if (dm_fs_test_fail("reclone") || clonefile(g_mnt[i].commit, re, 0)) { rerr = errno ? errno : EIO; rm_tree(re); }
+        else if (renamex_np(re, g_mnt[i].dir, RENAME_SWAP)) { rerr = errno ? errno : EIO; rm_tree(re); }
+        else rm_tree(re);                                               // 换下来的被污染工作目录 | The swapped-out tainted work directory
+        if (rerr) { save_poison(perr); LOG("【红】存档事务：重新克隆工作目录失败 errno=%d——工作目录不动、保持已污染（下次提交照样拒绝并重试），已提交版本不变", rerr); }
         pthread_mutex_unlock(&g_lock);
-        LOG("【红】存档提交拒绝：本事务有存档写失败 errno=%d（工作目录里 0 字节文件：%s）；已提交版本不变，工作目录已从已提交版重新克隆%s", perr, tl ? torn + 1 : "无", nopen ? "；【红】仍有存档文件开着" : "");
+        LOG("【红】存档提交拒绝：本事务有存档写失败 errno=%d（工作目录里 0 字节文件：%s）；已提交版本不变，工作目录%s%s", perr, tl ? torn + 1 : "无", rerr ? "没能重新克隆（见上一行）" : "已从已提交版重新克隆", nopen ? "；【红】仍有存档文件开着" : "");
         front_save_failed(perr);
         return RES_FAIL;
     }
@@ -526,6 +558,7 @@ HLE_FORCE("_ZN2nn2fs8OpenFileEPNS0_10FileHandleEPKci", "fsp-srv → open(2)", Re
     return RES_OK;
 }
 HLE_FORCE("_ZN2nn2fs8ReadFileEPmNS0_10FileHandleElPvm", "fsp-srv → pread(2)", Result, h_fs_ReadFile, size_t *out, uint64_t h, int64_t off, void *buf, size_t sz) {
+    if (!h) { *out = 0; return RES_FAIL; }   // 文件句柄就是 fd，0 是标准输入、不会是游戏打开的文件：打开失败后照用的空句柄 | A file handle is an fd; 0 is standard input and never a file the game opened: it is the null handle the game keeps using after a failed open
     size_t got = 0; uint64_t t0 = g_flag.bootprof ? now_ns() : 0;
     dm_guest_write_prepare(buf, sz);   // 目标可能是图形层写保护的贴图池页：内核写只读页返回 EFAULT 而不缺页，先解保护并标脏 | The destination may be a texture pool page write-protected by the graphics layer: a kernel write to a read-only page returns EFAULT instead of page-faulting, so unprotect and mark dirty first
     while (got < sz) {
@@ -551,6 +584,7 @@ HLE_FORCE("_ZN2nn2fs8ReadFileEPmNS0_10FileHandleElPvm", "fsp-srv → pread(2)", 
     return RES_OK;
 }
 HLE_FORCE("_ZN2nn2fs9WriteFileENS0_10FileHandleElPKvmRKNS0_11WriteOptionE", "fsp-srv → pwrite(2)", Result, h_fs_WriteFile, uint64_t h, int64_t off, const void *buf, size_t sz, const void *opt) {
+    if (!h) return RES_FAIL;
     (void)opt; size_t put = 0;
     if (g_fsave[(int)h & 0xffff]) {                                     // 存档写注入点（确定性回归用；只数存档挂载上的写） | Save write injection point (for deterministic regression; only writes on the save mount are counted)
         static int cfg = -1, kill_n, fail_n, fail_e;
@@ -572,16 +606,19 @@ HLE_FORCE("_ZN2nn2fs9WriteFileENS0_10FileHandleElPKvmRKNS0_11WriteOptionE", "fsp
     return RES_OK;
 }
 HLE_FORCE("_ZN2nn2fs11GetFileSizeEPlNS0_10FileHandleE", "fsp-srv → fstat(2)", Result, h_fs_GetFileSize, int64_t *out, uint64_t h) {
+    if (!h) return RES_FAIL;
     struct stat st; if (fstat((int)h, &st)) return err_res("fstat", "fd");
     *out = (int)h < 4096 && g_hm[(int)h] ? g_hm[(int)h]->size : st.st_size; return RES_OK;
 }
 HLE_FORCE("_ZN2nn2fs11SetFileSizeENS0_10FileHandleEl", "fsp-srv → ftruncate(2)", Result, h_fs_SetFileSize, uint64_t h, int64_t sz) {
+    if (!h) return RES_FAIL;
     if (!ftruncate((int)h, sz)) return RES_OK;
     if (g_fsave[(int)h & 0xffff]) save_poison(errno);
     return err_res("ftruncate", "fd");
 }
 HLE_FORCE("_ZN2nn2fs9FlushFileENS0_10FileHandleE", "fsp-srv；宿主 write 已进页缓存，刷新为空操作", Result, h_fs_FlushFile, uint64_t h) { (void)h; return RES_OK; }
-HLE_FORCE("_ZN2nn2fs9CloseFileENS0_10FileHandleE", "fsp-srv → close(2)", void, h_fs_CloseFile, uint64_t h) { g_fmode[(int)h & 0xffff] = 0; g_fsave[(int)h & 0xffff] = 0;
+HLE_FORCE("_ZN2nn2fs9CloseFileENS0_10FileHandleE", "fsp-srv → close(2)", void, h_fs_CloseFile, uint64_t h) {
+    if (!h) return;  g_fmode[(int)h & 0xffff] = 0; g_fsave[(int)h & 0xffff] = 0;
     if ((int)h >= 0 && (int)h < 4096 && g_hm[(int)h]) { holemap *m = g_hm[(int)h]; g_hm[(int)h] = NULL; free(m->log); free(m->len); free(m->phys); free(m); }
     close((int)h); }
 HLE_FORCE("_ZN2nn2fs15GetFileOpenModeENS0_10FileHandleE", "fsp-srv；打开方式由宿主记录", int, h_fs_GetFileOpenMode, uint64_t h) { return g_fmode[(int)h & 0xffff]; }
@@ -589,7 +626,7 @@ HLE_FORCE("_ZN2nn2fs15GetFileOpenModeENS0_10FileHandleE", "fsp-srv；打开方�
 // ---------- 路径操作 ----------
 // ---------- Path operations ----------
 HLE_FORCE("_ZN2nn2fs10CreateFileEPKcl", "fsp-srv → open(O_CREAT|O_EXCL)+ftruncate", Result, h_fs_CreateFile, const char *path, int64_t sz) {
-    HP_EX(path, 1); RW();
+    HP_EX(path, 1); RW_CREATE();
     int fd = open(hp, O_WRONLY | O_CREAT | O_EXCL, 0644);
     if (fd < 0) return err_res("create", hp);
     int rc = ftruncate(fd, sz); int e = errno; close(fd);
@@ -598,7 +635,7 @@ HLE_FORCE("_ZN2nn2fs10CreateFileEPKcl", "fsp-srv → open(O_CREAT|O_EXCL)+ftrunc
     errno = e; return rc ? err_res("create", hp) : RES_OK;
 }
 HLE_FORCE("_ZN2nn2fs10DeleteFileEPKc", "fsp-srv → unlink(2)", Result, h_fs_DeleteFile, const char *path) { HP(path); RW(); return unlink(hp) ? err_res("unlink", hp) : RES_OK; }
-HLE_FORCE("_ZN2nn2fs15CreateDirectoryEPKc", "fsp-srv → mkdir(2)", Result, h_fs_CreateDirectory, const char *path) { HP_EX(path, 1); RW();
+HLE_FORCE("_ZN2nn2fs15CreateDirectoryEPKc", "fsp-srv → mkdir(2)", Result, h_fs_CreateDirectory, const char *path) { HP_EX(path, 1); RW_CREATE();
     if (mkdir(hp, 0755)) return err_res("mkdir", hp);
     if (set_guest_name(hp, path)) { int e = errno; rmdir(hp); errno = e; return err_res("mkdir name", hp); }
     return RES_OK; }
@@ -621,7 +658,10 @@ HLE_FORCE("_ZN2nn2fs10RenameFileEPKcS2_", "fsp-srv → rename(2)", Result, h_fs_
     if (!host_path_ex(to, hp2, sizeof hp2, NULL, 1)) return err_res("rename path", to);
     if (!access(hp2, F_OK)) return RES_PATH_EXISTS;
     if (rename(hp, hp2)) return err_res("rename", hp);
-    if (set_guest_name(hp2, to)) { int e = errno; if (rename(hp2, hp)) die("fs 改名元数据失败且回退失败 errno=%d", errno); errno = e; return err_res("rename name", hp2); }
+    if (dm_fs_test_fail("guestname") || set_guest_name(hp2, to)) { int e = errno ? errno : EIO;
+        if (dm_fs_test_fail("renameback") || rename(hp2, hp)) {   // 回退也失败：文件留在新路径、客体名元数据不对；不退出——在事务存档里就让本事务提交被拒（已提交版本不变，重新克隆即复原） | Rollback also failed: the file stays at the new path with wrong guest-name metadata; do not exit. In a transactional save, this transaction's commit is refused (the committed version is unchanged and recloning restores it)
+            LOG("【红】fs 改名元数据失败且回退失败 errno=%d：%s 留在新路径%s", errno, hp2, in_txn_dir(hp2) ? "，本事务存档提交将被拒" : ""); if (in_txn_dir(hp2)) save_poison(e); }
+        errno = e; return err_res("rename name", hp2); }
     return RES_OK;
 }
 HLE_FORCE("_ZN2nn2fs12GetEntryTypeEPNS0_18DirectoryEntryTypeEPKc", "fsp-srv → stat(2)", Result, h_fs_GetEntryType, int32_t *out, const char *path) {
@@ -678,6 +718,7 @@ HLE_FORCE("_ZN2nn2fs13OpenDirectoryEPNS0_15DirectoryHandleEPKci", "fsp-srv → o
     *out = (uint64_t)h; return RES_OK;
 }
 HLE_FORCE("_ZN2nn2fs13ReadDirectoryEPlPNS0_14DirectoryEntryENS0_15DirectoryHandleEl", "fsp-srv → readdir(3)", Result, h_fs_ReadDirectory, int64_t *count, DirectoryEntry *ents, uint64_t hh, int64_t max) {
+    if (!hh) { *count = 0; return RES_FAIL; }
     PATH_LOCK(); dirh_t *h = (dirh_t *)hh; int64_t n = 0; struct dirent *e;
     if (h->snap) { while (n < max && h->psnap < h->nsnap) { DirectoryEntry *src = &h->snap[h->psnap++]; if (!(h->mode & (src->type == ENT_DIR ? DIRMODE_DIR : DIRMODE_FILE))) continue; ents[n++] = *src; } *count = n; return RES_OK; }
     while (n < max && (e = readdir(h->d))) {
@@ -694,5 +735,6 @@ HLE_FORCE("_ZN2nn2fs13ReadDirectoryEPlPNS0_14DirectoryEntryENS0_15DirectoryHandl
     *count = n; return RES_OK;
 }
 HLE_FORCE("_ZN2nn2fs14CloseDirectoryENS0_15DirectoryHandleE", "fsp-srv → closedir(3)", void, h_fs_CloseDirectory, uint64_t hh) {
+    if (!hh) return;   // 游戏在打开失败后也会关（句柄是 0）：原版无事可做 | The game also closes after a failed open (handle 0): nothing to do in the original either
     dirh_t *h = (dirh_t *)hh; closedir(h->d); if (h->od) closedir(h->od); free(h->snap); free(h);
 }

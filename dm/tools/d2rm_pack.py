@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # 不用 Xcode 出可玩的安装包：把你自己的游戏文件做进「壳」。
-#   壳（D2RMobile-shell.ipa）是一个不含任何游戏内容、没有签名的安装包；本工具用你的游戏文件在你的电脑上生成它缺的全部内容
+#   壳（D2RMobile-shell-build-input.zip，构建原料、不能直接安装）是一个不含任何游戏内容、没有签名的安装包；本工具用你的游戏文件在你的电脑上生成它缺的全部内容
 #   （改写后的游戏程序、着色器库、覆盖层、界面素材、几张数据表），放进去，写出一个新的安装包。之后用自签工具整包签名装机。
 #   游戏文件只在本机读，不上传；做出来的安装包里有游戏内容，请只自己用，不要分发。
 # 用法：d2rm_pack.py <壳.ipa> <游戏文件目录> <输出.ipa>
@@ -10,17 +10,17 @@
 # 需要：Python 3.9+ 与 pillow numpy lz4 capstone unicorn；C 编译器（clang 或 gcc，解贴图的小段 C 用）；.NET SDK（编着色器翻译工具）；
 #   spirv-cross；苹果的 Metal 着色器编译器（Mac 上随 Xcode）。缺什么本工具开头会逐项报。
 # 它做的事与「./setup.sh + dm/ios/run.sh build 的生成部分」相同，只是最后不调 Xcode 构建，而是把产物放进壳里。
-# Build a playable install package without Xcode: put your own game files into the "shell".
-#   The shell (D2RMobile-shell.ipa) is an unsigned install package with no game content at all; this tool uses your game files to generate, on your computer, everything it lacks
-#   (the rewritten game program, shader libraries, overlay, UI assets, a few data tables), puts it in, and writes out a new install package. Afterwards sign the whole package with a sideloading tool and install it.
-#   The game files are only read locally and never uploaded; the resulting install package contains game content, so please use it only yourself and do not distribute it.
-# Usage: d2rm_pack.py <shell.ipa> <game files directory> <output.ipa>
-#   game files directory = the Update directory of Switch version 3.3.94012, containing ExeFS/{main,sdk} and RomFS/data/... (how to export it from your own game)
-#   working directory (cache and intermediate outputs, about 12 GB): environment variable DM_ROOT, default ~/dm-work; every step already done is skipped
-#   Older devices (A16 and earlier chips): make the texture pack first, then run this tool with the environment variable D2RM_ASTC_PACK=<the pack directory of the texture pack>
-# Requires: Python 3.9+ with pillow numpy lz4 capstone unicorn; a C compiler (clang or gcc, for the small piece of C that decodes textures); the .NET SDK (to build the shader translation tool);
-#   spirv-cross; Apple's Metal shader compiler (on a Mac it comes with Xcode). This tool reports whatever is missing item by item at the start.
-# What it does is the same as "./setup.sh + the generation part of dm/ios/run.sh build", except that at the end it does not invoke an Xcode build but puts the build outputs into the shell.
+# Make a playable install package without Xcode: build your own game files into the "shell".
+#   The shell (D2RMobile-shell-build-input.zip, build input, not installable) is an unsigned install package with no game content; this tool generates everything it lacks from your game files on your computer
+#   (the rewritten game program, shader library, overlay, UI art and a few data tables), puts it in, and writes a new install package. Then sign the whole package with a sideloading tool and install it.
+#   Your game files are only read locally and never uploaded; the package you make contains game content, so keep it for yourself and do not distribute it.
+# Usage: d2rm_pack.py <shell.ipa> <game files dir> <output.ipa>
+#   game files dir = the Update directory of the Switch version 3.3.94012, containing ExeFS/{main,sdk} and RomFS/data/... (how to export it from your own game)
+#   Work directory (cache and intermediates, about 12 GB): environment variable DM_ROOT, default ~/dm-work; every step that is already done is skipped
+#   Older devices (A16 and earlier chips): build the texture pack first, then run this tool with D2RM_ASTC_PACK=<the texture pack's pack directory>
+# Requires: Python 3.9+ with pillow numpy lz4 capstone unicorn; a C compiler (clang or gcc, for a small C texture decoder); the .NET SDK (to build the shader translator);
+#   spirv-cross; Apple's Metal shader compiler (comes with Xcode on a Mac). The tool lists anything missing at the start.
+# It does the same as the generation part of ./setup.sh + dm/ios/run.sh build, except that instead of building with Xcode it puts the results into the shell.
 import hashlib, json, os, re, runpy, shutil, subprocess, sys, time, zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__)); DM = os.path.dirname(HERE); IOS = os.path.join(DM, 'ios'); GT = os.path.join(DM, 'gfx', 'tools')
@@ -237,10 +237,15 @@ def main():
     if ('b-' + chain) not in open(c1, encoding='utf-8').readline(): die('着色器下标清单首行的链版本不是壳要的 %s' % chain)
     say('自检：%d 个着色器说明、下标清单、目录名的链版本都是壳要的 %s；翻译出的源码摘要 %s%s' % (len(js), chain, got, '与壳一致' if info.get('SHADER_SRC') else '（这个壳没带摘要，没比）'))
 
+    # 打包记录：做进去的内容是哪个产物代号。壳启动时与 dm/shell_info.txt 的代号比，不一致（拼装出来的包）就弹框说明、不起游戏（main.m pack_check）
+    # Pack record: which product generation was built in. At launch the shell compares it with the generation in dm/shell_info.txt; if they differ (a package assembled from different releases) it shows a message and does not start the game (main.m pack_check)
+    with open(os.path.join(stage, 'dm', 'pack_info.txt'), 'w', encoding='utf-8') as f: f.write('PRODUCT=%s\n' % P)
+    extra = extra + ['dm/pack_info.txt']
+
     # 六、照壳的清单核对一项不缺，再放进去
     # 6. Check against the shell's manifest that nothing is missing, then put it in
     miss = [m for m in manifest if not (os.path.isdir(os.path.join(stage, m)) if m.endswith('/') else os.path.isfile(os.path.join(stage, m)))]
-    if miss: die('有 %d 项没做出来：%s。壳的清单里要、而这份工具没有生成——壳与工具不是同一版。请用与这份仓库同一版本的壳（发布页最新的 D2RMobile-shell.ipa），或把仓库更新到与壳对应的版本' % (len(miss), '、'.join(miss)))
+    if miss: die('有 %d 项没做出来：%s。壳的清单里要、而这份工具没有生成——壳与工具不是同一版。请用与这份仓库同一版本的壳（发布页最新的 D2RMobile-shell-build-input.zip），或把仓库更新到与壳对应的版本' % (len(miss), '、'.join(miss)))
     tmp = out_ipa + '.part'; added = 0
     with zipfile.ZipFile(tmp, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as o:
         for i in z.infolist(): o.writestr(i, z.read(i.filename))

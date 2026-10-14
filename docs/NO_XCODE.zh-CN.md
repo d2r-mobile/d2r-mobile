@@ -15,9 +15,11 @@ English: [NO_XCODE.md](NO_XCODE.md)
 
 ## 壳里有什么、没有什么
 
-壳从本仓库的[发布页](https://github.com/d2r-mobile/d2r-mobile/releases)下载。发布页上有两份：`D2RMobile-shell.ipa` 给 iOS 26 及以上，`D2RMobile-shell-ios18.ipa` 给 iOS 18 – 25（[OLDER_SYSTEMS.zh-CN.md](OLDER_SYSTEMS.zh-CN.md)），按手机的系统挑一份，后面的步骤相同。壳（约 4 MB）里只有我们自己的宿主程序、图标和两张随仓库公开的表。它**没有**：游戏程序、着色器、覆盖层、界面素材、任何从游戏文件生成的数据表。构建壳的脚本（`dm/ios/tools/shell_build.sh`）在最后会拿真实的游戏内容去壳里逐个文件搜一遍，搜到就不出壳。
+壳从本仓库的[发布页](https://github.com/d2r-mobile/d2r-mobile/releases)下载。发布页上有两份：`D2RMobile-shell-build-input.zip` 给 iOS 26 及以上，`D2RMobile-shell-ios18-build-input.zip` 给 iOS 18 – 25（[OLDER_SYSTEMS.zh-CN.md](OLDER_SYSTEMS.zh-CN.md)），按手机的系统挑一份，后面的步骤相同。壳（约 4 MB）里只有我们自己的宿主程序、图标和两张随仓库公开的表。它**没有**：游戏程序、着色器、覆盖层、界面素材、任何从游戏文件生成的数据表。构建壳的脚本（`dm/ios/tools/shell_build.sh`）在最后会拿真实的游戏内容去壳里逐个文件搜一遍，搜到就不出壳。
 
-壳自己起不来——它启动时会告诉你「这个安装包里还没有游戏程序」。
+**壳是做安装包的原料，不能直接装来玩**（所以它是 `.zip`，不是 `.ipa`）。把它改名直接装上去，App 启动时会弹框「这个安装包还不能玩」，列出缺的内容，告诉你回到下面第一步；不会进游戏。
+
+**每次换新版本，都要用新版的壳和同一版本的源码重新做一遍第一步**，再装新做出来的安装包。手机上第三步放的资源档案和版本无关，不用重拷。
 
 ## 你需要准备的
 
@@ -41,7 +43,7 @@ English: [NO_XCODE.md](NO_XCODE.md)
 ## 第一步：把游戏内容做进壳
 
 ```
-python3 dm/tools/d2rm_pack.py <D2RMobile-shell.ipa> <你的游戏文件目录> <输出.ipa>
+python3 dm/tools/d2rm_pack.py <D2RMobile-shell-build-input.zip> <你的游戏文件目录> <输出.ipa>
 ```
 
 `<你的游戏文件目录>` 是含 `ExeFS/` 与 `RomFS/` 的那一层。它依次：改写游戏程序并写成一个动态库 → 从游戏文件生成界面素材与几张数据表 → 生成覆盖层 → 把游戏的着色器翻译成 Metal → 照壳里的清单核对一项不缺 → 写出新的安装包（约 130 MB）。第一次约十几分钟，主要花在翻译着色器上；每一步做过就跳过。

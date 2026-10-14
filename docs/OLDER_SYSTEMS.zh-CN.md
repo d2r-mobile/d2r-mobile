@@ -36,8 +36,8 @@ DM_IOS_M3=1 ./run.sh build
 
 | 壳 | 给谁 |
 |---|---|
-| `D2RMobile-shell.ipa` | iOS 26 及以上 |
-| `D2RMobile-shell-ios18.ipa` | iOS 18 – 25 |
+| `D2RMobile-shell-build-input.zip` | iOS 26 及以上 |
+| `D2RMobile-shell-ios18-build-input.zip` | iOS 18 – 25 |
 
 做包工具两份壳都认，命令不变。A16 及更早的机型同样加 `D2RM_ASTC_PACK`（见 NO_XCODE 的「老机型」一节）——贴图包只和芯片有关，两份壳用的是同一个贴图包。
 

@@ -57,23 +57,17 @@ static void layout_game(void) {
     LOG("窗口：内容区 %.0f×%.0f，游戏画面 %.0f×%.0f 放在 (%.0f,%.0f)", g_view.bounds.size.width, g_view.bounds.size.height, r.size.width, r.size.height, r.origin.x, r.origin.y);
 }
 // 退出（关窗口 / ⌘Q / 菜单）：有局在就先请游戏走一次它自己的存盘并等存档提交（做法同 iOS 壳进后台），最多 3 秒，再有序收尾。
-// 暂停菜单 / 大秘境面板开着时游戏停拍：先放开暂停让拍走起来；读取画面里等它进到局内再请。3 秒到了还没有提交就照实记「未存盘退出」
-// Quit (closing the window / ⌘Q / menu): if a game is in progress, first ask the game to do its own save and wait for the save to be committed (the same way the iOS shell does when going to the background), for at most 3 seconds, then shut down in order.
-// With the pause menu / rift panel open the game is not ticking: release the pause first so the ticks run; in a loading screen wait until it is in the game, then ask. If nothing is committed when the 3 seconds are up, truthfully log "quit without saving"
+// 暂停菜单 / 大秘境面板开着时游戏停拍：冻住世界、临时放开暂停存这一次（diag.c dm_save_wait，与 iOS 进后台同一个函数）；读取画面里等它进到局内再请。3 秒到了还没有提交就照实记「未存盘退出」
+// Quit (close window / Cmd-Q / menu): if a game is running, first ask the game to do one of its own saves and wait for the save commit (same as the iOS shell going to the background), at most 3 s, then shut down in order.
+// When the pause menu / Greater Rift panel is open the game does not tick: freeze the world and temporarily release the pause for this one save (diag.c dm_save_wait, the same function as iOS going to the background); on the loading screen wait until in game before asking. If there is still no commit after 3 s, log "quit without saving" as is
 static void app_quit(const char *why) {
     static int once; if (once++) return;
     { uint64_t dm_audio_render_calls(void); LOG("窗口：退出（%s）；声卡回调累计 %llu（0 = 这次没出声）", why, (unsigned long long)dm_audio_render_calls()); }
-    int dm_ingame_now(void); int dm_request_save(void); int dm_unpause_for_exit(void); uint64_t dm_fs_commit_count(void); uint64_t now_ns(void);
+    int dm_ingame_now(void); int dm_save_wait(double max_s, uint64_t *commits, int *froze, double *ms);
     if (!dm_ingame_now() && !dm_uiscreen_ingame()) { LOG("窗口：退出（不在局内，没有待存的进度）"); dm_host_shutdown(why); return; }
-    uint64_t c0 = dm_fs_commit_count(), t0 = now_ns(), last = c0, last_t = 0; int asked = 0, paused = 0;
-    for (;;) {
-        paused |= dm_unpause_for_exit(); if (!asked) asked = dm_request_save();
-        usleep(20000); uint64_t c = dm_fs_commit_count(), t = now_ns();
-        if (c != last) { last = c; last_t = t; }
-        if ((asked && last_t && t - last_t >= 200000000ull) || t - t0 >= 3000000000ull) break;
-    }
-    if (last != c0 && asked) LOG("窗口：退出前等游戏存盘 %.0f ms，期间存档提交 %llu 次%s", (now_ns() - t0) / 1e6, (unsigned long long)(last - c0), paused ? "（原先停在暂停菜单 / 面板，已放开）" : "");
-    else LOG("【红】窗口：未存盘退出——3 秒内没等到存档提交（%s%s）", asked ? "已请游戏存盘" : "一直没到能请存盘的状态（读取画面？）", paused ? "，原先暂停着、已放开" : "");
+    uint64_t n = 0; int froze = 0; double ms = 0; int asked = dm_save_wait(3, &n, &froze, &ms);
+    if (n && asked) LOG("窗口：退出前等游戏存盘 %.0f ms，期间存档提交 %llu 次%s", ms, (unsigned long long)n, froze ? "（原先暂停着：冻结世界存盘、已恢复暂停）" : "");
+    else LOG("【红】窗口：未存盘退出——3 秒内没等到存档提交（%s%s）", asked ? "已请游戏存盘" : "一直没到能请存盘的状态（读取画面？）", froze ? "，原先暂停着、冻结放开过" : "");
     { int dm_cloud_flush_wait(double sec); dm_cloud_flush_wait(10); }   // 存盘之后把这一局传上 iCloud 再退（没开同步时立即返回） | after saving, upload this session to iCloud before quitting (returns immediately when sync is off)
     dm_host_shutdown(why);
 }

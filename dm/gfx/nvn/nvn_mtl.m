@@ -2105,7 +2105,7 @@ static void shmap_load(void) {
 // Warm-up entry: built in the background, waiting to be taken by the submit thread. vs / fs are strong references (in pso they are only raw pointers, and the background dictionary is released when the task ends)
 @interface WarmItem : NSObject { @public int kind; NSString *key, *vs_key, *fs_key; NvShader *shader, *vs, *fs; pso_key pso; id<MTLFunction> fsfn; id object; } @end
 @implementation WarmItem @end
-static NSMutableDictionary<NSString *, NvShader *> *g_shcache;
+static NSMutableDictionary<NSString *, NvShader *> *g_shcache; static _Atomic uint32_t g_shcache_n;   // 表只在提交线程上读写；条数另记一份原子数给别的线程读（资源计数） | The tables are read and written only on the submit thread; a separate atomic count is kept for other threads to read (resource counts)
 
 static void c1_store(NvShader *o) {
     size_t len = o->rf.c1_len;
@@ -2286,7 +2286,7 @@ static NvShader *shader_get(NSString *pc, int stage) {
     if (o) return o;
     uint64_t bt = bp_now(); o = shader_load(pc, stage);
     if (!o) return nil;
-    g_shcache[pc] = o;
+    g_shcache[pc] = o; atomic_fetch_add(&g_shcache_n, 1);
     pso_record("S\t%s\t%d\n", pc.UTF8String, stage);
     pso_user_record("S\t%s\t%d\n", pc.UTF8String, stage);
     g_bp_lib_n++; g_bp_lib_ns += bp_now() - bt;
@@ -4751,17 +4751,17 @@ static void warm_claim(void) {
     for (WarmItem *item in items) {
         if (item->kind == 0) {
             if (!g_shcache) g_shcache = [NSMutableDictionary dictionary];
-            if (!g_shcache[item->key]) { g_shcache[item->key] = item->shader; g_warm_claim_shaders++; }
+            if (!g_shcache[item->key]) { g_shcache[item->key] = item->shader; atomic_fetch_add(&g_shcache_n, 1); g_warm_claim_shaders++; }
         } else if (item->kind == 1) {
             if (!g_shcache) g_shcache = [NSMutableDictionary dictionary];
             NvShader *vs = g_shcache[item->vs_key], *fs = item->fs_key.length ? g_shcache[item->fs_key] : nil;
-            if (!vs) { vs = item->vs; g_shcache[item->vs_key] = vs; }
-            if (item->fs_key.length && !fs) { fs = item->fs; g_shcache[item->fs_key] = fs; }
+            if (!vs) { vs = item->vs; g_shcache[item->vs_key] = vs; atomic_fetch_add(&g_shcache_n, 1); }
+            if (item->fs_key.length && !fs) { fs = item->fs; g_shcache[item->fs_key] = fs; atomic_fetch_add(&g_shcache_n, 1); }
             item->pso.vs = (__bridge void *)vs; item->pso.fs = (__bridge void *)fs;
             if (!hm_get_id(&g_pso, &item->pso)) { hm_put_id(&g_pso, &item->pso, item->object); g_warm_claim_rps++; }
         } else {
             NvShader *cs = g_shcache[item->key];
-            if (!cs) { cs = item->shader; if (!g_shcache) g_shcache = [NSMutableDictionary dictionary]; g_shcache[item->key] = cs; }
+            if (!cs) { cs = item->shader; if (!g_shcache) g_shcache = [NSMutableDictionary dictionary]; g_shcache[item->key] = cs; atomic_fetch_add(&g_shcache_n, 1); }
             const void *key = (__bridge const void *)cs;
             if (!hm_get_id(&g_cps, &key)) { hm_put_id(&g_cps, &key, item->object); g_warm_claim_cps++; }
         }
@@ -4888,6 +4888,7 @@ static void copy_t2b(const p_copy_b2t *c) {
 // CPU 读贴图（ReadTexels）：预排布贴图以池内存为真值，解排布直读；其余从 MTLTexture blit 读回（调用方已按 NVN 规矩等过 GPU）
 // CPU texture read (ReadTexels): for packaged textures the pool memory is the ground truth, de-layout and read directly; the rest are read back from the MTLTexture by blit (the caller has already waited for the GPU per NVN rules)
 void mtl_read_texels(const tex_t *t, unsigned level, unsigned layer0, const NVNcopyRegion *r, uint8_t *dst, size_t row, size_t img) {
+    if (!on_sub_thread()) while (atomic_load(&g_up_pending)) usleep(200);   // 翻译在翻译线程：调用方已排空队列（批已随提交冲刷），这里只等上传在 GPU 上做完（提交线程上由 q_cb 冲刷并等） | Translation runs on the translation thread: the caller has already drained the queue (batches were flushed with the submit), so here we only wait for uploads to finish on the GPU (on the submit thread q_cb flushes and waits)
     xv_check(t->serial, level, layer0, "CPU读回");
     PD("U cpu_read ser=%llu lv%u sl%u xyz=%d,%d,%d size=%d,%d,%d dst=%p row=%lu img=%lu", t->serial, level, layer0, r->xoffset, r->yoffset, r->zoffset, r->width, r->height, r->depth, dst, (unsigned long)row, (unsigned long)img);
     int bw, bh, bpb = nvn_fmt_bpb(t->d.format, &bw, &bh);
@@ -5106,7 +5107,13 @@ static const char *cctx_snap(void) {
 // State constants / buffer updates / events / counters / texture uploads execute as usual (the UI pass needs them, the game is waiting).
 int g_frz_on = -1;
 static int g_frz_phase = 2, g_frz_drop, g_frz_seen_ds; static uint64_t g_frz_full_n, g_frz_skip_n;
-void mtl_world_frozen(int on) { g_frz_on = on != 0; }
+// 宿主在游戏线程上写的两个画法开关（冻结位、强制全画）先记成请求，提交入队时锁存进任务（mtl_host_latch），翻译线程执行那次提交前生效（mtl_host_apply）：
+// 生效时机与同步翻译时一样落在两次提交之间，不会在翻译途中翻转（回放每条操作都读冻结位；强制全画计数回放里自减，宿主直接写会丢）
+// The two drawing switches the host writes on the game thread (freeze bit, force full draw) are first recorded as requests, latched into the job when the submit is enqueued (mtl_host_latch), and take effect before the translation thread runs that submit (mtl_host_apply):
+// they take effect between two submits just as with synchronous translation and never flip in the middle of translation (replay reads the freeze bit for every operation; the force-full-draw counter is decremented in replay, and a direct write by the host would lose one)
+static _Atomic int g_frz_req = -1, g_force_req;
+void mtl_world_frozen(int on) { atomic_store(&g_frz_req, on != 0); }
+uint64_t mtl_host_latch(void) { return (uint64_t)(uint32_t)(atomic_load(&g_frz_req) + 1) | (uint64_t)(uint32_t)atomic_exchange(&g_force_req, 0) << 32; }
 static int frz_wanted(void) { if (g_frz_on < 0) { const char *e = getenv("DM_NVN_TEST_FRZ"); g_frz_on = e && atoi(e); if (g_frz_on) MLOG("DM_NVN_TEST_FRZ：世界冻结状态位由测试开关顶替（常开）"); } tbdr_on(); return g_frz_on > 0 && tbdr_on() && g_ruler_truth <= 0; }
 // ---------- 运行时外推（省电画法；不给玩家开关；线上出过卡顿缺陷，现缺省关，A17 上有不卡的证据再开）----------
 // 3D 隔帧：全画帧照常画，并在附件被挪作他用之前拷下不透明 HDR（468）、主深度模板、色调映射后的 468、FXAA 后的 469；
@@ -5135,7 +5142,8 @@ static struct { int env, frame, filt, first, hdrp, mainp_seen, skipall, oit_seen
 static int rt_want(void);
 static void rt_toggle_poll(void) { static int tg = -1; if (tg < 0) { const char *e = getenv("DM_RT_AB_TOGGLE"); tg = e ? atoi(e) : 0; (void)rt_want(); }   // 首次顺带读 DM_RT_AB（真机上世界冻结位早早置 0，frz_op 不一定被调到）   // 测试：每 tg 秒按墙钟在 A / B 之间来回切 | On first call also read DM_RT_AB (on a real device the world-freeze bit is set to 0 very early, so frz_op is not necessarily called)   // test: switch back and forth between A / B every tg seconds by wall clock
     if (tg > 0) { int v = (int)((time(NULL) / tg) & 1); if (v != g_dm_rt_ab) { g_dm_rt_ab = v; MLOG("DM_RT_AB_TOGGLE：画法切到 %s", v ? "B" : "A"); } } }
-void mtl_rt_force_full(int n) { g_rt.force_full = n; }   // 宿主调：要换 3D 渲染比例等画面整体变化前，之后 n 帧一律全画 | Called by the host: before an overall picture change such as switching the 3D render scale, the following n frames are all fully drawn
+void mtl_rt_force_full(int n) { atomic_store(&g_force_req, n); }   // 宿主调：要换 3D 渲染比例等画面整体变化前，之后 n 帧一律全画（随下一次提交生效） | Called by the host: before a change to the whole picture such as switching the 3D render scale, draw everything for the next n frames (takes effect with the next submit)
+void mtl_host_apply(uint64_t v) { int frz = (int)(uint32_t)v - 1, force = (int)(v >> 32); if (frz >= 0) g_frz_on = frz; if (force) g_rt.force_full = force; }
 // ---------- 省电模式（30 帧）----------
 // 开：显示节拍对象改 30 Hz（帧率范围 30–30，ProMotion 屏跟着降刷新率；front_ios.m 的帧率提示一起降），游戏每拍出一帧；运行时外推关（每帧真画）。
 // 游戏逻辑本来就按 25 拍 / 秒走、单位位置按时间插值，30 帧下没有重复帧（真机实测：每帧镜头位移的变异系数 30 帧 0.292、60 帧 0.296）。
@@ -5402,7 +5410,7 @@ void mtl_res_snapshot(mtl_res_count *out) {
     out->pso = g_pso.n;
     out->cps = g_cps.n;
     out->dss = g_dss.n;
-    out->shaders = (uint32_t)(g_shcache ? g_shcache.count : 0);
+    out->shaders = atomic_load(&g_shcache_n);   // 资源计数在宿主线程上取，回放在翻译线程上改表 | Resource counts are taken on the host thread while replay changes the tables on the translation thread
     os_unfair_lock_lock(&g_c1_lock);
     out->c1_bufs = (uint32_t)(g_c1_banks.count + g_c1_exclusive); out->c1_alloc = g_c1_alloc_bytes; out->c1_data = g_c1_data_bytes;
     os_unfair_lock_unlock(&g_c1_lock);
