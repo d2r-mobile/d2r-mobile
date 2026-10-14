@@ -739,6 +739,14 @@ static void run_boot(void);
 @property (strong) UILabel *label; @property (strong) UIProgressView *bar; @property (strong) UIButton *retry;
 @property (assign) int64_t last; @property (assign) CFAbsoluteTime lastT; @property (assign) double rate;
 @property (strong) nw_path_monitor_t netmon; @property (assign) int netDown, stopped;   // 守着网络：停在「下载没开始」那一页时，网络从不通变成通就自己重试 | network watch: while sitting on the "download did not start" page, retry automatically when the network goes from down to up
+// 托管下载（TestFlight）：进度到 100% 之后系统还要把资源包装进本地（头文件：完成通知 = 下完且本地可用），这段不给进度；完成回调 / 通知不来就会一直停在进度字上（线上玩家卡 10 分钟）。
+// 所以守着系统的「本地可用」状态自己轮询（5 秒一次、30 秒记一行日志），到了就进游戏，不只等回调；100% 后屏上说明在安装、空间不够写清差多少；
+// 安装超时 / 暂停 / 报错时给「改用直接下载」（走下载站那条路，包里配了下载地址才给）。packFull = 进度到 100% 的时刻，gone = 已改走直接下载（之后托管的回调只记日志）
+// Hosted download (TestFlight): after progress reaches 100% the system still has to install the asset pack locally (header: completion notification = downloaded and available locally), and gives no progress for that part; if the completion callback / notification does not come, the screen stays on the progress text forever (players in the field were stuck for 10 minutes).
+// So we watch the system's "available locally" state and poll it ourselves (every 5 seconds, a log line every 30 seconds) and enter the game when it is reached, instead of only waiting for the callback; after 100% the screen explains that it is installing, and if space is short it says by how much;
+// on install timeout / pause / error it offers "Use direct download" (the download-site path, only offered if the package has a download address configured). packFull = the moment progress reached 100%, gone = already switched to direct download (after that, callbacks from the hosted download are only logged)
+@property (strong) UIButton *useDirect, *share; @property (strong) dispatch_source_t poll; @property (assign) CFAbsoluteTime packT, packFull, logT, testAvailAt;
+@property (assign) int64_t packBytes, packDone; @property (assign) int gone, slowShown, finished, textKind, packStop;   // packStop：系统报了暂停 / 失败，屏上留那条说明，不再换回「正在安装」 | packStop: the system reported paused / failed; the screen keeps that explanation and does not switch back to "Installing"
 @end
 @implementation AssetVC
 - (void)netUp { if (self.netDown && self.stopped) { plog("assets: 网络通了，自动重试"); self.netDown = 0; [self start]; } else self.netDown = 0; }
@@ -765,10 +773,92 @@ static void run_boot(void);
     self.retry = [UIButton buttonWithType:UIButtonTypeSystem]; self.retry.frame = CGRectMake(b.size.width / 2 - 60, b.size.height / 2 + 50, 120, 44);
     [self.retry setTitle:T("dmDlRetry") forState:UIControlStateNormal]; self.retry.hidden = YES; self.retry.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin | UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleBottomMargin;
     [self.retry addTarget:self action:@selector(start) forControlEvents:UIControlEventTouchUpInside];
-    [self.view addSubview:self.label]; [self.view addSubview:self.bar]; [self.view addSubview:self.retry];
+    self.useDirect = [UIButton buttonWithType:UIButtonTypeSystem]; [self.useDirect setTitle:T("dmDlUseDirect") forState:UIControlStateNormal]; self.useDirect.hidden = YES;
+    [self.useDirect addTarget:self action:@selector(useDirectTap) forControlEvents:UIControlEventTouchUpInside];
+    self.share = [UIButton buttonWithType:UIButtonTypeSystem]; [self.share setTitle:T("dmPauseShareLog") forState:UIControlStateNormal]; self.share.hidden = YES;
+    [self.share addTarget:self action:@selector(shareTap) forControlEvents:UIControlEventTouchUpInside];
+    [self.view addSubview:self.label]; [self.view addSubview:self.bar]; [self.view addSubview:self.retry]; [self.view addSubview:self.useDirect]; [self.view addSubview:self.share];
     UIApplication.sharedApplication.idleTimerDisabled = YES;
     [self watchNet];
     [self start];
+}
+- (void)viewDidLayoutSubviews {   // 按钮一行居中排：重试 / 改用直接下载 / 分享诊断日志，只排露出来的 | buttons centred in one row: Retry / Use direct download / Share diagnostic log, only the ones showing
+    [super viewDidLayoutSubviews]; CGRect b = self.view.bounds; NSMutableArray<UIButton *> *row = [NSMutableArray array]; CGFloat w = 0;
+    for (UIButton *x in @[self.retry, self.useDirect, self.share]) if (!x.hidden) { [x sizeToFit]; [row addObject:x]; w += MAX(120, x.bounds.size.width + 24) + (row.count > 1 ? 16 : 0); }
+    CGFloat x0 = (b.size.width - w) / 2;
+    for (UIButton *x in row) { CGFloat bw = MAX(120, x.bounds.size.width + 24); x.frame = CGRectMake(x0, b.size.height / 2 + 50, bw, 44); x0 += bw + 16; }
+}
+- (void)showBtn:(UIButton *)x { dispatch_async(dispatch_get_main_queue(), ^{ x.hidden = NO; [self.view setNeedsLayout]; }); }
+- (void)shareTap { plog("assets: 玩家点了分享诊断日志"); void dm_sharelog_share(void); dm_sharelog_share(); }
+- (void)useDirectTap {
+    plog("assets: 玩家点了改用直接下载（托管已等 %.0f 秒，进度 %.2f / %.2f GB%s）", CFAbsoluteTimeGetCurrent() - self.packT, self.packDone / 1e9, self.packBytes / 1e9, self.packFull ? "，已到 100%" : "");
+    self.gone = 1; if (self.poll) { dispatch_source_cancel(self.poll); self.poll = nil; }
+    self.useDirect.hidden = YES; [self.view setNeedsLayout]; [self direct:nil];
+}
+- (void)offerDirect:(int)why {   // 托管那条路走不下去时给玩家另一条（why：1 安装超时、2 暂停、3 报错）：包里没配下载地址（照公开仓库出的包）就不给，只记日志 | when the hosted path cannot go on, give the player another path (why: 1 install timeout, 2 paused, 3 error): if the package has no download address configured (packages built from the public repository), it is not offered, only logged
+    if (self.gone) return;
+    if (!res_dl_configured()) { static int lg; if (!lg++) plog("assets: 托管走不下去（%d：1 安装超时 2 暂停 3 报错），但本包没配资源下载地址，不给「改用直接下载」", why); return; }
+    plog("assets: 托管走不下去（%d：1 安装超时 2 暂停 3 报错）→ 露出「改用直接下载」", why); [self showBtn:self.useDirect]; [self showBtn:self.share];
+}
+static double slow_s(void) { const char *t = getenv("DM_TEST_BA_SLOW"); return t ? atof(t) : 300; }   // 100% 后等系统装进本地多久算慢（头文件只说完成通知 = 本地可用，中间要多久没写；给 5 分钟）；测试开关缩短 | how long to wait after 100% for the system to install it locally before it counts as slow (the header only says the completion notification = available locally, not how long it takes in between; 5 minutes is given); a test switch shortens it
+static int64_t free_bytes(void) {   // 给 App 用的可用空间（系统「重要用途」口径，同设置里显示的）；测试开关 DM_TEST_BA_FREE=<GB> 造空间不够 | free space available to the App (the system's "important usage" measure, the same as shown in Settings); test switch DM_TEST_BA_FREE=<GB> stages not enough space
+    const char *t = getenv("DM_TEST_BA_FREE"); if (t) return (int64_t)(atof(t) * 1e9);
+    NSURL *u = [NSURL fileURLWithPath:NSHomeDirectory()]; NSNumber *v = nil; [u getResourceValue:&v forKey:NSURLVolumeAvailableCapacityForImportantUsageKey error:nil]; return v.longLongValue;
+}
+- (BOOL)packAvail {
+    if (getenv("DM_TEST_BA")) return self.testAvailAt > 0 && CFAbsoluteTimeGetCurrent() >= self.testAvailAt;
+    if (@available(iOS 26.4, *)) return [BAAssetPackManager.sharedManager assetPackIsAvailableLocallyWithIdentifier:@"romfs"];
+    return NO;
+}
+- (void)logPack:(BOOL)avail free:(int64_t)fr {
+    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent(); double w = now - self.packT, f = self.packFull ? now - self.packFull : -1, d = self.packDone / 1e9, t = self.packBytes / 1e9, g = fr / 1e9; int a = avail;
+    if (getenv("DM_TEST_BA")) { plog("assets: 托管状态（测试现场）：已等 %.0f 秒，进度 %.2f / %.2f GB（100%% 后 %.0f 秒，-1 = 没到），系统说本地可用 %d，可用空间 %.2f GB", w, d, t, f, a, g); return; }
+    if (@available(iOS 26.4, *)) {
+        [BAAssetPackManager.sharedManager getLocalStatusOfAssetPackWithIdentifier:@"romfs" completionHandler:^(BAAssetPackStatus st) {
+            plog("assets: 托管状态：已等 %.0f 秒，进度 %.2f / %.2f GB（100%% 后 %.0f 秒，-1 = 没到），系统说本地可用 %d，可用空间 %.2f GB；系统状态位 0x%lx（1 可下载 2 有更新 4 最新 8 过期 0x10 已撤 0x20 下载中 0x40 已下完）",
+                 w, d, t, f, a, g, (unsigned long)st); }];
+    } else plog("assets: 托管状态：已等 %.0f 秒，进度 %.2f / %.2f GB（100%% 后 %.0f 秒，-1 = 没到），系统说本地可用 %d，可用空间 %.2f GB", w, d, t, f, a, g);
+}
+- (void)packText:(int64_t)fr {   // 100% 之后屏上那段：空间不够 > 超时 > 正在安装 | the passage on screen after 100%: not enough space > timeout > installing
+    NSString *dev = UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad ? @"iPad" : @"iPhone";
+    int k = self.packBytes > 0 && fr < self.packBytes ? 3 : self.slowShown ? 2 : 1;
+    NSString *t = k == 3 ? [NSString stringWithFormat:T("dmDlInstallSpace"), self.packBytes / 1e9, dev, fr / 1e9, (self.packBytes - fr) / 1e9, dev]
+                : k == 2 ? [NSString stringWithFormat:T(res_dl_configured() ? "dmDlPackSlow" : "dmDlPackSlowNoDl"), (int)MAX(1, lround(slow_s() / 60))]   // 没配下载地址就没有「改用直接下载」按钮，文字不提它 | with no download address configured there is no "Use direct download" button, and the text does not mention it
+                : [NSString stringWithFormat:T("dmDlInstalling"), self.packBytes / 1e9, fr / 1e9];
+    if (k != self.textKind) { self.textKind = k; [self say:t]; }   // 换了一种说法才进日志；只是空间数字变了就只改屏上的字 | only goes into the log when the wording changes; if only the space numbers changed, just update the text on screen
+    else if (![self.label.text isEqualToString:t]) dispatch_async(dispatch_get_main_queue(), ^{ self.label.text = t; });
+}
+- (void)pollPack {
+    if (self.gone) return;
+    CFAbsoluteTime now = CFAbsoluteTimeGetCurrent(); BOOL avail = [self packAvail]; int64_t fr = free_bytes();
+    if (now - self.logT >= 30) { self.logT = now; [self logPack:avail free:fr]; }
+    if (avail) { plog("assets: 轮询：系统说资源包本地可用（完成回调%s）→ 进游戏", self.finished ? "也到了" : "没到"); [self ready]; return; }
+    if (!self.packFull || self.packStop) return;
+    if (!self.slowShown && now - self.packFull >= slow_s()) { self.slowShown = 1; plog("assets: 进度 100%% 后 %.0f 秒系统仍没装好", now - self.packFull); [self offerDirect:1]; }
+    [self packText:fr];
+}
+- (void)watchPack {   // 托管下载开始后：守着系统状态（主线程定时器） | after the hosted download starts: watch the system state (main-thread timer)
+    if (self.poll) return; self.packT = CFAbsoluteTimeGetCurrent(); self.logT = 0;
+    dispatch_source_t s = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue()); self.poll = s; __weak AssetVC *w = self;
+    dispatch_source_set_timer(s, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC), 5 * NSEC_PER_SEC, NSEC_PER_SEC / 2);
+    dispatch_source_set_event_handler(s, ^{ [w pollPack]; }); dispatch_resume(s);
+}
+// 测试开关 DM_TEST_BA=finish|late|silent|fail（Mac 上的 iOS 包造托管下载现场，资源其实在本地）：3 秒内假进度走到 100%，之后——
+// finish 再 3 秒送完成通知；late 什么都不来（配 DM_TEST_BA_SLOW=<秒> 看超时）；silent 不送通知、8 秒后「系统说本地可用」（看轮询自愈）；fail 送下载失败。
+// DM_TEST_BA_TAP=<秒>：到点替玩家点「改用直接下载」（按钮没露出来就报红）
+// Test switch DM_TEST_BA=finish|late|silent|fail (stages a hosted download scene for the iOS package on the Mac, the resources are actually local): fake progress goes to 100% within 3 seconds, then -
+// finish sends the completion notification 3 seconds later; late sends nothing (with DM_TEST_BA_SLOW=<seconds> to see the timeout); silent sends no notification and "the system says it is available locally" after 8 seconds (to see polling recover); fail sends a download failure.
+// DM_TEST_BA_TAP=<seconds>: at that time, taps "Use direct download" for the player (reports red if the button is not showing)
+- (void)fakeBA:(NSString *)sc API_AVAILABLE(ios(26.0)) {
+    plog("assets: 测试现场 DM_TEST_BA=%s", sc.UTF8String); self.packBytes = 4130000000LL; [self watchPack]; [self say:T("dmDlDownloading")];
+    NSProgress *g = [NSProgress progressWithTotalUnitCount:self.packBytes]; BAAssetPack *np = nil;
+    for (int i = 1; i <= 10; i++) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(i * 0.3 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ g.completedUnitCount = self.packBytes * i / 10; [self downloadOfAssetPack:np hasProgress:g]; });
+    if ([sc isEqualToString:@"silent"]) self.testAvailAt = CFAbsoluteTimeGetCurrent() + 11;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 6 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        if ([sc isEqualToString:@"finish"]) [self downloadOfAssetPackFinished:np];
+        if ([sc isEqualToString:@"fail"]) [self downloadOfAssetPack:np failedWithError:[NSError errorWithDomain:@"DmTestBA" code:1 userInfo:@{NSLocalizedDescriptionKey: @"test failure"}]]; });
+    const char *tp = getenv("DM_TEST_BA_TAP"); if (tp) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(atof(tp) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        if (self.useDirect.hidden) plog("【红】DM_TEST_BA_TAP：「改用直接下载」没露出来"); else [self useDirectTap]; });
 }
 - (void)say:(NSString *)t { plog("assets: %s", t.UTF8String); dispatch_async(dispatch_get_main_queue(), ^{ self.label.text = t; }); }
 - (void)fail:(NSString *)what error:(NSError *)e {
@@ -776,13 +866,15 @@ static void run_boot(void);
     // A direct-install build has no hosted assets, so this path always fails: the error goes only to the log, and the screen gives the player instructions they can follow
     plog("assets: %s失败：%s（%s %ld）", what.UTF8String, e.localizedDescription.UTF8String, e.domain.UTF8String, (long)e.code);
     [self say:no_assets_text()];
-    dispatch_async(dispatch_get_main_queue(), ^{ self.retry.hidden = NO; });
+    [self showBtn:self.retry];
 }
 - (void)start {
-    self.retry.hidden = YES; self.stopped = 0; self.last = 0; self.lastT = CFAbsoluteTimeGetCurrent();
+    self.retry.hidden = YES; self.stopped = 0; self.last = 0; self.lastT = CFAbsoluteTimeGetCurrent(); self.packStop = 0; self.textKind = 0;
     char why[2048];
+    if (getenv("DM_TEST_BA") && !self.gone) { if (@available(iOS 26.0, *)) [self fakeBA:@(getenv("DM_TEST_BA"))]; return; }   // 测试：造托管下载现场（fakeBA） | test: stage a hosted download scene (fakeBA)
     if (!getenv("DM_ASSETS_TEST") && romfs_locate(why, sizeof why)) { [self ready]; return; }   // 重试时资源已到（如刚在「文件」里拷完） | Assets have already arrived on retry (e.g. just finished copying in the Files app)
     if (!getenv("DM_ASSETS_TEST") && g_doc_bad) { [self direct:@(why)]; return; }   // 有文件夹但不完整（拷到一半 / 下到一半）：不试托管下载，直接从下载站补齐；下载站走不通才报原因 | A folder exists but is incomplete (half copied / half downloaded): do not try the hosted download, fill in the rest straight from the download site; report the reason only if the download site is unreachable
+    if (self.gone) { [self direct:nil]; return; }   // 玩家已选「改用直接下载」：重试仍走这条（托管的回调此后不接，回到托管会停在「正在下载」） | the player chose "Use direct download": retries keep going this way (callbacks from the hosted download are not taken from now on; going back to hosted would stay stuck at "Downloading")
     NSString *stray = !getenv("DM_ASSETS_TEST") && g_doc_stray ? @(why) : nil;   // 「D2R Mobile」里有文件夹但都不是资源：托管下载、下载站都走不通时给玩家看这条 | 「D2R Mobile」 has folders but none of them is assets: show the player this message when neither the hosted download nor the download site works
     if (getenv("DM_ROMFS_TEST_PACK")) { [self ready]; return; }   // 只测试用：托管资源包「下完了」但不合格的现场 | Test only: the scenario where the managed asset pack has "finished downloading" but does not pass validation
     if (getenv("DM_ASSETS_TEST") && !strcmp(getenv("DM_ASSETS_TEST"), "direct")) { [self direct:nil]; return; }   // 测试：资源在本地也走真正的直接下载准备（联网取清单、盘点、查空间），配 DM_ASSET_FREE_TEST 造空间不够 | Test: with assets local, still go through the real direct-download preparation (fetch the manifest over the network, take inventory, check space); pair with DM_ASSET_FREE_TEST to fake insufficient space
@@ -798,8 +890,11 @@ static void run_boot(void);
         [m getAssetPackWithIdentifier:@"romfs" completionHandler:^(BAAssetPack *pack, NSError *e) {
             if (!pack) { plog("assets: 没有托管资源包（%s），改从下载站直接下", e.localizedDescription.UTF8String); dispatch_async(dispatch_get_main_queue(), ^{ [self direct:stray]; }); return; }   // 直装包走到这里必然失败 | A direct-install build always fails when it gets here
             [self say:T("dmDlDownloading")];
+            plog("assets: 托管资源包 版本 %ld、%.2f GB，请系统确保本地可用（可用空间 %.2f GB）", (long)pack.version, pack.downloadSize / 1e9, free_bytes() / 1e9);
+            dispatch_async(dispatch_get_main_queue(), ^{ self.packBytes = pack.downloadSize; [self watchPack]; });
             [m ensureLocalAvailabilityOfAssetPack:pack completionHandler:^(NSError *e2) {
-                if (e2) { [self fail:@"下载游戏资源" error:e2]; return; }
+                if (e2) { self.packStop = 1; [self fail:@"下载游戏资源" error:e2]; [self offerDirect:3]; return; }
+                plog("assets: 系统「确保本地可用」完成回调到了");
                 dispatch_async(dispatch_get_main_queue(), ^{ [self ready]; });
             }];
         }];
@@ -809,7 +904,7 @@ static void run_boot(void);
 // Direct-install build: download the assets straight from our own download site into Documents/D2R Mobile Resources (asset_dl.m). When the download site is unreachable the screen falls back to the original instructions (or the reason given by fallback)
 - (void)direct:(NSString *)fallback {
     if (!res_dl_configured()) {   // 这个包没配下载地址（照公开仓库自己出的包）：不去连、不说「下载没开始」，只讲把资源拷进来 | This build has no download address configured (a build made by yourself from the public repository): do not connect, do not say "the download has not started", only explain how to copy the resources in
-        plog("assets: 本包没配资源下载地址，不走下载"); [self say:fallback ? [NSString stringWithFormat:@"%@\n%@", fallback, T("dmDlCopyInShort")] : no_assets_text()]; self.bar.hidden = YES; self.retry.hidden = NO; self.stopped = 1; return; }   // 这条路没有进度可报：不留一条空的进度条 | nothing to report progress on along this path: do not leave an empty progress bar
+        plog("assets: 本包没配资源下载地址，不走下载"); [self say:fallback ? [NSString stringWithFormat:@"%@\n%@", fallback, T("dmDlCopyInShort")] : no_assets_text()]; self.bar.hidden = YES; [self showBtn:self.retry]; self.stopped = 1; return; }   // 这条路没有进度可报：不留一条空的进度条 | nothing to report progress on along this path: do not leave an empty progress bar
     [self say:T("dmDlConnecting")];
     [DmAssetDL.shared prepare:^(NSString *err, int64_t remain, int64_t total, BOOL cellular) {
         if (err && DmAssetDL.shared.shortBytes > 0) {   // 设备空间不够（原先只进日志、界面显示的是「先从内测页下载资源包」，跟真实原因无关）：系统提示写清还差多少 | Not enough space on the device (previously this only went to the log and the screen showed 「先从内测页下载资源包」(First download the asset pack from the beta page), unrelated to the real cause): the system prompt states exactly how much is missing
@@ -817,7 +912,7 @@ static void run_boot(void);
             NSString *dev = UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPad ? @"iPad" : @"iPhone";   // 按设备写 | Wording depends on the device
             NSString *m = [NSString stringWithFormat:T("dmDlSpaceMsg"), DmAssetDL.shared.shortBytes / 1e9, remain / 1e9, dev, DmAssetDL.shared.freeBytes / 1e9, dev];
             NSString *title = [NSString stringWithFormat:T("dmDlSpaceTitle"), dev];
-            [self say:[[title stringByAppendingString:@"\n"] stringByAppendingString:m]]; self.retry.hidden = NO;
+            [self say:[[title stringByAppendingString:@"\n"] stringByAppendingString:m]]; [self showBtn:self.retry];
             UIAlertController *a = [UIAlertController alertControllerWithTitle:title message:m preferredStyle:UIAlertControllerStyleAlert];
             [a addAction:[UIAlertAction actionWithTitle:T("dmOk") style:UIAlertActionStyleDefault handler:nil]];
             [self presentViewController:a animated:YES completion:^{ plog("assets: 已弹系统提示「%s」｜正文：%s", title.UTF8String, [m stringByReplacingOccurrencesOfString:@"\n" withString:@" ⏎ "].UTF8String); }]; return; }
@@ -829,7 +924,7 @@ static void run_boot(void);
         if (err) {   // 下载没开始：屏上写真实原因和下一步，不落回「还没有游戏资源」（没网时玩家看到的是「没有资源」，不知道是网络、也不知道能重试） | download did not start: show the real reason and the next step on screen instead of falling back to "no game assets yet" (with no network the player saw "no assets", not knowing it was the network or that a retry was possible)
             plog("assets: 直接下载走不了：%s", err.UTF8String);
             [self say:[NSString stringWithFormat:T("dmDlNotStarted"), fallback ? [fallback stringByAppendingString:@"\n"] : @"", self.netDown ? T("dmDlNetDown") : err, self.netDown ? T("dmDlNextAuto") : T("dmDlNextRetry")]];
-            self.retry.hidden = NO; self.stopped = 1; return; }
+            [self showBtn:self.retry]; self.stopped = 1; return; }
         void (^go)(void) = ^{
             [self say:[NSString stringWithFormat:T("dmDlWill"), remain < 100000000 ? [NSString stringWithFormat:@"%.0f MB", remain / 1e6] : [NSString stringWithFormat:@"%.1f GB", remain / 1e9], total / 1e9]];   // 自动开始的大下载，开始前先把要下多少写在屏上 | A large download that starts automatically: show on screen how much will be downloaded before it starts
             self.last = total - remain; self.lastT = CFAbsoluteTimeGetCurrent(); self.rate = 0;
@@ -839,33 +934,45 @@ static void run_boot(void);
                 self.label.text = [NSString stringWithFormat:@"正在下载游戏资源（共 %.1f GB）\n%.2f / %.2f GB（%.0f%%）  %.1f MB/s%@", tot / 1e9, done / 1e9, tot / 1e9, tot ? 100.0 * done / tot : 0, self.rate / 1e6, note ? [@"\n" stringByAppendingString:note] : @""];
                 self.bar.progress = tot ? (float)done / tot : 0;
             } done:^(NSString *e2) {
-                if (e2) { [self say:[NSString stringWithFormat:T("dmDlStopped"), e2, self.last / 1e9, total / 1e9]]; self.retry.hidden = NO; self.stopped = 1; return; }
+                if (e2) { [self say:[NSString stringWithFormat:T("dmDlStopped"), e2, self.last / 1e9, total / 1e9]]; [self showBtn:self.retry]; self.stopped = 1; return; }
                 [self ready];
             }];
         };
         if (!cellular || remain <= 0) { go(); return; }
         UIAlertController *a = [UIAlertController alertControllerWithTitle:T("dmDlCellTitle") message:[NSString stringWithFormat:T("dmDlCellMsg"), remain / 1e9] preferredStyle:UIAlertControllerStyleAlert];
-        [a addAction:[UIAlertAction actionWithTitle:T("dmDlCellLater") style:UIAlertActionStyleCancel handler:^(UIAlertAction *x) { [self say:T("dmDlCellWait")]; self.retry.hidden = NO; }]];
+        [a addAction:[UIAlertAction actionWithTitle:T("dmDlCellLater") style:UIAlertActionStyleCancel handler:^(UIAlertAction *x) { [self say:T("dmDlCellWait")]; [self showBtn:self.retry]; }]];
         [a addAction:[UIAlertAction actionWithTitle:T("dmDlCellGo") style:UIAlertActionStyleDefault handler:^(UIAlertAction *x) { plog("assets: 玩家同意用流量下载"); go(); }]];
         [self presentViewController:a animated:YES completion:nil];
     }];
 }
 - (void)downloadOfAssetPack:(BAAssetPack *)p hasProgress:(NSProgress *)g API_AVAILABLE(ios(26.0)) {
     CFAbsoluteTime now = CFAbsoluteTimeGetCurrent(); int64_t done = g.completedUnitCount, total = g.totalUnitCount;
+    if (self.gone) return;   // 已改走直接下载：屏上是那条路的进度 | already switched to direct download: the screen shows that path's progress
+    self.packDone = done; if (total > 0) self.packBytes = total;
+    if (total > 0 && done >= total) {   // 到 100%：之后是系统装包，屏上改说明（进度字不再刷） | reached 100%: from here the system installs the pack, the screen switches to an explanation (the progress text is no longer updated)
+        if (!self.packFull) { self.packFull = now; plog("assets: 托管下载进度到 100%%（%.2f GB），等系统装进本地；可用空间 %.2f GB", total / 1e9, free_bytes() / 1e9);
+            dispatch_async(dispatch_get_main_queue(), ^{ self.bar.progress = 1; [self packText:free_bytes()]; [self showBtn:self.share]; }); }
+        return; }
     if (now - self.lastT >= 1.0) { self.rate = (done - self.last) / (now - self.lastT); self.last = done; self.lastT = now; }
     NSString *t = [NSString stringWithFormat:T("dmDlProgress"), done / 1e9, total / 1e9, total ? 100.0 * done / total : 0, self.rate / 1e6];
     dispatch_async(dispatch_get_main_queue(), ^{ self.label.text = t; self.bar.progress = total ? (float)done / total : 0; });
 }
-- (void)downloadOfAssetPackFinished:(BAAssetPack *)p API_AVAILABLE(ios(26.0)) { plog("assets: 系统通知资源包下载完成"); dispatch_async(dispatch_get_main_queue(), ^{ [self ready]; }); }
-- (void)downloadOfAssetPackPaused:(BAAssetPack *)p API_AVAILABLE(ios(26.0)) { [self say:T("dmDlPaused")]; }
-- (void)downloadOfAssetPack:(BAAssetPack *)p failedWithError:(NSError *)e API_AVAILABLE(ios(26.0)) { [self fail:@"下载游戏资源" error:e]; }
+- (void)downloadOfAssetPackBegan:(BAAssetPack *)p API_AVAILABLE(ios(26.0)) { plog("assets: 系统通知托管下载开始 / 继续"); self.packStop = 0; self.textKind = 0; }
+- (void)downloadOfAssetPackFinished:(BAAssetPack *)p API_AVAILABLE(ios(26.0)) {
+    plog("assets: 系统通知资源包下载完成%s", self.gone ? "（已改走直接下载，不接）" : ""); if (self.gone) return; self.finished = 1; dispatch_async(dispatch_get_main_queue(), ^{ [self ready]; }); }
+- (void)downloadOfAssetPackPaused:(BAAssetPack *)p API_AVAILABLE(ios(26.0)) {
+    plog("assets: 系统通知托管下载暂停%s", self.gone ? "（已改走直接下载）" : ""); if (self.gone) return; self.packStop = 1; [self say:T("dmDlPaused")]; [self offerDirect:2]; }
+- (void)downloadOfAssetPack:(BAAssetPack *)p failedWithError:(NSError *)e API_AVAILABLE(ios(26.0)) {
+    if (self.gone) { plog("assets: 托管下载失败（已改走直接下载）：%s", e.localizedDescription.UTF8String); return; }
+    self.packStop = 1; [self fail:@"下载游戏资源" error:e]; [self offerDirect:3]; }
 - (void)ready {
     char why[2048];
     static int started; if (started) return;   // 完成回调与系统的完成通知都会走到这里：只起一次 | Both the completion callback and the system's completion notification end up here: start only once
     if (!romfs_locate(why, sizeof why)) {
-        if (g_pack_wait) { [self say:T("dmDlPackWait")]; return; }   // 等系统的完成通知（downloadOfAssetPackFinished）再来，不按时间等 | Come back when the system's completion notification (downloadOfAssetPackFinished) arrives; do not wait by time
-        [self say:[NSString stringWithFormat:T("dmDlNotReady"), @(why)]]; self.retry.hidden = NO; return; }
-    started = 1;
+        if (g_pack_wait) { if (!self.packFull) [self say:T("dmDlPackWait")]; return; }   // 等系统说本地可用（完成通知或 pollPack 轮询到）；100% 后屏上是 packText 那段 | waiting for the system to say it is available locally (the completion notification, or found by pollPack's polling); after 100% the screen shows the packText passage
+        if (self.poll) { plog("assets: 系统说可用但校验没过：%s", why); }
+        [self say:[NSString stringWithFormat:T("dmDlNotReady"), @(why)]]; [self showBtn:self.retry]; return; }
+    started = 1; if (self.poll) { dispatch_source_cancel(self.poll); self.poll = nil; }
     plog("assets: 资源就绪，就地起宿主");
     g_need_assets = 0;
     self.view = front_ios_view(self.view.window.windowScene.coordinateSpace.bounds);
@@ -1071,7 +1178,7 @@ int main(int argc, char *argv[]) {
             else plog("boot: 老机型补充包未就绪：%s", g_astc_why);
         }
         if (g_no_bc) {}
-        else if (getenv("DM_ASSETS_TEST")) { g_need_assets = 1; plog("boot: DM_ASSETS_TEST——强制走资源下载界面再就地起宿主（测这条路径）"); }
+        else if (getenv("DM_ASSETS_TEST") || getenv("DM_TEST_BA")) { g_need_assets = 1; plog("boot: DM_ASSETS_TEST——强制走资源下载界面再就地起宿主（测这条路径）"); }
         else if (romfs_locate(why, sizeof why)) plog("boot: 游戏资源就绪，宿主等场景到前台再装载");
         else { g_need_assets = 1; plog("boot: 游戏资源还没到（%s），先显示资源下载界面", why); }
     } else metal_cache_report_and_clean();

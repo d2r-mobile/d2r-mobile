@@ -52,7 +52,7 @@ if [ "$1" = build ]; then
   mkdir -p Gen/msl && cp -cR "$MSL/b-$V" Gen/msl/
   # 资源直接下载（直装包，Sources/asset_dl.m）：地址文件列表（仓库里的 asset_pointers.txt）+ 出包时的缺省下载根地址（DM_ASSET_BASE，tools/adhoc.sh 传隧道地址；没传就不带）
   # Direct asset download (direct-install package, Sources/asset_dl.m): URL file list (asset_pointers.txt in the repository) + the default download root URL at packaging time (DM_ASSET_BASE; tools/adhoc.sh passes the tunnel URL; omitted if not passed)
-  cp asset_pointers.txt Gen/dm/; [ -n "${DM_ASSET_BASE:-}" ] && echo "$DM_ASSET_BASE" > Gen/dm/asset_base.txt
+  cp asset_pointers.txt Gen/dm/; if [ -n "${DM_ASSET_BASE:-}" ]; then echo "$DM_ASSET_BASE" > Gen/dm/asset_base.txt; else rm -f Gen/dm/asset_base.txt; fi   # 没给就删掉上次的：生成物只跟本次输入走（原先只写不删，同一棵树先出带地址的包、再出不带的会沿用旧地址） | if not given, delete the previous one: the generated file follows only this run's input (it used to be written but never deleted, so building a package with an address and then one without in the same tree kept the old address)
   # 老机型补充包的自动下载根地址（DM_ASTC_PACK_BASE，<根>/manifest.json + <根>/data/…；没传 = 只能玩家用「文件」拷，见 Sources/asset_dl.m）
   # Root URL for automatic download of the Legacy Device Pack (DM_ASTC_PACK_BASE, <root>/manifest.json + <root>/data/...; not passed = players can only copy it with the Files app, see Sources/asset_dl.m)
   rm -f Gen/dm/astc_pack_base.txt; [ -n "${DM_ASTC_PACK_BASE:-}" ] && echo "$DM_ASTC_PACK_BASE" > Gen/dm/astc_pack_base.txt

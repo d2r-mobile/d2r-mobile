@@ -116,3 +116,4 @@ static void on_click(void) {   // 宿主在游戏主线程调：玩家点了「�
     });
 }
 void dm_sharelog_boot(void) { g_t0 = NSDate.date; dm_sharelog_init(on_click); }   // main.m 起宿主前调一次 | main.m calls this once before starting the host
+void dm_sharelog_share(void) { on_click(); }   // 游戏外的界面直接调（资源下载页的「分享诊断日志」按钮，main.m AssetVC） | called directly from screens outside the game (the "Share diagnostic log" button on the asset download page, main.m AssetVC)

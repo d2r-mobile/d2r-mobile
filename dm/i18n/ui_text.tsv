@@ -135,6 +135,11 @@ dmDlCellGo	用流量下载	Use Cellular Data	蜂窝网络提示框按钮
 dmDlProgress	正在下载游戏资源\n%.2f / %.2f GB（%.0f%%）  %.1f MB/s	Downloading game resources\n%.2f / %.2f GB (%.0f%%)  %.1f MB/s	资源下载页进度（托管下载）
 dmDlPaused	下载已暂停（检查网络），恢复后自动继续	Download paused (check your network). It resumes automatically.	资源下载页
 dmDlPackWait	系统还在准备资源包，完成后自动继续	The system is still preparing the resource pack. It continues automatically.	资源下载页（main.m）
+dmDlInstalling	下载完成，系统正在安装资源包\n可能要几分钟，请保持本 App 在前台\n资源包 %.2f GB，本机可用 %.2f GB	Download complete. The system is installing the resource pack.\nThis can take a few minutes. Keep this app open.\nPack %.2f GB, %.2f GB free on this device	资源下载页：托管下载到 100% 之后（main.m）
+dmDlInstallSpace	下载完成，但本机空间不够系统安装资源包\n资源包 %.2f GB，%@ 现在可用 %.2f GB，至少还差 %.2f GB\n请在「设置 → 通用 → %@ 储存空间」清理，清理后自动继续	Download complete, but there is not enough space to install the resource pack.\nPack %.2f GB; this %@ has %.2f GB free, at least %.2f GB more needed.\nFree up space in Settings → General → %@ Storage. It continues automatically.	资源下载页：托管下载 100% 后空间不够（main.m）
+dmDlPackSlow	系统安装资源包已超过 %d 分钟还没完成\n可以继续等，也可以点「改用直接下载」从下载站下载资源（断点续传）	The system has been installing the resource pack for over %d minutes.\nYou can keep waiting, or tap "Download Directly" to get the resources from our download site (resumable).	资源下载页：托管安装超时（main.m）
+dmDlPackSlowNoDl	系统安装资源包已超过 %d 分钟还没完成\n可以继续等；也可以点「分享诊断日志」把日志发给我们	The system has been installing the resource pack for over %d minutes.\nYou can keep waiting, or tap "Share Diagnostics" to send us the log.	资源下载页：托管安装超时、包里没配下载地址（main.m）
+dmDlUseDirect	改用直接下载	Download Directly	资源下载页按钮（main.m）
 dmDlNotReady	游戏资源还不能用\n%@\n处理后点重试	Game resources are not ready\n%@\nFix this, then tap Retry	资源下载页（main.m）
 dmDlWill	将下载游戏资源：还要下 %@（共 %.1f GB）	Downloading game resources: %@ remaining (%.1f GB total)	资源下载页：自动开始的大下载，开始前写明大小（%@ = 「4 MB」「4.1 GB」）
 dmDlNotStarted	%@游戏资源下载没开始：%@\n%@\n也可以从内测页手动下载资源包，放进「我的 iPhone → D2R Mobile」	%@The resource download could not start: %@\n%@\nYou can also download the resource pack from the beta page and put it in "On My iPhone → D2R Mobile"	资源下载页：取不到下载地址 / 清单时停在这一页（前缀、原因、下一步）
@@ -208,6 +213,7 @@ dmRiftSayFoes	本场有 %d 位强敌	%d powerful foes this run	秘境系统提�
 dmRiftSayInvader	强敌逼近！	A powerful foe approaches!	秘境系统提示（dm_rift.c）：80 层起途中闯入一位首领，刷出前约 3 秒提示；英文：拟
 dmRiftSayInvaderGone	闯入者退去了	The intruder withdraws	秘境系统提示（dm_rift.c）：守护者现身时，还在场的闯入首领退场；英文：拟
 dmRiftSayGuardians	进度已满：两位守护者现身！	Two Rift Guardians appear!	秘境系统提示（dm_rift.c）：75 层起守护者是两位；英文：同 dmRiftSayGuardian 的用词
+dmRiftSayWave	守护者第 %d 波现身（共 %d 波）	Guardian wave %d of %d	秘境系统提示（dm_rift.c）：95 层起守护者分波，第 2 波起每波现身时说一声；英文：拟
 dmRiftSayGuardian	进度已满：守护者现身！	The Rift Guardian appears!	秘境系统提示（dm_rift.c）；英文：Rift Guardian 取自暗黑 3 官方 2.1.0 补丁说明（news.blizzard.com/en-us/article/14569138）；出现时的界面原句没查到，拟
 dmElyToaGround	背包已满，赦免之证掉在脚边	Inventory full: Token of Absolution dropped	极乐世界新角色补齐（dm_elysium.c）：背包放不下时的系统提示；英文物品名 = 暗黑 2 原版 Token of Absolution
 dmMercSlotLocked	通关地狱后打通秘境10层解锁	Clear Greater Rift Level 10 to unlock	佣兵新装备位没解锁时的系统提示（dm_rift.c；中文是 原句）；英文：Greater Rift 取暗黑 3 原文
@@ -262,6 +268,7 @@ dmRiftHudGuard	守护者现身	Rift Guardian	秘境顶部进度条（dm_rift_hud
 dmRiftHudNext	下次第 %d 层	Next: Level %d	秘境顶部进度条（dm_rift_hud.m，UIKit）；英文：拟
 dmRiftHudTop	已通关最高层	Highest level cleared	秘境顶部进度条（dm_rift_hud.m，UIKit）：第 100 层限时内通关，没有下一层了（公开仓库）；英文：拟
 dmRiftHudOver	已超时：打完仍有掉落，不计通关	Overtime: drops, no clear	秘境顶部进度条（dm_rift_hud.m，UIKit）第二行：限时已到、守护者还没倒（公开仓库）；英文：拟
+dmRiftHudKillWave	守护者 第 %d/%d 波（%d/%d）	Guardians %d/%d (%d/%d)	秘境顶部进度条第二行：守护者分波时（95 层起）写第几波 / 共几波与这一波已倒 / 总数；英文：拟，栏宽所限不写 wave
 dmRiftHudKillN	击败守护者（%d/%d）	Slay the Guardians (%d/%d)	秘境顶部进度条第二行：守护者两位以上时带已倒 / 总数；英文：同 dmRiftHudKill 的用词
 dmRiftHudOverKill	已超时：击败守护者仍有掉落	Overtime: slay it for drops	秘境顶部进度条第二行：已超时且守护者在场（一位）；英文：拟
 dmRiftHudOverKillN	已超时：击败守护者（%d/%d）仍有掉落	Overtime: slay %d/%d for drops	同上，守护者两位以上；英文：拟

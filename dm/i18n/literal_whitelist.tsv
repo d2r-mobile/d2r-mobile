@@ -113,3 +113,6 @@ host/dm_custom.c	@DM_WIDGET_OK	同上
 host/dm_rift_ui.c	@DM_WIDGET_OK	同上
 host/dm_autobuff.c	*	技能名、排除理由、测试读数都只进日志；这个功能屏上没有自己的文字（玩家看到的是原版的施法动作）
 ios/Sources/dm_shader_prep.m	*	公开版壳专用的「首次准备着色器」页（整个文件在 #ifdef DM_SHELL 里，内测包不编）：这时宿主与中英表还没起，中英两套文字就写在文件里、跟系统语言走
+host/dm_rift.c	（第 1 波）	只进日志：刷守护者那行标第几波（分波时）
+host/dm_rift.c	（第 2 波）	同上
+host/dm_rift.c	（第 3 波）	同上

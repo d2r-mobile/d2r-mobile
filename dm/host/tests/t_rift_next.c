@@ -63,6 +63,16 @@ int main(void) {
     { static const struct { uint32_t cls; int want; } bc[] = { { 561, 0 }, { 562, 1 }, { 564, 1 }, { 566, 1 }, { 567, 0 }, { 570, 1 }, { 571, 0 }, { 544, 0 }, { 45, 0 } };
       for (unsigned i = 0; i < sizeof bc / sizeof *bc; i++) if (boss_summon(bc[i].cls) != bc[i].want) { fails++; printf("  ✗ boss_summon(%u) 应为 %d\n", bc[i].cls, bc[i].want); } }
     printf("invader_guard %s：在场与已退场的闯入首领都算特殊单位\n", fails ? "失败" : "OK");
+    // 特殊精英的梯度（设计稿第二十四节）：原生怪留几成 / 一场最多几组 / 同时在场几组。74 层及以下 = 100% / 0 / —（逐位不变）
+    // Special elite gradient (design draft section 24): share of native monsters kept / max groups per run / groups present at once. Level 74 and below = 100% / 0 / - (unchanged bit for bit)
+    { static const struct { int tier, nat, quota, cap; } sc[] = { { 1, 100, 0, 2 }, { 74, 100, 0, 2 }, { 75, 80, 2, 2 }, { 79, 80, 2, 2 }, { 80, 55, 5, 2 }, { 84, 55, 5, 2 }, { 85, 30, 7, 2 }, { 89, 30, 7, 2 }, { 90, 0, 1 << 30, 3 }, { 100, 0, 1 << 30, 3 } };
+      for (unsigned i = 0; i < sizeof sc / sizeof *sc; i++) if (su_nat_pct(sc[i].tier) != sc[i].nat || su_quota(sc[i].tier) != sc[i].quota || su_cap(sc[i].tier) != sc[i].cap) { fails++; printf("  ✗ 第 %d 层特殊精英梯度应为 %d%% / %d 组 / 同时 %d 组\n", sc[i].tier, sc[i].nat, sc[i].quota, sc[i].cap); }
+      // 池：43 行、不重样、不含剔掉的 23 行、含女伯爵（6）与随从 9 只的三行（24、36、38，有巴尔的场在抽的时候跳过）
+      // Pool: 43 rows, no duplicates, none of the 23 removed rows, includes the Countess (6) and the three rows with 9 minions (24, 36, 38; skipped when drawing for a run with Baal)
+      static const uint8_t out[] = { 5, 10, 15, 18, 20, 26, 27, 28, 29, 30, 31, 39, 41, 42, 43, 44, 45, 60, 61, 62, 63, 64, 65 }; int seen[66] = { 0 }, bad = sizeof k_su_pool != 43;
+      for (unsigned i = 0; i < sizeof k_su_pool; i++) { if (k_su_pool[i] > 65 || seen[k_su_pool[i]]++) bad = 1; } for (unsigned i = 0; i < sizeof out; i++) bad |= seen[out[i]]; bad |= !seen[6] || !seen[24] || !seen[36] || !seen[38];
+      if (bad) { fails++; printf("  ✗ 特殊精英的池不对（应 43 行、不重样、不含剔掉的 23 行）\n"); }
+      printf("su_tiers %s：10 格梯度 + 池 43 行\n", fails ? "失败" : "OK"); }
     printf("t_rift_next %s：%d 格（层 × 晋级量）下一层 = 手写期望且 ≤ 100，宿主与顶部条同值\n", fails ? "失败" : "OK", n);
     return fails != 0;
 }
