@@ -195,20 +195,30 @@ flowchart LR
 
 **Tests ship with the code.** The project includes unit tests for the host and graphics layers, an equivalence check for every rewritten instruction, scripted walkthrough regression for the touch interface, and on-device smoke tests. Start with `make -C dm/host/tests run`, `make -C dm/gfx/tests run` and `dm/verify/regress.sh` (run them inside the Python environment from step 2 below; `regress.sh` also needs `brew install llvm`). [CONTRIBUTING.md](CONTRIBUTING.md) covers how to send changes.
 
+## Which devices are supported
+
+| Device | Playable? | How | How sure we are |
+|---|---|---|---|
+| **iPhone / iPad, A17 Pro and later** (iPhone 15 Pro and later, iPhone 16 and later, iPads with M-series chips) | Yes | iOS 26 or later: the default shell / default build; iOS 18 – 25: the iOS 18 shell / [older-API build](docs/OLDER_SYSTEMS.md) | Main devices, played daily |
+| **iPhone / iPad, A16 and earlier** (all iPhone 14 models, iPhone 15 / 15 Plus, iPhone 13 series and so on) | Yes, with one extra step | Make a Legacy Device Pack from your own game files as in [docs/LEGACY_DEVICES.md](docs/LEGACY_DEVICES.md) and include it when making the install package; the system split is the same as the row above | Played by players: iPhone 14 Pro Max (A16, 6 GB) at 60 fps; iPhone 13 Pro Max (A15, 6 GB) in the 30 fps mode |
+| **Chips older than A15, devices with 4 GB of RAM** | No reports yet | Same as the row above | If you have tried, please open an Issue and tell us |
+| **Mac, Apple silicon** | Yes (native macOS App) | macOS 26 or later: the default build; macOS 15 – 25: the [older-API build](docs/OLDER_SYSTEMS.md). Keyboard, mouse and gamepad all work; what each can do is in [docs/MAC.md](docs/MAC.md) | A player has played the older-API build on macOS 15.7.7 |
+| **Intel Macs** | Not supported | — | — |
+
+**What the dialogs in the App mean**
+
+- **"One More Step for This Device"**: this phone can run the game; the install package was made without the Legacy Device Pack. Make the pack as in [docs/LEGACY_DEVICES.md](docs/LEGACY_DEVICES.md), make the install package again with it and reinstall.
+- **"Device Not Supported … iPhone 15 Pro and later can play"**: this is the old text from before v1.0.9. You are on an old version; update to the latest. For A16 and earlier devices, then follow the line above.
+
+**What a package you build yourself does not have, compared with our test-group builds**: the public version can be built and installed with a free Apple ID. Three things in our test-group builds are not in it: iCloud save sync (the App needs the iCloud signing entitlement, which a self-signed package does not have), downloading packs and resources inside the App, and new-version notices (these two use our own server). The game itself and the features we added are the same.
+
 ## Getting started
 
 Both routes start with **the files of the game you bought**: the Switch release of Diablo II: Resurrected plus the Reign of the Warlock expansion, updated to 1.0.34.0 (the version the console shows; it corresponds to PC version 3.3.94012, and the directory names and tools in this repository use the latter number). This project is built for the version with that expansion; using it without the expansion is not supported and has not been verified. How to prepare them is in [docs/GAME_FILES.md](docs/GAME_FILES.md).
 
 This project is implemented and verified on the Switch release 1.0.34.0 (which corresponds to PC version 3.3.94012), and by default the tools accept only that version. Community users have reported adapting other versions on their own by following the structure of this repository, and running them successfully. The rule tables are grouped by game version (in `dm/tools/patch_nso.py`, keyed by the build ID of the main program); you are welcome to contribute the version you adapted.
 
-**Check your device first** — the system decides which build to use, the chip decides whether you also need a texture pack, and the two combine:
-
-| Your device | iOS 26 or later | iOS 18 – 25 |
-|---|---|---|
-| **A17 Pro and newer** (iPhone 15 Pro and later, iPhone 16 and later) | Default build, follow the steps below | [Older-API build](docs/OLDER_SYSTEMS.md) |
-| **A16 and earlier** (iPhone 14 series, iPhone 15 / 15 Plus and before) | Default build + [Legacy Device Pack](docs/LEGACY_DEVICES.md) | [Older-API build](docs/OLDER_SYSTEMS.md) + [Legacy Device Pack](docs/LEGACY_DEVICES.md) |
-
-On a Mac only the system matters: macOS 26 or later uses the default build, macOS 15 – 25 the [older-API build](docs/OLDER_SYSTEMS.md).
+**Check your device first**: the "Which devices are supported" table above tells you which build to use and whether you also need a Legacy Device Pack.
 
 | | With a Mac | Without a Mac |
 |---|---|---|
@@ -272,7 +282,7 @@ Download our prebuilt "shell" package (`D2RMobile-shell.ipa`; `D2RMobile-shell-i
 | `.nsp` / `.xci` game packages | The tools only check the version of the main program and do not distinguish package formats; we ran the whole path with an `.xci` ourselves, and users have reported that `.nsp` packages work perfectly as well |
 | Signing and installing with a sideloading tool (Sideloadly, AltStore and the like) | Not verified; open an issue and tell us how it went |
 | Making the package on Linux | Not verified (verified on Windows and Mac) |
-| Devices that have not moved to iOS 26 / macOS 26 | Playable with the older-API build (minimum iOS 18.0 / macOS 15.0): [docs/OLDER_SYSTEMS.md](docs/OLDER_SYSTEMS.md) |
+| Devices that have not moved to iOS 26 / macOS 26 | Playable with the older-API build (minimum iOS 18.0 / macOS 15.0): [docs/OLDER_SYSTEMS.md](docs/OLDER_SYSTEMS.md); the full device table is under "Which devices are supported" above |
 | A16 and earlier devices (iPhone 14 family, iPhone 15 / 15 Plus and so on) | Playable; they need a Legacy Device Pack and an App built with it: [docs/LEGACY_DEVICES.md](docs/LEGACY_DEVICES.md). "One More Step for This Device" (older versions say "Device Not Supported") in the App means this step is missing |
 | The "one-line verdict" and "legacy Chinese name" entries in item notes | These two content tables are not shipped with the repository; you can supply your own, see `dm/ios/tools/annot/README.md` |
 

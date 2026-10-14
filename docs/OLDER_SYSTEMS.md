@@ -6,7 +6,7 @@ The default build requires iOS 26 / macOS 26: the graphics side is built on a gr
 
 ## Which one do I need
 
-Look at the system first, then at the chip. The two are independent and can be combined:
+Look at the system first, then at the chip. The two are independent and can be combined (every device is listed under "[Which devices are supported](../README.md#which-devices-are-supported)" in the README):
 
 | Your device | System is iOS 26 or later | System is iOS 18 – 25 |
 |---|---|---|

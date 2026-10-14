@@ -8,7 +8,7 @@ On an Apple silicon Mac this project can be built into a native macOS App, `D2R 
 
 ## Requirements
 
-Apple silicon. Two tiers by system:
+Apple silicon (Intel Macs are not supported; see "[Which devices are supported](../README.md#which-devices-are-supported)" in the README for every device). Two tiers by system:
 
 | Your system | How to build | Output |
 |---|---|---|

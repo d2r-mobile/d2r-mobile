@@ -2,13 +2,13 @@
 
 中文：[LEGACY_DEVICES.zh-CN.md](LEGACY_DEVICES.zh-CN.md)
 
-The iPhone 14 family, iPhone 15 / 15 Plus and earlier models can play; they just need one more step: a **Legacy Device Pack** made from your own game files and placed on the phone. This page covers it from start to finish.
+The iPhone 14 family, iPhone 15 / 15 Plus and earlier models can play; they just need one more step (see "[Which devices are supported](../README.md#which-devices-are-supported)" in the README for every device): a **Legacy Device Pack** made from your own game files and placed on the phone. This page covers it from start to finish.
 
 ## Why the extra step
 
 Almost all of the game's textures use BC compression. Apple GPUs support that format only from the A17 Pro (iPhone 15 Pro) on; earlier chips cannot read it. The answer is to convert those textures offline, on a computer, into ASTC, which these devices do support — the picture is the same picture. Textures are game content, so we cannot provide this pack; it can only be generated on your own computer from your own game files.
 
-**Which devices need it**: the App decides this itself at launch, so there is no table to consult. A device that needs it shows "Supplementary Pack Required"; if it shows "One More Step for This Device" (older versions say "Device Not Supported") instead, the App was built without the part that goes with the pack — rebuild it as in step 4 below.
+**Which devices need it**: the App decides this itself at launch, so there is no table to consult. A device that needs it shows "Supplementary Pack Required"; if it shows "One More Step for This Device" instead, the App was built without the part that goes with the pack — rebuild it as in step 4 below. If it shows "Device Not Supported … iPhone 15 Pro and later can play", that is the old text from before v1.0.9: update to the latest version first, then follow this page.
 
 ## What you need
 

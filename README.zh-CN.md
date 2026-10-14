@@ -195,20 +195,30 @@ flowchart LR
 
 **测试和代码一起开源。** 项目自带宿主与图形层的单元测试、对每一处改写指令的等价核对、触摸界面的脚本化走查回归、真机冒烟。从 `make -C dm/host/tests run`、`make -C dm/gfx/tests run` 与 `dm/verify/regress.sh` 开始（都在下面第 2 步准备的 Python 环境里跑；`regress.sh` 另需 `brew install llvm`）。怎么参与见 [CONTRIBUTING.zh-CN.md](CONTRIBUTING.zh-CN.md)。
 
+## 支持哪些设备
+
+| 设备 | 能不能玩 | 怎么做 | 把握程度 |
+|---|---|---|---|
+| **iPhone / iPad，A17 Pro 及以后**（iPhone 15 Pro 起、iPhone 16 起、M 系列芯片的 iPad） | 直接玩 | iOS 26 及以上用缺省的壳 / 缺省构建；iOS 18 – 25 用 iOS 18 的壳 / [老接口版](docs/OLDER_SYSTEMS.zh-CN.md) | 主力机型，日常在玩 |
+| **iPhone / iPad，A16 及更早**（iPhone 14 全系、iPhone 15 / 15 Plus、iPhone 13 系列等） | 可以玩，多一步 | 按 [docs/LEGACY_DEVICES.zh-CN.md](docs/LEGACY_DEVICES.zh-CN.md) 用自己的游戏文件做一份老机型补充包，做安装包时带上它；系统同上一行分 iOS 26 / iOS 18 – 25 | 已有玩家实测：iPhone 14 Pro Max（A16，6 GB）60 帧；iPhone 13 Pro Max（A15，6 GB）30 帧档 |
+| **比 A15 更老的芯片、4 GB 内存的设备** | 尚无报告 | 同上一行 | 欢迎试过的人开 Issue 告诉我们结果 |
+| **Mac，Apple 芯片** | 直接玩（原生 macOS App） | macOS 26 及以上用缺省出法；macOS 15 – 25 用[老接口出法](docs/OLDER_SYSTEMS.zh-CN.md)。键盘、鼠标、手柄都能玩，各自能做什么见 [docs/MAC.zh-CN.md](docs/MAC.zh-CN.md) | 已有玩家在 macOS 15.7.7 上实际玩过老接口版 |
+| **Intel 芯片的 Mac** | 不支持 | — | — |
+
+**App 里弹的框是什么意思**
+
+- **「这台设备要多做一步」**：这台手机可以玩，只是做安装包时没有带上老机型补充包。照 [docs/LEGACY_DEVICES.zh-CN.md](docs/LEGACY_DEVICES.zh-CN.md) 做好补充包、带着它重新做一次安装包再装，就能进游戏。
+- **「暂不支持本机型……iPhone 15 Pro 及以后可以玩」**：这是 v1.0.9 以前的旧文字。用的是旧版本，更新到最新版本即可；A16 及更早的机型照上一条做。
+
+**自己做的包和我们内测包的差别**：公开版可以用免费的 Apple ID 自己做包、自己装。内测包里有三样公开版没有：iCloud 存档同步（需要 App 带着 iCloud 的签名权限，自己签的包没有）、App 内下载补充包与资源、新版本提醒（这两样要用到我们自己的服务端）。游戏本身和我们加的玩法两边一样。
+
 ## 开始使用
 
 两条路都要先有**你自己购买的游戏的文件**：Switch 版《暗黑破坏神 II：狱火重生》本体加「术士君临」资料片，更新到 1.0.34.0（主机上显示的版本号；它对应 PC 版的 3.3.94012，本仓库的目录名和工具里用的是后一个号）。本项目是按带这部资料片的版本做的，没有资料片的情况不支持、也没有验过。怎么准备见 [docs/GAME_FILES.zh-CN.md](docs/GAME_FILES.zh-CN.md)。
 
 本项目基于 Switch 版 1.0.34.0（对应 PC 版的 3.3.94012）实现并验证，工具默认只认这一版。已有社区用户反馈，参照仓库结构自行适配了其他版本并成功运行。规则表按游戏版本分组存放（`dm/tools/patch_nso.py` 里按主程序的构建标识分组），欢迎把你适配的版本提交回来。
 
-**先对一下你的设备**——系统决定用哪种构建，芯片决定要不要多做一份贴图包，两件事可以叠：
-
-| 你的设备 | iOS 26 及以上 | iOS 18 – 25 |
-|---|---|---|
-| **A17 Pro 及更新**（iPhone 15 Pro 起、iPhone 16 起） | 缺省构建，照下面走 | [老接口版](docs/OLDER_SYSTEMS.zh-CN.md) |
-| **A16 及更早**（iPhone 14 系列、iPhone 15 / 15 Plus 及更早） | 缺省构建 + [老机型贴图包](docs/LEGACY_DEVICES.zh-CN.md) | [老接口版](docs/OLDER_SYSTEMS.zh-CN.md) + [老机型贴图包](docs/LEGACY_DEVICES.zh-CN.md) |
-
-Mac 只看系统：macOS 26 及以上用缺省构建，macOS 15 – 25 用[老接口版](docs/OLDER_SYSTEMS.zh-CN.md)。
+**先对一下你的设备**：上面「支持哪些设备」那张表告诉你该用哪种构建、要不要多做一份老机型补充包。
 
 | | 有 Mac | 没有 Mac |
 |---|---|---|
@@ -272,7 +282,7 @@ DM_MAC_M3=1 dm/tools/mac_app.sh      # macOS 15 – 25：产出 D2R Mobile M3.ap
 | `.nsp` / `.xci` 两种游戏包 | 工具只核对主程序的版本，不区分包的格式；我们自己用 `.xci` 走过全程，有网友反馈 `.nsp` 格式的游戏包也完美兼容 |
 | 用自签工具（Sideloadly、AltStore 等）签名装机 | 没验过，欢迎开 Issue 告诉我们结果 |
 | Linux 上做包 | 没验过（Windows 与 Mac 上验过） |
-| 没升到 iOS 26 / macOS 26 的设备 | 可以玩，用老接口版（最低 iOS 18.0 / macOS 15.0）：[docs/OLDER_SYSTEMS.zh-CN.md](docs/OLDER_SYSTEMS.zh-CN.md) |
+| 没升到 iOS 26 / macOS 26 的设备 | 可以玩，用老接口版（最低 iOS 18.0 / macOS 15.0）：[docs/OLDER_SYSTEMS.zh-CN.md](docs/OLDER_SYSTEMS.zh-CN.md)；完整的设备表见上面「支持哪些设备」 |
 | A16 及更早的机型（iPhone 14 系列、iPhone 15 / 15 Plus 等） | 可以玩，要多做一份老机型贴图包并带着它构建 App：[docs/LEGACY_DEVICES.zh-CN.md](docs/LEGACY_DEVICES.zh-CN.md)。App 提示「这台设备要多做一步」（旧版本显示的是「暂不支持本机型」）就是缺这一步 |
 | 物品注释里的「一句点评」与「旧译名对照」 | 两张内容表不随仓库提供，可自备，见 `dm/ios/tools/annot/README.zh-CN.md` |
 
