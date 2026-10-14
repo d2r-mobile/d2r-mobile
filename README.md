@@ -201,7 +201,8 @@ flowchart LR
 |---|---|---|---|
 | **iPhone / iPad, A17 Pro and later** (iPhone 15 Pro and later, iPhone 16 and later, iPads with M-series chips) | Yes | iOS 26 or later: the default shell / default build; iOS 18 – 25: the iOS 18 shell / [older-API build](docs/OLDER_SYSTEMS.md) | Main devices, played daily |
 | **iPhone / iPad, A16 and earlier** (all iPhone 14 models, iPhone 15 / 15 Plus, iPhone 13 series and so on) | Yes, with one extra step | Make a Legacy Device Pack from your own game files as in [docs/LEGACY_DEVICES.md](docs/LEGACY_DEVICES.md) and include it when making the install package; the system split is the same as the row above | Played by players: iPhone 14 Pro Max (A16, 6 GB) at 60 fps; iPhone 13 Pro Max (A15, 6 GB) in the 30 fps mode |
-| **Chips older than A15, devices with 4 GB of RAM** | No reports yet | Same as the row above | If you have tried, please open an Issue and tell us |
+| **Devices with 4 GB of RAM** (such as the 4th-generation iPad Air) | Not supported yet (we are reducing memory use and will update this when there is progress) | — | Tested by a player: on an iPad Air 4 (A14, 4 GB) with the Legacy Device Pack, the system ends the app a few seconds after launch because the device runs out of memory |
+| **Chips older than A15 with 6 GB of RAM or more** | No reports yet | Same as the A16-and-earlier row | If you have tried, please open an Issue and tell us |
 | **Mac, Apple silicon** | Yes (native macOS App) | macOS 26 or later: the default build; macOS 15 – 25: the [older-API build](docs/OLDER_SYSTEMS.md). Keyboard, mouse and gamepad all work; what each can do is in [docs/MAC.md](docs/MAC.md) | A player has played the older-API build on macOS 15.7.7 |
 | **Intel Macs** | Not supported | — | — |
 
