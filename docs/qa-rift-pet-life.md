@@ -3,7 +3,7 @@
 **English** | [简体中文](qa-rift-pet-life.zh-CN.md)
 
 
-The verification matrix here was proposed by the reporter of [#23](https://github.com/jhaizhou-ops/d2r-mobile/issues/23). It has been checked against the fixed behaviour and rewritten as a regression checklist. "Verified" rows were actually run and read by the maintainers; "not run" rows have not been run by anyone yet — contributions welcome.
+The verification matrix here was proposed by the reporter of [#23](https://github.com/d2r-mobile/d2r-mobile/issues/23). It has been checked against the fixed behaviour and rewritten as a regression checklist. "Verified" rows were actually run and read by the maintainers; "not run" rows have not been run by anyone yet — contributions welcome.
 
 ## Root cause and fix (merged)
 
