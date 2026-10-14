@@ -106,6 +106,8 @@ host/dm_rift.c	@merc_dump	佣兵装备位的测试读数（DM_TEST_MERC_DUMP）�
 host/dm_rift.c	部位 %u 模式 %u id %u	佣兵装备位的测试读数，只进日志
 host/dm_rift.c	[%.3s 部位 %u]	同上
 host/dm_rift.c	[类型 %u 类号 %u id %u 等级 %d 生命上限 %d（基础 %d）当前 %d]	随从生命的测试读数（DM_RIFT_TEST_PETDUMP），只进日志
+host/dm_rift.c	（第一位）	刷守护者的日志行里标第几位，只进日志
+host/dm_rift.c	（第二位）	同上
 host/dm_kills.c	@DM_WIDGET_OK	控件类型核对的日志标签（dm_widget.h），不上屏
 host/dm_custom.c	@DM_WIDGET_OK	同上
 host/dm_rift_ui.c	@DM_WIDGET_OK	同上

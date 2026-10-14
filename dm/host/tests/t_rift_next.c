@@ -40,6 +40,17 @@ int main(void) {
     for (int i = 0; i < hn; i++) { long long got = hp_base_limit(hc[i].base, hc[i].full), tot = hc[i].base > 0 ? got * hc[i].full / hc[i].base : got;
         if (got != hc[i].want || (hc[i].full > hc[i].base && hc[i].base > 0 && tot > 2147483392LL)) { fails++; printf("  ✗ 基础 %d 合计 %d：可写上限应为 %lld，得 %lld（写满后合计 %lld）\n", hc[i].base, hc[i].full, hc[i].want, got, tot); } }
     printf("hp_base_limit %s：%d 格，带百分比加成时写满基础项合计不过属性上限\n", fails ? "失败" : "OK", hn);
+    // 双守护者的生命系数 s、伤害系数 d（hi_duo_x1000，×1000）：75 层 510 / 750，100 层 775 / 1000，中间线性；低于 75 层（被测试开关强制）取 75 层的值。
+    // 手算：87 层 s = 510 + 265 × 12 ÷ 25 = 637，d = 750 + 250 × 12 ÷ 25 = 870。
+    // 并核「任何单体不过属性上限」：100 层最大的规则值是巴尔 10819454 点，× 0.775 = 8385076 ≤ 8388607
+    // Life factor s and damage factor d of dual Guardians (hi_duo_x1000, x1000): 510 / 750 at level 75, 775 / 1000 at level 100, linear in between; below level 75 (forced by a test switch) the level-75 values.
+    // By hand: level 87 s = 510 + 265 x 12 / 25 = 637, d = 750 + 250 x 12 / 25 = 870.
+    // Also checks "no single unit exceeds the stat limit": the largest rule value at level 100 is Baal's 10819454 points, x 0.775 = 8385076 <= 8388607
+    static const struct { int tier, s, d; } dc[] = { { 30, 510, 750 }, { 75, 510, 750 }, { 87, 637, 870 }, { 100, 775, 1000 } };
+    for (unsigned i = 0; i < sizeof dc / sizeof *dc; i++) { K.tier = dc[i].tier; if (hi_duo_x1000(0) != dc[i].s || hi_duo_x1000(1) != dc[i].d) { fails++; printf("  ✗ 第 %d 层 s / d 应为 %d / %d，得 %d / %d\n", dc[i].tier, dc[i].s, dc[i].d, hi_duo_x1000(0), hi_duo_x1000(1)); } }
+    K.tier = 100; if (10819454LL * hi_duo_x1000(0) / 1000 > 8388607LL) { fails++; printf("  ✗ 100 层巴尔 × s 过了属性上限\n"); }
+    K.guards[0] = 7; K.guards[1] = 9; K.guards[2] = 0; if (!is_guard(7) || !is_guard(9) || is_guard(0) || is_guard(8)) { fails++; printf("  ✗ is_guard 认错\n"); }
+    printf("hi_duo %s：4 格系数 + 巴尔不过上限 + 认守护者\n", fails ? "失败" : "OK");
     printf("t_rift_next %s：%d 格（层 × 晋级量）下一层 = 手写期望且 ≤ 100，宿主与顶部条同值\n", fails ? "失败" : "OK", n);
     return fails != 0;
 }

@@ -52,10 +52,13 @@ static int w_interact(uint64_t u) {   // 就近交互：游戏的点击入口（
 #if TARGET_OS_OSX
 #define W_GROUND 99   // g_go.type 的特殊值：目标不是单位，是地面上的一格（Mac 鼠标点空地走过去；只有 macOS 宿主有） | special value of g_go.type: the target is not a unit but a tile on the ground (Mac mouse click-to-walk; macOS host only)
 #define W_NEAREST_OK(t) ((t) == 2 || (t) == W_GROUND)
+static int g_hit_mon;   // 这一次命中把敌对怪也算进来（Mac 鼠标点怪 = 攻击；触屏不算，攻击归技能键） | this hit test also counts hostile monsters (Mac mouse click on a monster = attack; touch does not, attacking belongs to the skill buttons)
+#define W_MON_OK(cat) (g_hit_mon && ((cat) == 1 || (cat) == 0xa))   // 交互类别 1 = 普通怪、0xa = 另一类可攻击的（同下面测试开关 monster 的认法） | interaction category 1 = ordinary monster, 0xa = another attackable kind (the same recognition as the monster test switch below)
 static int g_gnd_x, g_gnd_y;   // 地面目标格 | ground target tile
 static uint64_t g_gnd_stick_seen, g_gnd_stick_at;   // 摇杆时间戳上次读到的值、它变化的时刻（本文件的时钟；那个时间戳是别的时钟记的，只能比变没变） | the last value read of the stick timestamp and the moment it changed (this file's clock; that timestamp is recorded by another clock, so only whether it changed can be compared)
 #else
 #define W_NEAREST_OK(t) ((t) == 2)
+#define W_MON_OK(cat) 0
 #endif
 static struct { uint32_t type, id; uint64_t until_ns, stick, next_fr, still_fr; int on, lx, ly; int n, i, tx, ty, replans, stop_at, empty, direct, alt, alt_on, ax, ay, nearest; uint16_t node[24][2]; } g_go;   // stop_at > 0：只走到这么多格内就停、不交互（测试开关「走到怪旁」用） | stop_at > 0: only walk to within this many cells and stop, without interacting (used by the test switch "walk next to a monster")
 static uint64_t w_find(uint32_t type, uint32_t id) { uint8_t *b = wb(); return type <= 5 ? ((uint64_t (*)(uint64_t, uint32_t, uint32_t, uint32_t))(b + 0x45f5f0))((uint64_t)(uintptr_t)(b + 0x2d603a0 + type * 0x400), id & 0x7f, id, type) : 0; }
@@ -324,7 +327,7 @@ static uint64_t w_hit(uint8_t *b, float sx, float sy, float min, float *dist, in
             if (t == 4 && *(uint32_t *)(u + 0xc) != 3) continue;   // 物品只认在地上的 | items only count when on the ground
             if (!(((int (*)(uint64_t, int, int, int, int))(b + 0x464a70))(u, 0, 0, -1, -1) & 1)) continue;
             if (t == 0 && u == pl) continue;
-            int cat = ((int (*)(int, uint64_t, uint64_t))(b + 0x2f7b7c))(0x165, pl, u); if (t == 0 ? cat != 9 : t == 1 ? cat != 5 : t == 2 ? cat != 2 : 0) continue;   // 类别 9 = 死亡状态的玩家单位（0x2f7c28–0x2f7c34：main+0x4667a0 对玩家类判模式 0x11）= 尸体，点它 = 取回装备（游戏点击入口对玩家类发 0x13） | category 9 = a player unit in the dead state (0x2f7c28–0x2f7c34: main+0x4667a0 checks mode 0x11 for the player type) = corpse, tapping it = retrieve equipment (the game's click entry sends 0x13 for the player type)
+            int cat = ((int (*)(int, uint64_t, uint64_t))(b + 0x2f7b7c))(0x165, pl, u); if (t == 0 ? cat != 9 : t == 1 ? (cat != 5 && !W_MON_OK(cat)) : t == 2 ? cat != 2 : 0) continue;   // 类别 9 = 死亡状态的玩家单位（0x2f7c28–0x2f7c34：main+0x4667a0 对玩家类判模式 0x11）= 尸体，点它 = 取回装备（游戏点击入口对玩家类发 0x13） | category 9 = a player unit in the dead state (0x2f7c28–0x2f7c34: main+0x4667a0 checks mode 0x11 for the player type) = corpse, tapping it = retrieve equipment (the game's click entry sends 0x13 for the player type)
             float f[2], h[2]; if (!w_project(b, scene, u, f, 0)) continue;
             if (t == 4 || !w_project(b, scene, u, h, 1)) { h[0] = f[0]; h[1] = f[1]; }
             float hh = fabsf(f[1] - h[1]), ww = hh * (t == 1 ? 0.44f : 1.0f), cx = (f[0] + h[0]) / 2, cy = (f[1] + h[1]) / 2, dhw = 0, dhv = 0, sbx = 0, sby = 0, sbw = 0, sbh = 0;
@@ -366,9 +369,13 @@ unsigned dm_world_tap(float nx, float ny) { if (nx < 0) nx = 0; if (nx > 1) nx =
 int dm_world_tap_result(unsigned seq) { return atomic_load(&g_tap_done) == seq ? atomic_load(&g_tap_res) : -1; }   // -1 还没执行；0 没有目标（什么都没发）；1 物品 2 NPC 3 物件 4 出口 | -1 not executed yet; 0 no target (nothing sent); 1 item 2 NPC 3 object 4 exit
 int dm_world_has_target(void) { return atomic_load(&g_has_target); }   // 按主键会去交互的目标存在（游戏手柄版自己的选择，main+0x2f7a0c）；任意线程读 | a target that the primary button would interact with exists (the game's own controller-version selection, main+0x2f7a0c); read from any thread
 #if TARGET_OS_OSX
+static int w_hostile(uint8_t *b, uint64_t u) { if (*(uint32_t *)u != 1) return 0; uint64_t pl = w_player(); int c = pl ? ((int (*)(int, uint64_t, uint64_t))(b + 0x2f7b7c))(0x165, pl, u) : 0; return c == 1 || c == 0xa; }
+static void w_attack(uint64_t u, const char *how) { if (g_go.on) g_go.on = 0; int r = w_interact(u); static int lg; if (lg++ < 300) LOG("鼠标攻击：%s 类型 1 cls %u id %u → 点击入口 %d", how, *(uint32_t *)(u + 4), *(uint32_t *)(u + 8), r); }
 static void w_walk_step(uint8_t *b) {
     uint64_t t = atomic_exchange(&g_walk, 0); if (!t) return; uint64_t dm_stick_last_ns(void); uint64_t pl = w_player(), scene = *(uint64_t *)(b + 0x2e2a698); int W = 0, H = 0, px = 0, py = 0; float f[2];
     dm_screen_real(&W, &H); if (!pl || !scene || W <= 0 || H <= 0 || !w_unit_xy(pl, &px, &py) || !w_project(b, scene, pl, f, 0)) return;
+    { float d0 = 0; int lab0 = 0; g_hit_mon = 1; uint64_t mu = w_hit(b, ((t >> 16) & 0xffff) / 65535.0f * W, (t & 0xffff) / 65535.0f * H, H * 0.10f, &d0, &lab0); g_hit_mon = 0;
+      if (mu && w_hostile(b, mu)) { if (w_now_ns() - g_gnd_stick_at >= 300000000ull) w_attack(mu, "按住"); return; } }   // 按住时光标下是敌对怪：再打一下（摇杆 / W A S D 刚动过就让给它） | while held with a hostile monster under the pointer: hit once more (yielding to the stick / W A S D if they have just moved)
     if (g_go.on && g_go.type != W_GROUND) return;   // 正走向某个目标去交互：不打断 | walking towards some target to interact: do not interrupt
     if (w_now_ns() - g_gnd_stick_at < 300000000ull) return;   // 摇杆 / W A S D 0.3 秒内动过：让给它 | the stick / W A S D moved within 0.3 s: yield to it
     float sx = ((t >> 16) & 0xffff) / 65535.0f * W, sy = (t & 0xffff) / 65535.0f * H, k = H * 0.00206f, a = (sx - f[0]) / k / 16, c = (sy - f[1]) / k / 8;
@@ -383,13 +390,30 @@ static void w_walk_step(uint8_t *b) {
     g_go.n = g_go.i = g_go.replans = g_go.empty = g_go.direct = g_go.alt = g_go.alt_on = 0; g_go.stop_at = 0; g_gnd_x = x; g_gnd_y = y; g_go.on = 1;
 }
 #endif
+#if TARGET_OS_OSX
+// ---- Mac 鼠标：点怪 = 攻击 ----
+// 发令走游戏自己的点击入口（同 w_interact：手柄主键与键鼠左键共用的 main+0x4ace20，带上这只怪当指定目标）：近战它自己走过去打，主键上绑的是技能就对它放那个技能，不另写攻击逻辑。
+// 按住不放时 touch_mac.c 每 0.2 秒来一次「朝光标走」的请求（dm_world_walk）：光标下是敌对怪就改成对它再发一次攻击（追着打），不是怪才走路。
+// ---- Mac mouse: clicking a monster = attack ----
+// The order goes through the game's own click entry (same as w_interact: main+0x4ace20, shared by the gamepad main button and the keyboard-and-mouse left button, with this monster as the designated target): for melee it walks over and hits by itself, and if a skill is bound to the main button it uses that skill on it; no separate attack logic is written.
+// While held, touch_mac.c sends a "walk towards the pointer" request every 0.2 s (dm_world_walk): when a hostile monster is under the pointer it becomes another attack order on it (chasing it), and only otherwise is it walking.
+static _Atomic int g_tap_mouse;
+unsigned dm_world_click(float nx, float ny) { atomic_store(&g_tap_mouse, 1); return dm_world_tap(nx, ny); }   // 任意线程：鼠标左键点世界（比触屏的点按多认敌对怪） | any thread: left mouse click on the world (recognises hostile monsters in addition to what a touch tap does)
+#endif
 static void w_tap_step(uint8_t *b) {
     uint64_t t = atomic_exchange(&g_tap, 0); if (!t) return; unsigned seq = (unsigned)(t >> 32); int res = 0;
     int W = 0, H = 0; dm_screen_real(&W, &H);   // 命中框按真实画面算，不能用游戏的「屏幕宽高」全局量（界面改成 16:9 后它的高是界面高，dm_uiscreen.c） | hit boxes are computed against the real picture, not the game's "screen width/height" globals (after the UI was changed to 16:9 its height is the UI height, dm_uiscreen.c)
     float sx = ((t >> 16) & 0xffff) / 65535.0f * W, sy = (t & 0xffff) / 65535.0f * H, d = 0; int lab = 0;
+#if TARGET_OS_OSX
+    g_hit_mon = atomic_exchange(&g_tap_mouse, 0);
+#endif
     uint64_t u = W > 0 && H > 0 ? w_hit(b, sx, sy, H * 0.10f, &d, &lab) : 0;
+#if TARGET_OS_OSX
+    g_hit_mon = 0;
+    if (u && w_hostile(b, u)) { w_attack(u, "点"); u = 0; res = 6; }   // 鼠标点到敌对怪：攻击（见 w_attack），不走「走过去交互」 | the mouse clicked a hostile monster: attack (see w_attack), not "walk over and interact"
+#endif
     if (u) { uint32_t ty = *(uint32_t *)u; res = ty == 4 ? 1 : ty == 1 ? 2 : ty == 2 ? 3 : ty == 0 ? 5 : 4; w_go(u); }
-    static int logged; if (logged++ < 200) { if (u) LOG("世界目标：点 (%.0f,%.0f) → 类型 %u cls %u id %u（%s，离框中心 %.0f 像素）", sx, sy, *(uint32_t *)u, *(uint32_t *)(u + 4), *(uint32_t *)(u + 8), lab ? "名字标签" : "命中框", d); else LOG("世界目标：点 (%.0f,%.0f) → 没有目标，不发令", sx, sy); }
+    static int logged; if (logged++ < 200) { if (u) LOG("世界目标：点 (%.0f,%.0f) → 类型 %u cls %u id %u（%s，离框中心 %.0f 像素）", sx, sy, *(uint32_t *)u, *(uint32_t *)(u + 4), *(uint32_t *)(u + 8), lab ? "名字标签" : "命中框", d); else if (res != 6) LOG("世界目标：点 (%.0f,%.0f) → 没有目标，不发令", sx, sy); }
     atomic_store(&g_tap_res, res); atomic_store(&g_tap_done, seq);
 }
 // 测试量具（触点脚本 tap_unit）：盯住某一类单位，主线程每帧把它身体框中心的屏幕位置（出图画面归一化）发布出来，脚本线程读了去落真实触点。
@@ -403,6 +427,9 @@ static void w_watch_step(uint8_t *b) {
     uint32_t w = atomic_load(&g_watch); if (!w) return; int t = (w >> 24) & 0x7f; uint32_t cls = w & 0xffffff; uint64_t scene = *(uint64_t *)(b + 0x2e2a698), v = 0;
     int W = 0, H = 0; dm_screen_real(&W, &H);
     for (int k = 0; scene && W > 0 && H > 0 && t <= 5 && k < 128 && !v; k++) for (uint64_t u = *(uint64_t *)(b + 0x2d603a0 + t * 0x400 + k * 8); u; u = *(uint64_t *)(u + 0x158)) {
+#if TARGET_OS_OSX
+        if (cls == 0xfffffe) { if (!(((int (*)(uint64_t, int, int, int, int))(b + 0x464a70))(u, 0, 0, -1, -1) & 1) || !w_hostile(b, u)) continue; } else   // 类号 0xfffffe（Mac 合成鼠标脚本的 unit 1,hostile）= 敌对且可选中的怪 | class 0xfffffe (unit 1,hostile in the Mac synthetic mouse script) = hostile and selectable monster
+#endif
         if (cls != 0xffffff ? *(uint32_t *)(u + 4) != cls : (t == 4 && *(uint32_t *)(u + 0xc) != 3)) continue;   // 类号 0xffffff（开关里写 any）= 这一类里任意一个；物品只认在地上的 | class number 0xffffff (written as any in the switch) = any one of this type; items only count when on the ground
         float f[2], h[2]; if (!w_project(b, scene, u, f, 0)) continue;
         if (!w_project(b, scene, u, h, 1)) { h[0] = f[0]; h[1] = f[1]; }

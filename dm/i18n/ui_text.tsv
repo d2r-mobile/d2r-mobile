@@ -204,6 +204,7 @@ dmRiftSayErr	秘境出错了，这次没开	The Rift could not be opened	秘境�
 dmRiftSayStart	第 %d 层开始，限时 15 分钟	Level %d: 15 minute time limit	秘境系统提示（dm_rift.c）；英文：Greater Rift level / time limit 取自暗黑 3 官方 2.1.0 补丁说明（news.blizzard.com/en-us/article/14569138）「complete the current Greater Rift level within the designated time limit」
 dmRiftSayGift	赠彩虹刻面一颗，已掉在脚下	A Rainbow Facet has dropped	秘境系统提示（dm_rift.c）；「彩虹刻面」是旧译名（原版现行「彩虹魔石」）；英文物品名 = 原版键 Rainbow Facet 的 enUS；英文：物品名 = 暗黑 2 原版 item-names[Rainbow Facet]
 dmRiftSayTimeout	时间到：本层未过关，守护者仍会掉落	Time's up: level not cleared	秘境系统提示（dm_rift.c）；超时打倒守护者不算过关；英文：not cleared，不用 Failed（没死也没失败，只是不计）
+dmRiftSayGuardians	进度已满：两位守护者现身！	Two Rift Guardians appear!	秘境系统提示（dm_rift.c）：75 层起守护者是两位；英文：同 dmRiftSayGuardian 的用词
 dmRiftSayGuardian	进度已满：守护者现身！	The Rift Guardian appears!	秘境系统提示（dm_rift.c）；英文：Rift Guardian 取自暗黑 3 官方 2.1.0 补丁说明（news.blizzard.com/en-us/article/14569138）；出现时的界面原句没查到，拟
 dmElyToaGround	背包已满，赦免之证掉在脚边	Inventory full: Token of Absolution dropped	极乐世界新角色补齐（dm_elysium.c）：背包放不下时的系统提示；英文物品名 = 暗黑 2 原版 Token of Absolution
 dmMercSlotLocked	通关地狱后打通秘境10层解锁	Clear Greater Rift Level 10 to unlock	佣兵新装备位没解锁时的系统提示（dm_rift.c；中文是 原句）；英文：Greater Rift 取暗黑 3 原文
@@ -257,6 +258,7 @@ dmRiftHudLate	第 %d 层超时	Level %d overtime	秘境顶部进度条（dm_rift
 dmRiftHudGuard	守护者现身	Rift Guardian	秘境顶部进度条（dm_rift_hud.m，UIKit）；英文：见 dmRiftSayGuardian
 dmRiftHudNext	下次第 %d 层	Next: Level %d	秘境顶部进度条（dm_rift_hud.m，UIKit）；英文：拟
 dmRiftHudTop	已通关最高层	Highest level cleared	秘境顶部进度条（dm_rift_hud.m，UIKit）：第 100 层限时内通关，没有下一层了（公开仓库）；英文：拟
+dmRiftHudOver	已超时：打完仍有掉落，不计通关	Overtime: drops, no clear	秘境顶部进度条（dm_rift_hud.m，UIKit）第二行：限时已到、守护者还没倒（公开仓库）；英文：拟
 dmRiftHudSame	下次仍是这一层	Next: same level	秘境顶部进度条（dm_rift_hud.m，UIKit）；英文：拟
 dmRiftHudKill	击败守护者	Slay the Rift Guardian	秘境顶部进度条（dm_rift_hud.m，UIKit）；英文：拟；任务目标原句没查到
 dmRiftHudGoal	消灭秘境中的怪物   %d%%	Slay the monsters   %d%%	秘境顶部进度条（dm_rift_hud.m，UIKit）；英文：拟；任务目标原句没查到
@@ -296,6 +298,7 @@ dmRiftGamT	安亚赌博	Gamble at Anya	大秘境面板（touch_layout.py _rift_p
 dmRiftBtnStart	开始	Enter Rift	大秘境面板（touch_layout.py _rift_panel）；英文：拟；方尖碑面板按钮原文没查到；暗黑 3 方尖碑面板的进入按钮原文为 ACCEPT；我们的面板没有它那句前置说明，单一个 Accept 不知接受什么，未采用，留 Enter Rift（看过认可）
 dmRiftBtnAbandon	放弃	Quit	大秘境面板（touch_layout.py _rift_panel）；英文用 Quit（「放弃用 quit 不是 abandon」）
 dmRiftBtnResel	重新选层	Select Level	大秘境面板（touch_layout.py _rift_panel）已完成页上组按钮；英文与选层页标题同词
+dmRiftCapContOver	有掉落，不计通关	Loot only, no clear	大秘境面板进行中页「继续」钮上方的说明，已超时时用（公开仓库）；英文：拟
 dmRiftCapCont	回到离开时的位置	Resume your run	大秘境面板（touch_layout.py _rift_panel）；英文：拟
 dmRiftBtnCont	继续	Continue	大秘境面板（touch_layout.py _rift_panel）
 dmRiftMsT	首通奖励	First Clear	大秘境面板（touch_layout.py _rift_panel）
@@ -327,3 +330,6 @@ dmAppFullscreen	全屏	Toggle Full Screen	显示菜单的全屏项
 dmAppMenuHelp	帮助	Help	帮助菜单
 dmAppKeysTitle	键盘与手柄按键对照	Keyboard and Controller Buttons	帮助菜单的键位对照项，也是那一页的标题
 dmAppKeysText	用键盘时，界面上的按键提示显示的就是键盘上的键；接上手柄按一下，提示换成手柄字母。\n\n确认：J（空格也可以）　　返回：K（Esc 也可以）\n回车也可以确认；页面底部有「=」提示时回车当 =（如起名后的「接受」）\n=：菜单 / 新角色　　Tab：地图\n移动：W A S D　　十字键：方向键\nU I Q E Z C：手柄的 X Y L R ZL ZR\nF：按左摇杆　　G：按右摇杆\n\n鼠标：左键点空地走过去，按住不放一直朝光标走；点目标、界面、底部的按键提示和技能 / 药水格；右键 = 返回；滚轮滚列表。\n接上手柄可以直接用。这一页以后在「帮助」菜单里。	With a keyboard, on-screen button hints show keyboard keys; press anything on a connected controller and they switch to controller letters.\n\nConfirm: J (Space also works)    Back: K (Esc also works)\nReturn also confirms; acts as = when the page shows an = hint (e.g. Accept after naming)\n=: menu / new character    Tab: map\nMove: W A S D    D-pad: arrow keys\nU I Q E Z C: controller X Y L R ZL ZR\nF: press left stick    G: press right stick\n\nMouse: left click the ground to walk there, hold to keep walking toward the cursor; click targets, the interface, the button hints at the bottom and skill / potion slots; right click = back; wheel scrolls lists.\nA connected controller works right away. This page stays in the Help menu.	键位对照正文（首次启动弹一次）
+dmAppShareLog	分享日志…	Share Logs…	帮助菜单：把两份日志与版本信息打成压缩包，玩家选位置存下（不上传）
+dmAppShareInfo	版本信息	Version Info	分享日志压缩包里版本信息那份文件的标题行
+dmAppShareFail	日志打包失败	Could Not Pack the Logs	分享日志失败时提示框的标题

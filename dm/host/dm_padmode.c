@@ -470,6 +470,10 @@ void dm_padmode_step(uint8_t *b, uint64_t frame) {   // 游戏主线程每帧（
               L += (size_t)snprintf(o + L, L < sizeof o ? sizeof o - L : 0, "%s%s=「%s」", i ? "、" : "", g_str[i].key, r ? r : "(空)"); }
           LOG("DM_TEST_PADMODE：帧 %llu 模式 %s，原版取串 %s", (unsigned long long)frame, g_cur ? "手柄" : "触屏", o); } }
 #if TARGET_OS_OSX
+    // 建角模式页「极乐世界」那行左边写死的手柄键帽（布局 touch_layout.py 的 TouchBlissKey，原位 x −1665）：Mac 的覆盖层同位带了一个键盘键帽 TouchBlissKeyK，按当前键帽对调
+    // The hard-coded gamepad key cap to the left of the "Elysium" row on the character-creation mode page (TouchBlissKey in the layout touch_layout.py, original position x -1665): the Mac overlay carries a keyboard key cap TouchBlissKeyK at the same position, and the two are swapped according to the current key caps
+    if (g_kbd_have && frame % 10 == 0) { uint64_t root = rd8((uint64_t)(uintptr_t)(b + 0x2f05458)), a = root ? pm_find(root, "TouchBlissKey", 0) : 0, k = a ? pm_find(root, "TouchBlissKeyK", 0) : 0;
+        for (int i = 0; i < 2 && a && k; i++) { uint64_t w = i ? k : a; int32_t *r = (int32_t *)(uintptr_t)(w + 0x70), x = (i ? g_kbd : !g_kbd) ? -1665 : 99999; if (r[0] != x) { r[0] = x; ((void (*)(uint64_t))rd8(rd8(w) + 0x10))(w); } } }
     // 测试开关 DM_TEST_KBDCAPS=<帧>:<0|1>[,…]：到帧当作「实体手柄有输入（0）/ 键盘有输入（1）」（无人值守的局没有实体手柄）
     // Test switch DM_TEST_KBDCAPS=<frame>:<0|1>[,...]: at that frame act as if "a physical gamepad had input (0) / the keyboard had input (1)" (unattended runs have no physical gamepad)
     { static int n = -1, k; static struct { uint64_t f; int m; } ev[8];

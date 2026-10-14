@@ -69,7 +69,9 @@ What it can do now:
 
 - **Click empty ground to walk there**: a left click on empty ground walks the character to that point, finding its way around obstacles; a click inside a wall or water walks to the nearest reachable spot.
 - **Hold to keep walking**: hold the left button and the character keeps walking towards the pointer, following it as it moves. W A S D / the gamepad stick take priority: press a direction key while walking and the keyboard takes over at once.
+- **Click a monster = attack**: a left click on a monster attacks it with whatever is bound to the main attack key (J) — a melee character walks over and hits, spells and ranged attacks are used on it directly. Holding keeps attacking and chasing; when it is not a monster under the pointer, holding walks towards it as before. Right click is still back.
 - **Click a target in the world** (NPC, chest, waypoint, item on the ground): the character walks over and interacts. With a panel open, a click outside it only closes the panel.
+- **Items take the mouse now**: a click selects and shows the description; a double click = use / put on / take off (a potion in the belt = drink, the cube = open, a vendor's goods = buy); press and drag = pick up, release = put down (move between cells, equip, into the stash / cube, into the inventory = buy, onto the vendor's shelf = sell), with the item image right on the pointer; press and hold on an empty cell = tidy this page.
 - **Click the bottom row**: a skill icon = use that skill (the same as pressing the key shown under it), a potion cell = drink it, the middle button = open the inventory group of pages, the run / walk button = toggle.
 - **Click the interface**: buttons, checkboxes and tabs in panels (including the in-page tabs of the skill tree), the pause menu, the settings pages, and "Start" and the close X on the rift level-selection page.
 - **Click a key hint at the bottom**: clicking an entry presses that key.
@@ -79,17 +81,16 @@ What it can do now:
 
 What it cannot do yet:
 
-- **Clicking a monster does not attack**; attack with the skill keys (J K U I).
 - Click-to-walk was verified only in the camp, on empty ground and the waypoint; complex terrain in the wild and clicking NPCs are unverified.
 - Switching input device (keyboard ↔ gamepad) while the settings page or the stash is open: the prompts change only after the panel closes.
-- **Long press / double click / drag / buying on items do not take the mouse.** Use the keyboard or gamepad cursor: move the cursor onto the item with W A S D and press the key shown in the bottom bar. For example, buying from a vendor: cursor onto the goods (the bottom bar shows "A Buy") → press Space (or J) → press it again in the confirmation.
+- A **long press** on an item (more details / take one) is press-and-hold with the mouse; these are the same gestures as on touch.
 - "Hold …" key hints need longer than a click, so hold the key on the keyboard; a hint with two key caps is not recognised.
 - The life orb, mana orb and experience bar do nothing when clicked.
 
 ## Saves, logs and iCloud
 
 - Saves: `~/Library/Application Support/D2R Mobile/save`
-- Log: `~/Library/Logs/D2R Mobile/host.log` (the previous run is `host.prev.log`). Please attach it when reporting a problem.
+- Log: `~/Library/Logs/D2R Mobile/host.log` (the previous run is `host.prev.log`). When reporting a problem use Help → Share Log… in the menu bar: it packs these two logs and a version-information file into one archive and lets you choose where to save it; nothing is uploaded, no saves are included, and the user name in the logs is replaced with `~`.
 - The older-API build (`D2R Mobile M3.app`) uses a separate pair of directories with M3 in the name.
 
 **iCloud save sync: not available in an App you build from this repository.** The program has the same sync as on iPhone / iPad wired in, but it needs the App to carry the iCloud signing entitlement; an App you build yourself is signed locally without it, so saves stay on this Mac, the log records one line saying iCloud is unavailable and only local saves are used, and the game runs as usual. To bring your phone's progress over, import it by hand as below.
@@ -133,10 +134,10 @@ After a forced quit or a crash, the system's "reopen windows?" dialog no longer 
 ## Known shortcomings
 
 - The five things from the top have not been operated by a person: keyboard keys, a physical gamepad, the resource-folder dialog, ⌘Q and menu clicks, how it feels in the hand. The key mapping was written from the key-code table.
-- Clicking a monster does not attack; long press / double click / drag / buying on items do not take the mouse; click-to-walk was verified only in the camp (see "Mouse" above).
+- Click-to-walk was verified only in the camp. Clicking a distant monster through a wall may stop the character at the obstacle; step around and click again. Clicking monsters with a ranged class, and the trove's auto-placement under mouse drags, are unverified. There is no right-click skill as on PC.
+- The Share Log menu item and save panel have not been operated by a person; what was verified is the archive it produces.
 - "Prompts switch back to gamepad letters when a gamepad is used" was verified by simulation; no physical gamepad has been connected.
-- On a few pages (the rift confirmation page and level-selection page) the key cap drawn inside a button is still the gamepad "A"; press J or Space.
 - The free town portal on ZR + Space of a gamepad is not there.
 - The quest bar on the left in rifts is not there.
-- An App you build yourself has no iCloud save sync; there are no update checks and no sharing of the diagnostic log.
+- An App you build yourself has no iCloud save sync and does no update check (it does not go online).
 - The older-API build was played on macOS 15 by one player in our test group (Mac mini M4, macOS 15.7, using a package built elsewhere); building it from this repository on a Mac running macOS 15 has not been operated by a person.

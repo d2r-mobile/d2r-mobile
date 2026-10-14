@@ -27,6 +27,12 @@ int main(void) {
         if (town_menu(c[i].st) != c[i].want || m.menu != c[i].want) { fails++; printf("  ✗ %s：应给页 %d，town_menu %d、peek %d\n", c[i].what, c[i].want, town_menu(c[i].st), m.menu); } }
     atomic_store(&M.req_start, 7); atomic_store(&M.req_cont, 1); atomic_store(&M.req_abandon, 1); atomic_store(&M.menu, MENU_CHOICE); menu_reset();
     if (atomic_load(&M.req_start) || atomic_load(&M.req_cont) || atomic_load(&M.req_abandon) || atomic_load(&M.menu) != MENU_NONE) { fails++; printf("  ✗ 新局重置后仍有残留：开始 %d 继续 %d 放弃 %d 页 %d\n", atomic_load(&M.req_start), atomic_load(&M.req_cont), atomic_load(&M.req_abandon), atomic_load(&M.menu)); }
+    // 「进行中且已超时」（rift_overtime）：= 状态是进行中 ∧ 开局至今 ≥ 900 秒；顶部条与菜单拿到的是同一个量。开局时刻摆在 N 秒前（客体时钟）
+    // "In progress and overtime" (rift_overtime): = state is in progress AND at least 900 seconds since the start; the top bar and the menu receive the same quantity. The start moment is placed N seconds in the past (guest clock)
+    static const struct { int st; int ago; int want; } oc[] = { { ST_RUN, 100, 0 }, { ST_RUN, 899, 0 }, { ST_RUN, 901, 1 }, { ST_RUN, 5000, 1 }, { ST_DONE, 901, 0 }, { ST_IDLE, 901, 0 } };
+    for (unsigned i = 0; i < sizeof oc / sizeof *oc; i++) { atomic_store(&K.st, oc[i].st); K.t0_ns = guest_ns() - (uint64_t)oc[i].ago * 1000000000ull; dm_rift_hud_t h = {0}; dm_rift_menu_t m = {0}; dm_rift_hud(&h); menu_fill(&m, 2);
+        if (rift_overtime() != oc[i].want || m.overtime != oc[i].want || (oc[i].st != ST_IDLE && h.overtime != oc[i].want)) { fails++; printf("  ✗ 状态 %d 开局 %d 秒前：超时量应为 %d，得 %d（顶部条 %d、菜单 %d）\n", oc[i].st, oc[i].ago, oc[i].want, rift_overtime(), h.overtime, m.overtime); } }
+    printf("rift_overtime %s：6 格\n", fails ? "失败" : "OK");
     printf("t_rift_oldrun %s：%d 格城里入口给页 + 新局重置清请求\n", fails ? "失败" : "OK", n);
     return fails != 0;
 }

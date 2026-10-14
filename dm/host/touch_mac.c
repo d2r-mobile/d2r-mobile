@@ -17,6 +17,7 @@ int dm_loadscreen_down(void);
 // Tick number: script playback goes by server ticks (deterministic); a real mouse (App form) converts wall clock into 30 ticks per second - the game stops ticking while the pause menu / settings page / Greater Rift panel is open,
 // and with server ticks the mouse events would sit in the queue unprocessed, so nothing on those pages could be clicked
 static int g_live_on;
+int dm_touch_host_is_live(void) { return g_live_on; }   // 真鼠标模式（Mac App）：dm_cursor.c 据此在手柄版界面下也跑触屏的物品手势泵 | real-mouse mode (Mac App): based on this dm_cursor.c runs the touch layout's item gesture pumps under the gamepad interface as well
 static uint32_t touch_cur_tick(void) { return g_live_on ? (uint32_t)(now_ns() / 33333333ull) : dm_cur_tick(); }
 
 typedef struct { uint64_t beat; int op, slot; float x, y; } touch_event;
@@ -196,6 +197,9 @@ void dm_touch_host_step(uint64_t now, uint64_t *buttons, int32_t *lx, int32_t *l
                   else if (dm_ui_minimap_rect(mr)) { float band = (mr[3] - mr[1]) / 4; if (band < 0.042f) band = 0.042f; if (band > (mr[3] - mr[1]) * 0.4f) band = (mr[3] - mr[1]) * 0.4f;
                       if (px >= mr[0] && px <= mr[2] && py >= mr[1] && py <= mr[1] + band) { dm_ui_map_full(1); eat = 1; hold = 0; fprintf(stderr, "[dm] 鼠标：点在小地图顶上那一条 → 切到全屏地图\n"); } } }
               if (eat) { if (op == 2) { eat = 0; if (hold) { hold = 0; g_live_btn_until = touch_cur_tick() + 3; } } atomic_store(&g_live.head, h + 1); continue; } }
+            if (!in) { static int upd_eat; int dm_update_click_at(float, float);   // 主菜单右上角的「有新版本…」那行：点它 = 打开下载页（dm_update.c），这一下从按下到抬起都不再交给界面 | the "New version..." line at the top right of the main menu: clicking it = open the download page (dm_update.c); this click is no longer passed to the interface from press to release
+                if (op == 0 && dm_update_click_at(px, py)) upd_eat = 1;
+                if (upd_eat) { if (op == 2) upd_eat = 0; atomic_store(&g_live.head, h + 1); continue; } }
             if (!in) {   // 前端页：抬起时先问一次命中——落在页签上就走「点页签 = 按对应的手柄键」（页签不认鼠标点击；局内由手势层做同一件事），其余照旧发鼠标点击 | front-end pages: on release, hit-test once first - landing on a tab goes through "clicking a tab = pressing the corresponding gamepad key" (tabs do not take mouse clicks; in game the gesture layer does the same), everything else sends a mouse click as before
                 if (op == 2 && dm_ui_item_at_now(px, py) == 2) { dm_ui_touch(3, px, py); dm_ui_tab_go(); } else dm_ui_touch(op, px, py);
                 atomic_store(&g_live.head, h + 1); continue; }
@@ -262,7 +266,13 @@ apply_input:
         touch_event *e = &g_touch.event[g_touch.next++];
         if (e->slot < 0 || e->slot >= DM_TC_MAX_TOUCH) continue;
         if (e->op == TOUCH_DOWN) { dm_tc_begin(&g_touch.state, e->slot, e->x, e->y); if (g_touch.state.navigation_mode && e->slot == g_touch.state.pointer_slot) dm_tc_pointer_item(&g_touch.state, dm_ui_item_at_now(e->x / 2868, e->y / 1320)); }
-        else if (e->op == TOUCH_MOVE) { dm_tc_move(&g_touch.state, e->slot, e->x, e->y);
+        else if (e->op == TOUCH_MOVE) {
+            // 真鼠标拖物品：触屏层把物品图抬在「手指」上方 DM_TC_POINTER_LIFT_PT（手指会挡住图），落点也按抬起后的图算；鼠标不挡东西，物品图应当就在光标上。
+            // 所以拖动已经起了之后，把光标位置下移同样的量当「手指位置」喂给触屏层：抬起后的图正好落在光标上，松手落点 = 光标。起拖前不移（不然一下单击会被这段位移当成拖）
+            // Dragging an item with the real mouse: the touch layer lifts the item image DM_TC_POINTER_LIFT_PT above the "finger" (a finger would cover the image) and computes the drop point from the lifted image; a mouse covers nothing, so the item image should sit right on the pointer.
+            // So once a drag has started, the pointer position shifted down by the same amount is fed to the touch layer as the "finger position": the lifted image lands exactly on the pointer, and the drop point = the pointer. No shift before the drag starts (otherwise a plain click would be taken as a drag because of this displacement)
+            if (g_live_on && g_touch.state.navigation_mode && e->slot == g_touch.state.pointer_slot && g_touch.state.finger[e->slot].pointer_dragged) e->y += DM_TC_POINTER_LIFT_PT;
+            dm_tc_move(&g_touch.state, e->slot, e->x, e->y);
             // 界面连续手势（同 iOS 前端 front_ios.m）：手势层定型后把起手点与当前点交给宿主；起拖时报一次物品图的抬起量（同上面拖放落点的 DM_TC_POINTER_LIFT_PT / 1320）
             // Continuous UI gestures (same as the iOS front end front_ios.m): once the gesture layer has settled the gesture, hand the start point and current point to the host; when a drag starts report the lift amount of the item image once (same as DM_TC_POINTER_LIFT_PT / 1320 of the drag-and-drop landing point above)
             dm_tc_finger *f = &g_touch.state.finger[e->slot];
@@ -289,7 +299,7 @@ apply_input:
                 // 真鼠标：手势层认为没有面板开着（它按名单认面板，大秘境选层页这类借壳的面板不在名单里），这一下却落在某个面板里 → 发界面点击，不当点世界
                 // Real mouse: the gesture layer believes no panel is open (it recognises panels by a list, and panels that borrow another shell, such as the Greater Rift level-selection page, are not on it), yet this click lands inside some panel -> send a UI click instead of a world click
                 if (g_live_on && dm_ui_item_at_now(wx, wy) == 0) { dm_ui_touch(0, wx, wy); dm_ui_touch(2, wx, wy); }
-                else { unsigned q = dm_world_tap(wx, wy); if (g_live_on) { g_lm.tap_seq = q; g_lm.tap_x = wx; g_lm.tap_y = wy; } } }   // 真鼠标：记下这一笔，答案是「没有目标」就改成走到那一点 | real mouse: remember this click, and if the answer is "no target" turn it into walking to that point
+                else if (g_live_on) { unsigned dm_world_click(float, float); g_lm.tap_seq = dm_world_click(wx, wy); g_lm.tap_x = wx; g_lm.tap_y = wy; } else dm_world_tap(wx, wy); }   // 真鼠标：记下这一笔，答案是「没有目标」就改成走到那一点 | real mouse: remember this click, and if the answer is "no target" turn it into walking to that point
             if (g_touch.state.mouse_click_seq != mc) { float nx = g_touch.state.mouse_click_x / 2868, ny = g_touch.state.mouse_click_y / 1320; dm_ui_touch(0, nx, ny); dm_ui_touch(2, nx, ny); }
         }
     }

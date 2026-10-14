@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <TargetConditionals.h>
 #include "dm.h"
 #include "dm_widget.h"
 #include "dm_rift.h"
@@ -138,8 +139,15 @@ void dm_rift_ui_pump(void) {
     //   level (quitting is irreversible, so it is not on A); B is not taken over = the original game closes the panel.
     //   The key legend uses the original bottom button legend (action number 0 = A, 2 = X), with the same strings as on the buttons
     { int dm_padmode_current(void); uint64_t dm_padmode_page_keys(uint64_t); void dm_padmode_legend(int, const char *);
-      { int kx = dm_padmode_current() ? 52 : 99999; rect(find(bw, "TouchRF_KeyA", 0), kx, 1181); rect(find(bw, "TouchRF_KeyA2", 0), kx, 1181); rect(find(bw, "TouchRF_KeyX", 0), m.menu == 3 ? 99999 : kx, 844); }   // 确认页上面那个钮不在，它的键帽也不显示   // 按钮左端的原版键帽：只在手柄模式显示 | the upper button is absent on the confirmation page, so its key cap is not shown either
-      rect(find(panel(), "TouchCloseBox", 1), dm_padmode_current() ? 99999 : -998, 256);   // 右上角的触屏关闭 X（布局同编年史 _chronicle_touch）：手柄模式挪到屏外（按 B 关），触屏模式放回布局里的位置；同 dm_kills.c | the touch close X in the top-right corner (layout same as the Chronicle _chronicle_touch): moved off screen in controller mode (B closes), put back at its layout position in touch mode; same as dm_kills.c
+      { int kx = dm_padmode_current() ? 52 : 99999, px = kx;
+#if TARGET_OS_OSX
+        // Mac App：玩家用键盘时按钮左端显示键盘键帽（布局里名字加 K 的那几个，只有 Mac 的覆盖层带），手柄有输入时显示手柄键帽；两套同位，一套在屏上另一套挪出屏
+        // Mac App: when the player uses the keyboard, the left end of a button shows the keyboard key cap (the ones whose layout names end in K, carried only by the Mac overlay), and when a gamepad has input the gamepad key cap is shown; the two sets share a position, one on screen and the other moved off screen
+        { int dm_padmode_kbd(void); int qx = 99999; if (dm_padmode_kbd()) { qx = kx; px = 99999; }
+          rect(find(bw, "TouchRF_KeyAK", 0), qx, 1181); rect(find(bw, "TouchRF_KeyA2K", 0), qx, 1181); rect(find(bw, "TouchRF_KeyXK", 0), m.menu == 3 ? 99999 : qx, 844); }
+#endif
+        rect(find(bw, "TouchRF_KeyA", 0), px, 1181); rect(find(bw, "TouchRF_KeyA2", 0), px, 1181); rect(find(bw, "TouchRF_KeyX", 0), m.menu == 3 ? 99999 : px, 844); }   // 确认页上面那个钮不在，它的键帽也不显示   // 按钮左端的原版键帽：只在手柄模式显示 | the upper button is absent on the confirmation page, so its key cap is not shown either
+      { uint64_t an = find(panel(), "TouchRF_Anchor", 1); int pad = dm_padmode_current(); rect(find(an, "TouchRF_CloseX", 1), pad ? 99999 : 1766, 64); rect(find(an, "TouchClose", 1), pad ? 99999 : 1705, -11); rect(find(an, "TouchRF_CloseBtn", 1), pad ? 1868 : 99999, 8); }   // 外框右上角的关闭钮只留一个：手柄 / 键鼠显示原版红框（按 B 或鼠标点），触屏显示金色 X（与别的面板同图同处），另一个挪出屏 | only one close button stays at the top right of the frame: gamepad / keyboard-and-mouse show the original red frame (press B or click it), touch shows the gold X (same image and place as other panels), and the other one is moved off screen
       if (dm_padmode_current()) { int ch = m.menu >= 2, cf = m.menu == 3;   // cf：确认页，只有 A = 继续；取消 = B 关面板（原版） | cf: confirmation page, only A = continue; cancel = B closes the panel (as in the original)
           uint64_t ev = dm_padmode_page_keys(DM_BTN_A | DM_BTN_X | DM_BTN_LEFT | DM_BTN_RIGHT | DM_BTN_UP | DM_BTN_DOWN);
           dm_padmode_legend(0, dm_str(b, ch ? "dmRiftBtnCont" : "dmRiftBtnStart")); if (ch && !cf) dm_padmode_legend(2, dm_str(b, m.done ? "dmRiftBtnResel" : "dmRiftBtnAbandon"));
@@ -200,8 +208,8 @@ void dm_rift_ui_pump(void) {
         // uncompleted page = "this level is void / Abandon" and "return to the position at the time of leaving / Continue". "Reselect level" is a separate
         // button at the same position as "Abandon", moved in and out (the host cannot write button text)
         rect(find(bw, "TouchRF_Abandon", 0), m.done ? 99999 : 0, 818); rect(find(bw, "TouchRF_Resel", 0), m.done ? 0 : 99999, 818);
-        text(find(bw, en ? "TouchRF_ContTE" : "TouchRF_ContT", 0), dm_str(rb(), m.done ? "dmRiftCapGuard" : "dmRiftCapCont"));
-        text(find(bw, "TouchRF_ChNote", 0), ""); text(find(bw, "TouchRF_ChT", 0), dm_str(rb(), m.done ? (m.inc ? "dmRiftTitleDone" : "dmRiftTitleLate") : "dmRiftTitleRun"));
+        text(find(bw, en ? "TouchRF_ContTE" : "TouchRF_ContT", 0), dm_str(rb(), m.done ? "dmRiftCapGuard" : m.overtime ? "dmRiftCapContOver" : "dmRiftCapCont"));
+        text(find(bw, "TouchRF_ChNote", 0), ""); text(find(bw, "TouchRF_ChT", 0), dm_str(rb(), m.done ? (m.inc ? "dmRiftTitleDone" : "dmRiftTitleLate") : m.overtime ? "dmRiftTitleLate" : "dmRiftTitleRun"));   // 进行中但已超时：标题同「超时未过关」 | in progress but overtime: the title is the same as "Time's Up"
         if (m.done) { text(find(bw, "TouchRF_ChLeftL", 0), dm_str(rb(), "dmRiftGuardDown")); text(find(bw, "TouchRF_ChLeft", 0), ""); text(find(bw, "TouchRF_ChProgL", 0), dm_str(rb(), m.inc ? "dmRiftNextOpen" : "dmRiftRetryOpen")); text(find(bw, "TouchRF_ChProg", 0), ""); text(find(bw, "TouchRF_ChNoteL", 0), dm_str(rb(), m.inc ? "dmRiftSaved" : "dmRiftNotCounted")); }
         else { int s = m.secs_left; text(find(bw, "TouchRF_ChLeftL", 0), dm_str(rb(), "dmRiftTimeLeft")); snprintf(t, sizeof t, "%d:%02d", s / 60, s % 60); text(find(bw, "TouchRF_ChLeft", 0), t);
             text(find(bw, "TouchRF_ChProgL", 0), dm_str(rb(), "dmRiftProgress")); snprintf(t, sizeof t, "%d%%", (int)(m.progress * 100)); text(find(bw, "TouchRF_ChProg", 0), t); text(find(bw, "TouchRF_ChNoteL", 0), ""); }

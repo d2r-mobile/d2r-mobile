@@ -62,6 +62,7 @@ static NSString *res_item(NSString *name) {
     for (NSString *ln in [txt componentsSeparatedByString:@"\n"]) { NSString *pre = [name stringByAppendingString:@"="]; if ([ln hasPrefix:pre]) { d = [ln substringFromIndex:pre.length]; return [fm fileExistsAtPath:d] ? d : nil; } }
     return nil;
 }
+static void upd_start(void);   // 更新检查（在文件后面） | update check (later in this file)
 // main() 最前面调。是 App 形态就把环境与参数备好并返回 1；不是返回 0、什么都不动
 // Called at the very start of main(). In App form it prepares the environment and arguments and returns 1; otherwise it returns 0 and touches nothing
 int dm_app_bootstrap(int *argc, char ***argv) {
@@ -119,9 +120,47 @@ int dm_app_bootstrap(int *argc, char ***argv) {
         if (ov) setenv("DM_ROMFS_OVERLAY", ov.fileSystemRepresentation, 1);
         static char *av[5]; av[0] = (*argv)[0]; av[1] = strdup(prod.fileSystemRepresentation); av[2] = "main"; av[3] = "sdk"; av[4] = NULL;
         *argv = av; *argc = 4;
+        upd_start();
         LOG("App：存档 %s；资源 %s；程序文件 %s；界面覆盖层 %s；日志 %s", save.UTF8String, rom.UTF8String, prod.UTF8String, getenv("DM_ROMFS_OVERLAY") ?: "（没有，原版界面）", lf.UTF8String);
         return 1;
     }
+}
+
+// ---- 更新检查 ----
+// 包的 Info.plist 里带了 SWUpdateURL（打包脚本 DM_MAC_UPDATE_URL；内测包指向下载站的 latest_mac.json）才检查；公开版 / 自己构建的包不带 = 不联网、不提示。
+// 版本文件：{"build": 整数构建号, "note": "一句说明", "note_en": "English", "url": "下载页"}。主菜单出现时读一次（两次之间至少隔 60 秒），2 秒超时；
+// build 比包内构建号大 → 交给两端共用的提示核心（host/dm_update.c：手柄版主菜单右上角「构建 N」下面一行「有新版本 N · 说明」，按 Y / 键盘 I 打开下载页）；
+// 读不到 / 超时 / 格式不对一律静默（只记日志），不影响启动。不自动下载、不替换。下载页地址只认与版本文件同一个主机的 http(s) 地址
+// ---- Update check ----
+// Checked only when the package's Info.plist carries SWUpdateURL (the packaging script's DM_MAC_UPDATE_URL); public builds / packages you build yourself do not carry it = no network access, no hint.
+// Version file: {"build": integer build number, "note": "one sentence", "note_en": "English", "url": "download page"}. Read once when the main menu appears (at least 60 seconds between two reads), with a 2-second timeout;
+// build larger than the package's build number -> handed to the hint core shared by both platforms (host/dm_update.c: one line "New version N - note" under "Build N" at the top right of the gamepad-layout main menu; Y / keyboard I opens the download page);
+// unreadable / timed out / malformed are all silent (logged only) and do not affect startup. Nothing is downloaded or replaced automatically. The download page address is accepted only if it is an http(s) address on the same host as the version file
+void dm_update_init(int own_build, void (*on_select)(void), void (*on_click)(void)); void dm_update_offer(int new_build, const char *note, int urgent); void dm_update_safe_left(int units);
+static NSString *g_upd_url, *g_upd_page; static int g_upd_own; static double g_upd_last;
+static void upd_check(void) {
+    double now = CFAbsoluteTimeGetCurrent(); if (g_upd_last && now - g_upd_last < 60) return; g_upd_last = now;
+    NSURL *u = [NSURL URLWithString:g_upd_url]; if (!u) return;
+    NSURLSessionConfiguration *cf = NSURLSessionConfiguration.ephemeralSessionConfiguration; cf.timeoutIntervalForRequest = 2; cf.timeoutIntervalForResource = 2; cf.requestCachePolicy = NSURLRequestReloadIgnoringLocalCacheData;
+    [[[NSURLSession sessionWithConfiguration:cf] dataTaskWithURL:u completionHandler:^(NSData *d, NSURLResponse *r, NSError *e) {
+        NSInteger code = [r isKindOfClass:NSHTTPURLResponse.class] ? ((NSHTTPURLResponse *)r).statusCode : 0;
+        NSDictionary *j = (!e && code == 200 && d) ? [NSJSONSerialization JSONObjectWithData:d options:0 error:nil] : nil;
+        NSNumber *b = [j isKindOfClass:NSDictionary.class] ? j[@"build"] : nil;
+        if (![b isKindOfClass:NSNumber.class] || b.intValue < 1) { LOG("更新：读版本文件没成（%s，HTTP %ld），本次不提示", e ? e.localizedDescription.UTF8String : "格式不对", (long)code); return; }
+        NSString *zh = [j[@"note"] isKindOfClass:NSString.class] ? j[@"note"] : @"", *en = [j[@"note_en"] isKindOfClass:NSString.class] ? j[@"note_en"] : zh, *pg = [j[@"url"] isKindOfClass:NSString.class] ? j[@"url"] : nil;
+        NSURL *pu = pg ? [NSURL URLWithString:pg] : nil; BOOL okpg = pu && ([pu.scheme isEqualToString:@"https"] || [pu.scheme isEqualToString:@"http"]) && [pu.host isEqualToString:u.host];
+        g_upd_page = okpg ? [pg copy] : nil;
+        if (b.intValue > g_upd_own) { const char *l = getenv("DM_LANG"); NSString *note = (l && !strncmp(l, "zh", 2)) ? zh : en; LOG("更新：最新构建 %d 比自己（%d）新 → 主菜单提示（下载页 %s）", b.intValue, g_upd_own, okpg ? "有" : "没给或不同主机，不可点"); dm_update_offer(b.intValue, note.UTF8String, 0); }
+        else { LOG("更新：最新构建 %d，不比自己（%d）新，不提示", b.intValue, g_upd_own); dm_update_offer(0, "", 0); }
+    }] resume];
+}
+static void upd_click(void) { NSString *pg = g_upd_page; if (!pg) return; dispatch_async(dispatch_get_main_queue(), ^{ LOG("更新：打开下载页"); if (!getenv("DM_TEST_UPDATE_NOOPEN")) [NSWorkspace.sharedWorkspace openURL:[NSURL URLWithString:pg]]; }); }
+static void upd_start(void) {
+    NSDictionary *inf = NSBundle.mainBundle.infoDictionary; const char *te = getenv("DM_TEST_UPDATE_URL");   // 测试：换一个版本文件地址（本机起的小服务 / 不存在的地址） | test: use a different version file address (a small local server / a non-existent address)
+    g_upd_url = te ? @(te) : [inf[@"SWUpdateURL"] description]; g_upd_own = [[inf[@"CFBundleVersion"] description] intValue];
+    if (!g_upd_url.length || g_upd_own < 1) { LOG("更新：包里没配版本文件地址，不检查"); return; }
+    dm_update_init(g_upd_own, upd_check, upd_click); dm_update_safe_left(0);
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{ upd_check(); });   // 启动时查一次：手柄版主菜单不发「选角页出现」那条消息（核心靠它叫外壳去查），不能只等回调；回调若来了也照查（两次之间隔 60 秒） | check once at launch: the gamepad-layout main menu does not send the "character selection appeared" message (which the core relies on to ask the shell to check), so waiting for the callback alone is not enough; if the callback does come it checks as well (at least 60 seconds apart)
 }
 
 // 手柄代码（ios/Sources/dm_gamepad.m，两边共用）问「现在是不是面板 / 读取画面开着」：只用来决定空着的 ZR 格要不要当免费回城。

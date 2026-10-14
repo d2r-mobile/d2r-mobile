@@ -19,6 +19,7 @@
 #include <stdio.h>
 #include <stdatomic.h>
 #include <pthread.h>
+#include <TargetConditionals.h>
 
 static int g_own = -1; static void (*g_on_select)(void), (*g_on_click)(void);
 static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER; static struct { int build, urgent; char note[160]; } g_offer;   // g_mu 护 g_offer | g_mu guards g_offer
@@ -115,6 +116,23 @@ void dm_update_pump(void) {   // 取手柄处每帧调（游戏主线程） | Ca
     static uint64_t lw; static int ls = -1, lnw; int st = normal ? 1 : urg ? 2 : fail ? 2 + fail : 0;
     if (lw != bw || ls != st || (normal && lnw != nw)) { lw = bw; ls = st; lnw = nw; LOG("更新：选角页写上构建 %d%s（提示字宽 %d）", g_own, normal ? "，普通更新提示" : urg ? "，建议立即更新提示" : fail == 1 ? "，查更新失败提示（无线数据许可）" : fail ? "，查更新失败提示（浏览器手动更新）" : "，无提示", normal ? nw : 0); }
 }
+#if TARGET_OS_OSX
+// Mac App：鼠标点主菜单右上角那行「有新版本…」= 按 Y（打开下载页）。Mac 玩家第一反应是点它；这一行在手柄版里是纯文字、没有按钮可点，所以按位置认：
+// 提示字的文字框摆在 (屏宽 − 2000 − 边距, 130)、宽 2000、字靠右（见上面 pad 那一支），认它靠右的 1400 单位、上下各放宽到 100–230（布局单位：屏高 = 2160）。
+// 条件同 Y 键那条：有普通更新提示、主菜单面板显示着、选角 / 建角 / 设置页没开。游戏主线程调（touch_mac.c 取手柄处）；nx / ny = 画面归一化坐标。返回 1 = 点中并已处理
+// Mac App: a mouse click on the "New version..." line at the top right of the main menu = pressing Y (open the download page). A Mac player's first reaction is to click it; in the gamepad layout this line is plain text with no button to click, so it is recognised by position:
+// the hint's text box sits at (screen width - 2000 - margin, 130), 2000 wide, right-aligned (see the pad branch above), and the right-hand 1400 units are recognised, widened vertically to 100–230 (layout units: screen height = 2160).
+// Same conditions as the Y key: an ordinary update hint exists, the main menu panel is showing, and character selection / creation / settings are not open. Called on the game main thread (where touch_mac.c reads the gamepad); nx / ny = normalised picture coordinates. Returns 1 = hit and handled
+int dm_update_click_at(float nx, float ny) {
+    if (g_own < 0) return 0; int have, dm_padmode_busy(void); pthread_mutex_lock(&g_mu); have = g_offer.build > 0 && !g_offer.urgent; pthread_mutex_unlock(&g_mu);
+    uint8_t *b = tb(); uint64_t pr = b ? *(uint64_t *)(b + 0x2f05458) : 0; if (!have || !pr || dm_padmode_busy()) return 0;   // 不另判是不是手柄版：只有 Mac App 会初始化更新提示（g_own ≥ 0），它一直是手柄版 | no separate check for the gamepad layout: only the Mac App initialises the update hint (g_own >= 0), and it is always the gamepad layout
+    uint64_t mm = find(pr, "MainMenuPanel", 0), cs = find(pr, "CharacterSelectPanel", 0), cc = find(pr, "CharacterCreatePanel", 0), st = find(pr, "SettingsPanel", 0);
+    if (!mm || !*(uint8_t *)(mm + 0x50) || !find(mm, "TouchBuild", 0) || (cs && *(uint8_t *)(cs + 0x50)) || (cc && *(uint8_t *)(cc + 0x50)) || (st && *(uint8_t *)(st + 0x50))) return 0;
+    int vw = *(int32_t *)(b + 0x211da38), vh = *(int32_t *)(b + 0x211da3c), xr = vh > 0 ? (int)((long)vw * 2160 / vh) : 3840, sl = atomic_load(&g_safe_l), bx = sl + 6 > 79 ? sl + 6 : 79;
+    float x = nx * xr, y = ny * 2160; if (x < xr - 1400 - bx || x > xr - bx + 20 || y < 100 || y > 230) return 0;
+    LOG("更新：鼠标点了主菜单的新版本提示"); if (g_on_click) g_on_click(); return 1;
+}
+#endif
 // 文字框（TextBoxWidget，虚表 main+0x20ba4c8）设文本 = 游戏自己到处内联的两步（如 0x38f5bc–0x38f5cc、0x3d8480–0x3d849c）：
 // 字符串赋值 0x136e5c(控件+0x88, 字节, 字节数)，再 0xadc434(控件) 刷新省略号截断串。绘制每帧现取 +0x88 现量现画，不用另调重排。不是文字框就不动
 // Setting text on a text box (TextBoxWidget, vtable main+0x20ba4c8) = the two steps the game itself inlines everywhere (e.g. 0x38f5bc-0x38f5cc, 0x3d8480–0x3d849c):
