@@ -13,6 +13,18 @@ static _Atomic int g_sig;
 void hle_signal_system_event(void *g) { (void)g; atomic_fetch_add_explicit(&g_sig, 1, memory_order_seq_cst); }
 void hle_bind_system_event(void *g, int autoclear) { (void)g; (void)autoclear; }   // 真实现要客体线程 + SDK 内核事件；单测只数触发次数 | the real implementation needs a guest thread + SDK kernel event; the unit test only counts triggers
 int main(void) {
+    {   // 5.1 下混（期望按 Q15 系数手算：0.707·0.707 = 16384/32768 = 0.5，0.707 = 23170/32768）：顺序 左前 右前 中置 低音 左后 右后 | 5.1 downmix (expected values worked out by hand from the Q15 coefficients: 0.707*0.707 = 16384/32768 = 0.5, 0.707 = 23170/32768): order front left, front right, centre, LFE, rear left, rear right
+        static const struct { int16_t in[6]; int16_t l, r; const char *what; } c[] = {
+            { { 0, 0, 10000, 0, 0, 0 }, 5000, 5000, "只有中置（对白）→ 左右各 5000" },
+            { { 0, 0, 0, 0, 10000, 0 }, 5000, 0, "只有左后 → 左 5000、右 0" },
+            { { 10000, 0, 0, 0, 0, 0 }, 7070, 0, "只有左前 → 左 7070（−3 dB）" },
+            { { 0, 0, 0, 30000, 0, 0 }, 0, 0, "只有低音 → 不并入，0" },
+            { { 32767, 32767, 32767, 0, 32767, 32767 }, 32767, 32767, "满幅叠加 → 饱和到 32767" },
+            { { -32768, -32768, -32768, 0, -32768, -32768 }, -32768, -32768, "负满幅叠加 → 饱和到 −32768" } };
+        int bad = 0;
+        for (unsigned i = 0; i < sizeof c / sizeof *c; i++) { int16_t o[2]; downmix51(c[i].in, o, 1); int ok = o[0] == c[i].l && o[1] == c[i].r; bad |= !ok;
+            printf("下混：%s：期望 (%d,%d) → 真结果 (%d,%d) %s\n", c[i].what, c[i].l, c[i].r, o[0], o[1], ok ? "✓" : "✗"); }
+        if (bad) return 1; }
     char out[64], ev[64]; uint8_t prm[16]; gbuf b[3]; static int16_t pcm[3][4800 * 2];
     h_au_InitParam(prm);
     if (h_au_Open(out, ev, NULL, prm)) return 1;

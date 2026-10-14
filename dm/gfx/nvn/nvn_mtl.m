@@ -273,7 +273,7 @@ void bf_want_note(const char *key) {
 
 // ---------- 内存池 ----------
 // ---------- Memory pools ----------
-typedef struct { uintptr_t lo, hi; uintptr_t base; __unsafe_unretained id<MTLBuffer> buf; uint64_t gpu; const void *key; } pool_ent;
+typedef struct { uintptr_t lo, hi; uintptr_t base; __unsafe_unretained id<MTLBuffer> buf; uint64_t gpu; const void *key; int res; } pool_ent;   // res：已放进驻留集（按需，见 pool_res） | res: already put in the residency set (on demand, see pool_res)
 static pool_ent *g_pools; static int g_npool, g_cap;
 static NSMutableArray *g_keep;                  // 持有缓冲引用（pool_ent 里是不持有的指针） | Holds the buffer references (pool_ent has non-owning pointers)
 static uint64_t g_pool_adds;
@@ -407,16 +407,34 @@ uint64_t dm_mtl_l3_sample(uint32_t tick) {
 }
 
 static _Atomic uint64_t g_reg_gen = 1;   // 内存池 / 贴图 / 采样器登记的变更代号：参数缓冲复用以它为失效条件之一 | Change generation of memory pool / texture / sampler registration: one of the invalidation conditions for argument buffer reuse
+// 内存池按需驻留：零拷贝缓冲放进驻留集，iOS 会把整个池读进内存并钉成 wired（不计入 footprint，也不能被换出），游戏从没用过的池也一样——
+// 真机 17 Pro Max 实测 512 MB 的渲染目标池一局取址 0 次，放进驻留集整机 wired 高约 530 MB；A14 4 GB 机因此启动几秒就被系统按整机缺页结束（公开仓库 #37）。
+// 所以池建好时不放进驻留集，GPU 第一次经 mtl_addr / mtl_gpu_addr 取到它的地址时才放进去，并当场提交驻留集
+// （GPU 拿池地址只有这两个口子；当场提交 = 早于用到它的任何命令缓冲提交，不依赖各提交口自己调 res_commit）。调用方持 g_mu
+// On-demand residency of memory pools: putting a zero-copy buffer into the residency set makes iOS read the whole pool into memory and pin it as wired (not counted in footprint and never paged out), even a pool the game never uses -
+// measured on a 17 Pro Max: the 512 MB render-target pool is addressed 0 times in a run, and putting it into the residency set raises device wired memory by about 530 MB; this is why an A14 4 GB device was ended by the system for running out of memory within seconds of launch (public repository #37).
+// So a pool is not put into the residency set when created; it is put in, and the residency set committed on the spot, the first time the GPU gets its address through mtl_addr / mtl_gpu_addr
+// (these are the only two ways the GPU gets pool addresses; committing on the spot = earlier than any command buffer commit that uses it, without relying on each commit point calling res_commit). Caller holds g_mu
+static uint64_t g_cb_commits, g_pool_res_at;   // 已提交的命令缓冲个数（主提交 + 上传）；最近一次按需驻留时的这个数（0 = 没有待核的） | number of command buffers committed (main + upload); this number at the last on-demand residency (0 = nothing pending to check)
+static void pool_res(int i) {
+    if (g_pools[i].res) return;
+    res_add(g_pools[i].buf); res_commit(); g_pools[i].res = 1; g_pool_res_at = g_cb_commits + 1;
+    MLOG("内存池按需驻留：%llu MB 的池第一次被取址，已放进驻留集并提交（此时已提交命令缓冲 %llu 个）",
+         (unsigned long long)((g_pools[i].hi - g_pools[i].lo) >> 20), (unsigned long long)g_cb_commits);
+}
+static void cb_committed(void) {   // 主提交 / 上传提交之后调：核「驻留集提交早于用到它的第一个命令缓冲提交」，每次按需驻留后记一行 | called after the main submission / upload submission: checks that "the residency set commit is earlier than the first command buffer commit that uses it", one line after each on-demand residency
+    pthread_mutex_lock(&g_mu); uint64_t n = ++g_cb_commits, at = g_pool_res_at; if (at) g_pool_res_at = 0; pthread_mutex_unlock(&g_mu);
+    if (at) MLOG("内存池按需驻留：其后第一个命令缓冲提交是第 %llu 个（驻留集在第 %llu 个之前已提交）", (unsigned long long)n, (unsigned long long)at);
+}
 void mtl_pool_add(const void *mem, uint64_t size) {
     mtl_init(); g_reg_gen++;
     uintptr_t pg = (uintptr_t)getpagesize(), lo = (uintptr_t)mem, hi = lo + size;
     uintptr_t a = lo & ~(pg - 1), b = (hi + pg - 1) & ~(pg - 1);
     id<MTLBuffer> buf = [g_dev newBufferWithBytesNoCopy:(void *)a length:b - a options:MTLResourceStorageModeShared deallocator:nil];
     if (!buf) MDIE("内存池 %p+%#llx 建零拷贝缓冲失败", mem, (unsigned long long)size);
-    res_add(buf);
     pthread_mutex_lock(&g_mu);
     if (g_npool == g_cap) { g_cap = g_cap ? g_cap * 2 : 64; g_pools = realloc(g_pools, g_cap * sizeof *g_pools); }
-    g_pools[g_npool++] = (pool_ent){lo, hi, a, buf, buf.gpuAddress, mem};
+    g_pools[g_npool++] = (pool_ent){lo, hi, a, buf, buf.gpuAddress, mem, 0};   // 先不进驻留集：第一次被取址时才放进去（pool_res） | not in the residency set yet: put in the first time it is addressed (pool_res)
     g_pool_adds++;
     [g_keep addObject:buf];
     pthread_mutex_unlock(&g_mu);
@@ -437,7 +455,7 @@ int mtl_addr(uint64_t addr, uint64_t len, void **buf, uint64_t *off) {
     pthread_mutex_lock(&g_mu);
     for (int i = 0; i < g_npool; i++)
         if (addr >= g_pools[i].lo && addr + len <= g_pools[i].hi) {
-            *buf = (__bridge void *)g_pools[i].buf; *off = addr - g_pools[i].base; ok = 1; break;
+            pool_res(i); *buf = (__bridge void *)g_pools[i].buf; *off = addr - g_pools[i].base; ok = 1; break;
         }
     pthread_mutex_unlock(&g_mu);
     return ok;
@@ -447,7 +465,7 @@ int mtl_gpu_addr(uint64_t addr, uint64_t len, void **buf, uint64_t *off, uint64_
     pthread_mutex_lock(&g_mu);
     for (int i = 0; i < g_npool; i++)
         if (addr >= g_pools[i].lo && addr + len <= g_pools[i].hi) {
-            *buf = (__bridge void *)g_pools[i].buf; *off = addr - g_pools[i].base; *gpu = g_pools[i].gpu + *off; ok = 1; break;
+            pool_res(i); *buf = (__bridge void *)g_pools[i].buf; *off = addr - g_pools[i].base; *gpu = g_pools[i].gpu + *off; ok = 1; break;
         }
     pthread_mutex_unlock(&g_mu);
     return ok;
@@ -845,6 +863,7 @@ uint64_t mtl_sub_commit(void) {
     [g_q4 commit:buffers count:1 options:o];
     [g_q4 signalEvent:g_ev value:fence];
 #endif
+    cb_committed();
     g_alloc_fence[g_alloc_cur] = fence;
     g_cb = nil;
     g_commit_blocks = nil;
@@ -1137,6 +1156,7 @@ static void up_flush(void) {
     CBUF buffers[] = {cb};
     [g_q4 commit:buffers count:1 options:o];
 #endif
+    cb_committed();
     g_up_cb = nil; if (g_up_block) { defer_obj_release(g_up_block); g_up_block = nil; } g_up_block_off = g_up_block_size = 0;
     for (id obj in g_up_keep) defer_obj_release(obj);
     [g_up_keep removeAllObjects];
@@ -1827,10 +1847,34 @@ static void rp_end(void) { if (g_enc) {
 } }
 void pg_sub_begin_ext(uint64_t fence) { pg_sub_begin(fence); }
 void pg_commit_ext(id<MTLCommandBuffer> cb) { pg_commit(cb); }
-static void attach(MTLRenderPassAttachmentDescriptor *a, const tex_t *t, const view_t *v, int has_v) {
-    a.texture = tex_mtl(t);
+// 颜色附件实际挂上的格式：视图换了格式且挂得上就是视图格式，否则底图格式（挂附件与管线预测共用，口径一致）。warn：挂不上时报红
+// The format a colour attachment is actually attached with: the view's format if the view changes the format and it can be attached, otherwise the base texture's format (shared by attaching and pipeline prediction, so both agree). warn: log red when it cannot be attached
+static MTLPixelFormat rt_color_fmt(id<MTLTexture> base, const view_t *v, int has_v, int warn) {
+    if (!base || !has_v || !v->set_format) return base.pixelFormat;
+    uint32_t pf = 0; uint8_t swz[4];
+    if (!nvn_fmt_to_mtl(v->format, &pf, swz) || !pf) return base.pixelFormat;
+    if (pf != (uint32_t)base.pixelFormat && tex_need_pfv(base.pixelFormat, (MTLPixelFormat)pf) && !(base.usage & MTLTextureUsagePixelFormatView)) {
+        if (warn) RED_ONCE(48, "渲染目标视图格式 %#x 挂不上（底图 %lu 没有换格式用途），按底图格式画（首例）", v->format, (unsigned long)base.pixelFormat);
+        return base.pixelFormat; }
+    return (MTLPixelFormat)pf;
+}
+// color：颜色附件的视图换了格式（如 RGBA8 底图经 RGBA8_SRGB 视图写）就挂该格式的 Metal 视图——Switch 上写入与清除按视图格式编码，
+// 只挂底图则 sRGB 编码整个丢掉、画面偏暗（公开仓库 #36，seedds 在另一款游戏上实测）；管线颜色格式取挂上的贴图格式（g_pass.cfmt），随之一致。
+// 视图只活到本次提交跑完（Metal 4 不持有资源；视图与底图同一份存储，不单独驻留）。深度 / 模板附件不换格式
+// color: when the view of a colour attachment changes the format (e.g. an RGBA8 base texture written through an RGBA8_SRGB view), attach a Metal view of that format - on the Switch writes and clears are encoded by the view's format,
+// and attaching only the base texture drops the sRGB encoding entirely, making the picture too dark (public repository #36, measured by seedds on another game); the pipeline colour formats take the attached texture's format (g_pass.cfmt), so they follow.
+// The view lives only until this submission completes (Metal 4 does not retain resources; the view shares storage with the base texture and is not made resident separately). Depth / stencil attachments do not change format
+static void attach(MTLRenderPassAttachmentDescriptor *a, const tex_t *t, const view_t *v, int has_v, int color) {
+    id<MTLTexture> base = tex_mtl(t); a.texture = base;
     if (has_v && v->set_levels) a.level = v->base_level;
     if (has_v && v->set_layers) { if (t->d.target == 2) a.depthPlane = v->min_layer; else a.slice = v->min_layer; }
+    if (!color || !base) return;
+    MTLPixelFormat pf = rt_color_fmt(base, v, has_v, 1);
+    if (pf == base.pixelFormat) return;
+    id<MTLTexture> vw = [base newTextureViewWithPixelFormat:pf];
+    if (!vw) { RED_ONCE(49, "渲染目标视图建不出：格式 %#x（底图 %lu），按底图格式画（首例）", v->format, (unsigned long)base.pixelFormat); return; }
+    a.texture = vw; defer_obj_unref(vw);
+    { static int once; if (!once++) MLOG("渲染目标经换格式的视图挂上：视图格式 %#x，底图 %lu → 挂 %lu（首例）", v->format, (unsigned long)base.pixelFormat, (unsigned long)pf); }
 }
 // mode 1（clear_only）：只为落地挂起的清除而开的通道，只挂有清除的附件；mode 2：前瞻证明本通道不用深度模板，不挂深度。
 // clear_only：只为落地挂起的清除而开的通道，只挂有清除的附件——其余附件本通道不碰，挂上去在 TBDR 上平白一读一写
@@ -1855,7 +1899,7 @@ static RENC rp_begin_ex(int clear_only) {
     int any = 0;
     for (int i = 0; i < R.rt.n; i++) {
         if (!R.rt.color[i] || (clear_only == 1 && !R.clear_c[i])) continue;
-        attach(pd.colorAttachments[i], R.rt.color[i], &R.rt.cview[i], R.rt.has_cview[i]);
+        attach(pd.colorAttachments[i], R.rt.color[i], &R.rt.cview[i], R.rt.has_cview[i], 1);
         if (!pd.colorAttachments[i].texture) continue;
         any = 1;
         pd.colorAttachments[i].loadAction = R.clear_c[i] ? MTLLoadActionClear : MTLLoadActionLoad;
@@ -1880,14 +1924,14 @@ static RENC rp_begin_ex(int clear_only) {
     // clear_only：0 全挂 1 只为清除 2 深度模板都不挂 3 只挂模板 4 只挂深度（3 / 4 由 pass_ds_need 前瞻证明整通道只用那一项）
     // clear_only: 0 attach all 1 only for clears 2 neither depth nor stencil attached 3 stencil only 4 depth only (3 / 4: the pass_ds_need lookahead proves the whole pass uses only that one)
     if (R.rt.depth && clear_only == 3) {   // 只挂模板：合一格式的深度平面不进 tile、不读不写（Metal 允许深度附件空、模板附件挂合一贴图） | Stencil only: the depth plane of the combined format does not enter the tile and is neither read nor written (Metal allows an empty depth attachment with the combined texture on the stencil attachment)
-        attach(pd.stencilAttachment, R.rt.depth, &R.rt.dview, R.rt.has_dview);
+        attach(pd.stencilAttachment, R.rt.depth, &R.rt.dview, R.rt.has_dview, 0);
         MTLPixelFormat pf = pd.stencilAttachment.texture.pixelFormat;
         if (pf == MTLPixelFormatDepth32Float_Stencil8 || pf == MTLPixelFormatStencil8) {
             any = 1; pd.stencilAttachment.loadAction = R.clear_s ? MTLLoadActionClear : MTLLoadActionLoad;
             pd.stencilAttachment.clearStencil = R.cs; pd.stencilAttachment.storeAction = MTLStoreActionStore;
         } else pd.stencilAttachment.texture = nil;   // 没有模板平面：模板测试恒过，什么都不挂 | No stencil plane: the stencil test always passes, attach nothing
     } else if (R.rt.depth && clear_only != 2 && !(clear_only == 1 && !R.clear_d && !R.clear_s)) {
-        attach(pd.depthAttachment, R.rt.depth, &R.rt.dview, R.rt.has_dview);
+        attach(pd.depthAttachment, R.rt.depth, &R.rt.dview, R.rt.has_dview, 0);
         if (pd.depthAttachment.texture) {
             any = 1;
             pd.depthAttachment.loadAction = R.clear_d ? MTLLoadActionClear : MTLLoadActionLoad;
@@ -3283,7 +3327,7 @@ static void pso_predict_rest(void) {
         if (!fz_next(&cur, &q, &hq, &aq)) break;
         if (hq.op == OP_SET_RT) {
             const p_set_rt *r = aq; memset(cf, 0, sizeof cf); dfull = sfull = 0; samples = 1;
-            for (int i = 0; i < r->n && i < 8; i++) { id<MTLTexture> t = r->color[i] ? tex_mtl(r->color[i]) : nil; if (t) { cf[i] = (uint32_t)t.pixelFormat; samples = (uint32_t)t.sampleCount; } }
+            for (int i = 0; i < r->n && i < 8; i++) { id<MTLTexture> t = r->color[i] ? tex_mtl(r->color[i]) : nil; if (t) { cf[i] = (uint32_t)rt_color_fmt(t, &r->cview[i], r->has_cview[i], 0); samples = (uint32_t)t.sampleCount; } }
             id<MTLTexture> dt = r->depth ? tex_mtl(r->depth) : nil;
             if (dt) { MTLPixelFormat f = dt.pixelFormat; samples = (uint32_t)dt.sampleCount;
                 dfull = f != MTLPixelFormatStencil8 ? (uint32_t)f : 0; sfull = (f == MTLPixelFormatStencil8 || f == MTLPixelFormatDepth32Float_Stencil8) ? (uint32_t)f : 0; }
@@ -4472,7 +4516,7 @@ static void draw(const p_draw *dw, const p_draw_idx *di) {
         if (!strncmp(f->key, "ebcfcd1fa0a77dbc", 16) && !g_enc && R.rt.n == 1 && R.rt.color[0] && !R.clear_c[0]) {
             uint64_t h = 0; for (int i = 0; i < f->rf.nb && !h; i++) if (f->rf.b[i].kind == NVN_RB_TEX && f->rf.b[i].reg < 128) h = S.tex[1][f->rf.b[i].reg];
             if (h) { fx_from = R.rt.color[0]->serial; fx_to = h; PD("N %llu 跳过 FXAA：ser=%llu 的读者改读 ser=%llu", g_stat_pass, (unsigned long long)fx_from, (unsigned long long)h_ser(h)); return; } }
-        else if (fx_from && !strncmp(f->key, "52aac1f2306b8fc5", 16)) { for (int r = 0; r < 128; r++) if (S.tex[1][r] && h_ser(S.tex[1][r]) == fx_from) S.tex[1][r] = fx_to; fx_from = 0; } } }
+        else if (fx_from && !strncmp(f->key, "52aac1f2306b8fc5", 16)) { for (int r = 0; r < 128; r++) if (S.tex[1][r] && h_ser(S.tex[1][r]) == fx_from) { S.tex[1][r] = fx_to; g_args_dirty[1] = 1; } fx_from = 0; } } }
     { static uint64_t bloomq_frame; if (bloomq_frame != atomic_load(&g_cur_frame)) { bloomq_frame = atomic_load(&g_cur_frame); bloomq_reset(); }
       if (bloomq_enabled() && tbdr_on() && !g_defer_replaying && pr->sh[1]) {
         NvShader *f = pr->sh[1]; uint64_t tgt = 0; int lv, sl;
@@ -4501,14 +4545,14 @@ static void draw(const p_draw *dw, const p_draw_idx *di) {
         } else if (g_bloomq.state == 2 && !strncmp(f->key, "cc264583f2000c81", 16)) {
             if (bloomq_target(&tgt, &lv, &sl) && tgt == g_bloomq.b0_ser) { g_bloomq.state = 3; PD("C %llu 泛光 1/4 跳过 B0 上采样", g_stat_pass); return; }
         } else if (g_bloomq.state == 3 && !strncmp(f->key, "2e2d6700a2569795", 16)) {
-            if (g_bloomq.b1_h) { for (int r = 0; r < 128; r++) if (S.tex[1][r] && h_ser(S.tex[1][r]) == g_bloomq.b0_ser) S.tex[1][r] = g_bloomq.b1_h; PD("D %llu 泛光 1/4 叠加改读 B1", g_stat_pass); g_bloomq_last_b0 = g_bloomq.b0_ser; g_bloomq_last_b1h = g_bloomq.b1_h; g_bloomq_last_b1s = g_bloomq.b1_ser; bloomq_reset(); }
+            if (g_bloomq.b1_h) { for (int r = 0; r < 128; r++) if (S.tex[1][r] && h_ser(S.tex[1][r]) == g_bloomq.b0_ser) { S.tex[1][r] = g_bloomq.b1_h; g_args_dirty[1] = 1; } PD("D %llu 泛光 1/4 叠加改读 B1", g_stat_pass); g_bloomq_last_b0 = g_bloomq.b0_ser; g_bloomq_last_b1h = g_bloomq.b1_h; g_bloomq_last_b1s = g_bloomq.b1_ser; bloomq_reset(); }
             else { RED_ONCE(63, "泛光 1/4 状态缺少 B1 句柄"); bloomq_reset(); }
         } else if (!g_bloomq.state && g_bloomq_last_b1h && h_ser(g_bloomq_last_b1h) == g_bloomq_last_b1s && !strncmp(f->key, "2e2d6700a2569795", 16)) {   // B1 句柄仍指同一张贴图（换分辨率重建后不认） | The B1 handle still points to the same texture (not recognized after a rebuild on resolution change)
             // 本帧泛光链没跑（运行时外推的外推帧跳过了它：输入 469 区域外是上一帧 LDR，不能跑）就到了泛光叠加：照最近一次改读 B1，叠上一帧的泛光。
             // 不改读就读 B0——开了泛光 1/4 的话 B0 的上采样一直被跳过、从没写过，读到的是未初始化显存（M4 Pro 上区域里的单位整个发绿，别处多半是 0、缺泛光）
             // The bloom overlay is reached without the bloom chain having run this frame (the extrapolated frame of runtime extrapolation skipped it: outside the region the input 469 is the previous frame's LDR, so it cannot run): redirect the read to B1 as last time, overlaying the previous frame's bloom.
             // Without the redirect it would read B0 -- with bloom 1/4 on, B0's upsample is always skipped and never written, so what is read is uninitialized video memory (on M4 Pro the units in the region turn entirely green; elsewhere it is mostly 0, i.e. missing bloom)
-            int hit = 0; for (int r = 0; r < 128; r++) if (S.tex[1][r] && h_ser(S.tex[1][r]) == g_bloomq_last_b0) { S.tex[1][r] = g_bloomq_last_b1h; hit = 1; }
+            int hit = 0; for (int r = 0; r < 128; r++) if (S.tex[1][r] && h_ser(S.tex[1][r]) == g_bloomq_last_b0) { S.tex[1][r] = g_bloomq_last_b1h; hit = 1; g_args_dirty[1] = 1; }
             if (hit) { PD("D %llu 泛光链没跑：叠加沿用上一帧 B1", g_stat_pass); static uint64_t n; if (n++ % 600 == 0) MLOG("泛光 1/4：泛光链没跑的帧叠加沿用上一帧 B1（第 %llu 次）", (unsigned long long)n); }
         } else if (g_bloomq.state) { RED_ONCE(61, "泛光 1/4 起点：链中途出现别的绘制，本帧泛光不完整"); bloomq_reset(); }
       }
@@ -5678,9 +5722,31 @@ static void present_pipeline(MTLPixelFormat format) {
         g_blit_samp = [g_dev newSamplerStateWithDescriptor:sd];
     }
 }
+// 呈现采样的源：交换链贴图是 sRGB 格式（游戏把交换链建成 RGBA8_SRGB）时经它的非 sRGB 视图采样，屏上显示存的字节，与 Switch 扫描输出一致；
+// 直接采样会先解成线性，呈现层（BGRA8Unorm）不再编码，整幅偏暗（公开仓库 #36）。截图读的是原始字节，看不出这一处。
+// 视图按源贴图缓存 4 张、换掉最久没用的：呈现走自己的队列，不能挂主提交的延迟释放；同时在跑的呈现最多 3 帧，被换掉的那张已经用完
+// Source for presentation sampling: when the swapchain texture has an sRGB format (the game created the swapchain as RGBA8_SRGB), sample through its non-sRGB view so the screen shows the stored bytes, as the Switch's scan-out does;
+// sampling it directly decodes to linear first, and the present layer (BGRA8Unorm) does not encode again, so the whole picture is too dark (public repository #36). Screenshots read the raw bytes and cannot see this.
+// Views are cached per source texture, 4 of them, replacing the least recently used: presentation runs on its own queue and cannot use the deferred release of the main submission; at most 3 presents are in flight, so the replaced one is already done
+static id<MTLTexture> present_src(id<MTLTexture> src) {
+    MTLPixelFormat raw = MTLPixelFormatInvalid;
+    for (size_t i = 0; i < sizeof g_pfv_srgb / sizeof *g_pfv_srgb; i++) if (src.pixelFormat == g_pfv_srgb[i].b) raw = g_pfv_srgb[i].a;
+    if (raw == MTLPixelFormatInvalid) return src;
+    static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER; static id<MTLTexture> cs[4], cv[4]; static uint64_t used[4], tick;
+    pthread_mutex_lock(&mu);
+    int k = -1, old = 0;
+    for (int i = 0; i < 4; i++) { if (cs[i] == src) k = i; if (used[i] < used[old]) old = i; }
+    if (k < 0) { k = old; cs[k] = src; cv[k] = [src newTextureViewWithPixelFormat:raw];
+        if (!cv[k]) RED_ONCE(50, "出图：sRGB 交换链贴图（格式 %lu）的非 sRGB 视图建不出，直接采样（画面会偏暗，首例）", (unsigned long)src.pixelFormat);
+        else MLOG("出图：交换链贴图是 sRGB 格式 %lu，经格式 %lu 的视图采样", (unsigned long)src.pixelFormat, (unsigned long)raw); }
+    used[k] = ++tick; id<MTLTexture> v = cv[k] ?: src;
+    pthread_mutex_unlock(&mu);
+    return v;
+}
 // 出图仅采NVN声明的有效源矩形；与原始交换链读回截图分开。边缘钳到有效区纹素中心，双线性不读外侧黑纹素。
 // Present samples only the valid source rectangle declared by NVN; kept separate from the raw swapchain readback screenshot. Edges are clamped to the texel centers of the valid area, so bilinear does not read the black texels outside.
-static int present_encode(id<MTLCommandBuffer> cb, id<MTLTexture> src, id<MTLTexture> dst, const int crop[4]) {
+static int present_encode(id<MTLCommandBuffer> cb, id<MTLTexture> src0, id<MTLTexture> dst, const int crop[4]) {
+    id<MTLTexture> src = present_src(src0);
     NSUInteger cx = 0, cy = 0, cw = src.width, ch = src.height;
     if (crop && (crop[2] || crop[3])) {
         if (crop[0] < 0 || crop[1] < 0 || crop[2] <= 0 || crop[3] <= 0 ||
@@ -5719,7 +5785,8 @@ static int present_encode(id<MTLCommandBuffer> cb, id<MTLTexture> src, id<MTLTex
     [en endEncoding];
     return 1;
 }
-static int present_encode_m4(CBUF cb, id<MTLTexture> src, id<MTLTexture> dst, const int crop[4], int uv_i) {
+static int present_encode_m4(CBUF cb, id<MTLTexture> src0, id<MTLTexture> dst, const int crop[4], int uv_i) {
+    id<MTLTexture> src = present_src(src0);
     NSUInteger cx = 0, cy = 0, cw = src.width, ch = src.height;
     if (crop && (crop[2] || crop[3])) {
         if (crop[0] < 0 || crop[1] < 0 || crop[2] <= 0 || crop[3] <= 0 ||

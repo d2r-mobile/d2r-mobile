@@ -8,6 +8,7 @@
 #include <sys/sysctl.h>
 #import <QuartzCore/QuartzCore.h>
 #import <Metal/Metal.h>
+#import <ImageIO/ImageIO.h>
 #include "dm.h"
 #include "dm_input.h"
 #include "dm_uiscreen.h"
@@ -23,16 +24,36 @@ static int g_live;   // App 形态（或 DM_TOUCH_LIVE=1）：鼠标进我们的
 static CAMetalLayer *g_layer;
 static NSWindow *g_win;
 static NSView *g_view;
-// 窗口不是 16:9（拉伸窗口、全屏到 16:10 的屏）：游戏画面保持 16:9 居中，四周留黑边；鼠标位置按游戏画面这一块算
-// The window is not 16:9 (stretched window, full screen on a 16:10 display): the game picture stays 16:9 and centred with black bars around it; the mouse position is computed against the game picture
+// 真全屏（App 形态，屏幕比 16:9 窄——16:10 的 MacBook，「不能全屏」：全屏后上下各 56 点黑边）：照 iPad 那套（front_ios.m、dm_uiscreen.c）——
+// 启动时按屏幕比例（全屏时的内容区：屏幕扣掉刘海安全区）定游戏分辨率，局内 3D 铺满、界面按 16:9 贴底（开大面板居中），前端各页与读取画面游戏自己按 16:9 出、上下留边。
+// 窗口锁成同一比例，窗口态与全屏态都铺满。屏幕不比 16:9 窄（外接 16:9 / 更宽的屏）：照旧全程 16:9。比例在启动时按主屏定，之后挪到别的屏不重算（游戏分辨率只在启动时定）。
+// 测试开关 DM_TEST_SCREEN_ASPECT=<宽>x<高>：当作主屏是这个比例（16x9 = 外接 16:9 屏的口径）
+// True full screen (App form, screen narrower than 16:9 - a 16:10 MacBook, "cannot go full screen": 56 points of black bar above and below in full screen): the iPad approach (front_ios.m, dm_uiscreen.c) -
+// at launch the game resolution is set from the screen's aspect ratio (the full-screen content area: the screen minus the notch safe area); in game the 3D fills the screen, the interface is 16:9 along the bottom (centred with a large panel open), and the front-end pages and the loading screen are drawn by the game at 16:9 with bars above and below.
+// The window is locked to the same ratio, so both windowed and full screen are filled. Screens not narrower than 16:9 (external 16:9 / wider screens): 16:9 throughout as before. The ratio is set from the main screen at launch and not recomputed when moved to another screen (the game resolution is only set at launch).
+// Test switch DM_TEST_SCREEN_ASPECT=<w>x<h>: treat the main screen as this ratio (16x9 = the external 16:9 screen case)
+static double g_aspect = 16.0 / 9;   // 游戏画面比例（宽 ÷ 高） | aspect ratio of the game picture (width / height)
+static int g_full;                    // 1 = 真全屏已开 | 1 = true full screen is on
+static void full_setup(void) {
+    if (!getenv("DM_APP") || getenv("DM_GAME_RES")) return;
+    NSScreen *sc = NSScreen.mainScreen; double w = sc.frame.size.width, h = sc.frame.size.height - sc.safeAreaInsets.top; const char *e = getenv("DM_TEST_SCREEN_ASPECT"); unsigned tw, th;
+    if (e && sscanf(e, "%ux%u", &tw, &th) == 2 && tw && th) { w = tw; h = th; }
+    if (h <= 0 || w / h >= 16.0 / 9 - 0.01) { LOG("画面：主屏 %.0fx%.0f 不比 16:9 窄 → 全程 16:9", w, h); return; }
+    g_aspect = w / h; g_full = 1; dm_uiscreen_enable(DM_UISCREEN_BOTTOM);
+    LOG("画面：主屏全屏内容区 %.0fx%.0f（比例 %.3f）比 16:9 窄 → 真全屏：窗口锁这个比例，局内铺满、界面贴底，前端 16:9 留边", w, h, g_aspect);
+}
+// 游戏画面在视图里的位置：按游戏画面比例放进视图（比例对得上就是整个视图；对不上的四周留黑边）
+// Where the game picture sits in the view: fitted into the view by the picture's aspect ratio (if the ratios match, the whole view; otherwise black bars around)
 static NSRect game_rect(void) {
     NSSize b = g_view.bounds.size; CGFloat w = b.width, h = b.height;
-    if (w * 9 > h * 16) w = floor(h * 16 / 9); else h = floor(w * 9 / 16);
+    if (fabs(w / h / g_aspect - 1) < 0.003) { }   // 比例差 0.3% 以内（窗口高取整的零头、全屏内容区比按刘海安全区算的少 1 点）当对得上，铺满 | within 0.3% (the remainder from rounding the window height, and the full-screen content area being 1 point less than computed from the notch safe area) counts as matching, and it fills
+    else if (w > h * g_aspect) w = round(h * g_aspect); else h = round(w / g_aspect);
     return NSMakeRect(floor((b.width - w) / 2), floor((b.height - h) / 2), w, h);
 }
 static void layout_game(void) {
     NSRect r = game_rect(); if (NSEqualRects(r, g_layer.frame)) return;
-    [CATransaction begin]; [CATransaction setDisableActions:YES]; g_layer.frame = r; g_layer.contentsScale = g_view.window.backingScaleFactor; [CATransaction commit];
+    CGFloat sc = g_view.window.backingScaleFactor ?: 2;   // 画布跟着改：作为子层的 CAMetalLayer 改 frame 不会自己改 drawableSize，原先进全屏后一直用窗口态的画布放大显示（发糊） | the canvas follows: a CAMetalLayer used as a sublayer does not change its drawableSize when its frame changes, so after going full screen it used to keep the windowed canvas and scale it up (blurry)
+    [CATransaction begin]; [CATransaction setDisableActions:YES]; g_layer.frame = r; g_layer.contentsScale = sc; g_layer.drawableSize = CGSizeMake(round(r.size.width * sc), round(r.size.height * sc)); [CATransaction commit];
     LOG("窗口：内容区 %.0f×%.0f，游戏画面 %.0f×%.0f 放在 (%.0f,%.0f)", g_view.bounds.size.width, g_view.bounds.size.height, r.size.width, r.size.height, r.origin.x, r.origin.y);
 }
 // 退出（关窗口 / ⌘Q / 菜单）：有局在就先请游戏走一次它自己的存盘并等存档提交（做法同 iOS 壳进后台），最多 3 秒，再有序收尾。
@@ -41,6 +62,7 @@ static void layout_game(void) {
 // With the pause menu / rift panel open the game is not ticking: release the pause first so the ticks run; in a loading screen wait until it is in the game, then ask. If nothing is committed when the 3 seconds are up, truthfully log "quit without saving"
 static void app_quit(const char *why) {
     static int once; if (once++) return;
+    { uint64_t dm_audio_render_calls(void); LOG("窗口：退出（%s）；声卡回调累计 %llu（0 = 这次没出声）", why, (unsigned long long)dm_audio_render_calls()); }
     int dm_ingame_now(void); int dm_request_save(void); int dm_unpause_for_exit(void); uint64_t dm_fs_commit_count(void); uint64_t now_ns(void);
     if (!dm_ingame_now() && !dm_uiscreen_ingame()) { LOG("窗口：退出（不在局内，没有待存的进度）"); dm_host_shutdown(why); return; }
     uint64_t c0 = dm_fs_commit_count(), t0 = now_ns(), last = c0, last_t = 0; int asked = 0, paused = 0;
@@ -112,6 +134,7 @@ void *front_metal_layer(void) { return (__bridge void *)g_layer; }
 uint64_t front_game_res(int docked) {
     unsigned w, h; const char *e = getenv("DM_GAME_RES");
     if (e && sscanf(e, "%ux%u", &w, &h) == 2) return docked ? (uint64_t)h << 32 | w : (uint64_t)(h * 4 / 5) << 32 | (w * 4 / 5 + 3) / 4 * 4;
+    if (g_full) return docked ? (uint64_t)(llround(1600 / g_aspect / 2) * 2) << 32 | 1600 : 720ull << 32 | (uint64_t)(llround(720 * g_aspect / 8) * 8);   // 真全屏：宽 1600、高按屏幕比例（16:10 → 1600x1004） | true full screen: width 1600, height by the screen's aspect ratio (16:10 -> 1600x1004)
     return docked ? 900ull << 32 | 1600 : 720ull << 32 | 1280;
 }
 
@@ -155,14 +178,15 @@ void front_run(void (*guest)(void)) {
     @autoreleasepool {
         [NSApplication sharedApplication];
         [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
-        NSRect r = NSMakeRect(0, 0, 1280, 720);
+        full_setup();
+        NSRect r = NSMakeRect(0, 0, 1280, floor(1280 / g_aspect));
         NSWindow *win = [[NSWindow alloc] initWithContentRect:r
                                                     styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskResizable
                                                       backing:NSBackingStoreBuffered defer:NO];
         win.title = @"D2R Mobile"; win.restorable = NO; g_win = win;
         NSView *v = win.contentView; g_view = v;
         v.wantsLayer = YES; v.layer.backgroundColor = CGColorGetConstantColor(kCGColorBlack);
-        win.collectionBehavior = NSWindowCollectionBehaviorFullScreenPrimary; win.contentMinSize = NSMakeSize(640, 360);
+        win.collectionBehavior = NSWindowCollectionBehaviorFullScreenPrimary; win.contentMinSize = NSMakeSize(640, floor(640 / g_aspect)); if (g_full) win.contentAspectRatio = NSMakeSize(1280, 1280 / g_aspect);
         static DmWinCtl *ctl; ctl = [DmWinCtl new]; win.delegate = ctl;
         g_layer = [CAMetalLayer layer];
         g_layer.device = MTLCreateSystemDefaultDevice();
@@ -196,6 +220,18 @@ void front_run(void (*guest)(void)) {
             if (gr.size.width <= 0 || gr.size.height <= 0) return e;
             float nx = (float)((p.x - gr.origin.x) / gr.size.width), ny = (float)(1.0 - (p.y - gr.origin.y) / gr.size.height);   // AppKit 视图原点在左下，触屏原点在左上 | The AppKit view origin is at bottom left, the touchscreen origin is at top left
             if (e.type == NSEventTypeLeftMouseDown && (nx < 0 || nx > 1 || ny < 0 || ny > 1)) return nil;   // 按在黑边上：不算点 | Pressed on the black bars: not a click
+            if (g_full && g_live) {   // 真全屏：状态机吃界面矩形里的归一化坐标（同 iOS 的游戏视图）。两步： | true full screen: the state machine takes normalised coordinates inside the interface rectangle (like the iOS game view). Two steps:
+                // ① 先换到「实际显示的那块」：游戏当前分辨率（前端 16:9、局内整屏）按比例居中放进游戏画面，与上屏同一口径（nvn_mtl.m present_encode：比例差 1% 内铺满）；
+                // ② 再换到界面矩形（局内贴底）。局内界面矩形外是 3D 世界，带符号交下去（点世界换回整屏，touch_mac.c）；不在局内时显示块外是黑边，不算点
+                // (1) First map to "the block actually shown": the game's current resolution (16:9 in the front end, the whole screen in game) placed centred in the game picture by aspect ratio, the same measure as presentation (nvn_mtl.m present_encode: fill when the aspect ratios differ by less than 1%);
+                // (2) then map to the interface rectangle (along the bottom in game). In game, outside the interface rectangle is the 3D world, passed down with a sign (tapping the world maps back to the whole screen, touch_mac.c); outside the game the area beyond the shown block is the black bars, not counted as a tap
+                int rw = 0, rh = 0; double cx = 0, cy = 0, cw = 1, ch = 1;
+                if (dm_screen_real(&rw, &rh) && rw > 0 && rh > 0) { double ca = (double)rw / rh, ga = gr.size.width / gr.size.height;
+                    if (fabs(ga / ca - 1) >= 0.01) { if (ga > ca) { cw = ca / ga; cx = (1 - cw) / 2; } else { ch = ga / ca; cy = (1 - ch) / 2; } } }
+                float vx = (float)((nx - cx) / cw), vy = (float)((ny - cy) / ch);
+                double fy = 0, fh = 1; ui_rect_frac(&fy, &fh); float uy = fh > 0 ? (float)((vy - fy) / fh) : vy;
+                if (e.type == NSEventTypeLeftMouseDown && !dm_uiscreen_ingame() && (vx < 0 || vx > 1 || uy < 0 || uy > 1)) return nil;
+                dm_touch_host_live(e.type == NSEventTypeLeftMouseDown ? 0 : 1, vx, uy); return nil; }
             dm_touch t = {0, nx < 0 ? 0 : nx > 1 ? 1 : nx, ny < 0 ? 0 : ny > 1 ? 1 : ny};
             if (g_live) { dm_touch_host_live(e.type == NSEventTypeLeftMouseDown ? 0 : 1, t.x, t.y); return nil; }
             dm_touch_set(&t, 1); return nil;
@@ -218,7 +254,22 @@ void front_run(void (*guest)(void)) {
         if (getenv("DM_APP") && !getenv("DM_APP_ROMFS") && ![NSUserDefaults.standardUserDefaults boolForKey:@"KeysShown"]) { show_keys(); [NSUserDefaults.standardUserDefaults setBool:YES forKey:@"KeysShown"]; }   // 第一次启动给一次键位对照（界面上的按键提示是手柄字母）；以后在「帮助」菜单里 | Show the key mapping once on first launch (button prompts on screen are gamepad letters); afterwards it is in the Help menu
         { const char *e;   // 测试（没人点窗口时用）：DM_TEST_WINSIZE=宽x高 设内容区大小；DM_TEST_FULLSCREEN_AT=<秒> 进全屏；DM_TEST_QUIT_AT=<秒> 走一次退出 | Tests (for when nobody is there to click the window): DM_TEST_WINSIZE=WxH sets the content size; DM_TEST_FULLSCREEN_AT=<seconds> enters full screen; DM_TEST_QUIT_AT=<seconds> goes through one quit
           int w, h; if ((e = getenv("DM_TEST_WINSIZE")) && sscanf(e, "%dx%d", &w, &h) == 2) { [win setContentSize:NSMakeSize(w, h)]; layout_game(); }
-          if ((e = getenv("DM_TEST_FULLSCREEN_AT"))) dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(atof(e) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [win toggleFullScreen:nil]; });
+          if ((e = getenv("DM_TEST_FULLSCREEN_AT"))) for (const char *q = e; q && *q; q = strchr(q, ';') ? strchr(q, ';') + 1 : NULL)   // 「秒[;秒…]」：每个时刻切一次全屏（来回切） | "seconds[;seconds...]": toggle full screen at each time (back and forth)
+              dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(atof(q) * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [win toggleFullScreen:nil]; });
+          // DM_TEST_PRESENT_SHOT=<秒>:<路径>[;<秒>:<路径>…]：到点取下一次上屏的画面（图形层与上屏同一套编码，见 nvn_mtl.m mtl_grab_next_present）写成 PNG——
+          // 看的是玩家真看到的（含留边位置），不是游戏出图贴图（DM_NVN_SHOT_UI 取的那张，裁切区不居中）
+          // DM_TEST_PRESENT_SHOT=<seconds>:<path>[;<seconds>:<path>...]: at the given time, grab the next presented picture (the graphics layer uses the same encoding as presentation, see nvn_mtl.m mtl_grab_next_present) and write it as PNG -
+          // this is what the player actually sees (including where the bars are), not the game's output texture (the one DM_NVN_SHOT_UI takes, whose crop is not centred)
+          if ((e = getenv("DM_TEST_PRESENT_SHOT"))) { void mtl_grab_next_present(void (^cb)(CGImageRef img));
+              for (NSString *it in [@(e) componentsSeparatedByString:@";"]) { NSRange c = [it rangeOfString:@":"]; if (c.location == NSNotFound) continue;
+                  double at = [it substringToIndex:c.location].doubleValue; NSString *path = [it substringFromIndex:c.location + 1];
+                  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(at * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                      NSSize vb = v.bounds.size; NSRect gr = game_rect(); double fy = 0, fh = 1; ui_rect_frac(&fy, &fh);
+                      mtl_grab_next_present(^(CGImageRef img) { if (!img) { LOG("【红】DM_TEST_PRESENT_SHOT：%s 没取到", path.UTF8String); return; }
+                          CGImageDestinationRef d = CGImageDestinationCreateWithURL((__bridge CFURLRef)[NSURL fileURLWithPath:path], (__bridge CFStringRef)@"public.png", 1, NULL);
+                          if (d) { CGImageDestinationAddImage(d, img, NULL); CGImageDestinationFinalize(d); CFRelease(d); }
+                          LOG("DM_TEST_PRESENT_SHOT：%s %zux%zu（内容区 %.0fx%.0f，游戏画面 %.0fx%.0f 在 (%.0f,%.0f)，界面矩形纵向 %.3f 高 %.3f，%s）", path.UTF8String, CGImageGetWidth(img), CGImageGetHeight(img),
+                              vb.width, vb.height, gr.size.width, gr.size.height, gr.origin.x, gr.origin.y, fy, fh, dm_uiscreen_ingame() ? "局内" : "局外"); }); }); } }
           // DM_TEST_NSMOUSE=<文件>：合成真正的系统鼠标事件（NSEvent）投进 App 的事件队列，走与真人点击同一条分发路（事件监视器 → 换算 → 状态机），不经测试入口。
           // 每行「秒 down|move|up x,y」，x,y 是内容区里的点（左上角为原点；窗口缺省 1280×720），时刻自窗口建好起算
           // DM_TEST_NSMOUSE=<file>: synthesise real system mouse events (NSEvent) and post them to the App's event queue, going through the same dispatch path as a person clicking (event monitor -> conversion -> state machine), not through the test entry.

@@ -61,7 +61,7 @@ With a keyboard, the button prompts on screen (the hint bar at the bottom, skill
 
 **Creating a character, start to finish**: on the main menu press `=` (or click "New Character") → choose a class with the arrow keys and press Return (or click that class's figure) → on the mode page press Return or Space → on the naming page press Return to open the input box, type, Return → press Return once more to create.
 
-A gamepad works as soon as it is connected, alongside the keyboard. The menu bar has View → Full Screen (⌃⌘F) and Quit (⌘Q). The window can be resized freely; the game picture stays 16:9 and centred.
+A gamepad works as soon as it is connected, alongside the keyboard. The menu bar has View → Full Screen (⌃⌘F) and Quit (⌘Q). The window can be resized freely. In game the picture fills the window or screen at its own aspect ratio (on a 16:10 MacBook both windowed and full screen are filled, with the interface along the bottom, centred while a large panel is open); the front-end pages such as the main menu and character select stay 16:9 with bars above and below.
 
 ## Mouse
 
@@ -91,6 +91,7 @@ What it cannot do yet:
 
 - Saves: `~/Library/Application Support/D2R Mobile/save`
 - Log: `~/Library/Logs/D2R Mobile/host.log` (the previous run is `host.prev.log`). When reporting a problem use Help → Share Log… in the menu bar: it packs these two logs and a version-information file into one archive and lets you choose where to save it; nothing is uploaded, no saves are included, and the user name in the logs is replaced with `~`.
+- No sound: at launch the log has a line `audio：输出设备「…」…，系统缺省输出「…」…` (the output device in use and the system default output; a mismatch is marked red), and on exit a line `声卡回调累计 N` — N = 0 means no sound was played this time. (These log lines are in Chinese.)
 - The older-API build (`D2R Mobile M3.app`) uses a separate pair of directories with M3 in the name.
 
 **iCloud save sync: not available in an App you build from this repository.** The program has the same sync as on iPhone / iPad wired in, but it needs the App to carry the iCloud signing entitlement; an App you build yourself is signed locally without it, so saves stay on this Mac, the log records one line saying iCloud is unavailable and only local saves are used, and the game runs as usual. To bring your phone's progress over, import it by hand as below.

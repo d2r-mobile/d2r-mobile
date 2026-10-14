@@ -4,11 +4,17 @@
 #include "dm_actions.h"
 #include "dm_hud.h"
 #include "../ios/Sources/dm_touch_controls.h"
+#include "dm_uiscreen.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 uint64_t now_ns(void);
+// 手势层的坐标是「界面矩形里的归一化」（同 iOS 的游戏视图）；点世界 / 点地走要的是「整屏归一化」。16:9 时两者一样；
+// 真全屏（界面按 16:9 贴底、画面更高）下纵向要换：整屏 y = (界面 y × 界面高 + 界面矩形顶边) ÷ 画面高（iOS 前端在点世界前做的同一步，front_ios.m world_norm）
+// Gesture-layer coordinates are "normalised within the interface rectangle" (like the iOS game view); tapping the world / tap-to-walk needs "normalised to the whole screen". At 16:9 the two are the same;
+// with true full screen (interface 16:9 along the bottom, picture taller) the vertical needs converting: screen y = (interface y x interface height + interface rectangle top) / picture height (the same step the iOS front end does before tapping the world, front_ios.m world_norm)
+static float ui_y_to_screen(float uy) { int x, y, w, h, rw = 0, rh = 0; dm_ui_rect(&x, &y, &w, &h); return dm_screen_real(&rw, &rh) && rh > 0 && h > 0 ? (uy * h + y) / rh : uy; }
 uint64_t guest_ns(void);
 uint32_t dm_cur_tick(void);
 int dm_loadscreen_down(void);
@@ -54,6 +60,11 @@ static void touch_uimsg(const char *cat, const char *act, const char *arg) {
         scene.game = 1;
     dm_tc_set_panel_state(dm_ui_panel_state());
     int navigation = dm_tc_navigation(&scene, cat, act, arg);
+    // 真全屏（16:10 的 Mac，front_mac.m）：局内开大面板时界面整块移到正中、上下留同样宽的边，关掉回落贴底——iPad 的做法，判据同 front_ios.m 的 nmode == 1：
+    // 面板模式，且不是只开着 NPC 对话菜单（菜单跟着 NPC 摆，留在贴底）、不是死亡页。没开真全屏时宿主不动
+    // True full screen (16:10 Mac, front_mac.m): in game with a large panel open the interface moves as a block to the centre with equal bars above and below, and drops back to the bottom when closed - the iPad approach, same criterion as nmode == 1 in front_ios.m:
+    // panel mode, and not only the NPC dialogue menu open (the menu follows the NPC and stays at the bottom), and not the death page. Without true full screen the host does nothing
+    dm_uiscreen_set_panel(navigation && !dm_tc_scene_dead() && !dm_tc_scene_dialog_only(&scene));
     if (g_touch.enabled) {
         dm_tc_set_navigation_mode(&g_touch.state, navigation);
         static int pad = -1; if (pad < 0) { const char *e = getenv("DM_TOUCH_NAV_PAD"); pad = e && e[0] == '1'; }   // 缺省不给圆钮（同 front_ios.m） | no round button by default (same as front_ios.m)
@@ -217,7 +228,7 @@ void dm_touch_host_step(uint64_t now, uint64_t *buttons, int32_t *lx, int32_t *l
         { void dm_world_walk(float, float); int dm_world_tap_result(unsigned), dm_game_paused(void); uint32_t tk = touch_cur_tick();
           dm_tc_set_joy_block(&g_touch.state, 1);   // 鼠标不起触屏那个浮动摇杆（左下那片按住拖动原先会变成推摇杆） | the mouse does not start the touch layout's floating stick (holding and dragging in the bottom-left area used to turn into pushing the stick)
           if (g_lm.tap_seq) { int r = dm_world_tap_result(g_lm.tap_seq); if (r >= 0) { if (r == 0 && in && !dm_game_paused()) dm_world_walk(g_lm.tap_x, g_lm.tap_y); g_lm.tap_seq = 0; } }
-          if (g_lm.down && in && !g_touch.state.navigation_mode && !dm_game_paused() && (int32_t)(tk - g_lm.t0) >= 9 && (!g_lm.last || (int32_t)(tk - g_lm.last) >= 6) && dm_ui_item_at_now(g_lm.x, g_lm.y) != 0) { g_lm.last = tk; dm_world_walk(g_lm.x, g_lm.y); }
+          if (g_lm.down && in && !g_touch.state.navigation_mode && !dm_game_paused() && (int32_t)(tk - g_lm.t0) >= 9 && (!g_lm.last || (int32_t)(tk - g_lm.last) >= 6) && dm_ui_item_at_now(g_lm.x, g_lm.y) != 0) { g_lm.last = tk; dm_world_walk(g_lm.x, ui_y_to_screen(g_lm.y)); }
           if (!in) g_lm.down = 0; }
     }
     if (g_live_btn) { if ((int32_t)(g_live_btn_until - touch_cur_tick()) > 0) *buttons |= g_live_btn; else g_live_btn = 0; }
@@ -299,7 +310,7 @@ apply_input:
                 // 真鼠标：手势层认为没有面板开着（它按名单认面板，大秘境选层页这类借壳的面板不在名单里），这一下却落在某个面板里 → 发界面点击，不当点世界
                 // Real mouse: the gesture layer believes no panel is open (it recognises panels by a list, and panels that borrow another shell, such as the Greater Rift level-selection page, are not on it), yet this click lands inside some panel -> send a UI click instead of a world click
                 if (g_live_on && dm_ui_item_at_now(wx, wy) == 0) { dm_ui_touch(0, wx, wy); dm_ui_touch(2, wx, wy); }
-                else if (g_live_on) { unsigned dm_world_click(float, float); g_lm.tap_seq = dm_world_click(wx, wy); g_lm.tap_x = wx; g_lm.tap_y = wy; } else dm_world_tap(wx, wy); }   // 真鼠标：记下这一笔，答案是「没有目标」就改成走到那一点 | real mouse: remember this click, and if the answer is "no target" turn it into walking to that point
+                else if (g_live_on) { unsigned dm_world_click(float, float); float sy = ui_y_to_screen(wy); g_lm.tap_seq = dm_world_click(wx, sy); g_lm.tap_x = wx; g_lm.tap_y = sy; } else dm_world_tap(wx, ui_y_to_screen(wy)); }   // 真鼠标：记下这一笔，答案是「没有目标」就改成走到那一点 | real mouse: remember this click, and if the answer is "no target" turn it into walking to that point
             if (g_touch.state.mouse_click_seq != mc) { float nx = g_touch.state.mouse_click_x / 2868, ny = g_touch.state.mouse_click_y / 1320; dm_ui_touch(0, nx, ny); dm_ui_touch(2, nx, ny); }
         }
     }

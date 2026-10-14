@@ -33,6 +33,7 @@ void dm_elysium_arm(int on) { (void)on; }   // 极乐世界勾选（dm_elysium.c
 void dm_custom_on_uimsg(const char *cat, const char *act, const char *arg) { (void)cat; (void)act; (void)arg; }   // 「自定义」设置（dm_custom.c）的桩 | stub for the "Custom" settings (dm_custom.c)
 void dm_belt_put(unsigned id) { (void)id; }
 void dm_ui_rect(int *x, int *y, int *w, int *h) { *x = *y = *w = *h = 0; }
+void dm_uiscreen_set_panel(int on) { (void)on; }
 int dm_screen_real(int *w, int *h) { (void)w; (void)h; return 0; }
 int dm_uiscreen_ingame(void) { return 0; }
 void dm_uiscreen_set_ingame(int on) { (void)on; }   // 界面矩形（dm_uiscreen.c）的桩：没开真全屏 | stub for the UI rectangle (dm_uiscreen.c): true full screen not enabled

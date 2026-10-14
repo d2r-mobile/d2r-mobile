@@ -79,6 +79,7 @@ float dm_ui_ny(float ny) { return ny; }
 int dm_screen_real(int *w, int *h) { (void)w; (void)h; return 0; }
 void dm_uiscreen_enable(int m) { (void)m; }
 void dm_ui_rect(int *x, int *y, int *w, int *h) { *x = *y = *w = *h = 0; }
+void dm_uiscreen_set_panel(int on) { (void)on; }
 int dm_uiscreen_ingame(void) { return 0; }
 void dm_uiscreen_set_ingame(int on) { (void)on; }
 void dm_held_stow(void) {}
