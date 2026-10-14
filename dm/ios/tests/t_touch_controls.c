@@ -118,11 +118,11 @@ static void two_fingers_same_key(void) {
 }
 static void joystick_deadzone(void) {
     /* 浮动底盘。667×375（k = 1、安全区 0）手算：静止位 (max(90, 0+60)+30, 375−115) = (120, 260)；起摇杆区 x < 667×0.40 = 266.8 且 y > 375×0.45 = 168.75；
-       夹回 x ≥ 0+60 = 60、y ≤ 375−25−60 = 290。落在区里起手：圆心 = 落点，位移为零
+       夹回只为底盘整圈在屏内：x ≥ 60+8 = 68、y ≤ 375−60−8 = 307（不让安全区）。落在区里起手：圆心 = 落点，位移为零
        Floating base. Worked by hand for 667x375 (k = 1, safe area 0): rest position (max(90, 0+60)+30, 375-115) = (120, 260); stick-start zone x < 667x0.40 = 266.8 and y > 375x0.45 = 168.75;
-              clamp x >= 0+60 = 60, y <= 375-25-60 = 290. Starting inside the zone: centre = touch point, zero displacement */
+              clamping only keeps the whole base on screen: x >= 60+8 = 68, y <= 375-60-8 = 307 (not respecting the safe area). Starting inside the zone: centre = touch point, zero displacement */
     dm_tc_state s; dm_tc_init(&s,667,375); NEAR(s.layout.joy_x,120,0.001); NEAR(s.layout.joy_y,260,0.001);
-    NEAR(s.layout.joy_zone_r,266.8,0.001); NEAR(s.layout.joy_zone_t,168.75,0.001); NEAR(s.layout.joy_min_x,60,0.001); NEAR(s.layout.joy_max_y,290,0.001);
+    NEAR(s.layout.joy_zone_r,266.8,0.001); NEAR(s.layout.joy_zone_t,168.75,0.001); NEAR(s.layout.joy_min_x,68,0.001); NEAR(s.layout.joy_max_y,307,0.001);
     dm_tc_begin(&s,0,90,275);
     CHECK(s.joy_slot==0); NEAR(s.joy_origin_x,90,0); NEAR(s.joy_origin_y,275,0);
     CHECK(s.lx==0 && s.ly==0);
@@ -135,8 +135,15 @@ static void joystick_deadzone(void) {
     dm_tc_move(&s,0,600,200); CHECK(s.lx==DM_STICK_MAX && s.ly==0); NEAR(s.joy_origin_x,200,0);
     dm_tc_move(&s,0,200,25); CHECK(s.lx==0 && s.ly==DM_STICK_MAX); NEAR(s.joy_origin_y,200,0);
     dm_tc_end(&s,0); CHECK(s.joy_slot==-1 && s.lx==0 && s.ly==0); NEAR(s.layout.joy_x,120,0.001);
-    /* 贴左下角落指 (10,370)：圆心夹回 (60,290)，手指在圆心左下 (−50,−80)，一落下就是左下满偏 | touching down against the bottom-left corner (10,370): the centre is clamped back to (60,290), the finger is at (-50,-80) to the lower left of the centre, so it is at full lower-left deflection the moment it lands */
-    dm_tc_begin(&s,0,10,370); CHECK(s.joy_slot==0); NEAR(s.joy_origin_x,60,0); NEAR(s.joy_origin_y,290,0); CHECK(s.lx<0 && s.ly<0); dm_tc_end(&s,0);
+    /* 贴左下角落指 (10,370)：底盘画在夹回后的 (68,307)，轴值按手指相对落点算——落指那一下为 0；向右挪 6 点仍在死区；7 点起出值 (7−6)/54 × 32767 = 607；
+       向右拖满 60 点 = 向右满偏（不是按底盘圆心算出来的「左下」）。底盘不跟手走
+       touching down against the bottom-left corner (10,370): the base is drawn at the clamped (68,307), and the axes are computed from the finger relative to the touch point - 0 on touch-down; moving 6 points right is still inside the dead zone; from 7 points the output is (7-6)/54 x 32767 = 607;
+              dragging the full 60 points right = full right deflection (not the "down-left" one would get by computing from the base centre). The base does not follow the finger */
+    dm_tc_begin(&s,0,10,370); CHECK(s.joy_slot==0); NEAR(s.joy_origin_x,68,0); NEAR(s.joy_origin_y,307,0); CHECK(s.lx==0 && s.ly==0);
+    dm_tc_move(&s,0,16,370); CHECK(s.lx==0 && s.ly==0);
+    dm_tc_move(&s,0,17,370); CHECK(abs(s.lx-607)<=1 && s.ly==0);
+    dm_tc_move(&s,0,70,370); CHECK(s.lx==DM_STICK_MAX && s.ly==0); NEAR(s.joy_origin_x,68,0); NEAR(s.joy_origin_y,307,0);
+    dm_tc_end(&s,0);
     dm_tc_begin(&s,0,266,169); CHECK(s.joy_slot==0); NEAR(s.joy_origin_x,266,0); NEAR(s.joy_origin_y,169,0); dm_tc_end(&s,0);   /* 区的右上角以内 | just inside the zone's top-right corner */
     /* 区外：不起摇杆，拖也不变成摇杆 | outside the zone: no stick starts, and dragging does not turn into a stick either */
     dm_tc_begin(&s,0,267,275); CHECK(s.joy_slot==-1 && s.lx==0); dm_tc_end(&s,0);
@@ -145,13 +152,31 @@ static void joystick_deadzone(void) {
     /* 区里很快原地松开的那一下兼作点击（落点记成点世界），按久了 / 拖开了的不算 | a quick release in place inside the zone doubles as a tap (the touch point is recorded as a world tap); held long / dragged away does not count */
     { unsigned q = s.world_tap_seq; dm_tc_begin_at(&s,0,150,250,40.0); dm_tc_end_at(&s,0,40.1); CHECK(s.world_tap_seq==q+1); NEAR(s.world_tap_x,150,0); NEAR(s.world_tap_y,250,0);
       dm_tc_begin_at(&s,0,150,250,41.0); dm_tc_move_at(&s,0,200,250,41.05); dm_tc_end_at(&s,0,41.1); CHECK(s.world_tap_seq==q+1); }
-    /* 拖远了的摇杆手指被系统取消，0.2 秒后在离取消处 40 点的 (236,128) 重新落下（(260,160) 偏 (−24,−32)；已在起摇杆区上界 168.75 之外）：接着当摇杆，圆心沿用取消前的 (90,275)、方向按旧圆心算；超时：不接 | the stick finger, dragged far away, is cancelled by the system and 0.2 s later touches down again at (236,128), 40 points from where it was cancelled ((260,160) offset by (-24,-32); already above the zone's upper bound 168.75): it continues as the stick, the centre stays at (90,275) from before the cancel and the direction is computed from the old centre; after the timeout: not continued */
+    /* 拖远了的摇杆手指被系统取消，0.2 秒后在离取消处 40 点的 (236,128) 重新落下（(260,160) 偏 (−24,−32)；已在起摇杆区上界 168.75 之外）：接着当摇杆，落点与底盘沿用取消前的 (90,275)、方向按旧落点算；超时：不接 | the stick finger, dragged far away, is cancelled by the system and 0.2 s later touches down again at (236,128), 40 points from where it was cancelled ((260,160) offset by (-24,-32); already above the zone's upper bound 168.75): it continues as the stick, the touch point and base stay at (90,275) from before the cancel and the direction is computed from the old touch point; after the timeout: not continued */
     dm_tc_begin_at(&s,0,90,275,50.0); dm_tc_move_at(&s,0,260,160,50.2); CHECK(s.lx>0 && s.ly>0); dm_tc_cancel_finger(&s,0); CHECK(s.joy_slot==-1 && s.lx==0);
     dm_tc_begin_at(&s,1,236,128,50.4); CHECK(s.joy_slot==1 && s.lx>0 && s.ly>0); NEAR(s.joy_origin_x,90,0); NEAR(s.joy_origin_y,275,0); dm_tc_cancel_finger(&s,1);
     dm_tc_begin_at(&s,2,236,128,50.4+0.36); CHECK(s.joy_slot==-1); dm_tc_end_at(&s,2,51.5);          /* 超过 0.35 秒、落点在区外 | beyond 0.35 s, touch point outside the zone */
-    /* 取消后在区里别处重落（离取消处 140 点，不算接续）：按新落点起一个新的，圆心 (265, min(300,290)) | after a cancel, touching down elsewhere in the zone (140 points from where it was cancelled, not a continuation): a new stick starts at the new touch point, centre (265, min(300,290)) */
+    /* 取消后在区里别处重落（离取消处 140 点，不算接续）：按新落点起一个新的，圆心 (265, min(300,307)) = (265,300)，落指那一下轴为 0 | after a cancel, touching down elsewhere in the zone (140 points from where it was cancelled, not a continuation): a new stick starts at the new touch point, centre (265, min(300,307)) = (265,300), axes 0 on touch-down */
     dm_tc_begin_at(&s,0,90,275,52.0); dm_tc_move_at(&s,0,260,160,52.2); dm_tc_cancel_finger(&s,0);
-    dm_tc_begin_at(&s,1,265,300,52.3); CHECK(s.joy_slot==1); NEAR(s.joy_origin_x,265,0); NEAR(s.joy_origin_y,290,0); dm_tc_end_at(&s,1,53.5);
+    dm_tc_begin_at(&s,1,265,300,52.3); CHECK(s.joy_slot==1); NEAR(s.joy_origin_x,265,0); NEAR(s.joy_origin_y,300,0); CHECK(s.lx==0 && s.ly==0); dm_tc_end_at(&s,1,53.5);
+}
+/* 956×440（k = 1）手算：夹回界 x ≥ 60+8 = 68、y ≤ 440−68 = 372，只决定底盘画在哪：(6,434) → (68,372)；(60,400) → (68,372)；(150,330) → 不夹。
+   三处落指那一下轴都为 0；各自向右、向上、向左上（45°）拖 60 点，轴值只看手指相对落点，三处完全相同：
+   向右 (60,0) → (32767, 0)；向上 (0,60) → (0, 32767)；向左上 (−42.43, 42.43) → 斜向预修正后 (−1, 2)/√5 × 32767 = (−14654, 29308)（走出来的屏幕方向 = 手指方向，同 joystick_axes 那例）。
+   贴左下角时向左 / 向下拖不出 60 点（手指到屏幕边了）是物理限制，不在这里测
+   Worked by hand for 956x440 (k = 1): clamp bounds x >= 60+8 = 68, y <= 440-68 = 372, which only decide where the base is drawn: (6,434) -> (68,372); (60,400) -> (68,372); (150,330) -> not clamped.
+      At all three touch points the axes are 0 on touch-down; dragging 60 points right, up and up-left (45 degrees) from each, the axes depend only on the finger relative to the touch point and are identical for all three:
+      right (60,0) -> (32767, 0); up (0,60) -> (0, 32767); up-left (-42.43, 42.43) -> after the diagonal pre-correction (-1, 2)/sqrt(5) x 32767 = (-14654, 29308) (the screen direction walked = the finger direction, as in the joystick_axes example).
+      Near the bottom-left corner a drag of 60 points to the left / downwards is not possible (the finger reaches the screen edge); that is a physical limit and not tested here */
+static void joystick_clamp_956(void) {
+    static const float at[3][4] = {{6, 434, 68, 372}, {60, 400, 68, 372}, {150, 330, 150, 330}};
+    dm_tc_state s; dm_tc_init(&s,956,440); NEAR(s.layout.joy_min_x,68,0.001); NEAR(s.layout.joy_max_y,372,0.001);
+    for (int i = 0; i < 3; i++) { float x = at[i][0], y = at[i][1];
+        dm_tc_begin(&s,0,x,y); NEAR(s.joy_origin_x,at[i][2],0); NEAR(s.joy_origin_y,at[i][3],0); CHECK(s.lx==0 && s.ly==0);
+        dm_tc_move(&s,0,x+60,y); CHECK(s.lx==DM_STICK_MAX && s.ly==0);
+        dm_tc_move(&s,0,x,y-60); CHECK(s.lx==0 && s.ly==DM_STICK_MAX);
+        dm_tc_move(&s,0,x-42.4264f,y-42.4264f); CHECK(abs(s.lx+14654)<=2 && abs(s.ly-29308)<=2);
+        NEAR(s.joy_origin_x,at[i][2],0); NEAR(s.joy_origin_y,at[i][3],0); dm_tc_end(&s,0); }
 }
 static void joystick_axes(void) {
     dm_tc_state s; dm_tc_init(&s,667,375); dm_tc_begin(&s,0,90,275);   /* 圆心 90,275；下面各点 = 原用例整体平移 (−10, +75) | center 90,275; the points below = the original cases shifted as a whole by (−10, +75) */
@@ -437,7 +462,7 @@ static void safe_insets(void) {
     dm_tc_set_safe_insets(62, 62); dm_tc_layout_make(&b, 956, 440); dm_tc_set_safe_insets(0, 0);
     NEAR(a.target[DM_TC_MAIN].x, 900, 0.001); NEAR(b.target[DM_TC_MAIN].x, 854, 0.001); NEAR(b.target[DM_TC_MAIN].y, a.target[DM_TC_MAIN].y, 0.001);
     for (int i = DM_TC_SKILL1; i <= DM_TC_SKILL4; ++i) { NEAR(a.target[i].x - b.target[i].x, 46, 0.001); NEAR(a.target[i].y, b.target[i].y, 0.001); CHECK(b.target[i].x + b.target[i].r <= 894.001f); }
-    NEAR(a.swap.x - b.swap.x, 46, 0.001); NEAR(a.joy_x, 120, 0.001); NEAR(b.joy_x, 152, 0.001); NEAR(b.joy_min_x, 122, 0.001); NEAR(a.joy_y, 325, 0.001); NEAR(a.joy_max_y, 355, 0.001);   /* 静止位 max(90, 安全区 + 60) + 30、440 − 115；夹回界 安全区 + 60、440 − 25 − 60 | rest position max(90, safe area + 60) + 30, 440 - 115; clamp bounds safe area + 60, 440 - 25 - 60 */
+    NEAR(a.swap.x - b.swap.x, 46, 0.001); NEAR(a.joy_x, 120, 0.001); NEAR(b.joy_x, 152, 0.001); NEAR(b.joy_min_x, 68, 0.001); NEAR(a.joy_y, 325, 0.001); NEAR(a.joy_max_y, 372, 0.001);   /* 静止位 max(90, 安全区 + 60) + 30、440 − 115（让安全区）；夹回界 60 + 8、440 − 60 − 8（不让安全区） | rest position max(90, safe area + 60) + 30, 440 - 115 (respecting the safe area); clamp bounds 60 + 8, 440 - 60 - 8 (not respecting the safe area) */
     dm_tc_layout c; dm_tc_layout_make(&c, 956, 440); NEAR(c.target[DM_TC_MAIN].x, 900, 0.001);
 }
 /* 换组键：956×440 下主键中心 (900,358)，换组键在技能一正下方 (900−112, 358+52) = (788,410)，半径 22；不与技能一（中心 (788,358) 半径 26）重叠、不出屏 | Set-switch button: at 956×440 the main button center is (900,358), the set-switch button is directly below skill one at (900−112, 358+52) = (788,410), radius 22; it does not overlap skill one (center (788,358), radius 26) and does not go off screen */
@@ -556,7 +581,7 @@ static void belt_single_double(void) {
 }
 int main(void) {
     RUN(layout_667); RUN(layout_812); RUN(layout_956); RUN(layout_1024); RUN(layout_ipad169); RUN(layout_pixels); RUN(small_layout); RUN(difficulty_picker);
-    RUN(hit_edges); RUN(key_hold_and_ownership); RUN(two_fingers_same_key); RUN(joystick_deadzone);
+    RUN(hit_edges); RUN(key_hold_and_ownership); RUN(two_fingers_same_key); RUN(joystick_deadzone); RUN(joystick_clamp_956);
     RUN(joystick_axes); RUN(joystick_plus_skills); RUN(no_auto_handoff); RUN(background_no_key);
     RUN(circles_before_joystick); RUN(cancel_and_resize); RUN(deferred_skill_vs_belt); RUN(held_skill2_vs_belt); RUN(belt_single_double); RUN(no_ui_drag_outside_modal); RUN(invalid_slots_and_repeated_begin); RUN(all_slots_hold); RUN(enabled_targets); RUN(ui_scene_messages);
     RUN(pointer_tap); RUN(world_tap); RUN(pointer_outside_close); RUN(scene_dialog_only); RUN(pointer_item_tap); RUN(pointer_stack_tap); RUN(pointer_over_disabled_target); RUN(ui_drag_typing); RUN(pointer_drag_out); RUN(pointer_drag); RUN(pointer_long); RUN(pointer_long_then_drag); RUN(pointer_long_seq); RUN(pointer_shop_drag); RUN(pointer_control_hit); RUN(pointer_game_mode); RUN(pointer_pulse_queue); RUN(safe_insets); RUN(swap_key);

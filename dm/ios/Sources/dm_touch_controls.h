@@ -19,7 +19,7 @@ typedef struct {
     float width, height;
     dm_tc_target target[DM_TC_COUNT];
     float joy_x, joy_y, joy_radius;   /* 没按时底盘的显示位置（静止位）与底盘半径 | where the base is shown while not pressed (rest position), and the base radius */
-    float joy_zone_r, joy_zone_t, joy_min_x, joy_max_y;   /* 起摇杆区的右界与上界（左与下到屏幕边）；按下后底盘圆心的夹回界：x 不小于、y 不大于 | right and upper bounds of the stick-start zone (left and bottom reach the screen edges); clamp bounds for the base centre once pressed: x not less than, y not greater than */
+    float joy_zone_r, joy_zone_t, joy_min_x, joy_max_y;   /* 起摇杆区的右界与上界（左与下到屏幕边）；按下后底盘圆心的夹回界：x 不小于、y 不大于（只为底盘整圈画在屏内：屏幕边 + 半径 + 8） | right and upper bounds of the stick-start zone (left and bottom reach the screen edges); clamp bounds for the base centre once pressed: x not less than, y not greater than (only so that the whole base is drawn on screen: screen edge + radius + 8) */
     dm_tc_target swap;   /* 技能组切换键：本地开关，不直接发按键 | Skill set switch key: a local toggle; does not send a key directly */
     dm_tc_target diff;   /* 底部 UI v4 第 0 格难度：点开 / 收起 1–8 选择条，不发按键 | Bottom UI v4 cell 0 difficulty: tap to open / collapse the 1–8 selector bar; sends no key */
     dm_tc_target pick[8];   /* 选择条 8 格（第 i 格 = 人数档 i+1），在七格上方 | The selector bar's 8 cells (cell i = player-count level i+1), above the seven cells */
@@ -125,6 +125,7 @@ typedef struct {
     int belt_gap_cell; double belt_gap_at;   /* 按着第二组技能时要喝药：先把 ZL 和技能键松开、空出 DM_TC_ZL_LEAD_S，到 belt_gap_at 才按腰带键（belt_gap_cell = 等着的那一格，0 = 没有） | to drink a potion while a skill of the second skill set is held: first release ZL and the skill key and leave a gap of DM_TC_ZL_LEAD_S, and only at belt_gap_at press the belt key (belt_gap_cell = the cell that is waiting, 0 = none) */
     double joy_lost_s; float joy_lost_x, joy_lost_y, joy_lost_ox, joy_lost_oy;   /* 摇杆手指被系统取消的时刻与当时的位置（0 = 没有）：紧接着在附近重新落下的手指接着当摇杆 | time and position at which the joystick finger was cancelled by the system (0 = none): a finger landing again nearby right afterwards continues as the joystick */
     int joy_block;   /* 讲话文字框单独开着（前端不进面板态）：这时落在底座上的手指不起摇杆，照旧只当一次点击（关讲话框）。前端按面板栈写 | speech text box open on its own (the front end does not enter panel state): a finger on the base starts no stick and is still just one click (closes the speech box). Written by the front end from the panel stack */
+    float joy_touch_x, joy_touch_y, joy_lost_tx, joy_lost_ty;   /* 摇杆那根手指的落点（方向与幅度一律按「手指相对落点」算；joy_origin 只是底盘画在哪 = 落点夹回屏内之后）；被系统取消时记下的落点 | touch point of the stick finger (direction and magnitude are always computed from "finger relative to the touch point"; joy_origin is only where the base is drawn = the touch point clamped onto the screen); the touch point recorded when it was cancelled by the system */
     double belt_pulse_s;   /* 最近一次「给玩家喝」的腰带脉冲还在发的时刻：其间按着的第二组技能连同 ZL 一起让开，收回后 ZL 重新领先 DM_TC_ZL_LEAD_S 技能键才回来 | Time until which the most recent "player drinks" belt pulse is still being sent: during it the held second-set skill gives way together with ZL, and after the release ZL again leads by DM_TC_ZL_LEAD_S before the skill key comes back */
     int belt_q;   /* 此刻有别的脉冲在发 / 别的补发在等：排着，空了再落地（不互相盖掉）。值 = 格 | another pulse is being sent / another resend is pending: queue and fire when free (they never overwrite each other). Value = cell */
 } dm_tc_state;

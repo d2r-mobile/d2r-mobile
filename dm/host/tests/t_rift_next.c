@@ -51,6 +51,18 @@ int main(void) {
     K.tier = 100; if (10819454LL * hi_duo_x1000(0) / 1000 > 8388607LL) { fails++; printf("  ✗ 100 层巴尔 × s 过了属性上限\n"); }
     K.guards[0] = 7; K.guards[1] = 9; K.guards[2] = 0; if (!is_guard(7) || !is_guard(9) || is_guard(0) || is_guard(8)) { fails++; printf("  ✗ is_guard 认错\n"); }
     printf("hi_duo %s：4 格系数 + 巴尔不过上限 + 认守护者\n", fails ? "失败" : "OK");
+    // 闯入首领也算「特殊单位」（不按普通怪计分、不按普通怪再改属性）：在场的（K.inv_id）与已退场、还没被真移除的（g_inv_gone）都算——
+    // 后者漏掉的话，退场后那几秒里被打死会按普通金怪计 10 分（实测过：进度 400 → 410）
+    // Invading bosses also count as "special units" (not scored as ordinary monsters, not scaled again as ordinary monsters): both the one present (K.inv_id) and one that has left but is not yet truly removed (g_inv_gone) -
+    // if the latter is missed, being killed in the few seconds after leaving would score 10 points as an ordinary unique monster (measured: progress 400 -> 410)
+    K.guards[0] = K.guards[1] = K.guards[2] = 0; K.inv_id[0] = 21; K.inv_id[1] = 0; g_inv_gone[0] = 0; g_inv_gone[1] = 33;
+    if (!is_guard(21) || !is_guard(33) || is_guard(22) || is_guard(0)) { fails++; printf("  ✗ is_guard 没认全闯入首领（在场 21、已退场 33）\n"); }
+    K.inv_id[0] = 0; g_inv_gone[1] = 0; if (is_guard(21) || is_guard(33)) { fails++; printf("  ✗ 清掉之后 is_guard 还认\n"); }
+    // 首领召唤物按类号认：巴尔触手 562–566、分身 570；巴尔本体 544、它的小怪 571、普通怪不算
+    // Boss summons are recognised by class id: Baal's tentacles 562–566 and clone 570; Baal himself 544, his minions 571 and ordinary monsters do not count
+    { static const struct { uint32_t cls; int want; } bc[] = { { 561, 0 }, { 562, 1 }, { 564, 1 }, { 566, 1 }, { 567, 0 }, { 570, 1 }, { 571, 0 }, { 544, 0 }, { 45, 0 } };
+      for (unsigned i = 0; i < sizeof bc / sizeof *bc; i++) if (boss_summon(bc[i].cls) != bc[i].want) { fails++; printf("  ✗ boss_summon(%u) 应为 %d\n", bc[i].cls, bc[i].want); } }
+    printf("invader_guard %s：在场与已退场的闯入首领都算特殊单位\n", fails ? "失败" : "OK");
     printf("t_rift_next %s：%d 格（层 × 晋级量）下一层 = 手写期望且 ≤ 100，宿主与顶部条同值\n", fails ? "失败" : "OK", n);
     return fails != 0;
 }

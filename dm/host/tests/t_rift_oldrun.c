@@ -33,6 +33,12 @@ int main(void) {
     for (unsigned i = 0; i < sizeof oc / sizeof *oc; i++) { atomic_store(&K.st, oc[i].st); K.t0_ns = guest_ns() - (uint64_t)oc[i].ago * 1000000000ull; dm_rift_hud_t h = {0}; dm_rift_menu_t m = {0}; dm_rift_hud(&h); menu_fill(&m, 2);
         if (rift_overtime() != oc[i].want || m.overtime != oc[i].want || (oc[i].st != ST_IDLE && h.overtime != oc[i].want)) { fails++; printf("  ✗ 状态 %d 开局 %d 秒前：超时量应为 %d，得 %d（顶部条 %d、菜单 %d）\n", oc[i].st, oc[i].ago, oc[i].want, rift_overtime(), h.overtime, m.overtime); } }
     printf("rift_overtime %s：6 格\n", fails ? "失败" : "OK");
+    // 顶部条第二行写哪一句（dm_rift_hud 的 goal，宿主一处定）：按「是否超时 × 守护者是否在场 × 守护者几位」手写期望
+    // Which sentence the second line of the top bar shows (goal of dm_rift_hud, decided in one place in the host): expected values written by hand over "overtime or not x Guardians present or not x how many Guardians"
+    static const struct { int ago, guard, dead, total, want; } gc[] = { { 100, 0, 0, 0, 0 }, { 100, 1, 0, 1, 1 }, { 100, 1, 0, 2, 2 }, { 100, 1, 1, 2, 2 }, { 100, 1, 1, 3, 2 }, { 901, 0, 0, 0, 3 }, { 901, 1, 0, 1, 4 }, { 901, 1, 1, 2, 5 } };
+    for (unsigned i = 0; i < sizeof gc / sizeof *gc; i++) { atomic_store(&K.st, ST_RUN); K.t0_ns = guest_ns() - (uint64_t)gc[i].ago * 1000000000ull; K.guard = gc[i].guard ? 7 : 0; atomic_store(&K.guard_dead, 0); atomic_store(&K.gdead, gc[i].dead); atomic_store(&K.gtotal, gc[i].total);
+        dm_rift_hud_t h = {0}; dm_rift_hud(&h); if (h.goal != gc[i].want || h.gdead != gc[i].dead || h.gtotal != gc[i].total) { fails++; printf("  ✗ 开局 %d 秒前 守护者在场 %d（%d/%d）：第二行应为 %d，得 %d\n", gc[i].ago, gc[i].guard, gc[i].dead, gc[i].total, gc[i].want, h.goal); } }
+    K.guard = 0; printf("hud_goal %s：8 格\n", fails ? "失败" : "OK");
     printf("t_rift_oldrun %s：%d 格城里入口给页 + 新局重置清请求\n", fails ? "失败" : "OK", n);
     return fails != 0;
 }

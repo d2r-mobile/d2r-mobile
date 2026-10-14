@@ -79,16 +79,18 @@ void dm_tc_layout_make(dm_tc_layout *l, float width, float height) {
     /* 左摇杆是浮动底盘：左下「起摇杆区」里手指落在哪，底盘圆心就落在哪，松手回静止位。
        静止位：圆心离安全区左界 90（底盘半径 60 + 30）、不小于 120，离屏幕底 115——只是没按时画在哪。
        起摇杆区：屏宽的左 40% × 屏高的下 55%（左与下到屏幕边：拇指压在刘海那一条上也算）；区里我们的圆钮 / 腰带格、原版界面上可点的东西各自优先。
-       夹回：落点贴边时圆心挪回来，整个底盘留在安全区左界以右、底盘下沿离屏幕底不少于 25（不撞系统横条）
+       夹回：只为底盘整圈画在屏内——落点离左沿 / 底沿不到「半径 + 8」时底盘圆心挪回到那条线上；只影响画，轴值仍按手指相对落点算（摇杆头 = 底盘圆心 + 轴值 × 半径）。不让安全区（原先左界取「安全区 + 半径」，刘海机型约 122 点：
+       拇指自然落在离左边 60–120 点的人一落指就带明显的向左分量；左下角没有刘海也没有系统横条）。静止位仍让安全区，那只是没按时画在哪
        The left stick is a floating base: wherever the finger lands inside the bottom-left "stick-start zone", the base centre goes there, and it returns to the rest position on release.
               Rest position: centre 90 from the left edge of the safe area (base radius 60 + 30), not less than 120, and 115 from the bottom of the screen - only where it is drawn while not pressed.
               Stick-start zone: the left 40% of the screen width x the lower 55% of the screen height (reaching the screen edges on the left and bottom: a thumb on the notch strip counts too); inside the zone our round buttons / belt cells and the clickable things of the original UI each take priority.
-              Clamping: when the touch point is near an edge the centre is moved back so that the whole base stays to the right of the safe area's left edge and its lower rim is at least 25 from the bottom of the screen (clear of the system bar) */
+              Clamping: only so that the whole base is drawn on screen - when the touch point is closer than "radius + 8" to the left / bottom edge the base centre is moved back onto that line; it only affects drawing, and the axes are still computed from the finger relative to the touch point (stick knob = base centre + axes x radius). The safe area is not respected (the left bound used to be "safe area + radius", about 122 points on notched devices:
+              a thumb landing naturally 60–120 points from the left edge got a clear leftward component the moment it touched down; the bottom-left corner has neither a notch nor the system bar). The rest position still respects the safe area, which is only where it is drawn while not pressed */
     l->joy_radius = 60*k;
     l->joy_x = fmaxf(90*k, g_safe_l + 60*k) + 30*k;
     l->joy_y = l->height - 115*k;
     l->joy_zone_r = l->width*0.40f; l->joy_zone_t = l->height*0.45f;
-    l->joy_min_x = g_safe_l + l->joy_radius; l->joy_max_y = l->height - 25*k - l->joy_radius;
+    l->joy_min_x = l->joy_radius + 8*k; l->joy_max_y = l->height - l->joy_radius - 8*k;
 }
 
 int dm_tc_hit(const dm_tc_layout *l, float x, float y) {
@@ -214,7 +216,7 @@ static void update(dm_tc_state *s) {
     s->lx = s->ly = 0;
     if (s->joy_slot < 0) return;
     dm_tc_finger *f = &s->finger[s->joy_slot];
-    float dx = f->x-s->joy_origin_x, dy = s->joy_origin_y-f->y;
+    float dx = f->x-s->joy_touch_x, dy = s->joy_touch_y-f->y;   /* 相对落点，不相对底盘圆心：夹回只影响底盘画在哪，不进算法（贴角落指时圆心在手指右上方，按圆心算会出现手指往右、人往下） | relative to the touch point, not the base centre: clamping only affects where the base is drawn and does not enter the computation (touching down in a corner puts the centre to the upper right of the finger, and computing from the centre would make the character move down while the finger moves right) */
     /* 输入行程不跟大屏的视觉放大走：拇指不随屏幕变大。满偏 60 点、死区 6 点，手机与 iPad 一致
        （原先乘视觉倍数，12.9 寸 iPad 要推 105 点 ≈ 20 mm 才满偏，是手机的两倍）。底盘和摇杆头的大小仍按视觉倍数画。
        Input travel does not follow the visual enlargement on large screens: the thumb does not grow with the screen. Full deflection 60 points, dead zone 6 points, same on phone and iPad
@@ -388,7 +390,7 @@ void dm_tc_cancel_finger(dm_tc_state *s, int slot) {
     if (slot < 0 || slot >= DM_TC_MAX_TOUCH) return;
     ++s->gesture_epoch;
     if (s->finger[slot].active && s->finger[slot].target == DM_TC_PORTAL) { dm_tc_cancel_portal(s); }
-    if (slot == s->joy_slot && s->finger[slot].active) { s->joy_lost_s = s->last_time_s; s->joy_lost_x = s->finger[slot].x; s->joy_lost_y = s->finger[slot].y; s->joy_lost_ox = s->joy_origin_x; s->joy_lost_oy = s->joy_origin_y; }   /* 系统取消了摇杆那根手指：记下，紧接着在附近重新落下的接着当摇杆 | the system cancelled the joystick finger: record it, and a finger landing again nearby right afterwards continues as the joystick */
+    if (slot == s->joy_slot && s->finger[slot].active) { s->joy_lost_s = s->last_time_s; s->joy_lost_x = s->finger[slot].x; s->joy_lost_y = s->finger[slot].y; s->joy_lost_ox = s->joy_origin_x; s->joy_lost_oy = s->joy_origin_y; s->joy_lost_tx = s->joy_touch_x; s->joy_lost_ty = s->joy_touch_y; }   /* 系统取消了摇杆那根手指：记下，紧接着在附近重新落下的接着当摇杆 | the system cancelled the joystick finger: record it, and a finger landing again nearby right afterwards continues as the joystick */
     s->finger[slot] = (dm_tc_finger){.target=DM_TC_NONE};
     if (slot == s->joy_slot) { s->joy_slot = DM_TC_NONE; s->joy_origin_x = s->joy_origin_y = 0; }
     if (slot == s->aim_slot) s->aim_slot = DM_TC_NONE;
@@ -505,14 +507,14 @@ void dm_tc_begin_at(dm_tc_state *s, int slot, float x, float y, double now_s) {
     } else if (!s->navigation_mode && !s->joy_block && hit == DM_TC_NONE && s->joy_slot == DM_TC_NONE && x >= 0 && y <= s->layout.height &&
         ((x < s->layout.joy_zone_r && y > s->layout.joy_zone_t) ||
          (x < s->layout.width*0.43f && y > s->layout.height*0.25f && s->joy_lost_s > 0 && now_s - s->joy_lost_s <= DM_TC_JOY_RESUME_S && hypotf(x - s->joy_lost_x, y - s->joy_lost_y) <= DM_TC_JOY_GRAB_K * s->layout.joy_radius))) {
-        /* 浮动底盘：落在起摇杆区里就起摇杆，底盘圆心 = 落点（贴边时夹回，见布局处），方向与幅度按「手指相对底盘圆心」算，按住后拖到多远都照样识别，
+        /* 浮动底盘：落在起摇杆区里就起摇杆，底盘圆心 = 落点（贴边时夹回，见布局处），方向与幅度按「手指相对落点」算，按住后拖到多远都照样识别，
            底盘不跟手走；落在区外照旧是点地。这一下若很快原地松开，仍兼作一次点击（dm_tc_end_at）：区里的怪、掉落物、NPC 要点得到。
            摇杆那根手指刚被系统取消（通知横幅、系统手势；dm_tc_cancel_finger 记下时刻与位置），DM_TC_JOY_RESUME_S 内在原处附近重新落下的手指接着当摇杆，
-           哪怕落点已拖出起摇杆区。只开着讲话文字框 / 对话菜单时不起摇杆（joy_block）：夹回会让落点 ≠ 圆心、一落下就有方向，那一下只该关框
-           Floating base: a touch inside the stick-start zone starts the stick with the base centre = the touch point (clamped back near the edges, see the layout), direction and magnitude are computed from "finger relative to base centre", and once held, dragging any distance is still recognised;
+           哪怕落点已拖出起摇杆区。只开着讲话文字框 / 对话菜单时不起摇杆（joy_block）：那一下只该关框、人不走（落指位移为零本来也不出方向，但手指稍一滑就会走，照旧整根挡掉）
+           Floating base: a touch inside the stick-start zone starts the stick with the base centre = the touch point (clamped near the edges, see the layout), direction and magnitude are computed from "finger relative to the touch point", and once held, dragging any distance is still recognised;
                       the base does not follow the finger; a touch outside the zone is a ground tap as before. If this touch is released quickly in place it still doubles as a tap (dm_tc_end_at): monsters, dropped items and NPCs inside the zone must remain tappable.
                       When the stick finger has just been cancelled by the system (notification banner, system gesture; dm_tc_cancel_finger records the time and position), a finger touching down again near the same place within DM_TC_JOY_RESUME_S continues as the stick,
-                      even if the touch point has been dragged out of the stick-start zone. The stick does not start while only a speech text box / dialogue menu is open (joy_block): clamping would make touch point != centre and give a direction the moment it lands, when that touch should only close the box */
+                      even if the touch point has been dragged out of the stick-start zone. The stick does not start while only a speech text box / dialogue menu is open (joy_block): that touch should only close the box without moving the character (zero displacement on touch-down gives no direction anyway, but a slight slide would walk, so the whole finger is still blocked) */
         int resume = s->joy_lost_s > 0 && now_s - s->joy_lost_s <= DM_TC_JOY_RESUME_S && hypotf(x - s->joy_lost_x, y - s->joy_lost_y) <= DM_TC_JOY_GRAB_K * s->layout.joy_radius;
         s->joy_lost_s = 0;
         f->target = DM_TC_JOYSTICK;
@@ -520,6 +522,7 @@ void dm_tc_begin_at(dm_tc_state *s, int slot, float x, float y, double now_s) {
         /* 接续的沿用取消前的圆心，不按新落点重定：触摸被系统反复打断又重来的机器上，每重来一次底盘就跳到手指当前位置，看着像底盘追着手指跑 | a continuation keeps the centre from before the cancel instead of re-centring on the new touch point: on devices where touches are repeatedly interrupted by the system and restarted, the base would jump to the finger's current position on every restart and look as if it were chasing the finger */
         s->joy_origin_x = resume ? s->joy_lost_ox : fmaxf(x, s->layout.joy_min_x);
         s->joy_origin_y = resume ? s->joy_lost_oy : fminf(y, s->layout.joy_max_y);
+        s->joy_touch_x = resume ? s->joy_lost_tx : x; s->joy_touch_y = resume ? s->joy_lost_ty : y;   /* 接续的沿用取消前的落点，同样不按新落点重定 | a continuation keeps the touch point from before the cancel, likewise not re-centred on the new touch point */
     }
     update(s);
 }

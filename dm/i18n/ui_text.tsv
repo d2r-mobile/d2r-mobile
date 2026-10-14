@@ -204,6 +204,9 @@ dmRiftSayErr	秘境出错了，这次没开	The Rift could not be opened	秘境�
 dmRiftSayStart	第 %d 层开始，限时 15 分钟	Level %d: 15 minute time limit	秘境系统提示（dm_rift.c）；英文：Greater Rift level / time limit 取自暗黑 3 官方 2.1.0 补丁说明（news.blizzard.com/en-us/article/14569138）「complete the current Greater Rift level within the designated time limit」
 dmRiftSayGift	赠彩虹刻面一颗，已掉在脚下	A Rainbow Facet has dropped	秘境系统提示（dm_rift.c）；「彩虹刻面」是旧译名（原版现行「彩虹魔石」）；英文物品名 = 原版键 Rainbow Facet 的 enUS；英文：物品名 = 暗黑 2 原版 item-names[Rainbow Facet]
 dmRiftSayTimeout	时间到：本层未过关，守护者仍会掉落	Time's up: level not cleared	秘境系统提示（dm_rift.c）；超时打倒守护者不算过关；英文：not cleared，不用 Failed（没死也没失败，只是不计）
+dmRiftSayFoes	本场有 %d 位强敌	%d powerful foes this run	秘境系统提示（dm_rift.c）：90 层起开局提示本场闯入首领的位数；英文：拟
+dmRiftSayInvader	强敌逼近！	A powerful foe approaches!	秘境系统提示（dm_rift.c）：80 层起途中闯入一位首领，刷出前约 3 秒提示；英文：拟
+dmRiftSayInvaderGone	闯入者退去了	The intruder withdraws	秘境系统提示（dm_rift.c）：守护者现身时，还在场的闯入首领退场；英文：拟
 dmRiftSayGuardians	进度已满：两位守护者现身！	Two Rift Guardians appear!	秘境系统提示（dm_rift.c）：75 层起守护者是两位；英文：同 dmRiftSayGuardian 的用词
 dmRiftSayGuardian	进度已满：守护者现身！	The Rift Guardian appears!	秘境系统提示（dm_rift.c）；英文：Rift Guardian 取自暗黑 3 官方 2.1.0 补丁说明（news.blizzard.com/en-us/article/14569138）；出现时的界面原句没查到，拟
 dmElyToaGround	背包已满，赦免之证掉在脚边	Inventory full: Token of Absolution dropped	极乐世界新角色补齐（dm_elysium.c）：背包放不下时的系统提示；英文物品名 = 暗黑 2 原版 Token of Absolution
@@ -259,6 +262,9 @@ dmRiftHudGuard	守护者现身	Rift Guardian	秘境顶部进度条（dm_rift_hud
 dmRiftHudNext	下次第 %d 层	Next: Level %d	秘境顶部进度条（dm_rift_hud.m，UIKit）；英文：拟
 dmRiftHudTop	已通关最高层	Highest level cleared	秘境顶部进度条（dm_rift_hud.m，UIKit）：第 100 层限时内通关，没有下一层了（公开仓库）；英文：拟
 dmRiftHudOver	已超时：打完仍有掉落，不计通关	Overtime: drops, no clear	秘境顶部进度条（dm_rift_hud.m，UIKit）第二行：限时已到、守护者还没倒（公开仓库）；英文：拟
+dmRiftHudKillN	击败守护者（%d/%d）	Slay the Guardians (%d/%d)	秘境顶部进度条第二行：守护者两位以上时带已倒 / 总数；英文：同 dmRiftHudKill 的用词
+dmRiftHudOverKill	已超时：击败守护者仍有掉落	Overtime: slay it for drops	秘境顶部进度条第二行：已超时且守护者在场（一位）；英文：拟
+dmRiftHudOverKillN	已超时：击败守护者（%d/%d）仍有掉落	Overtime: slay %d/%d for drops	同上，守护者两位以上；英文：拟
 dmRiftHudSame	下次仍是这一层	Next: same level	秘境顶部进度条（dm_rift_hud.m，UIKit）；英文：拟
 dmRiftHudKill	击败守护者	Slay the Rift Guardian	秘境顶部进度条（dm_rift_hud.m，UIKit）；英文：拟；任务目标原句没查到
 dmRiftHudGoal	消灭秘境中的怪物   %d%%	Slay the monsters   %d%%	秘境顶部进度条（dm_rift_hud.m，UIKit）；英文：拟；任务目标原句没查到

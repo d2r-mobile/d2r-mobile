@@ -2432,12 +2432,43 @@ static void ui_panel_state_pump(uint64_t root) {   // 游戏主线程，每帧 |
 //   两种模式都跑：ui_target_pump（鉴定目标，含手柄按住 A）、ui_item_pump（命中查询，宿主自己也问）、ui_ptr_pump（指针事件，宿主合成的点击也走）、
 //     ui_safe_pump / ui_lift_pump / ui_trove_tabs_pump / ui_minimap_pump / ui_map_pump / ui_map_geom_pump / ui_map_center（屏幕几何，与输入方式无关）、ui_boss_pct_pump、ui_npcdlg_pump、
 //     ui_widestash_pump、mv_audit_pump、ui_pages_pump（含手柄 L / R 翻页）、ui_watch_pump、ui_panel_heal、ui_panel_state_pump、rs_pump（一键重开，在前端泵里调）
-// Per-frame pumps fall into two classes by mode (the long line in dm_ui_mouse_pump below; tests/mode_scan.py checks that every pump on that line either has if (tm) or is on this "runs in both modes" list; a new pump in neither fails).
-//   Touch only (with if (tm)): requests all come from touch gestures: tap world / mercenary portrait, long-press pickup, double-tap use, tap-to-buy, drag and drop, tap skill binding, off-hand set tab, open mercenary page.
-//     Not run in controller mode or while a mode switch is in progress; in-flight requests are voided by the switch cleanup (dm_ui_cache_mode_leave).
-//   Both modes: ui_target_pump (identify target, including controller hold A), ui_item_pump (hit query, the host asks too), ui_ptr_pump (pointer events, host-synthesized clicks go through it too),
+// 物品说明框停靠（观测门 OBS_TOOLTIP，挂在说明框面板的「提交一条说明」函数入口 main+0xb0d560(面板, 文字, 目标矩形左上 x2, 目标矩形宽高 x3, 样式, 文字 2)）。
+// 说明框是即时式的：悬停着的控件每帧重新提交、画完就清，宿主在自己的时机读面板里的记录数一直是 0，所以只能在提交那一刻改输入。
+// 原版把框摆在目标矩形（被点的那一格）正下 / 正上方：长说明（暗金、符文之语，十几行）盖住腰带、戒指、背包中间几列和「存放」钮，要点被盖住的格子得先点别处。
+// 触屏、只开着物品栏一个面板（它居中，左右各有一条「屏幕边到面板内框」的空带，约 0.6 个屏高宽）、光标下是物品时：把目标矩形换成对侧空带顶上的一个点——
+// 物品在面板右半停左带、在左半停右带，框从上往下排；量字、摆放、推回屏内仍是游戏自己做（离屏幕边的距离走布局里的 screenEdgePadding）。
+// 其余一律原样放行：手柄 / 键鼠模式；并排两个面板的页（储藏箱 / 商人 / 魔盒 / 单件槽 / 佣兵页——没有空带）；技能、属性、按钮的说明（光标下不是物品）；世界里的名牌。
+// 面板内框的半宽 = 0.484 × 屏高（真机截图量：2868×1320 上内框 x 795–2073）；顶上让开关闭 X 那一行（0.10 × 屏高）。只许游戏主线程（门回调就在）。
+// 测试开关 DM_TEST_TIPDOCK=1：不看模式（Mac 宿主是手柄版，用它看效果）；=0：整个关掉
+// The per-frame pumps fall into two kinds by mode (the long line in dm_ui_mouse_pump below; tests/mode_scan.py checks: each pump on that line either carries if (tm) or is on this "runs in both modes" list, and a new pump on neither list is red).
+//   Touch only (with if (tm)): all requests come from touch gestures - tapping the world / the mercenary portrait, long press to take, double tap to use, tap goods to buy, drag and drop, tap to bind a skill, the off-hand set tab, opening the mercenary page.
+//     Not run in gamepad mode or while a switching transaction is in progress; requests in flight are voided by the switch cleanup (dm_ui_cache_mode_leave).
+//   Run in both modes: ui_target_pump (identify target, including holding A on a gamepad), ui_item_pump (hit queries, also asked by the host itself), ui_ptr_pump (pointer events, also used by clicks synthesised by the host),
 //     ui_safe_pump / ui_lift_pump / ui_trove_tabs_pump / ui_minimap_pump / ui_map_pump / ui_map_geom_pump / ui_map_center (screen geometry, independent of input method), ui_boss_pct_pump, ui_npcdlg_pump,
-//     ui_widestash_pump, mv_audit_pump, ui_pages_pump (including controller L / R paging), ui_watch_pump, ui_panel_heal, ui_panel_state_pump, rs_pump (Quick Restart, called from the front-end pump)
+//     ui_widestash_pump, mv_audit_pump, ui_pages_pump (including gamepad L / R paging), ui_watch_pump, ui_panel_heal, ui_panel_state_pump, rs_pump (one-tap restart, called in the front-end pump)
+// Item tooltip docking (observation gate OBS_TOOLTIP, hooked at the entry of the tooltip panel's "submit one tooltip" function main+0xb0d560(panel, text, top-left of target rect x2, size of target rect x3, style, text 2)).
+// The tooltip is immediate-mode: the hovered widget resubmits it every frame and it is cleared once drawn, so the record count in the panel is always 0 whenever the host reads it; the input can only be changed at the moment of submission.
+// The original places the box directly below / above the target rectangle (the tapped cell): a long description (uniques, runewords, a dozen lines) covers the belt, rings, the middle columns of the inventory and the "Store" button, and a covered cell can only be tapped after tapping elsewhere first.
+// With touch, only the inventory panel open (it is centred, with a free band on each side "from the screen edge to the panel's inner frame", about 0.6 of the screen height wide), and an item under the cursor: the target rectangle is replaced by a point at the top of the opposite free band -
+// an item in the right half of the panel docks to the left band, one in the left half to the right band, the box running downwards; measuring the text, placing it and pushing it back on screen are still done by the game (the distance from the screen edge follows screenEdgePadding in the layout).
+// Everything else passes through unchanged: gamepad / keyboard-and-mouse mode; pages with two panels side by side (stash / vendor / cube / single-item slots / mercenary page - no free band); tooltips of skills, stats and buttons (not an item under the cursor); name plates in the world.
+// Half width of the panel's inner frame = 0.484 x screen height (measured from device screenshots: inner frame x 795–2073 on 2868x1320); the top leaves room for the row with the close X (0.10 x screen height). Game main thread only (where the gate callback runs).
+// Test switch DM_TEST_TIPDOCK=1: ignore the mode (the Mac host uses the gamepad layout; use it to see the effect); =0: turn it off entirely
+static int ui_touch_mode(void);
+void dm_ui_tooltip_obs(const uint64_t *regs) {
+    static int force = -2; if (force == -2) { const char *e = getenv("DM_TEST_TIPDOCK"); force = e ? atoi(e) : -1; }
+    if (force == 0 || (force < 0 && !ui_touch_mode())) return;
+    module_t *m = main_module(); uint64_t root = 0; if (!m) return; memcpy(&root, m->base + 0x2f05458, 8); if (!root) return;
+    if (atomic_load(&g_pstate) & (DM_PS_BANK | DM_PS_VENDOR | DM_PS_IMBUE | DM_PS_CUBE | DM_PS_VAULT | DM_PS_DEAD)) return;
+    if (!ui_panel(root, "PlayerInventoryExpansionLayout") || ui_panel(root, "HirelingInventoryPanel")) return;
+    dm_cursor_item_info ci; if (!dm_cursor_item(&ci)) return;
+    int W = *(int32_t *)(m->base + 0x211da38), H = *(int32_t *)(m->base + 0x211da3c); if (W <= 0 || H <= 0) return;
+    int tx = (int32_t)regs[2], tw = (int32_t)regs[3], half = (int)(0.484f * H), strip = W / 2 - half; if (strip < H / 4) return;   // 空带太窄（窄屏）就不挪 | free band too narrow (narrow screen): do not move it
+    int left = tx + tw / 2 >= W / 2, cx = left ? strip / 2 : W - strip / 2, y = (int)(0.10f * H);
+    uint64_t *r = (uint64_t *)(uintptr_t)regs;   // 门只回写 x0–x8：改 x2 / x3 | the gate writes back only x0-x8: change x2 / x3
+    r[2] = (uint64_t)(uint32_t)cx | (uint64_t)(uint32_t)y << 32; r[3] = 0;
+    static int lg; static int ll = -1; if (ll != left && lg < 40) { ll = left; lg++; LOG("说明框停靠：物品 %s 在面板%s半 → 说明框停到%s侧空带（中线 x %d，顶 y %d；画面 %dx%d）", ci.code, left ? "右" : "左", left ? "左" : "右", cx, y, W, H); }
+}
 static int ui_touch_mode(void) { int dm_padmode_current(void), dm_padmode_busy(void); return !dm_padmode_current() && !dm_padmode_busy(); }
 // Mac App：界面是手柄版（上面答「不是触屏模式」），但真鼠标走的是触屏那套物品手势（touch_mac.c 把鼠标事件喂给触屏状态机）。
 // 只把物品手势的四个执行泵（长按 / 双击使用 / 买 / 拖放）在真鼠标模式下补跑一遍；绑定框、技能页签对调、佣兵页这些改触屏布局的泵不跑。没有请求时这四个什么都不做，手柄玩家不受影响
