@@ -21,6 +21,7 @@
 #if TARGET_OS_IPHONE
 #import <UIKit/UIKit.h>
 #endif
+#import <Network/Network.h>
 #include <signal.h>
 #include <sys/clonefile.h>
 #include <stdatomic.h>
@@ -28,6 +29,8 @@
 #include "hle.h"
 
 int dm_cloud_sync(const char *save, const char *cloud, const char *bak, const char *statef, int allow_down, uint64_t now_ms, int (*ready)(const char *unit));
+int dm_cloud_inbox_add(const char *save, const char *statef, const char *pack); uint64_t dm_cloud_pack_stamp(const char *pack);
+int dm_cloud_bak_pack(const char *bak, const char *unit, const char *pack, const char *why); void dm_cloud_char_conflict_note(const char *unit);
 int dm_custom_get(const char *key);
 extern void (*g_dm_save_commit_hook)(const char *commit_dir);
 
@@ -54,10 +57,39 @@ static int pending_downloads(int start) {   // 还没下载好的包数；start 
     }
     return n;
 }
+// iCloud 自己的同名文件冲突（两台各写了一份同名包、系统挑了一份当现行版，其余成「未解决的冲突版本」；iCloud 离线冲突第 1 条）。启动同步前在文件协调里做：
+//   共享仓库：每个冲突版本收进待合并收件箱（dm_cloud_inbox_add，现行版照常走同步）；
+//   角色：包头时刻（游戏最后写它的时刻）最新的那份当现行版（不是系统挑的就换上去），其余整份进备份，记名进局提示。
+//   全部收好才把冲突标成已解决并删掉其余版本；有一份收不进就都留着，下次启动再来（宁可多留不丢）。
+// iCloud's own same-name file conflict (two devices each wrote a same-name pack, the system picked one as the current version and the rest became "unresolved conflict versions"; iCloud offline conflict item 1). Done inside file coordination before the launch sync:
+//   shared stash: each conflict version is stored in the to-merge inbox (dm_cloud_inbox_add; the current version goes through sync as usual);
+//   character: the copy with the newest pack header timestamp (the moment the game last wrote it) becomes the current version (swapped in if it is not the one the system picked), the rest go into the backup whole, and the name is recorded for a notice after entering a run.
+//   Only once everything is stored are the conflicts marked resolved and the other versions deleted; if any one cannot be stored, all are kept and tried again at the next launch (better keep extra than lose any).
+static void take_conflicts(NSString *save) {
+    NSFileManager *fm = NSFileManager.defaultManager;
+    for (NSString *f in [fm contentsOfDirectoryAtPath:g_cloud error:nil] ?: @[]) {
+        if ([f hasPrefix:@"."] || ![f hasSuffix:@".pack"]) continue;
+        NSURL *u = [NSURL fileURLWithPath:[g_cloud stringByAppendingPathComponent:f]]; NSArray<NSFileVersion *> *vs = [NSFileVersion unresolvedConflictVersionsOfItemAtURL:u];
+        if (!vs.count) continue;
+        NSString *unit = f.stringByDeletingPathExtension; int bad = 0;
+        if ([unit isEqualToString:@"_stash"]) { for (NSFileVersion *v in vs) bad |= dm_cloud_inbox_add(save.fileSystemRepresentation, g_state.fileSystemRepresentation, v.URL.fileSystemRepresentation) != 0; }
+        else { uint64_t best = dm_cloud_pack_stamp(u.fileSystemRepresentation); NSFileVersion *win = nil;
+            for (NSFileVersion *v in vs) { uint64_t t = dm_cloud_pack_stamp(v.URL.fileSystemRepresentation); if (t > best) { best = t; win = v; } }
+            if (win) { NSError *e = nil; bad |= dm_cloud_bak_pack(g_bak.fileSystemRepresentation, unit.UTF8String, u.fileSystemRepresentation, "iCloud 冲突里较旧的现行版") != 0;
+                if (!bad && ![win replaceItemAtURL:u options:0 error:&e]) { bad = 1; LOG("【红】iCloud 同步：%s 换上较新的冲突版本失败 %s", unit.UTF8String, e.localizedDescription.UTF8String ?: "?"); } }
+            for (NSFileVersion *v in vs) if (v != win) bad |= dm_cloud_bak_pack(g_bak.fileSystemRepresentation, unit.UTF8String, v.URL.fileSystemRepresentation, "iCloud 冲突版本") != 0;
+            if (!bad) dm_cloud_char_conflict_note(unit.UTF8String); }
+        if (bad) { LOG("【红】iCloud 同步：%s 有 %lu 个冲突版本没收好，留着下次启动再来", unit.UTF8String, (unsigned long)vs.count); continue; }
+        for (NSFileVersion *v in vs) v.resolved = YES;
+        NSError *e = nil; if (![NSFileVersion removeOtherVersionsOfItemAtURL:u error:&e]) LOG("iCloud 同步：%s 冲突已标解决，删其余版本没成（%s），不影响", unit.UTF8String, e.localizedDescription.UTF8String ?: "?");
+        LOG("iCloud 同步：%s 的 %lu 个 iCloud 冲突版本已收好（%s）", unit.UTF8String, (unsigned long)vs.count, [unit isEqualToString:@"_stash"] ? "进待合并收件箱" : "最新的当现行版、其余进备份");
+    }
+}
 static int run_sync(NSString *save, int down) {   // 在文件协调里做：iCloud 守护进程同时在写这个目录时不会读到半个文件 | Done inside file coordination: half-written files are not read while the iCloud daemon is writing this directory at the same time
     __block int r = -1; NSError *err = nil;
     [[[NSFileCoordinator alloc] initWithFilePresenter:nil] coordinateWritingItemAtURL:[NSURL fileURLWithPath:g_cloud] options:NSFileCoordinatorWritingForMerging error:&err byAccessor:^(NSURL *u) {
-        (void)u; r = dm_cloud_sync(save.fileSystemRepresentation, g_cloud.fileSystemRepresentation, g_bak.fileSystemRepresentation, g_state.fileSystemRepresentation, down, now_ms(), pack_ready); }];
+        (void)u; if (down) take_conflicts(save);   // 只在启动那次（运行中 save 是提交快照目录，不放收件箱） | only at launch (while running, save is the commit snapshot directory; nothing goes into the inbox)
+        r = dm_cloud_sync(save.fileSystemRepresentation, g_cloud.fileSystemRepresentation, g_bak.fileSystemRepresentation, g_state.fileSystemRepresentation, down, now_ms(), pack_ready); }];
     if (err) LOG("【红】iCloud 同步：文件协调失败 %s", err.localizedDescription.UTF8String);
     return r;
 }
@@ -187,6 +219,51 @@ static int migrate_v2(NSString *docs, double deadline) {
         LOG("【红】iCloud 同步：旧目录 saves 复制到 saves_v2 失败（%s），本次不同步", (err ?: e2).localizedDescription.UTF8String ?: "?"); return 0; }
     LOG("iCloud 同步：旧目录 saves 已复制到 saves_v2（%d 个文件，清单 %lu 个包），旧目录留给旧包用", copied, (unsigned long)[list componentsSeparatedByString:@"\n"].count - 1); return 1;
 }
+// 从没同步成功过的设备先看清云端再同步（iCloud 离线冲突第 2 条）：新设备断网首启时，系统还没把云端条目列到本机，云端目录看着是空的——
+// 照常同步会把本机全部当「云端没有」上传（离线时新建的穷共享仓库联网后与云端同名包冲突、盖掉云端），迁移那步还会新建一个空的 saves_v2。
+// 所以状态文件里一条记录都没有（从没同步成功过）时，先问系统的云端条目列表（NSMetadataQuery，收集完成才算数）：
+//   列出了包 → 这些包都已出现在本机目录（下好的或 iCloud 占位）才同步；列表是空的 → 网络通才同步（世界上第一台设备就是这种）。都不满足 = 本次整套跳过，下次启动再看。
+// 列表收集完成在断网时怎么表现、联网时空列表会不会滞后，要真机断网跑才知道（排给池）；滞后漏过去的那种由冲突版本合并兜住（第 1 条）。
+// 测试开关 DM_TEST_ICLOUD_FIRST=<收集完成>,<列出几个>,<到本机几个>,<网络通>：不问系统，按给的值判（Mac 宿主 / 本地测试云端验分支用）
+// A device that has never synced successfully first gets a clear view of the cloud before syncing (iCloud offline conflict item 2): on a new device's first launch without network, the system has not yet listed the cloud entries locally, so the cloud directory looks empty -
+// a normal sync would upload everything local as "not in the cloud" (a poor shared stash newly created offline conflicts with the cloud's same-name pack once online and overwrites the cloud), and the migration step would also create an empty saves_v2.
+// So when the state file has no record at all (never synced successfully), first ask the system for its list of cloud entries (NSMetadataQuery, counted only once gathering has finished):
+//   packs are listed -> sync only once all of them have appeared in the local directory (downloaded or as iCloud placeholders); the list is empty -> sync only if the network is reachable (the very first device in the world is like this). Neither = skip the whole thing this time and look again at the next launch.
+// How gathering completes with no network, and whether an empty list can lag behind when online, can only be known by running on a device with the network cut (queued for the pool); the lagging case that slips through is covered by merging conflict versions (item 1).
+// Test switch DM_TEST_ICLOUD_FIRST=<gathering done>,<how many listed>,<how many local>,<network reachable>: does not ask the system and decides by the given values (for verifying the branches on the Mac host / a local test cloud)
+static int never_synced(NSString *statef) {
+    NSString *t = [NSString stringWithContentsOfFile:statef encoding:NSUTF8StringEncoding error:nil];
+    return !t || [t rangeOfString:@"\t"].location == NSNotFound;
+}
+static int first_listing_ok(double deadline) {
+    int got = 0, listed = 0, present = 0, net = 0; const char *e = getenv("DM_TEST_ICLOUD_FIRST");
+    if (e) { sscanf(e, "%d,%d,%d,%d", &got, &listed, &present, &net); }
+    else {
+        __block int g = 0, n = 0, pr = 0; dispatch_semaphore_t sem = dispatch_semaphore_create(0); __block NSMetadataQuery *q = nil; __block id obs = nil;
+        dispatch_async(dispatch_get_main_queue(), ^{   // 元数据查询要挂在有运行循环的线程上 | the metadata query has to be attached to a thread with a run loop
+            q = [NSMetadataQuery new]; q.searchScopes = @[NSMetadataQueryUbiquitousDocumentsScope];
+            q.predicate = [NSPredicate predicateWithFormat:@"%K LIKE '*.pack'", NSMetadataItemFSNameKey];
+            obs = [NSNotificationCenter.defaultCenter addObserverForName:NSMetadataQueryDidFinishGatheringNotification object:q queue:nil usingBlock:^(NSNotification *note) { (void)note;
+                [q disableUpdates]; n = (int)q.resultCount; NSFileManager *fm = NSFileManager.defaultManager;
+                for (NSUInteger i = 0; i < q.resultCount; i++) { NSURL *u = [[q resultAtIndex:i] valueForAttribute:NSMetadataItemURLKey]; if (!u) continue;
+                    NSString *ph = [u.path.stringByDeletingLastPathComponent stringByAppendingPathComponent:[NSString stringWithFormat:@".%@.icloud", u.lastPathComponent]];
+                    if ([fm fileExistsAtPath:u.path] || [fm fileExistsAtPath:ph]) pr++; }
+                g = 1; [q stopQuery]; [NSNotificationCenter.defaultCenter removeObserver:obs]; dispatch_semaphore_signal(sem); }];
+            if (![q startQuery]) { [NSNotificationCenter.defaultCenter removeObserver:obs]; dispatch_semaphore_signal(sem); } });
+        double left = deadline - CFAbsoluteTimeGetCurrent(); if (left < 0.5) left = 0.5;
+        if (dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(left * NSEC_PER_SEC))))
+            dispatch_async(dispatch_get_main_queue(), ^{ if (q) { [q stopQuery]; if (obs) [NSNotificationCenter.defaultCenter removeObserver:obs]; } });
+        got = g; listed = n; present = pr;
+        __block int ns = 0; dispatch_semaphore_t ps = dispatch_semaphore_create(0); nw_path_monitor_t m = nw_path_monitor_create();
+        nw_path_monitor_set_queue(m, dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0));
+        nw_path_monitor_set_update_handler(m, ^(nw_path_t path) { if (!ns) { ns = nw_path_get_status(path) == nw_path_status_satisfied ? 1 : 2; dispatch_semaphore_signal(ps); } });
+        nw_path_monitor_start(m); dispatch_semaphore_wait(ps, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(NSEC_PER_SEC))); nw_path_monitor_cancel(m); net = ns == 1;
+    }
+    int ok = got && (listed ? present >= listed : net);
+    LOG("iCloud 同步：本机从没同步成功过，先看云端条目列表：收集%s、列出 %d 个包、已到本机 %d 个、网络%s → %s", got ? "完成" : "未完成", listed, present, net ? "通" : "不通",
+        ok ? "看清了，同步" : "没看清，本次不同步（不上传、不建 saves_v2），下次启动再看");
+    return ok;
+}
 void dm_cloud_boot(void) {
     const char *sv = getenv("DM_SAVE"), *sub = getenv("DM_TEST_ICLOUD_SUB"), *ldir = getenv("DM_TEST_ICLOUD_DIR"), *lroot = getenv("DM_TEST_ICLOUD_ROOT"); if (!sv) return;
     NSString *doc = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
@@ -215,6 +292,7 @@ void dm_cloud_boot(void) {
     if (ldir) g_cloud = test_path(ldir);                             // 测试：本地目录当云端（没有 iCloud 权限的开发包也能验整条链） | Test: use a local directory as the cloud (a dev build without iCloud entitlement can also verify the whole chain)
     else if (sub) { NSURL *ct = container(limit); if (!ct) return; g_cloud = [[ct.path stringByAppendingPathComponent:@"Documents"] stringByAppendingPathComponent:@(sub)]; }
     else { NSString *docs = test_path(lroot); if (!lroot) { NSURL *ct = container(limit); if (!ct) return; docs = [ct.path stringByAppendingPathComponent:@"Documents"]; }
+        if (never_synced([save stringByAppendingString:@".cloudstate"]) && (!lroot || getenv("DM_TEST_ICLOUD_FIRST")) && !first_listing_ok(t0 + limit)) return;
         if (!migrate_v2(docs, t0 + limit)) return;
         NSString *nw = [docs stringByAppendingPathComponent:@"saves_v2"]; if (!v2_ready(nw, [save stringByAppendingString:@".cloudv2ok"])) return;
         g_cloud = nw; }

@@ -10,6 +10,8 @@
 #include <unistd.h>
 int dm_cloud_sync(const char *save, const char *cloud, const char *bak, const char *statef, int allow_down, uint64_t now_ms, int (*ready)(const char *unit));
 int dm_cloud_conflict_take(void);
+int dm_cloud_char_conflict_take(char *out, size_t n);
+int dm_cloud_inbox_add(const char *save, const char *statef, const char *pack);
 #if __has_include("../stash_seed.h")   // 公开仓库不带这份预置（它是游戏生成的一份存档的字节）：不在时跳过用到它的 ⑱ ⑲ 两组 | the public repository does not ship this seed (it is the bytes of a save the game generated): when it is absent, the two groups that use it, 18 and 19, are skipped
 #include "../stash_seed.h"
 #define T_HAVE_STASH_SEED 1
@@ -41,6 +43,10 @@ static void put_d2i(const char *dev, int items, int chron, long sec) {
     put_bin(dev, "save/ModernSharedStashSoftCoreV2/ModernSharedStashSoftCoreV2.d2i", b, 68 + l2, sec);
 }
 static void put_vault(const char *dev, int n, long sec) { uint8_t b[8] = { 'S', 'W', 'V', 'T', 1, 0, (uint8_t)n, 0 }; put_bin(dev, "save/ModernSharedStashSoftCoreV2.swvault", b, 8, sec); }
+static int inbox_n(const char *dev) { char d[1024]; path(d, dev, "save/_cloudinbox"); DIR *dp = opendir(d); struct dirent *e; int n = 0; while (dp && (e = readdir(dp))) n += e->d_name[0] != '.'; if (dp) closedir(dp); return n; }
+static int inbox_has(const char *dev, const char *f) {   // 收件箱里有没有哪个条目带这个文件 | whether any inbox entry carries this file
+    char d[1024]; path(d, dev, "save/_cloudinbox"); DIR *dp = opendir(d); struct dirent *e; int k = 0; struct stat st;
+    while (dp && (e = readdir(dp))) { if (e->d_name[0] == '.') continue; char p[1400]; snprintf(p, sizeof p, "%s/%s/%s", d, e->d_name, f); k |= !stat(p, &st); } if (dp) closedir(dp); return k; }
 static int d2i_items(const char *dev, const char *rel) { char p[1024]; path(p, dev, rel); FILE *f = fopen(p, "rb"); if (!f) return -1; uint8_t b[70]; size_t n = fread(b, 1, 70, f); fclose(f); return n >= 67 ? b[66] : -1; }
 
 int main(void) {
@@ -139,20 +145,24 @@ int main(void) {
       CHECK(S3("H", 0) == 0 && d2i_items("H", D2I) == 0, "⑪ 新设备运行中首次同步：不传不改（不能拿空仓库盖云端）");
       CHECK(S3("H", 1) == 1 && d2i_items("H", D2I) == 5 && get("H", "save/ModernSharedStashSoftCoreV2.swvault"), "⑪ 新设备启动首次同步：以云端为准，拿到 5 件与编年史仓库");
       CHECK(count_bak("H", "_stash-") == 1, "⑪ 新设备本来那份空仓库进备份");
-      CHECK(!dm_cloud_conflict_take(), "⑪ 正常首次同步不算冲突");
+      CHECK(!dm_cloud_conflict_take() && inbox_n("H") == 0, "⑪ 本机那份是新建空档：不进收件箱、不提示");
       put_d2i("G", 6, 400, 6000); CHECK(S3("G", 0) == 1, "⑭ G 编年史变长（400）照常上传");
       CHECK(S3("H", 1) == 1 && d2i_items("H", D2I) == 6, "⑭ H 启动拿到 G 的新版");
       put_d2i("H", 0, 148, 7000);   // H 上的共享仓库不知为何变空（编年史 148、0 件），时刻更新 | the shared stash on H somehow became empty (chronicle 148, 0 items), with a newer timestamp
-      CHECK(S3("H", 0) == 0, "⑬ H 运行中要上传变空的那份：拦下");
-      CHECK(dm_cloud_conflict_take() == 1, "⑬ 拦下记冲突（进局弹提示）");
+      CHECK(S3("H", 0) == 0, "⑬ H 运行中要上传变空的那份：分叉，运行中不动");
+      CHECK(!dm_cloud_conflict_take(), "⑬ 运行中不提示（不再永久拦）");
       CHECK(S3("G", 1) == 0 && d2i_items("G", D2I) == 6, "⑬ 云端没被盖：G 仍是 6 件");
+      CHECK(S3("H", 1) == 1 && d2i_items("H", D2I) == 6, "⑬ H 启动：云端为现行版，拿回 6 件");
+      CHECK(inbox_n("H") == 1 && dm_cloud_conflict_take() == 1, "⑬ 本机那份共享仓库空了、但编年史仓库侧文件还有 3 件：进收件箱、提示一次");
       put_d2i("H", 7, 500, 7500); CHECK(S3("H", 0) == 1, "⑮ H 正常玩：编年史 500 上传");
       put_d2i("G", 6, 450, 7600);   // G 没同步到 H 的 500 就自己写了 450（两边都改，G 后写） | G wrote 450 itself without having synced H's 500 (both sides changed, G wrote later)
-      CHECK(S3("G", 0) == 0, "⑮ G 运行中要拿编年史 450 盖云端的 500：拦下");
-      CHECK(S3("G", 1) == 0 && d2i_items("G", D2I) == 6, "⑮ G 启动：云端 500 比本机 450 时刻早但编年史长——按后写赢会上传，被拦；本机不动");
-      CHECK(dm_cloud_conflict_take() == 1, "⑮ 记冲突");
+      CHECK(S3("G", 0) == 0, "⑮ G 运行中要拿编年史 450 盖云端的 500：分叉，运行中不动");
+      CHECK(S3("G", 1) == 1 && d2i_items("G", D2I) == 7, "⑮ G 启动：云端（7 件、500）为现行版");
+      CHECK(inbox_n("G") == 1 && inbox_has("G", "mine.pack") && inbox_has("G", "base.pack"), "⑮ G 本机那份（6 件、450）进收件箱，带上次同步的基准（6 件、400）");
+      CHECK(dm_cloud_conflict_take() == 1, "⑮ 收进收件箱：进局提示一次");
+      CHECK(S3("G", 1) == 0 && inbox_n("G") == 1, "⑮ 再启动：一致、无动作、不再收（不是永久状态）");
       { char p3[1024]; path(p3, "H", "save/ModernSharedStashSoftCoreV2.swvault"); unlink(p3); } put_d2i("H", 7, 500, 8000);
-      CHECK(S3("H", 0) == 0 && dm_cloud_conflict_take() == 1, "⑬ 编年史仓库侧文件没了（云端有 3 件）：拦下");
+      CHECK(S3("H", 0) == 0 && !dm_cloud_conflict_take(), "⑬ 编年史仓库侧文件没了（云端有 3 件）：分叉，运行中不动");
       put_vault("H", 0, 8100); put_d2i("H", 0, 500, 8100);
       CHECK(S3("H", 0) == 1 && !dm_cloud_conflict_take(), "⑯ 正常玩法：共享仓库物品取空、编年史仓库取空（文件还在，0 件），编年史没变短——照常上传");
       // ⑰ rf3 那个形状：云端专家仓库 2 件、编年史还是新建的 148；本机这份被换成游戏新建的空档（0 件、148），状态记录还在、云端没变 = 走「只本机改了」的上传
@@ -161,8 +171,8 @@ int main(void) {
         #define S4(dev, down) (path(s3, dev, "save"), path(b3, dev, "bak"), path(t3, dev, "state"), dm_cloud_sync(s3, cd, b3, t3, down, 0, NULL))
         put_d2i("J", 2, 148, 1000); CHECK(S4("J", 1) == 1, "⑰ 准备：J 上传 2 件、编年史 148 的仓库");
         put_d2i("J", 0, 148, 2000); dm_cloud_conflict_take();
-        CHECK(S4("J", 0) == 0 && dm_cloud_conflict_take() == 1, "⑰ 运行中要拿新建空档（0 件、148）盖 2 件的那份：拦下");
-        CHECK(S4("J", 1) == 0, "⑰ 启动时同样拦下（不上传）");
+        CHECK(S4("J", 0) == 0 && !dm_cloud_conflict_take(), "⑰ 运行中要拿新建空档（0 件、148）盖 2 件的那份：分叉，运行中不动");
+        CHECK(S4("J", 1) == 1 && d2i_items("J", D2I) == 2 && inbox_n("J") == 0, "⑰ 启动：拿回云端 2 件；本机空档不进收件箱");
         put_d2i("J", 0, 300, 3000); CHECK(S4("J", 0) == 1, "⑰ 编年史长过新建大小的仓库取空：照常上传");
         // ⑱ rf3 真形状：云端专家仓库是另一台的预置（stash_seed.h），本机还没有专家仓库档（启动同步跑在写预置之前）→ 不拦、不弹；本机写了预置后上传也不拦
         // (18) The real rf3 shape: the cloud hardcore stash is another device's preset (stash_seed.h), and the local device has no hardcore stash file yet (startup sync runs before the preset is written) -> not blocked, no prompt; uploading after the local device writes the preset is not blocked either
@@ -180,7 +190,7 @@ int main(void) {
           { uint8_t big[700]; memset(big, 0, sizeof big); uint32_t l1 = 68, l2 = 300; memcpy(big, "\x55\xaa\x55\xaa", 4); memcpy(big + 16, &l1, 4); memcpy(big + 64, "JM", 2); big[66] = 9; memcpy(big + 68, "\x55\xaa\x55\xaa", 4); memcpy(big + 84, &l2, 4); big[132] = 0xc0;
             put_bin("K", HC, big, 68 + 300, 5000); CHECK(S5("K", 0) == 1, "⑲ 准备：专家仓库有 9 件、编年史 300 上传"); }
           put_bin("K", HC, g_stash_seed, sizeof g_stash_seed, 6000);
-          CHECK(S5("K", 0) == 0 && dm_cloud_conflict_take() == 1, "⑲ 本机变回预置要盖 9 件的那份：拦下");
+          CHECK(S5("K", 0) == 0 && !dm_cloud_conflict_take(), "⑲ 本机变回预置要盖 9 件的那份：分叉，运行中不动");
           #undef HC
           #undef S5
         }
@@ -191,6 +201,61 @@ int main(void) {
       }
       #undef D2I
       #undef S3
+    }
+    // ⑳ 同名角色（iCloud 离线冲突第 3 条）：云端有 P 的 Foo（1000 秒）；新设备 Q 从没同步过、离线建了同名 Foo（5000 秒）和 Bar → 首次同步：Foo 用云端那份、
+    //    本机 Foo 整份进备份 Foo-5000000、记下名字待进局提示（取一次后清空）；Bar 上传、不进提示
+    // (20) Same-name character (iCloud offline conflict item 3): the cloud has P's Foo (1000 s); new device Q has never synced and created a Foo with the same name (5000 s) and a Bar offline -> first sync: Foo uses the cloud copy,
+    //    the local Foo goes into the backup whole as Foo-5000000, the name is recorded for a notice after entering a run (cleared once taken); Bar is uploaded and not part of the notice
+    { char c6[1024], s6[1024], b6[1024], t6[1024]; snprintf(c6, sizeof c6, "%s/cloud6", R); mkdir(c6, 0755); char nm[256];
+      #define S6(dev, down) (path(s6, dev, "save"), path(b6, dev, "bak"), path(t6, dev, "state"), dm_cloud_sync(s6, c6, b6, t6, down, 0, NULL))
+      put("P", "save/Foo/Foo.d2s", "fooP", 1000); CHECK(S6("P", 1) == 1, "⑳ 准备：P 上传 Foo");
+      dm_cloud_char_conflict_take(nm, sizeof nm);
+      put("Q", "save/Foo/Foo.d2s", "fooQ", 5000); put("Q", "save/Bar/Bar.d2s", "barQ", 5000);
+      CHECK(S6("Q", 1) == 2, "⑳ Q 首次同步：Foo 下载、Bar 上传，共 2 个动作");
+      CHECK(get("Q", "save/Foo/Foo.d2s") && !strcmp(get("Q", "save/Foo/Foo.d2s"), "fooP"), "⑳ Q 的 Foo 应换成云端那份 fooP");
+      CHECK(count_bak("Q", "Foo-5000000") == 1, "⑳ Q 本机那份 Foo 应进备份 Foo-5000000");
+      CHECK(dm_cloud_char_conflict_take(nm, sizeof nm) == 1 && !strcmp(nm, "Foo"), "⑳ 记下同名角色 Foo 待提示，实为「%s」", nm);
+      CHECK(dm_cloud_char_conflict_take(nm, sizeof nm) == 0, "⑳ 取过一次后清空");
+      CHECK(S6("Q", 1) == 0 && dm_cloud_char_conflict_take(nm, sizeof nm) == 0, "⑳ 再同步无动作、不再提示");
+      #undef S6
+    }
+    // ㉑ iCloud 离线冲突三个场景（第一笔口径：两台设备的全部数据都在——仓库或收件箱，且没有永久拦截）。老设备 A：10 件、编年史 600，已上云
+    // (21) Three iCloud offline conflict scenarios (first-step criterion: all data of both devices is kept - in the stash or the inbox - and nothing is blocked forever). Old device A: 10 items, chronicle 600, already in the cloud
+    { char c7[1024], s7[1024], b7[1024], t7[1024], cq[1024]; snprintf(c7, sizeof c7, "%s/cloud7", R); mkdir(c7, 0755); snprintf(cq, sizeof cq, "%s/cloud7q", R); mkdir(cq, 0755);
+      #define S7(dev, cl, down) (path(s7, dev, "save"), path(b7, dev, "bak"), path(t7, dev, "state"), dm_cloud_sync(s7, cl, b7, t7, down, 0, NULL))
+      #define D2I7 "save/ModernSharedStashSoftCoreV2/ModernSharedStashSoftCoreV2.d2i"
+      put_d2i("A7", 10, 600, 1000); CHECK(S7("A7", c7, 1) == 1, "㉑ 准备：A 上传 10 件");
+      dm_cloud_conflict_take();
+      // ① 新设备 N 没登录时离线玩（3 件、编年史 300），之后登录、启动同步
+      // (1) new device N plays offline while not signed in (3 items, chronicle 300), then signs in and syncs at launch
+      put_d2i("N7", 3, 300, 5000);
+      CHECK(S7("N7", c7, 1) == 1 && d2i_items("N7", D2I7) == 10, "㉑① N 首次同步：仓库是云端的 10 件");
+      CHECK(inbox_n("N7") == 1 && inbox_has("N7", "mine.pack") && !inbox_has("N7", "base.pack") && dm_cloud_conflict_take() == 1, "㉑① N 本机 3 件进收件箱（没有基准）、提示一次");
+      CHECK(S7("N7", c7, 1) == 0 && inbox_n("N7") == 1 && d2i_items("A7", D2I7) == 10, "㉑① 再启动无动作（没有永久状态）；A 的 10 件不动");
+      // ② 新设备 M 离线期间编年史比云端长（900 > 600）：原先永久拦住，现在同样云端为现行版 + 收件箱
+      // (2) new device M's chronicle grew longer than the cloud's while offline (900 > 600): previously blocked forever, now likewise the cloud is the current version + inbox
+      put_d2i("M7", 3, 900, 5000);
+      CHECK(S7("M7", c7, 0) == 0 && inbox_n("M7") == 0, "㉑② M 运行中：不动、不收（等启动）");
+      CHECK(S7("M7", c7, 1) == 1 && d2i_items("M7", D2I7) == 10 && inbox_n("M7") == 1 && dm_cloud_conflict_take() == 1, "㉑② M 启动：仓库 10 件，本机 3 件进收件箱");
+      CHECK(S7("M7", c7, 1) == 0 && S7("M7", c7, 0) == 0 && inbox_n("M7") == 1, "㉑② 再启动、再运行中都无动作：不是永久拦截");
+      // ③ 新设备 Q 登录但离线、看到的云端是空的（cloud7q），上传了 3 件；联网后 iCloud 拿 Q 的包当现行版（盖到 cloud7 上）
+      // (3) new device Q signs in but is offline and sees an empty cloud (cloud7q), uploads 3 items; once online, iCloud takes Q's pack as the current version (overwriting cloud7)
+      put_d2i("Q7", 3, 300, 5000); CHECK(S7("Q7", cq, 1) == 1, "㉑③ 准备：Q 往看着是空的云端传了 3 件");
+      char sp[1300], dp[1300], keep[1300]; snprintf(sp, sizeof sp, "%s/_stash.pack", cq); snprintf(dp, sizeof dp, "%s/_stash.pack", c7); snprintf(keep, sizeof keep, "%s/a_old.pack", R);
+      rename(dp, keep); { FILE *fi = fopen(sp, "rb"), *fo = fopen(dp, "wb"); char buf[8192]; size_t k; while ((k = fread(buf, 1, sizeof buf, fi)) > 0) fwrite(buf, 1, k, fo); fclose(fi); fclose(fo); }
+      CHECK(S7("A7", c7, 1) == 1 && d2i_items("A7", D2I7) == 3, "㉑③ A 启动：云端（Q 的 3 件）为现行版");
+      CHECK(inbox_n("A7") == 1 && inbox_has("A7", "base.pack") && dm_cloud_conflict_take() == 1, "㉑③ A 本机 10 件进收件箱，带上次同步的基准");
+      CHECK(S7("A7", c7, 1) == 0 && inbox_n("A7") == 1, "㉑③ 再启动无动作");
+      // iCloud 冲突版本：A 那台读出被换下的旧版本（a_old.pack，10 件）收进收件箱；只有预置 / 空档的版本不收
+      // iCloud conflict version: device A reads out the replaced old version (a_old.pack, 10 items) and stores it in the inbox; a version with only the preset / an empty save is not stored
+      { char ts7[1100]; path(s7, "A7", "save"); path(ts7, "A7", "state");
+        CHECK(dm_cloud_inbox_add(s7, ts7, keep) == 0 && inbox_n("A7") == 2 && dm_cloud_conflict_take() == 1, "㉑③ 冲突版本（10 件）收进收件箱");
+        put_d2i("E7", 0, 148, 100); { char e7[1100], ee[1100], et[1100], pk[1300]; path(e7, "E7", "save"); path(ee, "E7", "bak"); path(et, "E7", "state"); char ce[1300]; snprintf(ce, sizeof ce, "%s/cloud7e", R); mkdir(ce, 0755);
+          dm_cloud_sync(e7, ce, ee, et, 1, 0, NULL); snprintf(pk, sizeof pk, "%s/_stash.pack", ce);
+          CHECK(dm_cloud_inbox_add(s7, ts7, pk) == 0 && inbox_n("A7") == 2, "㉑③ 空档的冲突版本：没东西，不收"); }
+        CHECK(dm_cloud_inbox_add(s7, ts7, "/nonexistent.pack") == -1, "㉑③ 读不了的冲突版本：返回 -1"); }
+      #undef S7
+      #undef D2I7
     }
     printf("t_cloudsync: %d 项，%d 失败\n", checks, fails);
     return fails != 0;

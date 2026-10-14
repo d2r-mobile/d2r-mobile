@@ -28,10 +28,14 @@ with tempfile.TemporaryDirectory() as t:
     nw=round((x1-x0)*k); nx=round(((x0+x1)/2-ref_w/2)*k)-1
     # 系统提示框：整份自己写、不继承原版那份——原版带一个铺满的 Confirm 按钮（继承来的子控件删不掉），提示在屏上时它接住功能键和点击：
     # 按功能键 / 点它压着的地方都只是把提示关掉（面板开不了、下面的格子点不到）。触屏上提示到点自己消失，不要这个按钮
-    # System notification: written entirely by ourselves, not inheriting the original game's one -- the original carries a full-cover Confirm button (an inherited child widget cannot be deleted), which catches the function key and taps while the notification is on screen:
-    # pressing the function key / tapping where it covers only dismisses the notification (the panel cannot open, the cells beneath cannot be tapped). On a touchscreen the notification disappears by itself when its time is up, so this button is not wanted
+    # 停靠高度 y −790（原版 −500；先前为让开经验条提到 −600，仍压着底栏上方那行「生命 / 法力」数值——数值位数多时字伸进框里，触屏版那行更高、直接叠在框中间）：
+    # 框的下沿要高过数值行的上沿，触屏版需再上提约 173 单位、手柄版约 77 单位，取一个两版都让开的值。只改布局里的停靠位置，滑入滑出仍是游戏自己的动画
+    # System notice box: written entirely by us, not inheriting the original - the original has a full-size Confirm button (inherited child widgets cannot be removed), which takes the function keys and taps while a notice is on screen:
+    # pressing a function key / tapping where it covers only dismisses the notice (panels cannot be opened, the cells below cannot be tapped). On touch the notice disappears by itself on time, and this button is not wanted
+    # Docking height y -790 (original -500; it was raised to -600 earlier to clear the experience bar, but still covered the "life / mana" numbers above the bottom bar - with many digits the text ran into the box, and the touch layout's row is higher and sat right in the middle of the box):
+    # the lower edge of the box has to be above the upper edge of the number row; the touch layout needs about 173 more units, the gamepad layout about 77, so one value that clears both is taken. Only the docking position in the layout changes; slide-in and slide-out are still the game's own animation
     note={'type':'NotificationPanel','name':'NotificationPanel',
-          'fields':{'priority':9002,'notificationSeconds':5.0,'transitionSeconds':0.8,'rect':{'x':nx,'y':-600,'width':nw,'height':244},'anchor':{'x':0.5,'y':1.0}},
+          'fields':{'priority':9002,'notificationSeconds':5.0,'transitionSeconds':0.8,'rect':{'x':nx,'y':-790,'width':nw,'height':244},'anchor':{'x':0.5,'y':1.0}},
           'children':[{'type':'NineTileImageWidget','name':'NotificationBorder',
                        'fields':{'rect':{'x':0,'y':0,'width':nw,'height':244},'anchor':{'x':-0.5,'y':0.0},'filename':'PANEL/TooltipBorder/TooltipBorder','backgroundColor':[0.0,0.0,0.0,0.70],'tileScale':1},
                        'children':[{'type':'TextBoxWidget','name':'Prompt','fields':{'fitToParent':True,'style':'$StyleNotification'}}]}]}
@@ -68,9 +72,11 @@ with tempfile.TemporaryDirectory() as t:
     for rel,gd in (('controller/pauselayoutgardenhd.json',1),('controller/pauselayouthd.json',0)):   # 手柄版暂停菜单：一键重开 / 切换难度 / 存放 / 分享诊断日志 | Controller pause menu: one-tap restart / change difficulty / Deposit / Share Diagnostics
         lp,lt=touch_layout.read_layout(romfs,rel); o=os.path.join(tpad,'pad_pause%d.json'%gd); open(o,'w',encoding='utf-8').write(touch_layout.pad_pause(lt,gd,share=not os.environ.get('DM_OVERLAY_MAC'))); PR[lp.lower()]=o
     # 大秘境面板（借「消息记录」面板外壳，touch_layout._rift_panel）：手柄版同一份。少了它手柄模式点秘境门开出来的是空的原版消息记录面板、进不了秘境；手柄键在 dm_rift_ui.c
-    # Greater Rift panel (borrows the shell of the "Message Log" panel, touch_layout._rift_panel): the controller version uses the same one. Without it,
-    # tapping the Rift portal in controller mode opens an empty original Message Log panel and the Rift cannot be entered; the controller keys are in
-    # dm_rift_ui.c
+    # 手柄版的系统提示框：原版那份（停靠 y −500）下沿压着底栏上方那行「生命 / 法力」数值，数值位数多时字伸进框里。只把停靠位置上提 90 单位（下沿高过数值行），其余原样
+    # Greater Rift panel (borrowing the shell of the "message log" panel, touch_layout._rift_panel): the same for the gamepad layout. Without it, tapping a rift door in gamepad mode opens the empty original message log panel and the rift cannot be entered; gamepad keys are in dm_rift_ui.c
+    # The gamepad layout's system notice box: in the original (docked at y -500) its lower edge sits on the "life / mana" numbers above the bottom bar, and with many digits the text runs into the box. Only the docking position is raised by 90 units (lower edge above the number row); everything else as in the original
+    lp,lt=touch_layout.read_layout(romfs,'controller/notificationpanelhd.json'); assert lt.count('"y": -500')==1, lp   # 原版手柄版提示框的停靠位置应是 y -500（原包变了就停在这里） | the original gamepad notice box should dock at y -500 (if the original package changes, stop here)
+    o=os.path.join(tpad,'pad_notification.json'); open(o,'w',encoding='utf-8').write(lt.replace('"y": -500','"y": -590')); PR[lp.lower()]=o
     lp,lt=touch_layout.read_layout(romfs,'controller/messagelogpanelhd.json'); o=os.path.join(tpad,'pad_rift.json'); open(o,'w',encoding='utf-8').write(touch_layout._rift_panel(lt)[0]); PR[lp.lower()]=o
     PR.update(merc_slots.build_pad(romfs,tpad))   # 手柄版佣兵面板：同样加六个装备位 | Controller layout mercenary panel: likewise add six equipment slots
     # 手柄版职业选择页：八个职业的点击矩形同样改成按实际站位分的竖条（touch_layout.CLASS_STRIPS，原因见那里）。手柄用左右键选、原版没暴露；
@@ -161,7 +167,7 @@ with tempfile.TemporaryDirectory() as t:
     # 手柄专用清单：手柄模式下不是原版字节的布局就这几份，一份不许多、一份不许少（改上面某一行时把相邻一行整行替掉过，商人页的刷新钮就从包里掉了）
     # Controller-only list: these are the only layouts that are not original bytes in controller mode, not one more and not one fewer (once, when a line above was edited, the adjacent line was replaced whole, and the vendor page's refresh button dropped out of the package)
     PAD_PAGES=('controller/bankexpansionlayouthd.json','controller/console/charactercreatepanelhd.json','controller/console/characteroptionspanelhd.json','controller/console/mainmenubuttonribbonhd.json','controller/console/mainmenupanelhd.json','controller/console/settingspanelhd.json','controller/console/switch/playerinventoryexpansionlayouthd.json','controller/console/videooptionspanelhd.json',
-               'controller/controlleroverlayhd.json','controller/hirelinginventorypanelhd.json','controller/hudmonsterhealthhd.json','controller/messagelogpanelhd.json','controller/pauselayoutgardenhd.json','controller/pauselayouthd.json','controller/vendorpanellayouthd.json')
+               'controller/controlleroverlayhd.json','controller/hirelinginventorypanelhd.json','controller/hudmonsterhealthhd.json','controller/messagelogpanelhd.json','controller/notificationpanelhd.json','controller/pauselayoutgardenhd.json','controller/pauselayouthd.json','controller/vendorpanellayouthd.json')
     if sorted(k[len(LAY):] for k in PADLAY)!=sorted(PAD_PAGES): raise SystemExit('gen_romfs_overlay：手柄专用布局与清单 PAD_PAGES 不一致：多 %s，少 %s' % (sorted(set(k[len(LAY):] for k in PADLAY)-set(PAD_PAGES)), sorted(set(PAD_PAGES)-set(k[len(LAY):] for k in PADLAY))))
     def emit(repl, dst, tag, prebuilt=None):   # repl → 覆盖层（新 .build.config + 一个新数据档）写到 dst/data | repl → overlay (a new .build.config + one new data archive) written to dst/data
         repl=to_touch(repl); repl.update(PADLAY)

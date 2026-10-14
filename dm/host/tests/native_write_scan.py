@@ -41,18 +41,32 @@ def vis_scan(text, where):   # 直接写可见位的行；在带守卫的函数�
 # Third check (position guard): in dm_cursor.c, writing a widget rectangle (+0x70 x, +0x74 y, +0x78 width, +0x7c height) is allowed only in mv_offset (original-game widgets, allow list + record original value + must write back)
 # and in ui_move_ours (only names starting with Touch). Two forms are recognized: a direct *(int32_t *)(... + 0x7?) = ...; or, within the same function, first taking int32_t *name = (int32_t *)(... + 0x7?) and then writing name[k] = / *name =
 RECT_OK = ('mv_offset', 'ui_move_ours')
-RECT_PTR = re.compile(r'int32_t\s*\*\s*(\w+)\s*=\s*\(int32_t\s*\*\)\s*\([^;]*\+\s*0x7[0-9a-c]\b')
-RECT_DIRECT = re.compile(r'\*\s*\(int32_t\s*\*\)\s*\([^)]*\+\s*0x7[0-9a-c]\)\s*=(?!=)')
-def rect_scan(text, where):
+RECT_OFFS = ['0x7%x' % i for i in range(13)]   # 0x70–0x7c
+# 原版控件字段写入的登记例外（一项一行：文件、字段、只许在哪些函数里写、理由）。名单外的函数写这些字段一律报红
+# Registered exceptions for writes to original widget fields (one per line: file, field, which functions may write it, reason). Writes to these fields from functions not on the list are always red
+NATIVE_FIELD_OK = {
+    ('dm_cursor.c', '0x19c'): (('ui_note_dock_pump', 'note_dock_restore'), 'NotificationPanel 停靠目标 y：原版只在重排时按布局抄进、滑入滑出按它插值写 +0x74；'
+                               '改 +0x74 会被动画每帧盖回（试过）。原值我们自己记、停靠条件一结束当场写回（面板关 / 读取画面 / 保存并退出 / 回到前端）'),
+    ('dm_cursor.c', '0x74'): (('note_dock_snap',), 'NotificationPanel 矩形 y：停靠目标切换（开 / 关面板）那一刻框已停稳（原版停稳不写坐标）才写成新目标一次，动画期不写；写后下一帧核'),
+}
+def field_write_scan(text, where, off, ok, what):
+    ptr = re.compile(r'(?:int32_t|,)\s*\*\s*(\w+)\s*=\s*\(int32_t\s*\*\)\s*\([^;)]*\+\s*%s' % off)   # 基址只看本括号：同一行别的变量读别的字段不算；逗号后的第二个声明也认 | the base only counts within its own parentheses: other variables on the same line reading other fields do not count; a second declaration after a comma is recognised too
+    direct = re.compile(r'\*\s*\(int32_t\s*\*\)\s*\([^)]*\+\s*%s\)\s*=(?!=)' % off)
     bad, fn, ptrs = [], None, set()
     for no, line in enumerate(text.split('\n'), 1):
         m = re.match(r'(?:static\s+)?\w+\s+\*?(\w+)\(', line)
         if m and not line.startswith(' '): fn, ptrs = m.group(1), set()
         code = line.split('//', 1)[0]
-        for pm in RECT_PTR.finditer(code): ptrs.add(pm.group(1))
-        code = RECT_PTR.sub('', code)   # 声明那一处（int32_t *名 = …）本身不算写 | the declaration itself (int32_t *name = ...) does not count as a write
-        hit = RECT_DIRECT.search(code) or any(re.search(r'(?<![\w.>])(?:\*\s*%s|%s\s*\[\s*\d\s*\])\s*=(?!=)' % (q, q), code) for q in ptrs)
-        if hit and fn not in RECT_OK: bad.append('%s:%d 在 %s 里直接写了控件矩形（原版控件走 mv_offset、我们的走 ui_move_ours）：%s' % (where, no, fn, line.strip()[:120]))
+        for pm in ptr.finditer(code): ptrs.add(pm.group(1))
+        code = ptr.sub('', code)   # 声明那一处（int32_t *名 = …）本身不算写 | the declaration itself (int32_t *name = ...) does not count as a write
+        hit = direct.search(code) or any(re.search(r'(?<![\w.>])(?:\*\s*%s|%s\s*\[\s*\d\s*\])\s*=(?!=)' % (q, q), code) for q in ptrs)
+        if hit and fn not in ok: bad.append('%s:%d 在 %s 里直接写了%s：%s' % (where, no, fn, what, line.strip()[:120]))
+    return bad
+def rect_scan(text, where):
+    exc = [off for (f, off) in NATIVE_FIELD_OK if where.startswith(f) and off in RECT_OFFS]   # 矩形字段的登记例外：从矩形扫描里拿出来，按例外单独扫 | registered exceptions for rectangle fields: taken out of the rectangle scan and scanned separately as exceptions
+    bad = field_write_scan(text, where, '(?:%s)\\b' % '|'.join(o for o in RECT_OFFS if o not in exc), RECT_OK, '控件矩形（原版控件走 mv_offset、我们的走 ui_move_ours）')
+    for (f, off), (fns, why) in NATIVE_FIELD_OK.items():
+        if where.startswith(f): bad += field_write_scan(text, where, re.escape(off) + r'\b', fns + (RECT_OK if off in RECT_OFFS else ()), '原版控件字段 +%s（登记例外只许在 %s 里写）' % (off, ' / '.join(fns)))
     return bad
 
 def pages_pump(src):
@@ -66,6 +80,9 @@ def main():
         if not scan('    vu_show(vu_find(bk, "grid", 2), 0);', 'selftest') or scan('    vu_show(vu_find(vt, "TouchV_Back", 0), 1);   // "grid" 只在注释里', 'selftest') \
            or not vis_scan('static void f(uint64_t w) {\n    *(uint8_t *)(w + 0x50) = 0;\n}', 'selftest') or vis_scan('static void ui_show_ours(uint64_t w, int on) {\n    *(uint8_t *)(w + 0x50) = 1;\n}\n    if (*(uint8_t *)(w + 0x50) == 1) x();', 'selftest') \
            or not rect_scan('static void f(uint64_t w) {\n    int32_t *r = (int32_t *)(w + 0x70); r[0] = 5;\n}', 'selftest') or not rect_scan('static void g(uint64_t w) {\n    *(int32_t *)(w + 0x74) = 3;\n}', 'selftest') \
+           or rect_scan('static void ui_note_dock_pump(uint64_t w) {\n    int32_t *t = (int32_t *)(w + 0x19c), h = *(int32_t *)(w + 0x7c); *t = h;\n}', 'dm_cursor.c') \
+           or not rect_scan('static void n(uint64_t w) {\n    int32_t *t = (int32_t *)(w + 0x19c); *t = 1;\n}', 'dm_cursor.c') \
+           or not rect_scan('static void n2(uint64_t w) {\n    int32_t *t = (int32_t *)(w + 0x19c), *ry = (int32_t *)(w + 0x74); *ry = 1;\n}', 'dm_cursor.c') \
            or rect_scan('static void k(uint64_t w) {\n    int32_t *rx = (int32_t *)(w + 0x70), ww = *(int32_t *)(w + 0x78); if (*rx) x();\n}\nstatic void mv_offset(uint64_t w) {\n    int32_t *v = (int32_t *)(w + 0x70); *v = 1;\n}\nstatic int h(float *r) {\n    r[0] = 1.0f; int x = *(int32_t *)(w + 0x70); return x;\n}', 'selftest'):
             print('✗ native_write_scan 自检失败：该报的没报或不该报的报了'); return 1
         print('✓ native_write_scan 自检：违规行会报红、注释里的名字不算')

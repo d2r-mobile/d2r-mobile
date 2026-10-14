@@ -304,7 +304,7 @@ int dm_rift_hud(dm_rift_hud_t *o) {
     o->secs_left = st == ST_DONE ? g_left_done : RIFT_SECS - el; o->done = st == ST_DONE; o->guardian = K.guard != 0 && !atomic_load(&K.guard_dead); o->inc = K.inc; o->next = next_tier(); o->overtime = rift_overtime();
     // 第二行写哪一句在这里定（一个来源）：超时优先说明「已超时」，守护者在场就把「击败守护者」合进同一句；两位以上带（已倒 / 总数）
     // Which sentence the second line shows is decided here (one source): overtime takes priority with "Overtime", and when Guardians are present "Slay the Rift Guardian" is merged into the same sentence; with two or more it carries (fallen / total)
-    o->gdead = atomic_load(&K.gdead); o->gtotal = atomic_load(&K.gtotal); o->wave = K.wave + 1; o->nwave = K.nwave;
+    o->gdead = atomic_load(&K.gdead); o->gtotal = atomic_load(&K.gtotal); o->wave = K.wave + 1 - (K.wave_t != 0); o->nwave = K.nwave;
     o->goal = o->overtime ? (o->guardian ? (o->gtotal >= 2 ? 5 : 4) : 3) : o->guardian ? (o->gtotal >= 2 ? 2 : 1) : 0;
     return 1;
 }
@@ -895,7 +895,37 @@ static void rift_quest_obs(const uint64_t *regs) {
     static int n; if (n++ < 6 || (g_suseq_id && *(uint32_t *)(uintptr_t)(mon + 8) == g_suseq_id)) LOG("秘境：怪物类号 %u（单位 id %u）死在秘境图里，不走原版任务事件", *(uint32_t *)(uintptr_t)(mon + 4), *(uint32_t *)(uintptr_t)(mon + 8));
     ((uint64_t *)(uintptr_t)regs)[1] = (uint64_t)(uintptr_t)stand_in;
 }
+// 90 层起秘境图里不放普通预设怪（90 层以上没有其它怪、全是特殊精英）。观测门 OBS_PRESET_SPAWN 挂在「放一条预设单位记录」main+0x7ce800(游戏, 房间, 记录) 的入口，
+// 它只由房间激活时的放预设单位 0x7ce930 调（8 处）；我们自己刷守护者 / 闯入首领直接调 0x7ce630，刷特殊精英调 0x69b310，都不经过这里。
+// 记录 {+0 模式, +4 类号, +8 / +0x24 房内坐标, +0x18 地图 AI, +0x20 单位类型 1 怪 / 2 物件}；怪的类号分三段（原版 0x6910d0）：
+// 小于 monstats 行数（表 +0xf98）= 普通怪，再往上超级独特行数（表 +0x10b8）以内 = 超级独特，再往上 = monplace 放置码。
+// 拦的：会打人 / 刷怪的普通怪（投石车 497–500、观察员 516–519、邪恶小屋 528）；放置码里的随机怪群、金怪群、冠军、营地、group25–100 等。
+// 留的：超级独特；门 / 墙 / 攻城塔 / 监狱门 / 陷阱 / 友军野蛮人（场景，拿掉会改通行）；放置码 0 空、4 / 14–16 NPC、5 血鸦、29–31 尸体。
+// 拦法：x2 换成一份类号 −1 的副本，原版 0x6910d0 入口自己返回空（tbnz w2, #31），0x7ce630 / 0x7ce800 随之走各自的收尾，不碰任何状态；原记录不动。
+// From level 90, no ordinary preset monsters are placed in rift maps (above level 90 there are no other monsters, only special elites). Observation gate OBS_PRESET_SPAWN is hooked at the entry of "place one preset unit record" main+0x7ce800(game, room, record);
+// it is only called by the room-activation preset placement 0x7ce930 (8 call sites); our own Guardian / invading boss spawns call 0x7ce630 directly and special elite spawns call 0x69b310, neither goes through here.
+// Record {+0 mode, +4 class id, +8 / +0x24 in-room coordinates, +0x18 map AI, +0x20 unit type 1 monster / 2 object}; monster class ids fall into three ranges (original 0x6910d0):
+// below the monstats row count (table +0xf98) = ordinary monster, above that within the super unique row count (table +0x10b8) = super unique, above that = monplace placement code.
+// Blocked: ordinary monsters that attack or spawn monsters (catapults 497–500, watchers 516–519, evil hut 528); in the placement codes, random monster packs, unique packs, champions, camps, group25–100 etc.
+// Kept: super uniques; doors / walls / siege towers / prison doors / traps / friendly barbarians (scenery; removing them changes passability); placement codes 0 empty, 4 / 14–16 NPCs, 5 Blood Raven, 29–31 corpses.
+// How it is blocked: x2 is replaced by a copy with class id -1, the original 0x6910d0 entry returns null by itself (tbnz w2, #31), 0x7ce630 / 0x7ce800 then go through their own exits without touching any state; the original record is untouched.
+static void rift_preset_obs(const uint64_t *regs) {
+    static uint8_t stand_in[0x40]; static int n_blk; uint64_t G = regs[0], room = regs[1], rec = regs[2]; int st = atomic_load(&K.st);
+    if ((st != ST_RUN && st != ST_DONE) || !G || G != L.G || !room || !rec || *(int32_t *)(uintptr_t)(rec + 0x20) != 1 || !hi_on("pre", 90)) return;
+    uint64_t ex = rd(room + 0x18), lv = ex ? rd(ex + 0x90) : 0; int lvno = lv ? *(int32_t *)(uintptr_t)(lv + 0x1f8) : 0; if (!in_rift_map(lvno)) return;
+    uint64_t T = tables(G); if (!T) return; int N = *(int32_t *)(uintptr_t)(T + 0xf98), S = *(int32_t *)(uintptr_t)(T + 0x10b8), c = *(int32_t *)(uintptr_t)(rec + 4), blk;
+    if (c < 0) return;
+    if (c < N) blk = (c >= 497 && c <= 500) || (c >= 516 && c <= 519) || c == 528;
+    else if (c < N + S) blk = 0;
+    else { int p = c - N - S; blk = !(p == 0 || p == 4 || p == 5 || (p >= 14 && p <= 16) || (p >= 29 && p <= 31)); }
+    if (!blk) return;
+    memcpy(stand_in, (const void *)(uintptr_t)rec, 0x30); *(int32_t *)(stand_in + 4) = -1; *(uint64_t *)(stand_in + 0x18) = 0;
+    ((uint64_t *)(uintptr_t)regs)[2] = (uint64_t)(uintptr_t)stand_in;
+    static int all = -1; if (all < 0) all = getenv("DM_RIFT_TEST_TOUR") != NULL;
+    if (n_blk++ < 6 || n_blk % 100 == 0 || all) LOG("秘境：第 %d 层 关卡 %d 不放预设怪 类号 %d（%s %d；monstats %d 行、超级独特 %d 行；本进程累计 %d 条）", K.tier, lvno, c, c < N ? "普通" : "放置码", c < N ? c : c - N - S, N, S, n_blk);
+}
 static void rift_gates(void) { static int once; if (once) return; once = 1;
+    if (gate_obs_present(OBS_PRESET_SPAWN)) gate_obs_set(OBS_PRESET_SPAWN, rift_preset_obs); else LOG("秘境：这个产物不带放预设单位的门（r44 起的 touch 产物才带），90 层起普通预设怪照原版放");
     if (gate_obs_present(OBS_QUEST_KILL)) gate_obs_set(OBS_QUEST_KILL, rift_quest_obs); else LOG("秘境：这个产物不带任务事件的门（r36 起的 touch 产物才带），秘境里的首领死亡会走原版任务");
     if (gate_obs_present(OBS_LEVEL_WARP)) gate_obs_set(OBS_LEVEL_WARP, rift_level_obs);
     else LOG("秘境：这个产物不带出口换目的地的门（只有 r36 起的 touch 产物带），走出口会先落到原版的下一关、再由每拍检测送进下一张图"); }
@@ -1411,6 +1441,22 @@ void dm_rift_tick(uint64_t G, uint64_t player, uint8_t *main_base) {
       if (il && t % 250 == 0) { int n = 0, mn = 999, mx = 0; for (int bb = 0; bb < 128; bb++) for (uint64_t it = rd(G + 0x2e30 + 8 * bb); it; it = rd(it + 0x158)) { uint64_t d = rd(it + 0x10); if (!d || *(uint32_t *)(uintptr_t)(it + 0xc) != 3) continue; int v = *(int32_t *)(uintptr_t)(d + 0x38); n++; if (v < mn) mn = v; if (v > mx) mx = v; }
           LOG("秘境：测试读数 拍 %u 地上物品 %d 件，物品等级 %d–%d", t, n, n ? mn : 0, mx); } }
 
+    // 测试开关 DM_RIFT_TEST_TOUR=1：秘境进行中每秒用原版传送把人放到本图房间链里的下一间（中心附近的空地），整张图的房间都激活一遍——验「90 层起不放普通预设怪」要整图的读数
+    // Test switch DM_RIFT_TEST_TOUR=1: during a rift, every second the original teleport puts the player in the next room of this map's room chain (open ground near the centre), so every room of the whole map gets activated - verifying "no ordinary preset monsters from level 90" needs readings from the whole map
+    { static int tour = -1, k; if (tour < 0) tour = getenv("DM_RIFT_TEST_TOUR") != NULL;
+      if (tour && t % 25 == 0 && in_rift_map(lv) && atomic_load(&K.st) == ST_RUN) { uint64_t lvp = level_of(player), r = dm_level_rooms(lvp); int i = 0, nr = 0;
+          for (uint64_t q = r; q && nr < 2000; q = rd(q + 0x48)) nr++;
+          for (; r && i < k % (nr ? nr : 1); r = rd(r + 0x48)) i++;
+          if (r) { int32_t pos[2] = { *(int32_t *)(uintptr_t)(r + 0x60) * 5 + *(int32_t *)(uintptr_t)(r + 0x68) * 5 / 2, *(int32_t *)(uintptr_t)(r + 0x64) * 5 + *(int32_t *)(uintptr_t)(r + 0x6c) * 5 / 2 };
+              uint64_t rs = room_load(G, lvp, pos[0], pos[1]), rr = rs ? free_spot(G, rs, pos) : 0; int ok = rr && dm_teleport(B, G, player, rr, pos[0], pos[1]);
+              static int ln; if (ln++ < 3 || k == nr - 1) LOG("秘境：测试逐间跳 第 %d / %d 间 → %d,%d %s", k + 1, nr, pos[0], pos[1], ok ? "成" : "不成"); }
+          { static uint32_t seen[8192]; static int scls[8192], sfl[8192], ns;   /* 逐间跳全程：本图出现过的怪按单位 id 去重累计；走完一轮后 5 秒按类号报 | over the whole room-by-room jump: monsters seen in this map are accumulated, de-duplicated by unit id; 5 seconds after a full round, reported by class id */
+            for (int b = 0; b < 128; b++) for (uint64_t v = rd(G + 0x2230 + 1 * 0x400 + 8 * b); v; v = rd(v + 0x158)) { uint32_t id = *(uint32_t *)(uintptr_t)(v + 8); if (any_level(v) != lv) continue; int q = 0; for (; q < ns && seen[q] != id; q++) {}
+                if (q == ns && ns < 8192) { uint64_t md = rd(v + 0x10); uint32_t mo = *(uint32_t *)(uintptr_t)(v + 0xc); seen[ns] = id; scls[ns] = *(int32_t *)(uintptr_t)(v + 4); sfl[ns] = (md ? *(uint8_t *)(uintptr_t)(md + 0x1a) : 0) | (mo == 0 || mo == 12 ? 0x100 : 0); ns++; } }
+            if (k == nr + 5) { static int cl[1024], cn[1024], cf[1024]; int nc = 0;
+                for (int q = 0; q < ns; q++) { int j2 = 0; for (; j2 < nc && cl[j2] != scls[q]; j2++) {} if (j2 == nc && nc < 1024) { cl[nc] = scls[q]; cn[nc] = cf[nc] = 0; nc++; } if (j2 < 1024) { cn[j2]++; cf[j2] |= sfl[q]; } }
+                LOG("[逐间跳读数] 关卡 %d 出现过的怪 %d 只、%d 种", lv, ns, nc); for (int j2 = 0; j2 < nc; j2++) LOG("[逐间跳读数] 类号 %d ×%d 标志 0x%03x（0x100 = 有一只首次见到时已是死的）", cl[j2], cn[j2], cf[j2]); } }
+          k++; } }
     // 测试开关 DM_RIFT_TEST_PULL=1：每 3 秒用原版传送 0x7cc530 把人放到一只还活着的敌对怪（客户端认的）旁边——脚本按主攻击键就能一路打（验计分 / 守护者）
     // Test switch DM_RIFT_TEST_PULL=1: every 3 seconds use the original game's teleport 0x7cc530 to put the player next to a still-living hostile monster (as recognized by the client) -- a script only has to press the main attack button to fight all the way through (verifies scoring / guardian)
     { static int pull = -1; if (pull < 0) pull = getenv("DM_RIFT_TEST_PULL") != NULL;
@@ -1539,7 +1585,7 @@ void dm_rift_tick(uint64_t G, uint64_t player, uint8_t *main_base) {
         guard_wave(G, player, t, lowhp); }
     // 两波之间：上一波全倒 WAVE_GAP 拍后刷下一波
     // Between two waves: WAVE_GAP ticks after the previous wave is all down, the next wave is spawned
-    if (K.wave_t && t >= K.wave_t + WAVE_GAP && atomic_load(&K.st) == ST_RUN) { K.wave_t = 0; guard_wave(G, player, t, lowhp); }
+    if (K.wave_t && t >= K.wave_t + WAVE_GAP && atomic_load(&K.st) == ST_RUN) { guard_wave(G, player, t, lowhp); K.wave_t = 0; }   /* 先刷、再清「两波之间」：顶部条在两波之间报刚打完的那一波，刷出来才跳到下一波 | spawn first, then clear "between two waves": between waves the top bar reports the wave just finished, and moves to the next wave only once it has spawned */
     // 测试替身 DM_RIFT_TEST_DUMMY=<每秒点数>：对在场的每位守护者按固定输出扣当前生命（留 1 点，由随从补最后一下）——人物不用真打，用来出「承伤每秒峰值」的相对值
     // Test stand-in DM_RIFT_TEST_DUMMY=<points per second>: deduct current life from every Guardian present at a fixed output (leaving 1 point, with a minion delivering the last hit) - the character does not have to fight for real; used to obtain relative values of the "per-second peak of damage taken"
     { static int dps = -1; if (dps < 0) { const char *e = getenv("DM_RIFT_TEST_DUMMY"); dps = e ? atoi(e) : 0; }
@@ -1552,7 +1598,7 @@ void dm_rift_tick(uint64_t G, uint64_t player, uint8_t *main_base) {
     if (K.guard && !atomic_load(&K.guard_dead)) { int alive = 0, deadn = 0; uint64_t last = 0;
         for (int i = 0; i < 3; i++) { if (!K.guards[i]) continue; uint64_t u = find_unit(G, 1, K.guards[i]); if (!u) { alive++; continue; }   /* 不在单位表里（房间卸载）：不当它死了 | not in the unit table (room unloaded): do not treat it as dead */
             uint32_t m = *(uint32_t *)(uintptr_t)(u + 0xc); if (m == 0 || m == 12) { last = u; deadn++; static uint32_t said[3]; if (said[i] != K.guards[i]) { said[i] = K.guards[i]; LOG("秘境：拍 %u 守护者死亡（类号 %d id %u）", t, K.gcls[i], K.guards[i]); } } else alive++; }
-        atomic_store(&K.gdead, deadn);
-        if (!alive && last && K.wave + 1 < K.nwave) { memset(K.guards, 0, sizeof K.guards); K.wave++; K.wave_t = t; atomic_store(&K.gdead, 0); atomic_store(&K.gtotal, 0); LOG("秘境：拍 %u 守护者第 %d 波全部倒下，%d 拍后刷第 %d 波", t, K.wave, WAVE_GAP, K.wave + 1); }
+        if (!K.wave_t) atomic_store(&K.gdead, deadn);   /* 两波之间 guards 已清空，计数留着上一波的（全倒）给顶部条 | between two waves guards is already cleared; the count keeps the previous wave's (all down) for the top bar */
+        if (!alive && last && K.wave + 1 < K.nwave) { memset(K.guards, 0, sizeof K.guards); K.wave++; K.wave_t = t; LOG("秘境：拍 %u 守护者第 %d 波全部倒下，%d 拍后刷第 %d 波", t, K.wave, WAVE_GAP, K.wave + 1); }
         else if (!alive && last) { atomic_store(&K.guard_dead, 1); LOG("秘境：拍 %u 守护者全部死亡 → 结算", t); finish(G, player, last); } }
 }

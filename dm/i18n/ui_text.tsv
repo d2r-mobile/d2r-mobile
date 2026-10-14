@@ -260,7 +260,8 @@ dmKbRiftMsAll	已全部领取	All claimed	积分牌秘境项（dm_kills.c）
 dmKbRiftFast	最快 %d:%02d	Best Time %d:%02d	积分牌秘境项（dm_kills.c）；英文：拟（同积分牌 dmKbTimes 的 Best）；暗黑 3 排行榜列名为 Time Spent（意思是用时，不是最快），未采用，留 Best Time
 dmKbRiftMsGot	首通奖励已领取	First clear reward claimed	积分牌秘境项（dm_kills.c）；英文：拟
 dmKbRiftTotal	最高 %d 层	Best Level: %d	积分牌秘境项（dm_kills.c）；英文：拟
-dmCloudConflict	iCloud 共享仓库两边不一致，已保留本机，请联系我们	iCloud shared stash mismatch: kept this device. Please contact us	iCloud 同步冲突提示（diag.c）
+dmCloudConflict	iCloud：两台设备的共享仓库各有内容，已用云端那份，本机那份已完整保存待并回	iCloud: both devices had shared stash contents. Using the cloud copy; this device's copy is kept to be merged back	iCloud 共享仓库分叉提示（diag.c；本机那份在待合并收件箱）
+dmCloudCharConflict	iCloud：角色 %s 两台设备各有一份，已用云端那份，本机那份已备份	iCloud: both devices had character %s. Using the cloud copy; this device's copy is backed up	iCloud 首次同步同名角色提示（diag.c，%s = 角色名）
 dmRiftHudTitle	秘境	Rift	秘境顶部进度条（dm_rift_hud.m，UIKit）
 dmRiftHudDone	第 %d 层完成	Level %d complete	秘境顶部进度条（dm_rift_hud.m，UIKit）；英文：见 dmRiftSayDoneBoth
 dmRiftHudLate	第 %d 层超时	Level %d overtime	秘境顶部进度条（dm_rift_hud.m，UIKit）；英文：拟

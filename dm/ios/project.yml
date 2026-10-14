@@ -94,6 +94,7 @@ targets:
     dependencies:
       - target: RomfsDownloader      # 苹果托管资源包要求的下载扩展（系统缺省实现） | Download extension required by Apple-hosted asset packs (system default implementation)
       - sdk: BackgroundAssets.framework
+      - sdk: Network.framework             # iCloud 首次同步看网络通不通（cloud_ios.m first_listing_ok） | iCloud first sync checks whether the network is reachable (cloud_ios.m first_listing_ok)
     settings:
       PRODUCT_BUNDLE_IDENTIFIER: ${DM_BUNDLE_ID}
       ENABLE_USER_SCRIPT_SANDBOXING: NO              # 构建前脚本「从游戏文件生成资源」要读工程外的 RomFS（沙盒里读不到） | The pre-build script 「从游戏文件生成资源」(Generate assets from game files) needs to read the RomFS outside the project (unreadable inside the sandbox)
