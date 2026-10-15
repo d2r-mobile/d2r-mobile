@@ -1,6 +1,27 @@
 #pragma once
 #include <stdint.h>
 
+// 界面代号：游戏每重建一次界面（切手柄 / 触屏布局与运行模式的通知被游戏取走、切语言、面板卸载、前端 ↔ 局内、顶层面板换了一批）加 1。
+// 重建会释放旧控件；跨帧留着的控件裸指针再读就是野指针（腰带补满崩溃），只比身份的也会被新控件复用旧地址骗过。
+// 规则：游戏控件指针只在同一帧里用；要跨帧存，一律用 dm_wref——存时记代号；取时代号没变直接用，变了就核它还挂不挂在当前界面树上（只比指针、不解引用）：
+// 还在 = 没被释放（卸掉的只是别的面板），记上新代号照用；不在了给 0，调用方按名字 / 类型重新找、找不到就停。
+// 原先代号一变一律给 0：任何顶层面板卸掉都会让挪位表忘了小地图「已挪过」，真全屏的贴顶上提一次次叠加、把小地图推出屏外（回归 ipadfull top 局）。
+// 静态扫 dm/host/tests/widget_cache_scan.py 查「静态变量裸存控件指针」，在 tests/Makefile 里跑。
+// UI generation: incremented each time the game rebuilds the UI (the game consumes a controller / touch layout or run-mode notification, language switch, panel unload, front end ↔ in-game, a batch of top-level panels replaced).
+// A rebuild frees old widgets; reading a raw widget pointer kept across frames is a dangling pointer (the belt-fill crash), and even identity-only comparisons can be fooled by a new widget reusing the old address.
+// Rule: use game widget pointers only within the same frame; to keep one across frames, always use dm_wref, which records the generation when stored; on fetch, if the generation is unchanged use it directly, otherwise check whether it is still attached to the current UI tree (pointer comparison only, no dereference):
+// still there = not freed (only some other panel was unloaded), record the new generation and keep using it; gone returns 0, and the caller re-finds it by name / type and stops if not found.
+// Previously any generation change returned 0: any top-level panel unload made the move table forget the minimap had "already been moved", so the true-fullscreen snap-to-top shift stacked up again and again and pushed the minimap off screen (ipadfull top regression run).
+// The static scan dm/host/tests/widget_cache_scan.py looks for "raw widget pointers stored in static variables" and runs in tests/Makefile.
+uint32_t dm_ui_gen(void);                 // 当前界面代号（从 1 起）；任意线程可读 | Current UI generation (starting from 1); readable from any thread
+enum { DM_UIGEN_OPMODE = 1, DM_UIGEN_PERFMODE, DM_UIGEN_LANG, DM_UIGEN_PANEL_GONE, DM_UIGEN_ROOT };
+void dm_ui_gen_bump(int why);             // 界面重建了（任意线程）；why = DM_UIGEN_* | The UI was rebuilt (any thread); why = DM_UIGEN_*
+int dm_ui_unstable(void);                 // 重建进行中或刚重建（2 帧内）：控件可能还没建完，这一帧别去找 / 别用 | Rebuild in progress or just finished (within 2 frames): widgets may not be fully built yet; do not look up / use them this frame
+typedef struct { uint64_t w; uint32_t gen; } dm_wref;   // 跨帧存的游戏控件：只许游戏主线程读写 | Game widgets stored across frames: read/write only on the game main thread
+static inline void dm_wref_set(dm_wref *r, uint64_t w) { r->w = w; r->gen = dm_ui_gen(); }
+uint64_t dm_wref_get(dm_wref *r);         // 只许游戏主线程调 | Game main thread only
+int dm_ui_gen_revalidate(uint32_t *gen, uint64_t anchor);   // 整组缓存（结构体带 ui_gen）：代号变了时按锚点控件还在不在树上判整组还能不能用，在就记上新代号、返回 1 | Group cache (struct with ui_gen): when the generation changes, decide whether the whole group is still usable by whether the anchor widget is still in the tree; if so, record the new generation and return 1
+
 void dm_cursor_set(int x, int y);
 // 前端登记「待写原版光标」（屏幕点坐标），由宿主在游戏读手柄时（hle_hid fill）落地：
 // 与按键同一次采样到达游戏。前端主线程随时直写光标全局，游戏处理 A 之前会用自己的手柄光标状态把它写回，A 落在旧光标处

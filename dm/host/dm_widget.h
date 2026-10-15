@@ -8,6 +8,7 @@
 // Vtable values are offsets within the main module (3.3.94012), read on the host:
 #pragma once
 #include <stdint.h>
+#include <string.h>
 
 enum {
     DM_VT_TEXT = 0x20ba4c8,      // 文字框：串 +0x88 / 长 +0x90，字色 +0xbc | text box: string +0x88 / length +0x90, text color +0xbc
@@ -34,3 +35,18 @@ static inline int dm_widget_is_slot(const uint8_t *base, uint64_t w) { uint64_t 
         if (w && base && n++ < 5) { const char *nm = *(const char **)(uintptr_t)(w + 8); \
             LOG("【红】%s：控件「%s」不是预期的类（虚表 main+%#llx，应为 %#llx），不按偏移读写", who, nm ? nm : "?", (unsigned long long)dm_widget_vt(base, w), (unsigned long long)vt); } \
         return 0; }
+
+// 按名字找顶层面板：面板都是界面根的直接子控件（PanelManager 建在根下；dm_cursor.c ui_panel 同口径），只扫这一层。
+// 原先各模块从根做全树深搜，面板没开时每次都把整棵界面树扫完（每帧十几遍，宿主每帧指令数的大头，DM_PUMP_PROF 实测）。
+// 测试开关 DM_TEST_FINDCHK=1：每次顺带跑一遍旧的全树深搜（深度 ≤ 14），结果不同记【红】——证明换法行为不变。
+// Find a top-level panel by name: panels are all direct children of the UI root (PanelManager creates them under the root; same rule as ui_panel in dm_cursor.c), so only that level is scanned.
+// Previously each module did a full-tree depth-first search from the root, and with the panel closed walked the whole UI tree every time (a dozen-plus times per frame, the bulk of the host's per-frame instruction count, measured with DM_PUMP_PROF).
+// Test switch DM_TEST_FINDCHK=1: also runs the old full-tree depth-first search (depth <= 14) each time and logs a red line if the results differ -- proving the new method behaves the same.
+int dm_ui_top_chk_on(void);
+void dm_ui_top_chk(uint64_t root, const char *name, uint64_t got);
+static inline uint64_t dm_ui_top(uint64_t root, const char *name) {
+    uint64_t r = 0, ch = root ? *(uint64_t *)(uintptr_t)(root + 0x58) : 0, n = root ? *(uint64_t *)(uintptr_t)(root + 0x60) : 0;
+    if (ch && n <= 256) for (uint64_t j = 0; j < n && !r; j++) { uint64_t p = *(uint64_t *)(uintptr_t)(ch + 8 * j); const char *nm = p ? *(const char **)(uintptr_t)(p + 8) : 0; if (nm && !strcmp(nm, name)) r = p; }
+    if (dm_ui_top_chk_on()) dm_ui_top_chk(root, name, r);
+    return r;
+}

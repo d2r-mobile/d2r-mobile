@@ -72,18 +72,6 @@ ios/Sources/front_ios.m	GPU 无样本	性能读数日志
 ios/Sources/front_ios.m	电量 未知	性能读数日志
 ios/Sources/front_ios.m	GPU %.2f	性能读数日志
 ios/Sources/front_ios.m	电量 %.0f	性能读数日志
-ios/Sources/DmTouchOverlay.m	主技能	圆钮标签数组：游戏态走不到（技能钮 / 回城钮画图标、药剂 / 功能被跳过、地图钮关掉；盘点待定 1）
-ios/Sources/DmTouchOverlay.m	技能	同上
-ios/Sources/DmTouchOverlay.m	=回城	同上
-ios/Sources/DmTouchOverlay.m	=药剂	同上
-ios/Sources/DmTouchOverlay.m	=功能	同上
-ios/Sources/DmTouchOverlay.m	=地图	同上
-ios/Sources/DmTouchOverlay.m	确认／交换	导航态标签：只在测试开关 DM_TOUCH_NAV_PAD=1 下出现
-ios/Sources/DmTouchOverlay.m	=返回	同上
-ios/Sources/DmTouchOverlay.m	=操作	同上
-ios/Sources/DmTouchOverlay.m	=绑定	同上
-ios/Sources/DmTouchOverlay.m	下一页	同上
-ios/Sources/DmTouchOverlay.m	=取消	同上
 ios/tools/gen_hud_v4.py	十字（默认态）	生成脚本的格子标签（不画字）
 ios/tools/gen_hud_v4.py	生命法力	生命 / 法力字形集的中文部分（英文字母由中英表补）
 ios/tools/gen_hud_v4.py	攻击	lbl_main.png 烘了但前端画不到（主钮有图标时不写字，盘点待定 2）

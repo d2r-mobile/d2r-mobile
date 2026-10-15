@@ -31,6 +31,9 @@ run: \
 	$(B)/t_rift_next \
 	$(B)/t_rift_oldrun \
 	$(B)/t_rift_wave \
+	$(B)/t_interaction_diag \
+	$(B)/t_map_diag \
+	$(B)/t_warp_diag \
 	$(B)/t_romfs_validate \
 	$(B)/t_rwlv \
 	$(B)/t_swkbd \
@@ -42,6 +45,7 @@ run: \
 	$(B)/t_unit_level \
 	$(B)/t_widget
 	python3 native_write_scan.py --selftest ..
+	python3 widget_cache_scan.py --selftest ..
 	python3 mode_scan.py ../..
 	python3 ../../ios/tools/dm_i18n.py --check
 	python3 ../../i18n/scan_literals.py
@@ -49,6 +53,9 @@ run: \
 	$(B)/t_rift_clock
 	$(B)/t_rift_next
 	$(B)/t_rift_oldrun
+	$(B)/t_interaction_diag
+	$(B)/t_map_diag
+	$(B)/t_warp_diag
 	$(B)/t_rift_wave
 	$(B)/t_textbox
 	$(B)/t_rwlv
@@ -134,16 +141,16 @@ $(B)/t_fs_case: t_fs_case.c ../hle_fs.c ../hle.h ../dm.h ../dm_i18n.c | $(B)
 $(B)/t_romfs_validate: t_romfs_validate.c ../romfs_validate.c ../romfs_validate.h ../dm_i18n.c ../dm_i18n_tab.h | $(B)
 	clang -O1 -Wno-unused-function -I.. -o $@ t_romfs_validate.c ../romfs_validate.c ../dm_i18n.c
 
-$(B)/t_hid_script: t_hid_script.c t_touch_tick_stub.c ../hle_hid.c ../dm_cursor.c ../dm_hud.c ../dm_hud.h ../touch_mac.c ../../ios/Sources/dm_touch_controls.c ../hle.h ../dm.h ../dm_input.h ../front.h | $(B)
-	clang -O1 -Wno-unused-function -I.. -I../../ios/Sources -o $@ t_hid_script.c t_touch_tick_stub.c ../dm_cursor.c ../dm_hud.c ../touch_mac.c ../../ios/Sources/dm_touch_controls.c -lm
+$(B)/t_hid_script: t_hid_script.c t_touch_tick_stub.c ../hle_hid.c ../dm_cursor.c ../dm_hud.c ../dm_hud.h ../touch_mac.c ../../ios/Sources/dm_touch_controls.c ../hle.h ../dm.h ../dm_input.h ../front.h | $(B) ../dm_prof.c
+	clang -O1 -Wno-unused-function -I.. -I../../ios/Sources -o $@ t_hid_script.c t_touch_tick_stub.c ../dm_cursor.c ../dm_hud.c ../touch_mac.c ../../ios/Sources/dm_touch_controls.c -lm ../dm_prof.c
 
 $(B)/t_oe: t_oe.c ../hle_oe.c ../hle.h ../dm.h | $(B)
 	clang -O1 -Wno-unused-function -I.. -o $@ t_oe.c
 
-$(B)/t_hid_receipt: t_hid_receipt.c t_touch_tick_stub.c ../hle_hid.c ../dm_cursor.c ../dm_hud.c ../dm_hud.h ../touch_mac.c ../../ios/Sources/dm_touch_controls.c ../hle.h ../dm.h ../dm_input.h ../front.h | $(B)
-	clang -O1 -Wno-unused-function -I.. -I../../ios/Sources -o $@ t_hid_receipt.c t_touch_tick_stub.c ../dm_cursor.c ../dm_hud.c ../touch_mac.c ../../ios/Sources/dm_touch_controls.c -lm
-$(B)/t_touch_mac: t_touch_mac.c ../touch_mac.c ../dm_cursor.c ../dm_hud.c ../dm_hud.h ../../ios/Sources/dm_touch_controls.c ../../ios/Sources/dm_touch_controls.h ../../host/dm_input.h | $(B)   # 测试 #include 了 touch_mac.c 与 dm_touch_controls.c，须列为依赖（漏列致改源不重编） | the test #includes touch_mac.c and dm_touch_controls.c, which must be listed as dependencies (omitting them means source changes do not trigger a rebuild)
-	clang -std=c11 -Wall -Wextra -Werror -I.. -I../../ios/Sources -o $@ t_touch_mac.c ../dm_cursor.c ../dm_hud.c -lm
+$(B)/t_hid_receipt: t_hid_receipt.c t_touch_tick_stub.c ../hle_hid.c ../dm_cursor.c ../dm_hud.c ../dm_hud.h ../touch_mac.c ../../ios/Sources/dm_touch_controls.c ../hle.h ../dm.h ../dm_input.h ../front.h | $(B) ../dm_prof.c
+	clang -O1 -Wno-unused-function -I.. -I../../ios/Sources -o $@ t_hid_receipt.c t_touch_tick_stub.c ../dm_cursor.c ../dm_hud.c ../touch_mac.c ../../ios/Sources/dm_touch_controls.c -lm ../dm_prof.c
+$(B)/t_touch_mac: t_touch_mac.c ../touch_mac.c ../dm_cursor.c ../dm_hud.c ../dm_hud.h ../../ios/Sources/dm_touch_controls.c ../../ios/Sources/dm_touch_controls.h ../../host/dm_input.h | $(B)   # 测试 #include 了 touch_mac.c 与 dm_touch_controls.c，须列为依赖（漏列致改源不重编） ../dm_prof.c | The tests #include touch_mac.c and dm_touch_controls.c, so they must be listed as dependencies (missing them means editing the source does not trigger a rebuild) ../dm_prof.c
+	clang -std=c11 -Wall -Wextra -Werror -I.. -I../../ios/Sources -o $@ t_touch_mac.c ../dm_cursor.c ../dm_hud.c -lm ../dm_prof.c
 $(B)/t_target_rank: t_target_rank.c ../hle_target.c ../dm.h | $(B)
 	clang -O1 -Wno-unused-function -I.. -o $@ t_target_rank.c ../hle_target.c
 $(B)/t_rift_clock: t_rift_clock.c ../dm_rift.c ../dm_rift.h ../hle_os.c ../hle.h ../dm.h | $(B)
@@ -156,3 +163,12 @@ $(B)/t_rift_wave: t_rift_wave.c ../dm_rift.c ../dm_rift.h ../hle_os.c ../hle.h .
 	clang -O1 -Wall -Wno-unused-function -ffunction-sections -fdata-sections -Wl,-dead_strip -I.. -o $@ t_rift_wave.c ../hle_os.c
 $(B)/t_thread_leak: t_thread_leak.c ../thread.c ../dm.h | $(B)
 	clang -O1 -Wall -Wno-unused-function -I.. -I../../ios/Sources -o $@ t_thread_leak.c
+
+$(B)/t_interaction_diag: t_interaction_diag.c ../dm_world.c ../dm_unit.h | $(B)
+	clang -O1 -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_interaction_diag.c
+
+$(B)/t_map_diag: t_map_diag.c ../dm_cursor.c ../dm_unit.h | $(B)
+	clang -O1 -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_map_diag.c
+
+$(B)/t_warp_diag: t_warp_diag.c ../dm_rift.c ../dm_unit.h | $(B)
+	clang -O1 -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_warp_diag.c

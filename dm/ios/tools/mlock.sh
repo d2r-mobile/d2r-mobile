@@ -16,6 +16,9 @@ mlock_acquire() {
   export DM_DEVLOCK_DIR=${XT_LOCK_DIR:-${DM_ROOT:-$HOME/dm-work}/run/ios/macsmoke.lock}
   source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/devlock.sh" || { echo "🔴 mlock：同目录下没有 devlock.sh"; return 1; }
   devlock_acquire "$1" || return 1
+  # 窗口独占：开窗任务还要等整表其余槽（reg1–3）让出，否则盖住它们的包、停帧（见 macwin.sh）
+  # Window exclusivity: window-opening tasks must also wait for the other slots of the full table (reg1–3) to yield, otherwise they cover those apps and stall their frames (see macwin.sh)
+  source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/macwin.sh" && macwin_excl_acquire "$1" || { devlock_release; return 1; }
   export XT_LOCK_HELD=1; MLOCK_MINE=1
 }
-mlock_release() { [ "${MLOCK_MINE:-}" = 1 ] || return 0; devlock_release; MLOCK_MINE=; unset XT_LOCK_HELD; }
+mlock_release() { [ "${MLOCK_MINE:-}" = 1 ] || return 0; macwin_excl_release; devlock_release; MLOCK_MINE=; unset XT_LOCK_HELD; }

@@ -16,6 +16,7 @@
 #include <TargetConditionals.h>
 #include "dm.h"
 #include "dm_widget.h"
+#include "dm_cursor.h"
 #include "dm_rift.h"
 #include "dm_i18n.h"
 #include "dm_input.h"
@@ -33,7 +34,7 @@ static uint64_t find(uint64_t w, const char *name, int dep) {
     for (uint64_t i = 0; i < n; i++) { uint64_t r = find(*(uint64_t *)(ch + 8 * i), name, dep + 1); if (r) return r; }
     return 0;
 }
-static uint64_t panel_named(const char *nm) { uint8_t *b = rb(); uint64_t root = b ? *(uint64_t *)(b + 0x2f05458) : 0; return root ? find(root, nm, 1) : 0; }
+static uint64_t panel_named(const char *nm) { uint8_t *b = rb(); uint64_t root = b ? *(uint64_t *)(b + 0x2f05458) : 0; return root ? dm_ui_top(root, nm) : 0; }   // 面板是界面根的直接子控件（dm_widget.h） | Panels are direct children of the UI root (dm_widget.h)
 static uint64_t panel(void) { return panel_named("MessageLogPanel"); }
 static int panel_up(void) { uint64_t p = panel(); return p && *(uint8_t *)(uintptr_t)(p + 0x51); }   // 面板可见字节 +0x51（原版暂停判定读 BugPanel 也是它） | Panel visible byte +0x51 (the original pause check also reads this for BugPanel)
 static uint64_t body(void) { uint64_t cp = panel(), bd = cp ? find(cp, "TouchRift", 1) : 0; return bd ? find(bd, "TouchRF_Body", 0) : 0; }
@@ -65,8 +66,8 @@ static void text(uint64_t w, const char *s) {   // 同 dm_kills.c kb_text：文�
 // Greyed out = all four replaced with the disabled frame (original values are kept and written back on restore); taps still send messages as usual, and the host does not move the level at the limits
 DM_WIDGET_RED_DEF
 static void btn_grey(uint64_t w, int grey) {
-    static struct { uint64_t w; int32_t f[4]; } sv[8]; static int n; if (!w || !DM_WIDGET_OK(rb(), w, DM_VT_BUTTON, "秘境面板")) return; int i = 0; while (i < n && sv[i].w != w) i++;
-    if (i == n) { if (n == 8) return; sv[i].w = w; memcpy(sv[i].f, (void *)(uintptr_t)(w + 0x6e8), 16); n++; }
+    static struct { dm_wref r; int32_t f[4]; } sv[8]; static int n; if (!w || !DM_WIDGET_OK(rb(), w, DM_VT_BUTTON, "秘境面板")) return; int i = 0; while (i < n && dm_wref_get(&sv[i].r) != w) i++;
+    if (i == n) { i = 0; while (i < n && dm_wref_get(&sv[i].r)) i++; if (i == 8) return; if (i == n) n++; dm_wref_set(&sv[i].r, w); memcpy(sv[i].f, (void *)(uintptr_t)(w + 0x6e8), 16); }   // 重建后旧条目代号不符、取到 0：腾出来给新控件用 | After a rebuild, an old entry's generation does not match and it reads 0: freed up for a new widget
     int32_t *f = (int32_t *)(uintptr_t)(w + 0x6e8); int32_t want[4]; for (int k = 0; k < 4; k++) want[k] = grey ? sv[i].f[3] : sv[i].f[k];
     if (memcmp(f, want, 16)) { memcpy(f, want, 16); *(int32_t *)(uintptr_t)(w + 0x610) = want[0]; }
 }
@@ -91,11 +92,11 @@ static void merc_lock_pump(void) {
     // 只读原版控件，不拦这一下（格子是空的，原版自己不会做什么）；副手格不在这六格里，不弹
     // When not unlocked, moving the controller cursor onto one of these six cells pops up a one-line hint (touch taps / drags pop it in the touch layer by hit result, dm_cursor.c ui_classify): it pops once when the UI's focus widget [UI root+0xd0]+0x190 / hover widget +0x178 lands on one of the cells and it is not the same cell as in the previous frame.
     // Only reads original widgets and does not block the press (the cell is empty, and the original game does nothing by itself); the off-hand cell is not among these six and gets no hint
-    if (lock) { static uint64_t last; uint8_t *b = rb(); uint64_t pm = b ? *(uint64_t *)(b + 0x2f05458) : 0, fm = pm ? *(uint64_t *)(uintptr_t)(pm + 0xd0) : 0, cur = 0;
+    if (lock) { static dm_wref last; uint8_t *b = rb(); uint64_t pm = b ? *(uint64_t *)(b + 0x2f05458) : 0, fm = pm ? *(uint64_t *)(uintptr_t)(pm + 0xd0) : 0, cur = 0;
         for (int c = 0; fm && c < 2 && !cur; c++) { uint64_t w = *(uint64_t *)(uintptr_t)(fm + (c ? 0x178 : 0x190)); const char *nm = w ? *(const char **)(uintptr_t)(w + 8) : NULL;
             if (!nm || strncmp(nm, "slot_", 5) || !dm_widget_is_slot(b, w) || *(uint32_t *)(uintptr_t)(w + 0x5c8) != 1) continue;   // +0x5c8（属主）是物品格专有字段：先核类。指针本身不会悬空——原版控件析构（main+0xabee7c → 0xabdf4c）会把焦点管理器里指向自己的 +0x190 / +0x178 清掉 | +0x5c8 (owner) is an item-slot-only field: check the class first. The pointer itself cannot dangle: the game's widget destructor (main+0xabee7c → 0xabdf4c) clears the focus manager's +0x190 / +0x178 that point to it
             for (unsigned i = 0; i < sizeof k / sizeof *k; i++) if (!strcmp(nm + 5, k[i].n + 14)) cur = w; }
-        if (cur && cur != last) dm_rift_merc_locked_hint(); last = cur; }
+        if (cur && cur != dm_wref_get(&last)) dm_rift_merc_locked_hint(); dm_wref_set(&last, cur); }
     // 六个新物品格（布局里我们加的 slot_<部位>，原版物品格控件）：原版佣兵面板的初始化只给它认识的四个格填「身体部位号」（控件 +0x5d8：头 1 / 身 3 / 右手 4 / 左手 5）和格子尺寸（+0x5b8 两个 32 位 = 98），
     // 我们加的六个这两处是 0，控件就不知道该画佣兵哪个部位上的物品（客户端佣兵身上有这些物品，格子却是空的——实测）。面板每次建出来时补一次，值照玩家物品栏面板里同名格的（2 / 6 / 7 / 8 / 9 / 10）
     // The six new item cells (slot_<body location> that we add in the layout, original item cell widgets): the original mercenary panel's initialization fills in the "body location number" (widget +0x5d8: head 1 / torso 3 / right hand 4 / left hand 5) and the cell size (+0x5b8, two 32-bit values = 98) only for the four cells it knows,

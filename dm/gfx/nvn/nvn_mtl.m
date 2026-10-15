@@ -775,8 +775,8 @@ int g_fx_dedup = 1;
 int g_la_cache = 1;   // 每次绘制的反射摘要 / 全零事实表 / 全零集合删除这三处按对象缓存（udc_note_draw、zskip_can_draw）；0 = 每次现算（同进程交替测量对照用）   // 渲染编码器固定功能状态同值不重发（draw 里的 FX_SET）；0 = 每次绘制照发（同进程交替测量对照用） | Per-object caching for the per-draw reflection summary / all-zero fact table / all-zero set removal (udc_note_draw, zskip_can_draw); 0 = computed every time (for in-process alternating measurement comparison)   // Render encoder fixed-function state not resent if unchanged (FX_SET in draw); 0 = sent on every draw (for in-process alternating measurement comparison)
 int g_blit_bar = 1;   // Metal 4 复用拷贝编码器时的屏障（blit()）；0 = 不设，只供同进程交替量开销（数据可能乱序） | Barrier when reusing the blit encoder on Metal 4 (blit()); 0 = not set, only for measuring overhead with in-process alternation (data may be reordered)
 static int *ub_var(const char *nm) {
-    extern int g_bloom_q, g_dm_present_link, g_tbdr_rt, g_blit_bar;
-    static const struct { const char *n; int *p; } t[] = { {"g_bloom_q", &g_bloom_q}, {"g_dm_present_link", &g_dm_present_link}, {"g_frz_on", &g_frz_on}, {"g_fx_dedup", &g_fx_dedup}, {"g_la_cache", &g_la_cache}, {"g_tbdr_rt", &g_tbdr_rt}, {"g_blit_bar", &g_blit_bar} };
+    extern int g_bloom_q, g_dm_present_link, g_tbdr_rt, g_blit_bar, g_sdx_attdedup, g_tbdr_sub;
+    static const struct { const char *n; int *p; } t[] = { {"g_bloom_q", &g_bloom_q}, {"g_dm_present_link", &g_dm_present_link}, {"g_frz_on", &g_frz_on}, {"g_fx_dedup", &g_fx_dedup}, {"g_la_cache", &g_la_cache}, {"g_tbdr_rt", &g_tbdr_rt}, {"g_blit_bar", &g_blit_bar}, {"g_sdx_attdedup", &g_sdx_attdedup}, {"g_tbdr_sub", &g_tbdr_sub} };
     for (size_t i = 0; i < sizeof t / sizeof t[0]; i++) if (!strcmp(nm, t[i].n)) return t[i].p;
     return dlsym(RTLD_DEFAULT, nm);
 }
@@ -1794,6 +1794,10 @@ void ts_after(void);
 // For the decision see mtl_sub_index / sdx_decide; only what can be proven within the same submission is accepted, and anything still undecided at the end of the submission is always written back.
 typedef struct { uint64_t ser, bytes; uint32_t lv, sl; int idx; uint8_t depth, state, ridx, drawn, why, load, wrote, wwhy; const char *wkey; int wslot; } sd_att;   // depth：0 颜色 1 深度 2 模板（深度模板合一的贴图两部分分开判）   // state 0 未定 1 需要 2 多余；idx：颜色附件序号，深度为 -1 | depth: 0 color 1 depth 2 stencil (the two parts of a combined depth-stencil texture are decided separately)   // state 0 undecided 1 needed 2 redundant; idx: color attachment index, -1 for depth
 static sd_att g_sd[9]; static int g_nsd;
+// 子项开关 g_tbdr_sub（位掩码，登记进同进程交替测量的变量表）：总开关开着时逐项关掉一项，量每项花的翻译 CPU 与省的 GPU，找净亏的子项。同样每次提交开头锁存
+// Sub-item switch g_tbdr_sub (bitmask, registered in the variable table for in-process alternating measurement): with the master switch on, disable one item at a time to measure each item's translation CPU cost and GPU savings, and find net-loss items. Likewise latched at the start of each submit
+enum { TB_SDX = 1, TB_HOIST = 2, TB_DEFER = 4, TB_FUSE = 8, TB_DS = 16, TB_UDC = 32, TB_ALL = 63 };   // 写回前瞻（提交预扫描索引 + 跨提交账本）/ 纯清除通道提前 / 同目标续用 / 可读 tile 合并 / 深度模板按需挂 / 没写的附件不写回 | Write-back lookahead (per-submit prescan index + cross-submit ledger) / pure-clear pass hoisting / same-target reuse / readable tile merging / depth-stencil attached on demand / unwritten attachments not written back
+int g_tbdr_sub = TB_ALL; static int g_tbdr_sub_eff = TB_ALL;
 static int g_udc_ab = -1, g_udc_ab_on;
 // 本通道没写的附件（只做深度 / 模板测试、颜色写掩码为 0 等）写回改 DontCare：内容本就在内存里，免一次整块写回。
 // 缺省开：Mac 同进程开 / 关截图与空对照同分布；A19 Pro 私有 Depth32F_S8 / RGBA8 DontCare 后读回 0 处不同。
@@ -1804,7 +1808,7 @@ static int g_udc_ab = -1, g_udc_ab_on;
 static int udc_on(void) {
     if (g_udc_ab < 0) { const char *e = getenv("DM_NVN_UNWRITTEN_DC"); g_udc_ab = !(e && !strcmp(e, "0"));
         const char *a = getenv("DM_NVN_UDC_AB"); if (a && !strcmp(a, "1")) { g_udc_ab = 0; g_udc_ab_on = 0; } }
-    return g_udc_ab || g_udc_ab_on;
+    return (g_udc_ab || g_udc_ab_on) && (g_tbdr_sub_eff & TB_UDC);
 }
 // 诊断 DM_NVN_TBDR=0：关掉全部 TBDR 优化（写回前瞻、读入可省、同目标续用、纯清除通道前提、深度模板按需挂），回放走最朴素的「全挂、全读、全写」路径。
 // 只用于等价对照（同一回放局开 / 关逐字节比画面），不是产品配置
@@ -1817,6 +1821,7 @@ static int udc_on(void) {
 int g_tbdr_rt = 1; static int g_tbdr_eff = 1;
 static int tbdr_env(void) { static int v = -1; if (v < 0) { const char *e = getenv("DM_NVN_TBDR"), *r = getenv("DM_NVN_RULER"); v = !(e && !strcmp(e, "0")); g_ruler_truth = r && !strcmp(r, "1"); if (!v) MLOG("DM_NVN_TBDR=0：TBDR 优化全关（等价对照用）"); } return v; }
 static int tbdr_on(void) { return tbdr_env() && g_tbdr_eff && !g_ruler_truth; }
+static int tb_sub(int bit) { return tbdr_on() && (g_tbdr_sub_eff & bit); }
 int dm_nvn_ruler_truth(void) { tbdr_on(); return g_ruler_truth; }   // 视觉尺子真值阶段（宿主侧的被测设置据此让开，如 3D 渲染比例） | Visual ruler ground-truth phase (host-side settings under test yield accordingly, e.g. the 3D render scale)
 static int rt_range_on(void) { static int v = -1; if (v < 0) { const char *e=getenv("DM_NVN_RT_RANGE"); v=e && !strcmp(e,"1"); } return v; }   // 窄候选，缺省关 | Narrow candidate, off by default
 static uint64_t g_sd_dead_bytes, g_sd_n_dead, g_sd_n_all;
@@ -1845,6 +1850,7 @@ enum { XV_INVALID = 1, XV_PENDING_CLEAR = 2, XV_PROBE = 3 };
 typedef struct { uint64_t ser, tag; uint32_t lv, sl; uint8_t state; } xv_ent;
 static xv_ent g_xv[64]; static int g_xv_n, g_xv_block, g_xv_init;
 static void tbdr_latch(void) {   // 每次提交开头：锁存 TBDR 运行时开关，变了就清跨提交的写回核对账本 | At the start of each submission: latch the TBDR runtime switch, and clear the cross-submission writeback check ledger if it changed
+    if (g_tbdr_sub != g_tbdr_sub_eff) { if ((g_tbdr_sub ^ g_tbdr_sub_eff) & TB_SDX) g_xv_n = 0; g_tbdr_sub_eff = g_tbdr_sub; static int n; if (n++ < 4) MLOG("TBDR 子项开关 → 0x%x（提交 %llu 起）", g_tbdr_sub_eff, (unsigned long long)g_sub_serial); }
     if ((g_tbdr_rt != 0) == g_tbdr_eff) return;
     g_tbdr_eff = g_tbdr_rt != 0; g_xv_n = 0; static int n; if (n++ < 4) MLOG("TBDR 运行时开关 → %d（提交 %llu 起）", g_tbdr_eff, (unsigned long long)g_sub_serial);
 }
@@ -3647,7 +3653,7 @@ static uint64_t h_ser(uint64_t h) { int tid = (int)(h & 0xfffff); return tid ? a
 // Events (seq = replay sequence number): READ a draw / dispatch reads this texture per program reflection; ATT it is a current attachment at a draw; CLEAR cleared as a whole block while an attachment; COPY / CLRTEX either end of a copy / the cleared texture.
 // Decision (the first valid event decides): READ / COPY / CLRTEX -> needed; ATT whose SetRenderTargets is after the render pass end -> needed (load); CLEAR with the same -> redundant; no event -> needed.
 // On any uncertainty (replay sequence number does not match the index, nesting too deep) the index is invalidated and all remaining render passes of this submit store (storing is always correct, it just saves less bandwidth).
-typedef struct { uint32_t seq, rtseq; uint64_t ser; const uint8_t *op; uint16_t lv, sl; uint8_t kind, plane, anyls, why; } sdx_ev;   // plane 0 颜色 8 深度模板（ATT）1 深度 2 模板（CLEAR） | plane 0 color 8 depth-stencil (ATT) 1 depth 2 stencil (CLEAR)
+typedef struct { uint32_t seq, rtseq; uint64_t ser; const uint8_t *op; uint16_t lv, sl; uint8_t kind, plane, anyls, why; uint16_t rep; } sdx_ev;   // rep：并进这条的同通道后续 ATT 条数（defer_pre 的步数照原样算）   // plane 0 颜色 8 深度模板（ATT）1 深度 2 模板（CLEAR） | rep: number of later same-pass ATT entries merged into this one (defer_pre step counts unchanged)   // plane 0 color 8 depth-stencil (ATT) 1 depth 2 stencil (CLEAR)
 enum { SDX_READ = 1, SDX_NEED, SDX_ATT, SDX_CLEAR };
 #define SDX_NONE 0xffffffffu
 static sdx_ev *g_sdx, *g_sdx_tmp; static uint32_t g_sdx_n, g_sdx_cap; static int g_sdx_ok;   // 索引有效 | Index valid
@@ -3666,7 +3672,12 @@ static int sdx_bucket(uint64_t ser, int add) {   // 返回桶号；不在集合�
 static const uint8_t **g_sdx_op; static uint32_t g_sdx_nop, g_sdx_opcap;
 static uint32_t g_exec_seq;   // 回放中当前操作的序号 | Sequence number of the current operation during replay
 static uint64_t g_pp_slot[6][160]; static const prog_t *g_pp_prog; static const p_set_rt *g_pp_rt; static uint32_t g_pp_rtseq;
-static uint32_t *g_rtx_seq, *g_drx_seq; static uint32_t g_rtx_n, g_rtx_cap, g_drx_n, g_drx_cap;   // 本次提交的 SET_RT / 绘制序号表（可读 tile 合并的预筛用） | This submit's SET_RT / draw sequence number tables (used by the pre-screen of the readable tile merge)
+static uint32_t *g_rtx_seq, *g_drx_seq; static uint32_t g_rtx_n, g_rtx_cap, g_drx_n, g_drx_cap;
+// 同一通道（同一个 SetRenderTargets 序号）里每次绘制的「作附件」事件内容相同（同贴图、同平面、同级别层），判定都只认第一条：
+// 只记通道里第一次绘制的那几条，后续绘制只在它们的 rep 上加一（g_sdx_attdedup=0 回到每次绘制都记，同进程交替量用）
+// Within the same pass (same SetRenderTargets sequence number), every draw's "as attachment" events have identical content (same texture, same plane, same level/layer), and the decision only looks at the first:
+// only the entries of the first draw in the pass are recorded, and later draws just increment rep on them (g_sdx_attdedup=0 returns to recording every draw, for in-process alternating measurement)
+int g_sdx_attdedup = 1; static uint32_t g_att_rtseq = 0xffffffffu, g_att_idx[9]; static int g_att_n;   // 本次提交的 SET_RT / 绘制序号表（可读 tile 合并的预筛用） | This submit's SET_RT / draw sequence number tables (used by the pre-screen of the readable tile merge)
 static void seq_push(uint32_t **v, uint32_t *n, uint32_t *cap, uint32_t x) { if (*n == *cap) { *cap = *cap ? *cap * 2 : 1024; *v = realloc(*v, *cap * sizeof **v); } (*v)[(*n)++] = x; }
 static void sdx_ev_add(sdx_ev e) { if (sdx_bucket(e.ser, 0) < 0) return; if (g_sdx_n == g_sdx_cap) { g_sdx_cap = g_sdx_cap ? g_sdx_cap * 2 : 4096; g_sdx = realloc(g_sdx, g_sdx_cap * sizeof *g_sdx); g_sdx_tmp = realloc(g_sdx_tmp, g_sdx_cap * sizeof *g_sdx); } g_sdx[g_sdx_n++] = e; }
 static void sdx_lvsl(const view_t *v, int hv, uint16_t *lv, uint16_t *sl) { *lv = (uint16_t)(hv && v->set_levels ? v->base_level : 0); *sl = (uint16_t)(hv && v->set_layers ? v->min_layer : 0); }
@@ -3708,9 +3719,13 @@ static void sdx_walk(const uint8_t *p, int depth) {
                         if (k < 0 || k >= 160 || sh->stage < 0 || sh->stage >= 6) continue; uint64_t ser = g_pp_slot[sh->stage][k];
                         if (ser) sdx_ev_add((sdx_ev){seq, 0, ser, p, 0, 0, SDX_READ, 0, 0, 1}); } }
                 const p_set_rt *r = g_pp_rt;
-                if (h.op != OP_DISPATCH && r) {
+                if (h.op != OP_DISPATCH && r && g_sdx_attdedup && g_att_rtseq == g_pp_rtseq) {
+                    for (int q = 0; q < g_att_n; q++) if (g_sdx[g_att_idx[q]].rep < 0xffff) g_sdx[g_att_idx[q]].rep++;
+                } else if (h.op != OP_DISPATCH && r) {
+                    uint32_t n0 = g_sdx_n; g_att_rtseq = g_pp_rtseq; g_att_n = 0;
                     for (int k = 0; k < r->n && k < 8; k++) if (r->color[k]) { uint16_t lv, sl; sdx_lvsl(&r->cview[k], r->has_cview[k], &lv, &sl); sdx_ev_add((sdx_ev){seq, g_pp_rtseq, r->color[k]->serial, p, lv, sl, SDX_ATT, 0, 0, 2}); }
                     if (r->depth) { uint16_t lv, sl; sdx_lvsl(&r->dview, r->has_dview, &lv, &sl); sdx_ev_add((sdx_ev){seq, g_pp_rtseq, r->depth->serial, p, lv, sl, SDX_ATT, 8, !r->has_dview, 2}); }
+                    for (uint32_t q = n0; q < g_sdx_n && g_att_n < 9; q++) if (g_sdx[q].kind == SDX_ATT) g_att_idx[g_att_n++] = q;
                 }
                 break; }
             case OP_COPY_T2T: { const p_copy_t2t *c = a; if (c->src) sdx_ev_add((sdx_ev){seq, 0, c->src->serial, p, 0, 0, SDX_NEED, 0, 0, 3}); if (c->dst) sdx_ev_add((sdx_ev){seq, 0, c->dst->serial, p, 0, 0, SDX_NEED, 0, 0, 3}); break; }
@@ -3722,7 +3737,7 @@ static void sdx_walk(const uint8_t *p, int depth) {
     }
 }
 void mtl_sub_index(const uint64_t *h, int n) {   // 提交开始（hle_nvn.c QueueSubmitCommands）：建本次提交的写回前瞻索引 | Start of submit (hle_nvn.c QueueSubmitCommands): build this submit's store lookahead index
-    g_xv_ntouch = 0; g_sdx_n = g_sdx_nop = 0; g_rtx_n = g_drx_n = 0; g_exec_seq = 0; g_sdx_ok = tbdr_on();
+    g_xv_ntouch = 0; g_sdx_n = g_sdx_nop = 0; g_rtx_n = g_drx_n = 0; g_exec_seq = 0; g_sdx_ok = tb_sub(TB_SDX); g_att_rtseq = SDX_NONE; g_att_n = 0;
     if (!g_sdx_ok) { g_xv_n = 0; g_xv_block = 1; return; }   // 索引不可用：账本清空、本次提交不新增（没法核下一次触碰） | Index unavailable: clear the ledger and add nothing in this submit (the next touch cannot be verified)
     g_xv_block = 0;
     memset(g_sdx_hk, 0, sizeof g_sdx_hk); g_sdx_nb = 0;
@@ -3939,9 +3954,9 @@ static int prog_samples_ser(const prog_t *pg, uint64_t tex[6][128], uint64_t img
 static int g_defer_env_ab, g_defer_env_off;   // 环境开关：每次提交开始（defer_reset）读一次，热路径不调 getenv | Environment switches: read once at the start of each submit (defer_reset); the hot path does not call getenv
 static void defer_env(void) { const char *x = getenv("DM_NVN_DEFER_AB"), *e = getenv("DM_NVN_DEFER"); g_defer_env_ab = x && !strcmp(x, "1"); g_defer_env_off = e && !strcmp(e, "0"); }
 static int defer_on(void) {
-    if (!g_defer_env_ab) return tbdr_on() && !g_defer_env_off;
+    if (!g_defer_env_ab) return tb_sub(TB_DEFER) && !g_defer_env_off;
     if (g_defer_ab < 0) { g_defer_ab = 0; g_defer_ab_on = 0; }
-    return tbdr_on() && (g_defer_ab || g_defer_ab_on); }
+    return tb_sub(TB_DEFER) && (g_defer_ab || g_defer_ab_on); }
 static int defer_handle_sub(uint64_t h, const p_set_rt *r, int k, int cover) {
     int tid = (int)(h & 0xfffff); if (!tid || tid >= g_ntreg || !g_treg[tid].ok) return 0;
     uint64_t ser; int lv, sl; rt_sub(r, k, &ser, &lv, &sl); if (!ser || g_treg[tid].t.serial != ser) return 0;
@@ -4064,9 +4079,14 @@ static int defer_pre(void) {
         int b = sdx_bucket(ser, 0); if (b < 0) return 0;
         uint32_t lo = g_sdx_bst[b], end = g_sdx_bst[b + 1], hi = end;
         while (lo < hi) { uint32_t m = (lo + hi) / 2; if (g_sdx[m].seq <= P) lo = m + 1; else hi = m; }
-        int ok = 0, same = 0; uint32_t walk = 0, prt = lo > g_sdx_bst[b] && g_sdx[lo - 1].seq == P ? g_sdx[lo - 1].rtseq : SDX_NONE;   // P 本通道的 SetRenderTargets 序号（取本次绘制的作附件事件） | SetRenderTargets sequence number of P's own render pass (taken from this draw's used-as-attachment event)
+        // P 本通道的 SetRenderTargets 序号：原先取本次绘制的作附件事件；作附件事件按通道去重后改按 SET_RT 序号表取 P 之前最后一个（同一个值）
+        // SetRenderTargets sequence number of P's own pass: previously taken from this draw's as-attachment event; after as-attachment events were deduplicated per pass, it is taken from the SET_RT sequence table as the last one before P (same value)
+        uint32_t prt = SDX_NONE;
+        if (!g_sdx_attdedup) prt = lo > g_sdx_bst[b] && g_sdx[lo - 1].seq == P ? g_sdx[lo - 1].rtseq : SDX_NONE;
+        else { uint32_t a0 = 0, a1 = g_rtx_n; while (a0 < a1) { uint32_t m = (a0 + a1) / 2; if (g_rtx_seq[m] <= P) a0 = m + 1; else a1 = m; } if (a0 > 0) prt = g_rtx_seq[a0 - 1]; }
+        int ok = 0, same = 0; uint32_t walk = 0;
         for (uint32_t j = lo; j < end; j++) { const sdx_ev *e = &g_sdx[j];
-            if (++walk > 64) return 0;   // 事件太多（被大量采样的贴图）：不当候选，保守且免长走 | Too many events (a heavily sampled texture): not taken as a candidate, conservative and avoids a long walk
+            walk += 1u + e->rep; if (walk > 64) return 0;   // 事件太多（被大量采样的贴图）：不当候选，保守且免长走（并掉的同通道作附件事件照原样计步） | Too many events (heavily sampled texture): not a candidate; conservative and avoids long walks (merged same-pass as-attachment events still count steps as before)
             if (g_hoist_n && hoist_skipped(e->op)) continue;
             if (e->kind == SDX_READ || e->kind == SDX_NEED) continue;   // 读事件不带级别（读别的级不冲突），交给完整前瞻按级别核 | Read events carry no level (reading another level is not a conflict); handed to the full lookahead to check by level
             if (e->plane != 0 || e->lv != lv || e->sl != sl) continue;
@@ -4704,13 +4724,13 @@ static void draw(const p_draw *dw, const p_draw_idx *di) {
 #endif
     int defer_q_draw = !g_enc && !g_defer_replaying && g_defer_natq > 0;   // Q 开通道的这次绘制：通道照常经 hoist_try / fuse_try 开好后，先回放 P 再画本次 | The draw that opens Q's render pass: after the render pass is opened as usual through hoist_try / fuse_try, replay P first and then draw this one
     if (g_frz_state) goto frz_plain;   // 世界冻结的完整帧 / 冻结帧：不前提、不推迟、不合并（跳通道的状态机要看到每一条设目标） | Full frame / frozen frame of world freeze: no hoisting, no deferral, no merging (the pass-skipping state machine must see every set-target)
-    if (!g_enc && tbdr_on()) hoist_try();   // 先把夹在本通道与其续用之间的纯清除通道提前做掉（rp_begin_ex 之前，不占本通道） | First hoist and execute the pure-clear render passes sandwiched between this render pass and its continuation (before rp_begin_ex, not occupying this render pass)
+    if (!g_enc && tb_sub(TB_HOIST)) hoist_try();   // 先把夹在本通道与其续用之间的纯清除通道提前做掉（rp_begin_ex 之前，不占本通道） | First hoist and execute the pure-clear render passes sandwiched between this render pass and its continuation (before rp_begin_ex, not occupying this render pass)
     // 推迟判定在 hoist_try 之后：被提前的纯清除通道在前瞻里跳过，P 的同目标续段才认得出来
     // The deferral decision comes after hoist_try: hoisted pure-clear render passes are skipped in the lookahead, and only then can P's same-target continuation segment be recognized
     if (!g_enc && tbdr_on() && !defer_has_in_p() && !g_defer_replaying && !g_fz.active && !g_fz_checking && g_exec_next) { defer_try(dw, di); if (g_defer_cur->active && g_defer_cur->in_p) return; }
-    if (!g_enc && tbdr_on() && !g_fz_checking) fuse_try();   // 可读 tile 通道合并缺省开；结构 / 本像素证明不成立仍退回普通通道，CHECK 重画时不重入 | Readable tile render pass merge is on by default; when the structure / same-pixel proof does not hold it still falls back to a normal render pass, and it is not re-entered during the CHECK redraw
+    if (!g_enc && tb_sub(TB_FUSE) && !g_fz_checking) fuse_try();   // 可读 tile 通道合并缺省开；结构 / 本像素证明不成立仍退回普通通道，CHECK 重画时不重入 | Readable tile render pass merge is on by default; when the structure / same-pixel proof does not hold it still falls back to a normal render pass, and it is not re-entered during the CHECK redraw
 frz_plain:;
-    int need = g_enc || !tbdr_on() ? 3 : pass_ds_need(), mode = defer_q_draw ? 0 : need == 0 ? 2 : need == 2 ? 3 : need == 1 ? 4 : 0;   // 2 都不挂 3 只挂模板 4 只挂深度 | 2 attach neither, 3 attach stencil only, 4 attach depth only
+    int need = g_enc || !tb_sub(TB_DS) ? 3 : pass_ds_need(), mode = defer_q_draw ? 0 : need == 0 ? 2 : need == 2 ? 3 : need == 1 ? 4 : 0;   // 2 都不挂 3 只挂模板 4 只挂深度 | 2 attach neither, 3 attach stencil only, 4 attach depth only
     int skip_d = mode != 0;
     if (!g_enc) { g_fd_dw = dw; g_fd_di = di; }
     id<MTLRenderCommandEncoder> en = rp_begin_ex(mode);
@@ -6082,7 +6102,7 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
             double b[300]; memcpy(b, e2e, sizeof b);
             for (int i = 1; i < 300; i++) { double v = b[i]; int j = i - 1; while (j >= 0 && b[j] > v) { b[j + 1] = b[j]; j--; } b[j + 1] = v; }
             MLOG("显示节拍 至 %llu：节拍 300、出图 %llu、空节拍 %llu、合并丢弃旧帧 %llu；提交领先目标上屏 p50 %.3f ms / 最小 %.3f ms；游戏入队到目标上屏 p50 %.3f ms / 最小 %.3f / 最大 %.3f ms",
-                 (unsigned long long)g_link_tick_n, (unsigned long long)g_present_n, (unsigned long long)(g_link_tick_n - g_present_n),
+                 (unsigned long long)g_link_tick_n, (unsigned long long)lead_n, (unsigned long long)(g_link_tick_n - lead_n),   // 只数节拍里出的图：节拍停了改自己取 drawable 的那段不算（原先用总出图数，抢救后减成负数） | Count only frames presented via the display link: the period of acquiring drawables ourselves after a stall does not count (previously the total present count was used, which went negative after a rescue)
                  (unsigned long long)g_link_dropped, a[149], a[0], b[149], b[0], b[299]);
         }
     }
@@ -6143,6 +6163,14 @@ static int present_now(const tex_t *, double, uint64_t, uint64_t, const int[4], 
 #define STALL_NS 100000000ull
 #define STALL_RED_NS 2000000000ull
 static uint64_t g_stall_t0, g_stall_drop, g_stall_n; static int g_stall_red, g_stall_logged;
+// 激活中节拍停够 LINK_RESCUE_NS 就不再干等它回来：改成出图线程自己取 drawable 上屏（模式 0，不靠节拍回调），画面接着动；
+// 过 g_rescue_back_ns 再换回节拍试一次，又停就把间隔翻倍（上限 60 秒）。两份日志：iPhone 激活中节拍停了再没回来，
+// 原兜底只丢帧，画面定住 80 秒（玩家看到「黑屏 / 锁死」）。全在 g_pq_mu 下改；模式切换由 link_sync 在游戏出图线程上做
+// When the display link stalls for LINK_RESCUE_NS while active, stop waiting for it: switch to the present thread acquiring a drawable itself (mode 0, no display-link callback), so the picture keeps moving;
+// after g_rescue_back_ns, switch back to the display link once more, and if it stalls again double the interval (cap 60 s). Two logs: on iPhone the display link stalled while active and never came back,
+// and the old fallback only dropped frames, freezing the picture for 80 s (players saw a "black screen / lockup"). All changes are made under g_pq_mu; mode switching is done by link_sync on the game present thread
+#define LINK_RESCUE_NS 500000000ull
+static int g_rescue_mode; static uint64_t g_rescue_back_at, g_rescue_back_ns = 3000000000ull, g_rescue_n;
 // 显示节拍看门狗只认「激活」状态：App 失去活跃（下拉控制中心 / 通知、来电、系统弹窗）和后台里系统本来就不回调，画面也被盖住——丢帧兜底照旧，
 // 但不算卡住、不报红；停顿从「最近一次回调 / 最近一次激活」较晚的那个算起（A16 日志：失活 8–17 秒、后台 17 秒都被报成「前台卡住」）
 // The display link watchdog only recognizes the "active" state: when the App loses active status (pulling down Control Center / notifications, incoming call, system popup) and in the background the system does not call back anyway, and the picture is covered too -- the frame-drop fallback stays as before,
@@ -6206,7 +6234,11 @@ static void *link_main(void *arg) {   // 显示节拍线程：切到节拍模式
     return NULL;
 }
 static void link_sync(void) {   // 游戏出图线程每帧调：把节拍对象的状态对齐到 g_dm_present_link、省电模式与屏幕刷新率（运行中可改） | Called every frame by the game present thread: aligns the pacing object state with g_dm_present_link, power saving mode and screen refresh rate (changeable at runtime)
-    static int applied; static double applied_hz; int want = g_dm_present_link;
+    static int applied; static double applied_hz;
+    if (g_rescue_mode && now_ns() >= g_rescue_back_at) {   // 抢救期满：换回节拍再试（停顿计时从头算，免得刚换回就按旧停顿再抢救） | Rescue period expired: switch back to the display link and retry (stall timing restarts, so we do not rescue again right after switching back based on the old stall)
+        pthread_mutex_lock(&g_pq_mu); g_dm_present_link = g_rescue_mode; g_rescue_mode = 0; g_stall_t0 = 0; g_link_tick_ns = now_ns(); pthread_mutex_unlock(&g_pq_mu);
+        MLOG("显示节拍：抢救期满，换回节拍模式 %d 再试（帧 %llu）", g_dm_present_link, (unsigned long long)atomic_load(&g_cur_frame)); }
+    int want = g_dm_present_link;
     if (want < 0 || want > 2) { g_dm_present_link = applied == 3 ? 1 : applied; return; }
     if (want && mtl_fps_target() == 30) want = 3;   // 省电模式：显示节拍 30 Hz（按屏幕刷新率取整除档） | Power saving mode: display pacing 30 Hz (evenly dividing tier by screen refresh rate)
     if (want == applied && want && want != 2 && g_link) {   // 窗口换了屏 / 屏幕改了刷新率：节拍跟着换到新的整除档 | Window moved to another screen / screen refresh rate changed: pacing switches to the new evenly dividing tier
@@ -6331,6 +6363,11 @@ void mtl_present_wait(uint64_t tk) {
         int active = dm_focus_now() == 1; uint64_t since = dm_focus_in_since(), from = g_stall_t0 > since ? g_stall_t0 : since;
         if (active && !g_stall_logged && now - from >= STALL_NS) { g_stall_logged = 1;
             MLOG("显示节拍 %.0f ms 没回调（激活中）：丢掉排队未上屏的 %llu 帧，游戏继续（第 %llu 段；节拍回来自动照常）", (now - from) / 1e6, (unsigned long long)n, (unsigned long long)g_stall_n); }
+        if (active && !g_rescue_mode && g_dm_present_link && now - from >= LINK_RESCUE_NS) {
+            g_rescue_mode = g_dm_present_link; g_dm_present_link = 0; g_rescue_n++; g_rescue_back_at = now + g_rescue_back_ns;
+            MLOG("显示节拍激活中停了 %.0f ms：改为自己取 drawable 出图（第 %llu 次），%.0f 秒后再换回节拍试", (now - from) / 1e6, (unsigned long long)g_rescue_n, g_rescue_back_ns / 1e9);
+            if (g_rescue_back_ns < 60000000000ull) g_rescue_back_ns *= 2;
+        }
         if (active && !g_stall_red && now - from >= STALL_RED_NS) { g_stall_red = 1; MLOG("【红】显示节拍激活中连续 %.1f 秒没回调，出图全靠兜底丢帧，画面不动", (now - from) / 1e9); }
     }
     pthread_mutex_unlock(&g_pq_mu);
@@ -6348,6 +6385,7 @@ void mtl_bw(uint64_t *load, uint64_t *store, uint64_t *full) { *load = g_bw_load
 uint64_t mtl_udc_saved_bytes(void) { return g_udc_saved_bytes; }
 int mtl_has_window(void) { return front_metal_layer() != NULL; }
 int mtl_link_active(void) { return link_on(); }
+double mtl_link_tick_age_ms(void) { uint64_t t = __atomic_load_n(&g_link_tick_ns, __ATOMIC_RELAXED); return t ? (now_ns() - t) / 1e6 : -1; }
 void mtl_link_pause(int on) { CAMetalDisplayLink *l = g_link; if (l) l.paused = on != 0; }   // 测试用（DM_TEST_BG）：模仿系统在后台停掉节拍回调 | For testing (DM_TEST_BG): imitates the system stopping the display-link callback in the background
 int mtl_link_wait_tick(uint64_t timeout_ns) {
     if (!mtl_link_active()) return 0;

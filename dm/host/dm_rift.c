@@ -461,26 +461,26 @@ void dm_rift_client_pump(uint8_t *b) {
 //     「起算层那只怪」= 这只怪按 MonLvl 表抬到 9 层等级（角色等级 + 2，96 封顶；原生等级更高的就是它自己）时的生命 / 伤害。
 //     实现 = 等级表倍率 × 一个补足的百分比，两者相乘正好是上面的总倍率；所以每只怪的终值只和（原生值、9 层等级、层数）有关。
 //   三个数可用环境变量覆盖，联调只改数不改代码：DM_RIFT_GROW_HP100（百分数，缺省 487）、DM_RIFT_GROW_DM100（缺省 388）、DM_RIFT_GROW_FROM（起算层，缺省 9）。
-//   精英组数（原值的倍数）：1–40 层 ×2、41–50 ×2.5、51–60 ×3、61–80 ×3.5、81–100 ×4。密度全程 ×3（等真机帧率数再动）。
+//   精英组数（原值的倍数）：1–40 层 ×1、41–50 ×1.25、51–60 ×1.5、61–80 ×1.75、81–100 ×2。密度全程 ×1.5（原 ×3 与精英 ×2–×4 都砍一半，保 60 帧）。
 // 首版不含：冠军 / 金怪词缀数、抗性 / 免疫词缀权重（设计稿 41–60、81–100 层那两项，另读码）。
 //   伤害那份补足的百分比（两次定）：40 层之前不加；从起加层的 0 起逐层线性加到 100 层的现值（100 层终点不变，中间不留台阶——人物给点也是平滑的）。
 //     原版在怪物切动作模式时按「当前等级」重查 MonLvl 算最小 / 最大伤害和命中值（0x689220，实测 144 行读数逐值相等），我们抬了等级它自己就涨；
 //     这份百分比是在那之上另乘的。起加层 DM_RIFT_GROW_DM_FROM（缺省 40），终点仍由 DM_RIFT_GROW_DM100 定
-// ---- Difficulty: from Rift level 9, spawned monsters are modified in proportion to the MonLvl table
-// Rift level → monster level / total multiplier / elite pack multiple:
-//   Monster level: Rift levels 9–25 = character level + 2 + (Rift level − 9), capped at 96; from Rift level 26, +1 per level beyond 96 (character level no longer considered), capped at 109 at Rift level 38 (lvl_cap; the largest row of the MonLvl table is 110, which is not used, see below).
-//     Besides the "both sides' levels" term in the hit formula and the panel display, the level also brings the original game's own damage / attack rating table lookup (see the damage item below); the amount of life is set by the line below.
-//   Total multiplier (relative to "the same monster's value at the baseline Rift level 9"), linear all the way from Rift level 9 to Rift level 100 -- points on the character side come at a steady rate (1 skill point every 2 Rift levels), so monsters must be steady too,
-//     flat first and steep later would let the character pull ahead in the first 40 Rift levels and be unable to keep up afterwards (both sides are tuned together to "slightly challenging"):
-//       life(T) = 1 + (GROW_HP100 − 1) × (T − 9) / 91, damage(T) = 1 + (GROW_DM100 − 1) × (T − 9) / 91; defaults at Rift level 100 ×4.87 / ×3.88.
-//     "The monster at the baseline Rift level" = this monster's life / damage when raised by the MonLvl table to the Rift level 9 monster level (character level + 2, capped at 96; one whose native level is higher stays as it is).
-//     Implementation = level table multiplier × a make-up percentage, the product of the two being exactly the total multiplier above; so each monster's final value depends only on (native value, Rift level 9 monster level, Rift level number).
-//   The three numbers can be overridden with environment variables, so tuning changes numbers only, not code: DM_RIFT_GROW_HP100 (percent, default 487), DM_RIFT_GROW_DM100 (default 388), DM_RIFT_GROW_FROM (baseline Rift level, default 9).
-//   Elite pack count (multiple of the original value): Rift levels 1–40 ×2, 41–50 ×2.5, 51–60 ×3, 61–80 ×3.5, 81–100 ×4. Density ×3 throughout (to be changed only once real device frame rate numbers are in).
-// Not in the first version: champion / unique monster affix counts, resistance / immunity affix weights (the two design items for Rift levels 41–60 and 81–100; the code is to be read separately).
-//   The make-up percentage for damage (decided in two rounds): none before Rift level 40; from 0 at the start Rift level it rises linearly per Rift level to the current value at Rift level 100 (the Rift level 100 end point is unchanged, and no step is left in between -- character points are smooth too).
-//     When a monster switches action mode the original game looks MonLvl up again by "current level" to compute min / max damage and attack rating (0x689220, measured: 144 rows of readouts equal value for value), so it rises by itself once we raise the level;
-//     this percentage is multiplied on top of that. Start Rift level DM_RIFT_GROW_DM_FROM (default 40); the end point is still set by DM_RIFT_GROW_DM100
+// ---- Difficulty: from Rift level 9, spawned monsters are scaled by MonLvl table ratios
+// Rift level → monster level / total multiplier / elite pack multiplier:
+//   Monster level: levels 9–25 = character level + 2 + (level − 9), capped at 96; from level 26, +1 per level after 96 (character level no longer considered), capped at 109 at level 38 (lvl_cap; the MonLvl table's max row is 110 and is not used, see below).
+//     Besides the "both sides' level" term in the hit formula and the panel display, monster level also drives the original game's own damage / attack rating lookups (see the damage item below); the amount of life is set by the line below.
+//   Total multiplier (relative to "the same monster's value at the base level, 9"), linear all the way from level 9 to level 100: the player side gains points at a steady rate (1 skill point per 2 levels), so monsters must scale steadily too;
+//     flat first and steep later would let the player overtake for the first 40 levels and fall behind afterwards (both sides tuned together to "slightly challenging"):
+//       Life(T) = 1 + (GROW_HP100 − 1) × (T − 9) / 91, Damage(T) = 1 + (GROW_DM100 − 1) × (T − 9) / 91; default at level 100 ×4.87 / ×3.88.
+//     "The monster at the base level" = this monster's life / damage when raised via the MonLvl table to the level-9 monster level (character level + 2, capped at 96; if its native level is higher, it is itself).
+//     Implementation = level-table ratio × a compensating percentage, whose product is exactly the total multiplier above; so each monster's final value depends only on (native value, level-9 monster level, Rift level).
+//   The three numbers can be overridden by environment variables, so tuning changes numbers, not code: DM_RIFT_GROW_HP100 (percent, default 487), DM_RIFT_GROW_DM100 (default 388), DM_RIFT_GROW_FROM (base level, default 9).
+//   Elite pack count (multiple of the original): levels 1–40 ×1, 41–50 ×1.25, 51–60 ×1.5, 61–80 ×1.75, 81–100 ×2. Density ×1.5 throughout (the original ×3 and elite ×2–×4 are both halved to keep 60 fps).
+// Not in the first version: champion / unique affix counts, resistance / immunity affix weights (the two items for levels 41–60 and 81–100 in the design doc; need separate code reading).
+//   The compensating percentage for damage (set in two passes): none before level 40; from 0 at the start level it rises linearly per level to the current value at level 100 (the level-100 endpoint is unchanged, with no step in between, since player point gains are smooth too).
+//     When a monster switches animation mode, the original game re-reads MonLvl at the "current level" to compute min / max damage and attack rating (0x689220; 144 measured rows match value for value), so raising the level raises them by itself;
+//     this percentage is multiplied on top of that. Start level DM_RIFT_GROW_DM_FROM (default 40); the endpoint is still set by DM_RIFT_GROW_DM100
 static int grow_cfg(int which) { static int v[4] = { -1, -1, -1, -1 }; static const char *const nm[4] = { "DM_RIFT_GROW_HP100", "DM_RIFT_GROW_DM100", "DM_RIFT_GROW_FROM", "DM_RIFT_GROW_DM_FROM" }; static const int def[4] = { 487, 388, 9, 40 };
     if (v[which] < 0) { const char *e = getenv(nm[which]); v[which] = e && atoi(e) > 0 ? atoi(e) : def[which]; if (which < 2 && v[which] < 100) v[which] = 100; if (which == 2 && (v[which] < 9 || v[which] > 99)) v[which] = 9; if (which == 3 && v[which] < 9) v[which] = 9; } return v[which]; }
 // 怪物等级上限（封顶 109）：MonLvl 表 110 级那一行的命中值是断崖（109 级 4320 → 110 级 6532，伤害列只 124 → 130），怪一到 110 级对人物的命中率一步跳十几个点；
@@ -707,7 +707,18 @@ static int door_line_open(uint64_t lvt, int ax, int ay, int x, int y) { int n = 
         if (((uint32_t (*)(uint64_t, int, int, int))(B + 0x4ce020))(r2, cx, cy, 1) & 0xffff) return 0; }
     return 1; }
 // 不挡路：这一格周围 5 格内（11 × 11）没有一格是墙——开阔地上的门绕得过去；台阶口、巷子、门洞旁边都有墙，落不上（Mac 实测：只查直线时选到 (5047,5061)，正堵在北边石阶顶上）
-// Not blocking the way: no tile within 5 tiles around this one (11 × 11) is a wall -- a door on open ground can be walked around; step openings, alleys and doorways all have walls nearby and cannot be picked (measured on Mac: when only the straight line was checked, (5047,5061) was picked, blocking the very top of the northern stone steps)
+// 以 (x, y) 为中心按玩家自己的碰撞掩码填可达窗口并广搜（dm_doorspot.h）：掩码取路径结构 +0x64，读不到用 0x1c09（同点地寻路 dm_world.c），问原版碰撞查询 main+0x4ce020；
+// G 非 0 时（闯入首领）没载入的房间先用原版房间初始化（只建数据、不刷怪）、掩码去掉单位占位 0x1000；G 为 0（结算门）没载入的房间按全挡答，人自己中心格的 0x1000 不算。返回用的掩码
+// Not blocking the path: no wall within 5 tiles of this tile (11 × 11), so a door on open ground can be walked around; stair tops, alleys and doorways all have walls nearby and are rejected (measured on Mac: checking only straight lines picked (5047,5061), right on top of the northern stone stairs)
+// With (x, y) as center, fill the reachability window using the player's own collision mask and run a breadth-first search (dm_doorspot.h): the mask comes from path structure +0x64, falling back to 0x1c09 if unreadable (same as click-to-move pathfinding in dm_world.c), querying the original collision lookup main+0x4ce020;
+// when G is nonzero (invading boss), unloaded rooms are first initialized with the original room init (data only, no monster spawn) and unit occupancy 0x1000 is removed from the mask; when G is 0 (settlement door), unloaded rooms are treated as fully blocked and 0x1000 on the player's own center tile is ignored. Returns the mask used
+static uint32_t ds_fill(uint64_t G, uint64_t player, int x, int y, struct ds_grid *dg) {
+    uint64_t lvp = level_of(player), pp = rd(player + 0x38); uint32_t mk = pp ? *(uint32_t *)(uintptr_t)(pp + 0x64) : 0; if (!(mk & 1) || (mk & ~0xffffu)) mk = 0x1c09;
+    if (G) mk &= ~0x1000u;   /* 闯入首领（G 非 0 的那路）只看墙和物件：0x1000 是单位占位，佣兵 / 召唤物贴着人站时会把脚下四邻全标成挡（图 53 / 54 入口「窗口内可达 1 格」，单位走开后同一站位可达 2118 格） | Invading boss (the path with nonzero G) only looks at walls and objects: 0x1000 is unit occupancy, and a mercenary / summon standing next to the player would mark all four neighbors under the feet as blocked (map 53 / 54 entrance "1 reachable tile in window"; after the units moved away, the same position reached 2118 tiles) */
+    for (int iy = 0; iy < DS_W; iy++) for (int ix = 0; ix < DS_W; ix++) { int cx = x + ix - DS_R, cy = y + iy - DS_R; uint64_t r = G ? room_load(G, lvp, cx, cy) : room_at(lvp, cx, cy);
+        uint32_t v = r ? ((uint32_t (*)(uint64_t, int, int, int))(B + 0x4ce020))(r, cx, cy, (int)mk) & 0xffff : 1; if (ix == DS_R && iy == DS_R) v &= ~0x1000u; dg->blk[iy * DS_W + ix] = v != 0; }
+    ds_flood_r(dg, G ? 2 : 0); return mk;
+}
 static int door_clear(uint64_t lvt, int x, int y) { for (int dy = -5; dy <= 5; dy++) for (int dx = -5; dx <= 5; dx++) { uint64_t r = room_at(lvt, x + dx, y + dy); if (!r || (((uint32_t (*)(uint64_t, int, int, int))(B + 0x4ce020))(r, x + dx, y + dy, 1) & 0xffff)) return 0; } return 1; }
 static uint64_t pick_door_spot(uint64_t G, uint64_t lvt, int lvno, int ax, int ay, int32_t out[2]) {   // 锚点周围 40 格内全部合规的格子里取离锚点最近的 | Among all compliant tiles within 40 tiles of the anchor, take the one closest to the anchor
     long best = -1; uint64_t broom = 0; int bx = 0, by = 0, c[6] = {0};   // c：各条规则依次筛下来还剩多少格（找不到时打出来看卡在哪条） | c: how many tiles remain after each rule filters in turn (printed when nothing is found, to see which rule it is stuck on)
@@ -764,7 +775,11 @@ void svc_rift_exit(uint64_t *regs) {
 // This path is identified by player state, not by level id: changing level while dead = resurrect in town, the destination is unified to Harrogath
 // (the Rift's town, where the Rift gate is), the Rift stays in progress, and "Continue" at the gate goes back
 static void rift_level_obs(const uint64_t *regs) {
-    uint64_t G = regs[0], pl = regs[1]; int lv = (int)(uint32_t)regs[2]; if (!rift_exit_active(G, pl)) return;
+    uint64_t G = regs[0], pl = regs[1]; int lv = (int)(uint32_t)regs[2];
+    // 普通冒险也记录服务端实际换图请求；不记角色名，不改变目的地或重试传送。
+    // Normal adventuring also records the server's actual level-change requests; character names are not recorded, and destinations and teleport retries are not changed.
+    if (G && pl) LOG("换图请求诊断：拍 %u 玩家 %u 当前 %d 目标 %d 方式 %u 秘境状态 %d", *(uint32_t *)(uintptr_t)(G + 0x170), *(uint32_t *)(uintptr_t)(pl + 8), unit_level(pl), lv, (uint32_t)regs[3], atomic_load(&K.st));
+    if (!rift_exit_active(G, pl)) return;
     uint32_t pm = *(uint32_t *)(uintptr_t)(pl + 0xc);
     // 城镇 / 本次秘境图的放行以前没有记录：读取画面中崩溃时，最后一次目标和方式会丢失。只在实际换关入口记，不逐帧轮询。
     // The clearance of the town / this rift's maps previously left no record: on a crash during the loading screen, the last target and method were lost. Recorded only at the actual level change entry, not polled every frame.
@@ -965,8 +980,8 @@ static void maze_restore(uint64_t G, uint64_t player) {   // 只在换局时调�
         *(int32_t *)(uintptr_t)(a + (uint64_t)g_mz[i].row * 0x1c + 0xc) = g_mz[i].old; LOG("秘境：换局，LvlMaze 第 %d 行地狱房间数写回 %d", g_mz[i].row, g_mz[i].old); }
     g_nmz = k;
 }
-// 本局怪物区域（游戏 +0x1d0 + 8 × 关卡号；+0x2c4 密度、+0x2c8 / +0x2c9 精英组数下 / 上限）的原值：开局按原值 × 3 / × 2；结算后置 0（已结算的图不再填怪）；秘境结束写回
-// Original values of this run's monster regions (game +0x1d0 + 8 × level id; +0x2c4 density, +0x2c8 / +0x2c9 lower / upper limit of elite pack count): at rift start use original × 3 / × 2; set to 0 after completion (completed maps are not populated again); written back when the rift ends
+// 本局怪物区域（游戏 +0x1d0 + 8 × 关卡号；+0x2c4 密度、+0x2c8 / +0x2c9 精英组数下 / 上限）的原值：开局按原值 × 1.5 / × 1–2（原 × 3 / × 2–4）；结算后置 0（已结算的图不再填怪）；秘境结束写回
+// Original values of this game's monster area (game +0x1d0 + 8 × level number; +0x2c4 density, +0x2c8 / +0x2c9 elite pack count min / max): at start set to original × 1.5 / × 1–2 (formerly × 3 / × 2–4); set to 0 after settlement (a settled map no longer fills monsters); written back when the Rift ends
 static struct { uint64_t G; int have, den; uint8_t umin, umax; } g_reg[140];
 static int32_t *region_of(uint64_t G, int lv, uint8_t **umin, uint8_t **umax) { uint64_t r = lv > 0 && lv < 140 ? rd(G + 0x1d0 + 8ull * lv) : 0; if (!r) return 0;
     if (g_reg[lv].G != G || !g_reg[lv].have) { g_reg[lv].G = G; g_reg[lv].have = 1; g_reg[lv].den = *(int32_t *)(uintptr_t)(r + 0x2c4); g_reg[lv].umin = *(uint8_t *)(uintptr_t)(r + 0x2c8); g_reg[lv].umax = *(uint8_t *)(uintptr_t)(r + 0x2c9); }
@@ -1023,9 +1038,11 @@ static void rift_setup(uint64_t G) {
     uint64_t T = tables(G), a = T ? rd(T + 0x18f8) : 0, n = T ? rd(T + 0x1900) : 0;
     for (int i = 0; i < K.nmaps; i++) { int lv = K.maps[i]; uint64_t r = rd(G + 0x1d0 + 8ull * lv); if (!r) { LOG("【红】秘境：关卡 %d 没有怪物区域", lv); continue; }
         uint8_t *umin, *umax; int32_t *den = region_of(G, lv, &umin, &umax); int d0 = g_reg[lv].den, a0 = g_reg[lv].umin, b0 = g_reg[lv].umax;   // 从原值算（上一次秘境结算后置过 0） | Computed from the original values (they were set to 0 after the previous rift completion)
-        int e2 = tier_elite_x2(K.tier); *den = d0 * 3 > 10000 ? 10000 : d0 * 3; *umin = a0 * e2 / 2 > 255 ? 255 : a0 * e2 / 2; *umax = b0 * e2 / 2 > 255 ? 255 : b0 * e2 / 2;
+        // 密度与精英组数都砍一半保 60 帧（真机热机主线程 / 翻译线程各 16–19 ms，超出 16.7 ms 预算）——密度 ×3 → ×1.5、精英组数 ×2–×4 → ×1–×2（倍数表不动，计算时多除 2）
+        // Density and elite pack count both halved to keep 60 fps (on a warm device the main thread / translation thread each take 16–19 ms, over the 16.7 ms budget): density ×3 → ×1.5, elite packs ×2–×4 → ×1–×2 (multiplier table unchanged, an extra divide by 2 when computing)
+        int e2 = tier_elite_x2(K.tier); *den = d0 * 3 / 2 > 10000 ? 10000 : d0 * 3 / 2; *umin = a0 * e2 / 4 > 255 ? 255 : a0 * e2 / 4; *umax = b0 * e2 / 4 > 255 ? 255 : b0 * e2 / 4;
         { const char *e = getenv("DM_RIFT_TEST_NAT"); int pct = e ? atoi(e) : hi_on("su", 75) ? su_nat_pct(K.tier) : 100; *den = (int)((long long)*den * pct / 100); *umin = (uint8_t)(*umin * pct / 100); *umax = (uint8_t)(*umax * pct / 100); }   // 75 层起原生怪按层减少，位置让给特殊精英 | from level 75, native monsters are reduced level by level, making room for special elites
-        LOG("秘境：关卡 %d 本局怪物区域 密度 %d → %d、精英组 %d–%d → %d–%d（第 %d 层 ×%d.%d）", lv, d0, *den, a0, b0, *umin, *umax, K.tier, e2 / 2, e2 % 2 * 5);
+        LOG("秘境：关卡 %d 本局怪物区域 密度 %d → %d（×1.5）、精英组 %d–%d → %d–%d（第 %d 层 ×%d.%02d）", lv, d0, *den, a0, b0, *umin, *umax, K.tier, e2 / 4, e2 % 4 * 25);
         for (uint64_t k = 0; a && k < n; k++) if (*(int32_t *)(uintptr_t)(a + k * 0x1c) == lv) { int32_t *rm = (int32_t *)(uintptr_t)(a + k * 0x1c + 0xc); int had = 0; for (int q = 0; q < g_nmz; q++) had |= g_mz[q].lv == lv;
             if (g_built[lv]) LOG("秘境：关卡 %d 服务端已建，LvlMaze 地狱房间数不动（%d）", lv, *rm);
             else if (*rm > 4 && !had && g_nmz < 32) { g_mz[g_nmz].row = (int)k; g_mz[g_nmz].old = *rm; g_mz[g_nmz++].lv = lv; *rm = (*rm * 6 + 9) / 10; LOG("秘境：关卡 %d LvlMaze 地狱房间数 %d → %d（留到换局）", lv, g_mz[g_nmz - 1].old, *rm); } break; } }
@@ -1135,10 +1152,7 @@ static void finish(uint64_t G, uint64_t player, uint64_t guard) {
       // What is computed above is only "where we would like to put it"; the actual landing point must be a cell the player can walk to (dm_doorspot.h: breadth-first search from the player's feet with the player's way of walking, taking only among the reached cells the one nearest to the desired spot; when too narrow to fit, fall back to the nearest walkable cell by the feet).
       // Previously the desired spot was handed directly to the original game's free-ground search (looks only at the object bit 0x400, not at walls 0x1, and does not care whether it can be walked to), and in the Cave / the Pit the two doors would land in the black area inside the walls and could not be tapped.
       // Whether a cell blocks goes by the player's own collision mask (path structure +0x64, 0x1c09 when it cannot be read, same as ground-tap pathfinding dm_world.c), asked of the original game's collision query main+0x4ce020; for rooms not loaded it answers all blocked; the 0x1000 of the player's own center cell does not count
-      { static struct ds_grid dg; uint64_t lvp = level_of(player), pp = rd(player + 0x38); uint32_t mk = pp ? *(uint32_t *)(uintptr_t)(pp + 0x64) : 0; if (!(mk & 1) || (mk & ~0xffffu)) mk = 0x1c09;
-        for (int iy = 0; iy < DS_W; iy++) for (int ix = 0; ix < DS_W; ix++) { int cx = x + ix - DS_R, cy = y + iy - DS_R; uint64_t r = room_at(lvp, cx, cy);
-            uint32_t v = r ? ((uint32_t (*)(uint64_t, int, int, int))(B + 0x4ce020))(r, cx, cy, (int)mk) & 0xffff : 1; if (ix == DS_R && iy == DS_R) v &= ~0x1000u; dg.blk[iy * DS_W + ix] = v != 0; }
-        ds_flood(&dg);
+      { static struct ds_grid dg; uint64_t lvp = level_of(player); uint32_t mk = ds_fill(0, player, x, y, &dg);
         int nx, ny, tx, ty, t1 = ds_pick(&dg, bx + ox - x, by + oy - y, 0, 0, 0, ND_GAP, &nx, &ny), t2 = ds_pick(&dg, bx - ox - x, by - oy - y, 1, nx, ny, ND_GAP, &tx, &ty);
         // 「想放处」后面括号里是它自己的状态（挡 = 墙 / 物件 / 图外；走 −1 步 = 不挡但走不到）——旧规则落在哪、为什么不能用，日志里直接看得到
         // The parentheses after 「想放处」(desired spot) hold its own state (挡 (blocked) = wall / object / outside the map; 走 −1 步 (−1 steps) = not blocked but unreachable) -- where the old rule lands and why it cannot be used can be read directly in the log
@@ -1203,7 +1217,9 @@ static int start_rift(uint64_t G, uint64_t player, uint32_t t, int tier) {
     K.tier = tier; { const char *e = getenv("DM_RIFT_TIER"); if (e) K.tier = atoi(e); }   // 测试：钉层数 | Test: pin the level
     K.nmaps = 2 + rnd(2); K.maps[0] = fo[rnd(nf)]; K.maps[1] = fm[rnd(nm)]; K.maps[2] = 0;
     if (K.nmaps == 3) { do K.maps[2] = fm[rnd(nm)]; while (K.maps[2] == K.maps[1]); }
-    { static int n = -1; const char *e = getenv("DM_RIFT_NEED"); if (n < 0) n = e ? atoi(e) : 250; atomic_store(&K.need, n); }
+    // 进度需求 125 分（由 250 减半：密度与精英组数同时砍半保 60 帧，需求同比例下调，一场的长度不变；闯入首领那 +12% 在下面按比例乘，自动跟着减半）
+    // Progress requirement 125 points (halved from 250: density and elite pack count were both halved to keep 60 fps, so the requirement is lowered proportionally and a run's length is unchanged; the invading boss's +12% is applied proportionally below and halves automatically)
+    { static int n = -1; const char *e = getenv("DM_RIFT_NEED"); if (n < 0) n = e ? atoi(e) : 125; atomic_store(&K.need, n); }
     // 测试：钉图。分号隔开 = 本局第 1、2…次开局各用哪一段（次数超出用最后一段），用来造「上一层用过相邻迷宫」的现场
     // Test: pin the map. Semicolon-separated = which segment each of the 1st, 2nd... starts of this game uses (past the end, the last segment is used); used to set up the situation where "the previous level used an adjacent maze"
     { static int nth; const char *e = getenv("DM_RIFT_MAPS"); if (e) { for (int q = 0; q < nth; q++) { const char *nx = strchr(e, ';'); if (!nx) break; e = nx + 1; } nth++; K.maps[2] = 0; K.nmaps = sscanf(e, "%d,%d,%d", &K.maps[0], &K.maps[1], &K.maps[2]); } }
@@ -1459,6 +1475,23 @@ void dm_rift_tick(uint64_t G, uint64_t player, uint8_t *main_base) {
       if (il && t % 250 == 0) { int n = 0, mn = 999, mx = 0; for (int bb = 0; bb < 128; bb++) for (uint64_t it = rd(G + 0x2e30 + 8 * bb); it; it = rd(it + 0x158)) { uint64_t d = rd(it + 0x10); if (!d || *(uint32_t *)(uintptr_t)(it + 0xc) != 3) continue; int v = *(int32_t *)(uintptr_t)(d + 0x38); n++; if (v < mn) mn = v; if (v > mx) mx = v; }
           LOG("秘境：测试读数 拍 %u 地上物品 %d 件，物品等级 %d–%d", t, n, n ? mn : 0, mx); } }
 
+    // 测试开关 DM_RIFT_TEST_CLEAR=1（自动清图打法，验「一场能不能填满进度、结算」用）：秘境进行中每 1.5 秒，从服务端单位表里找本图离人最近、活着的敌对怪，
+    // 用原版传送放到它旁边（配 DM_RIFT_TEST_LOWHP=1 与按住攻击键，路过就打死）；本图眼下没有活的敌对怪（远处房间还没激活）就跳到房间链里下一间没去过的房，让下一片激活。
+    // 与 DM_RIFT_TEST_PULL 的区别：PULL 只认客户端见过的怪，见过的打完就停；这个按服务端的表，配上逐间推进，整张图都清得到
+    // Test switch DM_RIFT_TEST_CLEAR=1 (automatic map-clearing playstyle, to verify "whether one run can fill the progress and settle"): while a Rift is in progress, every 1.5 s, find the nearest living hostile monster on this map from the server unit table,
+    // and teleport next to it with the original teleport (with DM_RIFT_TEST_LOWHP=1 and the attack key held, it dies in passing); if this map has no living hostile monster right now (distant rooms not yet activated), jump to the next unvisited room in the room chain so the next area activates.
+    // Difference from DM_RIFT_TEST_PULL: PULL only knows monsters the client has seen and stops once those are dead; this one uses the server table and, advancing room by room, can clear the whole map
+    { static int on = -1, nxt; static uint64_t done[2048]; static int nd, lvd; static uint32_t skip[256], last_id; static int nskip, same;   /* 同一只连着 4 次被选中还没死（在水里 / 够不着 / 打不死）就跳过它 | If the same monster is picked 4 times in a row and is still alive (in water / unreachable / unkillable), skip it */ if (on < 0) on = getenv("DM_RIFT_TEST_CLEAR") != NULL;
+      if (on && t % 38 == 0 && in_rift_map(lv) && atomic_load(&K.st) == ST_RUN) { if (lvd != lv) { lvd = lv; nd = 0; nxt = 0; nskip = 0; same = 0; }
+          int px, py; unit_xy(player, &px, &py); uint64_t best = 0; long bd = -1;
+          for (int b = 0; b < 128; b++) for (uint64_t u = rd(G + 0x2230 + 1 * 0x400 + 8 * b); u; u = rd(u + 0x158)) { uint32_t m = *(uint32_t *)(uintptr_t)(u + 0xc); int x, y;
+              if (m == 0 || m == 12 || unit_level(u) != lv || unit_align(u) || !unit_xy(u, &x, &y)) continue; { uint32_t id = *(uint32_t *)(uintptr_t)(u + 8); int sk = 0; for (int q = 0; q < nskip && !sk; q++) sk = skip[q] == id; if (sk) continue; } long d = (long)(x - px) * (x - px) + (long)(y - py) * (y - py); if (bd < 0 || d < bd) { bd = d; best = u; } }
+          if (best) { uint32_t bid = *(uint32_t *)(uintptr_t)(best + 8); same = bid == last_id ? same + 1 : 0; last_id = bid; if (same >= 4 && nskip < 256) { skip[nskip++] = bid; same = 0; LOG("秘境：测试清图 怪 id %u（类号 %u）连着 4 次没打死，跳过", bid, *(uint32_t *)(uintptr_t)(best + 4)); best = 0; } }
+          if (best) { int x, y; unit_xy(best, &x, &y); if (bd > 9) { int32_t pos[2] = { x + 2, y + 2 }; uint64_t rr = free_spot(G, unit_room(best), pos); if (rr) dm_teleport(B, G, player, rr, pos[0], pos[1]); } }
+          else { uint64_t lvp = level_of(player); int n = 0; uint64_t r = dm_level_rooms(lvp);   /* 下一间没去过的房（按房间链次序） | Next unvisited room (in room-chain order) */
+              for (; r && n < 2000; r = rd(r + 0x48), n++) { int seen = 0; for (int q = 0; q < nd && !seen; q++) seen = done[q] == r; if (!seen) break; }
+              if (r) { if (nd < 2048) done[nd++] = r; int32_t pos[2] = { *(int32_t *)(uintptr_t)(r + 0x60) * 5 + *(int32_t *)(uintptr_t)(r + 0x68) * 5 / 2, *(int32_t *)(uintptr_t)(r + 0x64) * 5 + *(int32_t *)(uintptr_t)(r + 0x6c) * 5 / 2 };
+                  uint64_t rs = room_load(G, lvp, pos[0], pos[1]), rr = rs ? free_spot(G, rs, pos) : 0; if (rr) dm_teleport(B, G, player, rr, pos[0], pos[1]); static int ln; if (ln++ % 20 == 0) LOG("秘境：测试清图 本图眼下没有活的敌对怪 → 跳到第 %d 间房", nd); } } } }
     // 测试开关 DM_RIFT_TEST_TOUR=1：秘境进行中每秒用原版传送把人放到本图房间链里的下一间（中心附近的空地），整张图的房间都激活一遍——验「90 层起不放普通预设怪」要整图的读数
     // Test switch DM_RIFT_TEST_TOUR=1: during a rift, every second the original teleport puts the player in the next room of this map's room chain (open ground near the centre), so every room of the whole map gets activated - verifying "no ordinary preset monsters from level 90" needs readings from the whole map
     { static int tour = -1, k; if (tour < 0) tour = getenv("DM_RIFT_TEST_TOUR") != NULL;
@@ -1584,15 +1617,25 @@ void dm_rift_tick(uint64_t G, uint64_t player, uint8_t *main_base) {
         for (int i = 0; i < K.inv_n; i++) {
             if (K.inv_st[i] == 0 && !busy && !K.guard && nd > 0 && atomic_load(&K.score) * 100 >= (long long)nd * K.inv_pct[i]) { K.inv_st[i] = 1; K.inv_t[i] = t; busy = 1; say("dmRiftSayInvader"); LOG("秘境：拍 %u 闯入首领预警（第 %d 位，类号 %d，进度 %d%%）", t, i + 1, K.inv_cls[i], K.inv_pct[i]); }
             else if (K.inv_st[i] == 1 && K.guard) { K.inv_st[i] = 4; LOG("秘境：守护者已现身，第 %d 位闯入首领作罢", i + 1); }
-            else if (K.inv_st[i] == 1 && t - K.inv_t[i] >= 75) { static const int dx[8] = { 36, 26, 0, -26, -36, -26, 0, 26 }, dy[8] = { 0, 26, 36, 26, 0, -26, -36, -26 }; int x, y; unit_xy(player, &x, &y); uint64_t u = 0; int32_t pos[2] = { 0, 0 };
-                for (int k = 0, d0 = rnd(8); k < 8 && !u; k++) { int d = (d0 + k) % 8; pos[0] = x + dx[d]; pos[1] = y + dy[d]; uint64_t rs = room_load(G, level_of(player), pos[0], pos[1]), rr = rs ? free_spot(G, rs, pos) : 0;
-                    if (!rr || abs(pos[0] - x) + abs(pos[1] - y) < 24) continue;   /* 找到的空地被挪到人跟前就不要 | open ground that got moved right next to the player is not accepted */
-                    u = ((uint64_t (*)(uint64_t, uint64_t, int, int, int, int, int, int, uint64_t))(B + 0x7ce630))(G, rr, 1, K.inv_cls[i], pos[0], pos[1], 1, 0, 0x10); }
+            else if (K.inv_st[i] == 1 && t - K.inv_t[i] >= 75 && (t - K.inv_t[i]) % 25 == 0) { static const int dx[8] = { 36, 26, 0, -26, -36, -26, 0, 26 }, dy[8] = { 0, 26, 36, 26, 0, -26, -36, -26 }; int x, y; unit_xy(player, &x, &y); uint64_t u = 0; int32_t pos[2] = { 0, 0 };
+                /* 落点必须是玩家走得到的格：以人为中心按玩家的走法广搜（同结算门 dm_doorspot.h），只在搜得到、离人 24–40 格、不超过 120 步、四周也可达的格里，
+                   取离「随机方向 36 格」最近的（5 秒内没有就放宽到 12 格起）；直接在那一格刷，不再交给原版找空地（它只看物件位、会把点挪到墙后）。原先刷完不核可达，地穴 / 洞穴里会刷进墙后的另一条通道
+                   The spawn spot must be a tile the player can walk to: breadth-first search centered on the player using the player's movement rules (same as the settlement door, dm_doorspot.h); among tiles the search reaches that are 24–40 tiles from the player, within 120 steps, and with reachable surroundings,
+                                      pick the one closest to "36 tiles in a random direction" (if none within 5 s, relax to starting at 12 tiles); spawn directly on that tile instead of handing off to the original free-spot search (it only looks at object positions and moves the point behind walls). Previously reachability was not checked after spawning, and in tombs / caves it could spawn in another passage behind a wall */
+                static struct ds_grid ig; ds_fill(G, player, x, y, &ig); int d0 = rnd(8), rx = 0, ry = 0, lo = t - K.inv_t[i] >= 75 + 125 ? 12 : 24, kk = ds_pick_ring(&ig, dx[d0], dy[d0], lo, 120, &rx, &ry);   /* 迷宫入口通道绕：5 秒内找不到 24 格外的可达格就放宽到 12 格（可达不放宽） | Maze entrance passages wind: if no reachable tile beyond 24 tiles is found within 5 s, relax to 12 tiles (reachability is not relaxed) */
+                if (kk < 0) { static int nl; if (nl++ < 10) LOG("秘境：闯入首领这一秒没有合格落点（人 %d,%d 窗口内可达 %d 格，离人至少 %d 格、120 步内）", x, y, ig.reach, lo); }
+                if (kk >= 0) { pos[0] = x + rx; pos[1] = y + ry; uint64_t rr = room_load(G, level_of(player), pos[0], pos[1]);
+                    if (rr) u = ((uint64_t (*)(uint64_t, uint64_t, int, int, int, int, int, int, uint64_t))(B + 0x7ce630))(G, rr, 1, K.inv_cls[i], pos[0], pos[1], 1, 0, 0x10);
+                    LOG("秘境：闯入首领落点 人 %d,%d 窗口内可达 %d 格 → 取 %d,%d（离人 %d 格、走 %d 步、四周 %d 圈可达）%s", x, y, ig.reach, pos[0], pos[1], abs(rx) > abs(ry) ? abs(rx) : abs(ry), ds_dist(&ig, rx + DS_R, ry + DS_R), kk, u ? "" : "，原版没刷出来"); }
                 if (!u) { if (t - K.inv_t[i] > 325) { K.inv_st[i] = 4; LOG("秘境：第 %d 位闯入首领 10 秒内没找到落点，作罢", i + 1); } continue; }
                 K.inv_id[i] = *(uint32_t *)(uintptr_t)(u + 8); K.inv_st[i] = 2;
                 if (K.tier >= 9) { g_hp_mul = 300; scale_monster(G, u, target_level(player) + 3, dm_rift_tier_level(9, gs(player, 12)) + 3); g_hp_mul = 1000; }
                 LOG("秘境：拍 %u 闯入首领刷出（第 %d 位）类号 %d id %u 在 %d,%d（离人 %d 格）等级 %d 生命 %d", t, i + 1, K.inv_cls[i], K.inv_id[i], pos[0], pos[1], abs(pos[0] - x) + abs(pos[1] - y), gs(u, 12), gs(u, 7) >> 8); }
             else if (K.inv_st[i] == 2) { uint64_t u = find_unit(G, 1, K.inv_id[i]); uint32_t m = u ? *(uint32_t *)(uintptr_t)(u + 0xc) : 1;
+                /* 测试读数 DM_RIFT_TEST_INVREACH=1：刷出后头一拍按它的实际位置复核一次「玩家走不走得到」（同一套广搜，人此刻的位置为中心；它自己占的格算挡，看它周围 3 格内最近的可达格） | Test reading DM_RIFT_TEST_INVREACH=1: on the first tick after spawning, recheck once at its actual position whether "the player can reach it" (same breadth-first search, centered on the player's current position; tiles it occupies count as blocked, and the nearest reachable tile within 3 tiles around it is checked) */
+                { static uint32_t chk[2]; if (getenv("DM_RIFT_TEST_INVREACH") && u && chk[i] != K.inv_id[i] && (m != 0 && m != 12)) { chk[i] = K.inv_id[i]; static struct ds_grid cg; int px, py, ux, uy; unit_xy(player, &px, &py); unit_xy(u, &ux, &uy); ds_fill(G, player, px, py, &cg);
+                    int ix = ux - px + DS_R, iy = uy - py + DS_R, best = -1; for (int dy2 = -3; dy2 <= 3; dy2++) for (int dx2 = -3; dx2 <= 3; dx2++) { int d = ds_dist(&cg, ix + dx2, iy + dy2); if (d >= 0 && (best < 0 || d < best)) best = d; }
+                    LOG("[闯入可达] 关卡 %d 第 %d 位 类号 %d 人 %d,%d 它 %d,%d 相距 %d 格 → %s（走 %d 步）", lv, i + 1, K.inv_cls[i], px, py, ux, uy, abs(ux - px) > abs(uy - py) ? abs(ux - px) : abs(uy - py), best >= 0 ? "可达" : "【不可达】", best); } }
                 if (u && (m == 0 || m == 12)) { K.inv_st[i] = 3; int add = nd * 12 / (100 + 12 * K.inv_n); if (add < 1) add = 1; int sc = atomic_fetch_add(&K.score, add) + add;   /* 12% 按上调前的进度需求算 | 12% is computed on the progress requirement before the increase */
                     LOG("秘境：拍 %u 闯入首领死亡（第 %d 位，类号 %d）→ 进度 +%d，现 %d / %d", t, i + 1, K.inv_cls[i], add, sc, nd); } } } }
     if (!K.guard && atomic_load(&K.score) >= atomic_load(&K.need) && in_rift_map(lv)) {

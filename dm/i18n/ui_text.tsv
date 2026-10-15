@@ -75,6 +75,10 @@ dmCustomDropHaptic	高价值物品掉落时震动	Vibrate on valuable drops	自�
 dmCustomGemPick	符文与宝石自动拾取（直接进高级仓库）	Auto-stash runes & gems	自定义页开关
 dmCustomStoreBtn	背包「存放」按钮	Inventory Deposit button	自定义页开关
 dmCustomEcoFps	省电模式（30 帧）	Power saver (30 fps)	自定义页开关
+dmCustomQ3dSmooth	流畅优先	Smoothness first	自定义页「3D 画质」单选的第一项（缺省；dm_custom.c 键 q3d=0）
+dmCustomQ3dSmoothHint	掉帧时自动降低 3D 画面清晰度	Lowers 3D resolution when frames drop	流畅优先下面的说明小字
+dmCustomQ3dQuality	画质优先	Quality first	自定义页「3D 画质」单选的第二项（q3d=1）
+dmCustomQ3dQualityHint	始终保持设定的 3D 清晰度	Always keeps the set 3D resolution	画质优先下面的说明小字
 dmCustomLootFilter	掉落过滤（噩梦起自动隐藏杂物）	Loot Filter (auto, Nightmare+)	自定义页开关；Loot Filter 是原版过滤器的英文名
 dmCustomAutoBuff	自动补上增益技能（站着不动时）	Auto-recast buffs when idle	自定义页开关
 dmCustomLang	语言 / Language	语言 / Language	自定义页语言那一行的标签。两种界面写同样的中英两个词：这一行的文字控件指定原版的全球字体 BlizzardGlobal（英文界面缺省的 Formal 字体没有汉字，全球字体有；原版标题页、队伍名、合规提示同样按控件指定它）
@@ -359,3 +363,10 @@ dmTvChecking	正在检查游戏文件…	Checking game files…	Apple TV 版启�
 dmTvNoRomfs	游戏文件还不齐全：\n%s	The game files are incomplete:\n%s	游戏文件校验没过；%s = 校验给的原因
 dmTvNoAstcIndex	老机型补充包的覆盖层索引不在（romfs_overlay_astc/data/.build.config）	The Legacy Device Pack index is missing (romfs_overlay_astc/data/.build.config)	补充包到了、配套的覆盖层索引没拷进来
 dmTvGpuFail	图形设备初始化失败，请看启动日志	Could not set up the graphics device; see the launch log	建不起 Metal 4 命令队列
+dmTcMap	地图	Map	触屏圆钮的字：右上地图键（DmTouchOverlay.m，取不到图标时）
+dmTcCancel	取消	Cancel	触屏圆钮的字：全屏地图开着时地图键变成「取消」（DmTouchOverlay.m）
+dmTcNavConfirm	确认／交换	Confirm / Swap	触屏圆钮的字：面板态的虚拟手柄圆钮（只在 DM_TOUCH_NAV_PAD=1 调试时出现）
+dmTcNavBack	返回	Back	同上
+dmTcNavAction	操作	Action	同上
+dmTcNavBind	绑定	Bind	同上
+dmTcNavNext	下一页	Next Page	同上

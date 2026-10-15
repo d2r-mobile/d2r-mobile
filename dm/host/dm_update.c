@@ -15,6 +15,7 @@
 #include "hle.h"
 #include "dm.h"
 #include "dm_i18n.h"
+#include "dm_cursor.h"
 #include <string.h>
 #include <stdio.h>
 #include <stdatomic.h>
@@ -113,8 +114,8 @@ void dm_update_pump(void) {   // 取手柄处每帧调（游戏主线程） | Ca
     int nw = *(int32_t *)(nt + 0x78);
     if (pad) { place(nt, xr - 2000 - bx, 130); place(sm, 99999, 99999); place(big, 99999, 99999); }   // 手柄：提示字在构建号下面一行；两个「更新」按钮不摆出来（按 Y，见上） | Controller: the hint text goes on the line below the build number; the two 「更新」(Update) buttons are not shown (press Y, see above)
     else { place(nt, bx + 341, 2046); place(sm, normal ? bx + 341 + nw + 34 : 99999, normal ? 2030 : 99999); }
-    static uint64_t lw; static int ls = -1, lnw; int st = normal ? 1 : urg ? 2 : fail ? 2 + fail : 0;
-    if (lw != bw || ls != st || (normal && lnw != nw)) { lw = bw; ls = st; lnw = nw; LOG("更新：选角页写上构建 %d%s（提示字宽 %d）", g_own, normal ? "，普通更新提示" : urg ? "，建议立即更新提示" : fail == 1 ? "，查更新失败提示（无线数据许可）" : fail ? "，查更新失败提示（浏览器手动更新）" : "，无提示", normal ? nw : 0); }
+    static dm_wref lw; static int ls = -1, lnw; int st = normal ? 1 : urg ? 2 : fail ? 2 + fail : 0;
+    if (dm_wref_get(&lw) != bw || ls != st || (normal && lnw != nw)) { dm_wref_set(&lw, bw); ls = st; lnw = nw; LOG("更新：选角页写上构建 %d%s（提示字宽 %d）", g_own, normal ? "，普通更新提示" : urg ? "，建议立即更新提示" : fail == 1 ? "，查更新失败提示（无线数据许可）" : fail ? "，查更新失败提示（浏览器手动更新）" : "，无提示", normal ? nw : 0); }
 }
 #if TARGET_OS_OSX
 // Mac App：鼠标点主菜单右上角那行「有新版本…」= 按 Y（打开下载页）。Mac 玩家第一反应是点它；这一行在手柄版里是纯文字、没有按钮可点，所以按位置认：

@@ -16,12 +16,14 @@
 //   Stat point allocation: UI message CharacterStatsPanelMessage:UseSkillPoint, payload {i32 index (0 strength 1 dexterity 2 vitality 3 energy), i32 mode (2 = 1 point, 3 = 5 points, 1 = all)} (the same message sent by the stat plus widget 0xc4f704, handled by 0xc42858 → packet 0x3a).
 //   Skill point allocation: the skill tree button widget stores the click message -- [+0x558] category SkillsTreePanelMessage, [+0x568] → i32 skill id; send SkillsTreePanelMessage:UseSkillPoint {skill id} (handled by 0xc362ac → packet 0x3b);
 //            whether a point can be added = main+0xc368b0(skill id).
+#include "dm_prof.h"
 #include "dm_actions.h"
 #include "dm_cursor_item.h"
 #include "dm_elysium.h"
 #include "dm_custom.h"
 #include "dm_input.h"
 #include "dm_hud.h"
+#include <TargetConditionals.h>
 #include <unistd.h>
 #include "dm_uiscreen.h"
 #include "hle.h"
@@ -86,8 +88,25 @@ void dm_item_identify_free(uint32_t id) { if (id) atomic_store(&g_ident_free, id
 uint32_t dm_item_identify_free_take(void) { return atomic_exchange(&g_ident_free, 0); }   // 服务端拍取走（diag.c） | taken by the server tick (diag.c)
 void dm_item_target_cancel(void) { atomic_store(&g_tcancel, 1); }
 static _Atomic uint32_t g_repair;
-static _Atomic uint64_t g_bfill;
-void dm_belt_fill(uint64_t belt_widget) { if (belt_widget) atomic_store(&g_bfill, belt_widget); }
+static _Atomic int g_bfill;
+void dm_belt_fill(void) { atomic_store(&g_bfill, 1); }
+// 物品栏面板里可见的原版腰带控件（消息处理 main+0x3911d8）：补满的每一轮现找，不留指针——补满要跑好几轮（每 6 帧一次），
+// 中间切手柄 / 触屏布局、切语言会把整套界面重建、旧控件全部释放，留着的旧指针再拿来读虚表、写进焦点就是野指针（Mac 的崩溃，宿主复现 2/2）
+// The visible original belt widget in the inventory panel (message handler main+0x3911d8): looked up fresh every fill round, no pointer kept; a fill runs several rounds (one every 6 frames),
+// and switching controller / touch layout or language in between rebuilds the entire UI and frees all old widgets; reusing a kept old pointer to read the vtable or write focus is a dangling pointer (the Mac crash, reproduced 2/2 on the host)
+static uint64_t belt_find(uint64_t w, uint64_t h, int dep) {
+    if (!w || dep > 14 || !*(uint8_t *)(w + 0x50)) return 0;
+    if (*(uint64_t *)(*(uint64_t *)w + 0x28) == h) return w;
+    uint64_t ch = *(uint64_t *)(w + 0x58), n = *(uint64_t *)(w + 0x60); if (!ch || n > 256) return 0;
+    for (uint64_t i = 0; i < n; i++) { uint64_t r = belt_find(*(uint64_t *)(ch + 8 * i), h, dep + 1); if (r) return r; }
+    return 0;
+}
+static uint64_t belt_now(uint8_t *b, uint64_t root) {
+    uint64_t ch = root ? *(uint64_t *)(root + 0x58) : 0, n = root ? *(uint64_t *)(root + 0x60) : 0;
+    for (uint64_t i = 0; ch && n <= 256 && i < n; i++) { uint64_t p = *(uint64_t *)(ch + 8 * i); const char *nm = p ? *(const char **)(p + 8) : NULL;
+        if (nm && !strcmp(nm, "PlayerInventoryExpansionLayout")) return belt_find(p, (uint64_t)(uintptr_t)(b + 0x3911d8), 0); }
+    return 0;
+}
 void dm_item_repair(uint32_t id) { if (id) atomic_store(&g_repair, id); }
 void dm_test_identify(int what) { atomic_store(&g_test_ident, what); }   // 测试：1 = 对第一件未鉴定的物品鉴定；2 = 退出等目标状态 | test: 1 = identify the first unidentified item; 2 = leave the waiting-for-target state
 static _Atomic uint64_t g_take; static _Atomic int g_test_take;
@@ -490,9 +509,17 @@ static void test_bindtbl(uint8_t *b, uint64_t pl) {
 void dm_actions_pump(void) {
     uint8_t *b = ab(); if (!b) return; uint64_t root = *(uint64_t *)(b + 0x2f05458); if (!root) return;
     uint64_t pl = ((uint64_t (*)(uint32_t))(b + 0x45f9d0))(*(uint32_t *)(b + 0x2d20e4c));
+    // 手上物品的唯一真值（dm_hud.c）：客户端玩家物品栏的光标物品（物品栏 +0x40），它是物品单位（类型 4）且按 id 在客户端单位表里查得回同一个对象才算拿着；否则当作手上空
+    // The single source of truth for the held item (dm_hud.c): the cursor item of the client player's inventory (inventory +0x40); it counts as held only if it is an item unit (type 4) and looking it up by id in the client unit table returns the same object; otherwise the hand is treated as empty
+    { uint64_t inv = pl ? *(uint64_t *)(pl + 0x90) : 0, held = inv && *(uint32_t *)inv == 0x01020304 ? *(uint64_t *)(inv + 0x40) : 0; uint32_t id = 0;
+      if (held && *(uint32_t *)held == 4) { uint32_t hid = *(uint32_t *)(held + 8);
+          if (((uint64_t (*)(uint64_t, uint32_t, uint32_t, uint32_t))(b + 0x45f5f0))((uint64_t)(uintptr_t)(b + 0x2d603a0 + 4 * 0x400), hid & 0x7f, hid, 4) == held) id = hid; }
+      static uint64_t bad; if (held && !id && held != bad) { bad = held; LOG("【红】手上物品：客户端光标物品字段指着的不是有效物品（类型 %u）→ 当作手上空", *(uint32_t *)held); }
+      static uint32_t last; if (id != last) { last = id; LOG("手上物品（客户端）：%s（物品 id %u）", id ? "拿着" : "空了", id); }
+      dm_hud_set_held(id); }
     test_bindtbl(b, pl);
-    dm_elysium_pump();
-    { void dm_runeword_pump(void); dm_runeword_pump(); }   // 符文之语助手（dm_runeword.c） | Runeword helper (dm_runeword.c)
+    DM_PROF(0, "a.elysium", dm_elysium_pump());
+    { void dm_runeword_pump(void); DM_PROF(0, "a.runeword", dm_runeword_pump()); }   // 符文之语助手（dm_runeword.c） | Runeword helper (dm_runeword.c)
     dm_uiscreen_pump();
     // 随机名：给 CharacterCreateNamePanel 发它自己认的那条消息——InputMessage:ControllerActionBegin，载荷 +0x10 键序号 2（布局图例 option2「随机名字」；面板消息处理 main+0xc33378 的 0xc33594 分支：
     // 按当前职业从建角面板的名字表里随机取一条，main+0xac2058 写进名字框）。界面根 +0xb8（本帧已处理标志）非 0 时面板会忽略，下一帧再发
@@ -601,17 +628,30 @@ void dm_actions_pump(void) {
         // 条件 0x391484、算格 0x563380、发包（0x5d）、音效都在里面。这里照原样递一条「动作键 4（R）开始、带按住标记」的消息给它：
         // 它要求界面根本帧未处理（+0xb8 = 0）且焦点控件（[根+0xd0]+0x190）是腰带自己，调用期间替它摆好、调完放回
         // 原版一次只装一瓶（手柄是按住 R 连着触发）：一次补满 = 每 6 帧再递一次，直到原版判定装不了（腰带满 / 没药了），最多 16 次（只递一次时：背包 3 瓶、空 2 列，只补了 1 瓶）
-        // Single-item repair (tapping an item in repair mode on the vendor page): the common end point, in that mode, of the original item cell click handler 0x3b3f80–0x3b440c and the equipment slots 0x3bb898–0x3bb8c4
-        // 0x40acf4(panel (not read by the function body), owner, item, 1 = own, 0, 0) → 0x433e50 takes the repair branch by mode (repairable check 0x435b00, cost calculation, transaction). Must not be called outside repair mode: 0x433e50 then takes the sell branch
-        // One-tap belt refill (double tap on an empty belt cell in the inventory panel): the original controller "hold R with focus on the belt" code is inside the belt widget's message handler 0x3911d8, not a separate function --
-        // the condition 0x391484, the cell computation 0x563380, the packet send (0x5d) and the sound are all in there. Here a message "action button 4 (R) begin, with the held flag" is delivered to it exactly as the original would:
-        // it requires the UI root's this-frame-handled flag to be clear (+0xb8 = 0) and the focused widget ([root+0xd0]+0x190) to be the belt itself; these are set up for it during the call and put back afterwards
-        // The original game loads only one potion at a time (on the controller, holding R triggers repeatedly): one refill = deliver again every 6 frames until the original game judges nothing more can be loaded (belt full / no potions left), at most 16 times (when delivered only once: 3 potions in the inventory, 2 empty columns, only 1 potion was filled)
-        { static uint64_t bf_w, bf_next; static int bf_left, bf_done; uint64_t req = atomic_exchange(&g_bfill, 0), fr = dm_guest_frame();
-          if (req) { bf_w = req; bf_left = 16; bf_done = 0; bf_next = 0; }
-          uint64_t bw = bf_left && fr >= bf_next ? bf_w : 0, root = *(uint64_t *)(b + 0x2f05458), fh = root ? *(uint64_t *)(root + 0xd0) : 0;
-          if (bw) { const char *res = NULL;
-              if (!fh || *(uint64_t *)(*(uint64_t *)bw + 0x28) != (uint64_t)(uintptr_t)(b + 0x3911d8)) res = "不是腰带控件，没调";
+        // 腰带控件每一轮现找（belt_now），不跨帧留指针；界面正在重建 / 刚重建（dm_ui_unstable：切布局事务中，或界面代号 2 帧内变过）这一轮先不做，稳了再接着补
+        // Single-item repair (tap an item while the vendor page is in repair mode): the common endpoint, in that mode, of the original inventory-grid click handler 0x3b3f80–0x3b440c and the equipment slots 0x3bb898–0x3bb8c4
+        // 0x40acf4(panel (body does not read it), owner, item, 1 = own, 0, 0) → 0x433e50 takes the repair branch by mode (repairable check 0x435b00, compute cost, complete the deal). Must not be called outside repair mode: 0x433e50 then takes the sell branch
+        // One-tap belt fill (double-tap an empty belt slot in the inventory): the original controller "hold R with focus on the belt" logic lives in the belt widget's message handler 0x3911d8, not in a separate function;
+        // the condition 0x391484, slot computation 0x563380, packet send (0x5d) and sound effect are all inside it. Here we hand it, unchanged, a message "action key 4 (R) start, with hold flag":
+        // it requires the UI root frame to be unprocessed (+0xb8 = 0) and the focused widget ([root+0xd0]+0x190) to be the belt itself; we set these up for the call and restore them afterwards
+        // The original inserts only one potion per call (on controller, holding R triggers it repeatedly): one fill = hand the message again every 6 frames until the original decides nothing more fits (belt full / out of potions), at most 16 times (with a single call: 3 potions in the backpack, 2 empty columns, only 1 potion filled)
+        // The belt widget is looked up fresh each round (belt_now), with no pointer kept across frames; while the UI is rebuilding / just rebuilt (dm_ui_unstable: in a layout-switch transaction, or the UI generation changed within 2 frames) this round is skipped, and filling resumes once stable
+        { static uint64_t bf_next; static int bf_left, bf_done; int dm_ui_unstable(void); int req = atomic_exchange(&g_bfill, 0); uint64_t fr = dm_guest_frame();
+          if (req) { bf_left = 16; bf_done = 0; bf_next = 0;
+              // 测试开关 DM_TEST_BELTFILL_SWITCH=1：补满一开始就造「补满途中界面重建」的现场，走真实输入的同一入口：
+              // iOS 请求切到手柄版（同实体手柄碰一下，dm_padmode_request）；Mac App 恒为手柄版，会重建的是换键帽（同键盘 / 手柄交替，dm_padmode_request_kbd）
+              // Test switch DM_TEST_BELTFILL_SWITCH=1: as soon as a fill starts, create the "UI rebuilt mid-fill" situation through the same entry point as real input:
+              // on iOS, request a switch to the controller layout (same as touching a physical controller, dm_padmode_request); the Mac App is always in controller layout, so what rebuilds there is the key-cap swap (same as alternating keyboard / controller, dm_padmode_request_kbd)
+              if (getenv("DM_TEST_BELTFILL_SWITCH")) {
+#if TARGET_OS_OSX
+                  void dm_padmode_request_kbd(int); int dm_padmode_kbd(void); dm_padmode_request_kbd(!dm_padmode_kbd()); LOG("测试 DM_TEST_BELTFILL_SWITCH：补满开始，请求换键帽");
+#else
+                  void dm_padmode_request(int); dm_padmode_request(1); LOG("测试 DM_TEST_BELTFILL_SWITCH：补满开始，请求切到手柄版");
+#endif
+              } }
+          int due = bf_left && fr >= bf_next && !dm_ui_unstable(); uint64_t root = *(uint64_t *)(b + 0x2f05458), fh = root ? *(uint64_t *)(root + 0xd0) : 0, bw = due ? belt_now(b, root) : 0;
+          if (due) { const char *res = NULL;
+              if (!fh || !bw) res = "物品栏没开着 / 找不到腰带控件，没调";
               else if (!(((int (*)(uint64_t))(b + 0x391484))(bw) & 1)) {
                   // 原版自动装入只管腰带焦点那一列；别的空列：背包里下一瓶「原版判定此刻能进腰带」的药水（0x3c1b28），用背包格「移到腰带」那个函数放（同 dm_belt_put，原版自己挑列）
                   // The original auto-fill only handles the belt column that has focus; for the other empty columns: the next potion in the inventory that "the original game judges can go into the belt right now" (0x3c1b28), placed with the inventory cell "move to belt" function (same as dm_belt_put, the original game picks the column itself)
@@ -741,7 +781,7 @@ void dm_actions_pump(void) {
       else if (h) { int r = ((int (*)(uint64_t, int, uint64_t, int, int))(b + 0x565950))(pl, loc, h, 0, 0); ((void (*)(uint64_t, int, int, int, int))(b + 0x3bb24c))(h, loc, 0, -1, 0);
           LOG("装备：手上物品 id %u → 栏位 %d（原版判定 %d：0 不能放、1 放入、5 交换）已调原版放下", *(uint32_t *)(h + 8), loc, r); }
       else if (loc > 0) LOG("装备：手上没有物品，不动"); }
-    skill_cap_pump(b);
+    DM_PROF(0, "a.skill_cap", skill_cap_pump(b));
     {   // 测试开关 DM_TEST_SKILL_ADD=<帧>:<技能号>:<点数>[,<技能号>:<点数>…]（造现场 / 验上限）：到帧起每 6 帧替玩家发一个原版加技能点包（0x3b：技能号、0 = 加 1 点）， | test switch DM_TEST_SKILL_ADD=<frame>:<skill id>:<points>[,<skill id>:<points>...] (for setting up a test case / verifying the cap): starting at that frame, every 6 frames send one of the original game's add-skill-point packets on the player's behalf (0x3b: skill id, 0 = add 1 point),
         // 按写的顺序一个技能发够再发下一个（有前置的技能把前置写在前面）；进局后列一次已学技能，每个技能发完记一行它的基础等级
         // Skills are processed in the order written, one skill receiving all its points before the next (for a skill with prerequisites, list the prerequisites
@@ -761,8 +801,8 @@ void dm_actions_pump(void) {
         if (n < 0) { n = 0; const char *e = getenv("DM_TEST_C2S"); while (e && *e && n < 8) { q[n].at = strtoull(e, NULL, 10); const char *c = strchr(e, ':'); if (!c) break; c++; int l = 0; unsigned v;
                 while (l < 32 && sscanf(c, "%2x", &v) == 1 && c[0] != ';' && c[1] != ';' && c[1]) { q[n].pk[l++] = (uint8_t)v; c += 2; } q[n].len = l; n++; e = strchr(c, ';'); if (e) e++; } }
         uint64_t f = dm_guest_frame(); for (int i = 0; pl && i < n; i++) if (q[i].at && f >= q[i].at) { q[i].at = 0; ((void (*)(const uint8_t *, int))(b + 0x2ceab0))(q[i].pk, q[i].len); LOG("测试 DM_TEST_C2S：帧 %llu 发包 %02x（长 %d）", (unsigned long long)f, q[i].pk[0], q[i].len); } }
-    { void dm_freetp_client_step(uint8_t *, uint64_t); dm_freetp_client_step(b, pl); }   // 免费回城：客户端玩家挂回城技能、读 ZR 那格空不空 | Free town portal: attach the town portal skill to the client player and read whether the ZR slot is empty
-    dm_custom_ui_pump(root); auto_pot_pump(b, pl); swapskill_pump(b, pl); { void dm_kills_ui_pump(void); dm_kills_ui_pump(); } { void dm_rift_ui_pump(void); dm_rift_ui_pump(); } { void dm_vault_ui_pump(void); dm_vault_ui_pump(); }
+    { void dm_freetp_client_step(uint8_t *, uint64_t); DM_PROF(0, "a.freetp_client", dm_freetp_client_step(b, pl)); }   // 免费回城：客户端玩家挂回城技能、读 ZR 那格空不空 | Free town portal: attach the town portal skill to the client player and read whether the ZR slot is empty
+    dm_custom_ui_pump(root); DM_PROF(0, "a.auto_pot", auto_pot_pump(b, pl)); DM_PROF(0, "a.swapskill", swapskill_pump(b, pl)); { void dm_kills_ui_pump(void); DM_PROF(0, "a.kills_ui", dm_kills_ui_pump()); } { void dm_rift_ui_pump(void); DM_PROF(0, "a.rift_ui", dm_rift_ui_pump()); } { void dm_vault_ui_pump(void); DM_PROF(0, "a.vault_ui", dm_vault_ui_pump()); }
     uint32_t use = atomic_exchange(&g_use, 0); int force_merc = use ? atomic_exchange(&g_use_merc, 0) : 0;
     if (use && pl) { uint64_t it = ((uint64_t (*)(uint64_t, uint32_t, uint32_t, uint32_t))(b + 0x45f5f0))((uint64_t)(uintptr_t)(b + 0x2d603a0 + 4 * 0x400), use & 0x7f, use, 4);
         int busy = *(uint32_t *)(pl + 0xc) == 0x11 || ((uint64_t (*)(void))(b + 0x2aa7c0))() != 0, can = it && !busy && (((int (*)(uint64_t, int))(b + 0x3bff70))(it, 3) & 1);

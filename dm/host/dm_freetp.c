@@ -80,6 +80,10 @@ void dm_freetp_client_step(uint8_t *mb, uint64_t pl) {   // 游戏主线程每�
 }
 void dm_freetp_server_step(uint8_t *mb, uint64_t G, uint64_t player) {   // 服务端拍里调（diag.c） | Called in the server tick (diag.c)
     if (mb && player) grant(mb, player, 1);
+    // 测试开关 DM_TEST_FREETP=<拍>[,<拍>…]：到拍当作点了一次回城钮（裸宿主没有前端；复现公开仓库 「回城后点自己的蓝门第一次仍落城内」用）
+    // Test switch DM_TEST_FREETP=<tick>[,<tick>…]: at each tick, act as if the Town Portal button was tapped (the bare host has no front end; used to reproduce the public repo report "after returning to town, the first click on your own blue portal still lands in town")
+    { static char q[128]; static int init; if (!init) { init = 1; const char *e = getenv("DM_TEST_FREETP"); if (e) strlcpy(q, e, sizeof q); }
+      if (q[0] && G) { uint32_t t = *(uint32_t *)(uintptr_t)(G + 0x170), at = (uint32_t)atoi(q); if (t >= at) { const char *c = strchr(q, ','); memmove(q, c ? c + 1 : q + strlen(q), strlen(c ? c + 1 : "") + 1); atomic_store(&g_req, 1); LOG("DM_TEST_FREETP：拍 %u 当作点了回城钮", t); } } }
     if (!atomic_exchange(&g_req, 0) || !mb || !G || !player) return;
     uint32_t pm = *(uint32_t *)(player + 0xc); if (pm == 0 || pm == 17) { LOG("免费回城：玩家死了，不开"); return; }
     int sk = tp_skill_id(mb, player);

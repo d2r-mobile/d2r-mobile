@@ -92,6 +92,35 @@ static int item_name(const char *n);
 static int panel_skip(const char *nm);
 static int has_visible_leaf(uint64_t w, int dep);
 uint64_t dm_guest_frame(void);
+// 界面代号（dm_cursor.h）。加 1 的时机：游戏取走运行模式 / 性能模式通知（hle_oe.c，它据此重载布局）、切语言（diag.c setlang_obs）、
+// 以及游戏主线程每帧第一次取代号时发现上一帧在的某个顶层面板不在了（面板卸载、整套重建都会这样；只新开面板不算——只增不释放，
+// 若也加 1，自定义页之类按「控件换了 = 页刚出现」重摆的会把玩家没应用的改动冲掉）
+// UI generation (dm_cursor.h). Incremented when: the game consumes a run-mode / performance-mode notification (hle_oe.c; it reloads the layout accordingly), the language is switched (diag.c setlang_obs),
+// and when the game main thread, on its first generation fetch each frame, finds that some top-level panel present in the previous frame is gone (panel unloads and full rebuilds both do this; newly opened panels alone do not count, since that only adds and frees nothing;
+// if it also incremented, pages like the custom page that re-lay out on "widget changed = page just appeared" would wipe out the player's unapplied changes)
+static _Atomic uint32_t g_ui_gen = 1; static _Atomic uint64_t g_ui_gen_fr;   // 最近一次加 1 时的游戏帧 | Game frame of the most recent increment
+void dm_ui_gen_bump(int why) { uint32_t g = atomic_fetch_add(&g_ui_gen, 1) + 1; atomic_store(&g_ui_gen_fr, dm_guest_frame());
+    static unsigned n; if (n++ >= 200) return;
+    switch (why) { case DM_UIGEN_OPMODE: LOG("界面代号 → %u（游戏取走运行模式通知，要重载布局）", g); break; case DM_UIGEN_PERFMODE: LOG("界面代号 → %u（游戏取走性能模式通知）", g); break;
+        case DM_UIGEN_LANG: LOG("界面代号 → %u（切语言）", g); break; case DM_UIGEN_ROOT: LOG("界面代号 → %u（界面根换了）", g); break; default: LOG("界面代号 → %u（有顶层面板被卸掉）", g); } }
+static void ui_gen_scan(void) {   // 游戏主线程：顶层面板集合里少了谁 → 加 1 | Game main thread: a panel missing from the top-level panel set → increment by 1
+    static uint64_t fr0 = UINT64_MAX, prev[256], root0; static int np; uint64_t fr = dm_guest_frame(); if (fr == fr0) return; fr0 = fr;
+    module_t *m = main_module(); uint64_t root = 0; if (m) memcpy(&root, m->base + 0x2f05458, 8);
+    uint64_t ch = root ? *(uint64_t *)(root + 0x58) : 0, n = root ? *(uint64_t *)(root + 0x60) : 0; if (n > 256) n = 0;
+    int gone = root != root0 && root0; for (int i = 0; i < np && !gone; i++) { int k = 0; while (k < (int)n && *(uint64_t *)(ch + 8 * k) != prev[i]) k++; gone = k == (int)n; }
+    if (gone) dm_ui_gen_bump(root != root0 ? DM_UIGEN_ROOT : DM_UIGEN_PANEL_GONE);
+    root0 = root; np = (int)n; for (int i = 0; i < np; i++) prev[i] = *(uint64_t *)(ch + 8 * i);
+}
+uint32_t dm_ui_gen(void) { ui_gen_scan(); return atomic_load(&g_ui_gen); }   // 只许游戏主线程调（顺带做本帧的顶层面板核对） | Game main thread only (also performs this frame's top-level panel check)
+static int ui_has(uint64_t w, uint64_t want, int dep);
+static int ui_alive(uint64_t w) { module_t *m = main_module(); uint64_t root = 0; if (m) memcpy(&root, m->base + 0x2f05458, 8); return w && root && ui_has(root, w, 0); }
+// 不在树上时只给 0、不清 w：游戏重载布局时会把面板（AutoMap 等）先从根上摘下、再挂回同一个对象，摘下的那几帧不在树上但没被释放；
+// 清掉的话挂回来就成了「新控件」——挪位表因此忘了小地图已挪过，又挪一遍（回归 ipadfull top 局小地图被推出屏外）
+// When not in the tree, only return 0 without clearing w: when the game reloads the layout it first detaches panels (AutoMap etc.) from the root and then reattaches the same object; during those frames they are not in the tree but not freed;
+// clearing would turn the reattached one into a "new widget", so the move table forgot the minimap had already been moved and moved it again (in the ipadfull top regression run the minimap was pushed off screen)
+uint64_t dm_wref_get(dm_wref *r) { if (!r->w) return 0; uint32_t g = dm_ui_gen(); if (r->gen == g) return r->w; if (ui_alive(r->w)) { r->gen = g; return r->w; } return 0; }
+int dm_ui_gen_revalidate(uint32_t *gen, uint64_t anchor) { uint32_t g = dm_ui_gen(); if (*gen == g) return 1; if (ui_alive(anchor)) { *gen = g; return 1; } return 0; }
+int dm_ui_unstable(void) { int dm_padmode_busy(void); (void)dm_ui_gen(); return dm_padmode_busy() || dm_guest_frame() - atomic_load(&g_ui_gen_fr) < 2; }
 static int free_walk(uint64_t w, int dep, uint64_t base) {
     if (!w || dep > 14 || !*(uint8_t *)(w + 0x50)) return 0;
     const char *nm = (const char *)*(uint64_t *)(w + 8);
@@ -155,7 +184,7 @@ void dm_cursor_apply(uint64_t *buttons, int32_t *lx, int32_t *ly) {
       int dm_padmode_current(void); int c = want && !dm_padmode_current(); if (c != cmp) { cmp = c; dm_item_compare(c); } }   // 手柄模式照原版：按住对比键才对比（符文之语清单也靠这一位认「按住对比键」） | Controller mode follows the original: compare only while the compare button is held (the runeword list also relies on this bit to detect "compare button held")
     if ((*buttons & DM_BTN_A) && atomic_load(&g_a_wait)) atomic_store(&g_a_wait, now_ns());   // A 还按着：兜底的 0.3 秒从松开那一刻起算 | A is still held: the fallback's 0.3 seconds are counted from the moment of release
 }
-static uint64_t g_down_w; static _Atomic uint64_t g_origin_xy;   // 按下那次命中的物品区控件；最近一次「拿起」的物品原位中心（位 63 = 有效，x | y << 32 的低 31 位） | Item-area widget hit by that press; center of the original position of the most recently 'picked up' item (bit 63 = valid, low 31 bits of x | y << 32)
+static dm_wref g_down; static _Atomic uint64_t g_origin_xy;   // 按下那次命中的物品区控件；最近一次「拿起」的物品原位中心（位 63 = 有效，x | y << 32 的低 31 位） | Item-area widget hit by that press; center of the original position of the most recently 'picked up' item (bit 63 = valid, low 31 bits of x | y << 32)
 // 「拿起」那一刻记下物品原位的中心：放回原处要放回这里。游戏以光标为中心放——放回手指最初按下的那个点的话，
 // 按在长条物品的一端起拖，放回时整件偏一格、压到别的物品或出界被拒收，留在手上
 // 拖着进不了腰带的物品（装备、护身符…）经过腰带那一排时不把光标挪上去：原版光标一到腰带格，多排腰带就向上展开，
@@ -181,7 +210,7 @@ static int belt_row_block(module_t *m, int x, int y) {
 }
 static void origin_note(module_t *m, int x, int y) {
     dm_hud_info hi; dm_hud_get(&hi); if (hi.valid && hi.holding) return;   // 手上已有东西：这下是放下，不是拿起 | Something is already in hand: this press is a put-down, not a pick-up
-    dm_cursor_item_info ci; uint64_t w = g_down_w; atomic_store(&g_origin_xy, 0);
+    dm_cursor_item_info ci; uint64_t w = dm_wref_get(&g_down); atomic_store(&g_origin_xy, 0);
     if (!w || !dm_cursor_item(&ci)) return;
     g_pick_beltable = ci.beltable || ci.container == DM_ITEM_AT_BELT;
     int32_t vw = *(int32_t *)(m->base + 0x211da38), vh = *(int32_t *)(m->base + 0x211da3c);
@@ -274,6 +303,11 @@ static void cursor_apply(uint64_t *buttons, int32_t *lx, int32_t *ly) {
     // While the single-item task slot panel is open, the item in hand is 'the item in the slot' (in the original game, entering the slot = holding it in hand); having something in hand is the normal state, not 'the put-down failed': do not wrap up.
     // When the slot was occupied and another item in the inventory was dragged, this section put the long sword in the slot back into its original inventory cell, bypassing the slot widget -- the sword's image stayed on the slot, and the transaction packet sent by tapping confirm was rejected by the server
     if (g_rt.active && (dm_ui_panel_state() & DM_PS_IMBUE)) g_rt.active = 0;
+    // 「按返回」这一步（会关玩家的面板）对同一件手上物品只做一轮：g_back_id = 已经为它按过返回的那件；手上空了（或换了别的）才清。
+    // 原先没有上限：手上读数是假的时（卡死：服务端光标挂着已进仓库的魔盒），每拖一次物品就整条走一遍、按两次返回，刚开的面板一开就被关
+    // The "press Back" step (which closes the player's panels) runs only one round per held item: g_back_id = the item for which Back has already been pressed; cleared only when the hand empties (or holds something else).
+    // Previously there was no limit: when the held-item reading was false (the hang: the server cursor still holding a Horadric Cube already in the stash), every drag ran the whole chain and pressed Back twice, so a freshly opened panel closed immediately
+    static int g_back_id; { dm_hud_info h0; dm_hud_get(&h0); if (!h0.holding || (g_back_id && h0.holding != g_back_id)) g_back_id = 0; }
     if (g_rt.active && !g_rt.pending && now_ns() - g_rt.t > 300000000ull && !(dm_held_pending() && now_ns() - g_rt.t < 2000000000ull)) {
         dm_hud_info hi; dm_hud_get(&hi);
         uint64_t pk = atomic_load(&g_pick_xy);
@@ -292,7 +326,8 @@ static void cursor_apply(uint64_t *buttons, int32_t *lx, int32_t *ly) {
         else if (g_rt.stage < 2) { g_rt.stage = 2; g_rt.t = now_ns(); dm_held_stow();
             LOG("dm_cursor_apply：原位也放不下（手上 id %d）→ 收进背包（不关面板）", hi.holding); }
         else if (g_rt.stage == 2 && dm_held_stow_result() < 0 && now_ns() - g_rt.t < 2000000000ull) { /* dm_held_stow 没放成会逐帧重试约 1.5 秒，这段时间结果是 -1：等它出结果 | If dm_held_stow does not manage to stow, it retries every frame for about 1.5 seconds, and during that time the result is -1: wait for it to produce a result */ }
-        else if (g_rt.stage == 2) { g_rt.stage = 3; g_rt.t = now_ns(); atomic_store(&g_set_back_at, dm_guest_frame() + 1);
+        else if (g_rt.stage == 2 && g_back_id == hi.holding) { g_rt.active = 0; static int lg; if (lg++ < 20) LOG("【红】dm_cursor_apply：手上这件（id %d）已按过一轮返回仍没放下 → 不再按返回（不关玩家的面板），等手上换了再说", hi.holding); }
+        else if (g_rt.stage == 2) { g_rt.stage = 3; g_rt.t = now_ns(); g_back_id = hi.holding; atomic_store(&g_set_back_at, dm_guest_frame() + 1);
             LOG("dm_cursor_apply：背包也收不进（手上 id %d，结果 %d）→ 按返回，交给游戏自己处理", hi.holding, dm_held_stow_result()); }
         else if (g_rt.stage == 3) { g_rt.stage = 4; g_rt.t = now_ns(); atomic_store(&g_set_back_at, dm_guest_frame() + 1);   // 原版按返回分两步：面板开着时第一下只关面板、手上那件留着；面板外再按一下才由游戏自己处理——背包有位放背包（0x18），没位丢在脚下（0x17，玩家看得见、能捡回） | In the original game pressing back takes two steps: while a panel is open the first press only closes the panel and the item in hand is kept; pressing once more outside the panel is then handled by the game itself -- put into the inventory if there is room (0x18), dropped at the feet if not (0x17, visible to the player and can be picked back up)
             LOG("dm_cursor_apply：按返回只关了面板、手上还拿着（id %d）→ 再按一次返回，由游戏放背包或丢在脚下", hi.holding); }
@@ -551,7 +586,7 @@ int dm_ui_item_result(unsigned seq) { return atomic_load(&g_iq_done) == seq ? at
 static int item_name(const char *n) { return !strcmp(n, "grid") || !strcmp(n, "horadriccube_grid") || !strcmp(n, "Belt") || !strncmp(n, "slot_", 5) || !strncmp(n, "advancedstash_", 14) || !strcmp(n, "basicstash_container"); }
 static uint64_t g_iw_base;   // main 模块基址（item_walk 按虚表认高级仓库的成叠格用；ui_classify 进来时写） | Base address of the main module (used by item_walk to identify advanced stash stacked cells by vtable; written on entry to ui_classify)
 static const char *g_modal_name = "";   // 最近一次判成「模态框外」时那个模态框的名字 | Name of the modal the last time a hit was classified as 'outside the modal'
-static uint64_t g_slot_w; static const char *g_slot_panel;   // 最近一次物品区命中的控件、它所在的顶层面板名 | Widget of the most recent item-area hit, and the name of the top-level panel it belongs to
+static dm_wref g_slot; static const char *g_slot_panel;   // 最近一次物品区命中的控件、它所在的顶层面板名 | Widget of the most recent item-area hit, and the name of the top-level panel it belongs to
 static int item_walk(uint64_t w, uint64_t xy, int dep, char *hit, size_t hn) {
     if (!w || dep > 14) return 0;
     uint64_t nm = *(uint64_t *)(w + 8), ch = *(uint64_t *)(w + 0x58), n = *(uint64_t *)(w + 0x60);
@@ -560,7 +595,7 @@ static int item_walk(uint64_t w, uint64_t xy, int dep, char *hit, size_t hn) {
     // 高级仓库（宝石 / 材料 / 符文页）的成叠格：每格一个控件，名字是物品码（r01、gcw…），认虚表 main+0x20892f8（控件树转储）；它们的容器 advancedstash_* 自己没有矩形、命不中
     // Stacked cells of the advanced stash (gem / material / rune pages): one widget per cell, named by item code (r01, gcw...), identified by vtable main+0x20892f8 (widget tree dump); their containers advancedstash_* have no rectangle of their own and cannot be hit
     if (nm && (item_name((const char *)nm) || (g_iw_base && (*(uint64_t *)w - g_iw_base == 0x20892f8 || *(uint64_t *)w - g_iw_base == 0x20898e8)))) {   /* 0x20898e8 = 单件任务槽（ImbueSocketWidget）：槽里那件就是手上那件，从槽上起手拖到背包格 = 放回背包 | 0x20898e8 = single-item task slot (ImbueSocketWidget): the item in the slot is the item in hand; starting a drag on the slot and dragging to an inventory cell = put it back into the inventory */ uint64_t vt = *(uint64_t *)w, fn = *(uint64_t *)(vt + 0x48);
-        if (((int (*)(uint64_t, uint64_t))fn)(w, xy) & 1) { strlcpy(hit, (const char *)nm, hn); g_slot_w = w; return 1; } }
+        if (((int (*)(uint64_t, uint64_t))fn)(w, xy) & 1) { strlcpy(hit, (const char *)nm, hn); dm_wref_set(&g_slot, w); return 1; } }
     if (!ch || n > 256) return 0;
     for (uint64_t i = 0; i < n; i++) if (item_walk(*(uint64_t *)(ch + 8 * i), xy, dep + 1, hit, hn)) return 1;
     return 0;
@@ -600,7 +635,7 @@ static void ui_dump(uint64_t w, int dep, const char *want, int on, module_t *m) 
 // main+0xad9b80(tab bar, K, play sound) - it skips disabled tabs (+0xe88 + K), writes +0xdc4, plays the page-switch sound as needed (0x35f120), and sends via the UI root the tab bar's page-switch message (+0xb30)
 // and the K-th tab's own message (+0xb50 + K × 32); on receiving the page-switch message the panel goes straight to that page and the pages in between never appear (from reading the code: one of the three places that write +0xdc4).
 // When a tab is tapped tab_walk records the tab bar, the name and K; dm_ui_tab_go now switches directly (before executing, it verifies by pointer that it is still in the UI tree, visible, and of the tab bar class). The path in the skill binding flow that steps by delta (bd_tab_step) still presses keys as before
-static _Atomic uint64_t g_tab_w; static int g_tab_k; static char g_tab_name[48]; static _Atomic int g_tab_direct;   // g_tab_w 跨线程：游戏主线程判类时写（先写 K 与名字、最后原子发布指针），前端线程 dm_ui_tab_go 原子读 | g_tab_w crosses threads: written by the game main thread during classification (K and the name first, the pointer atomically published last), read atomically by the front-end thread in dm_ui_tab_go
+static dm_wref g_tab_ref; static _Atomic int g_tab_have; static int g_tab_k; static char g_tab_name[48]; static _Atomic int g_tab_direct;   // 命中的页签条：g_tab_ref 只在游戏主线程读写（带界面代号）；g_tab_have 给前端线程 dm_ui_tab_go 原子读（先写 K 与名字、最后发布） | Tab strip that was hit: g_tab_ref is read/written only on the game main thread (with UI generation); g_tab_have is read atomically by the front-end thread in dm_ui_tab_go (K and the name are written first, published last)
 static int ui_has(uint64_t w, uint64_t want, int dep) {   // 界面树里还挂着这个控件（按指针找；名字会重，如小站的页签条就叫「Tabs」） | This widget is still attached to the UI tree (searched by pointer; names can repeat, e.g. the waypoint tab bar is just called "Tabs")
     if (!w || dep > 14) return 0; if (w == want) return 1; uint64_t ch = *(uint64_t *)(w + 0x58), n = *(uint64_t *)(w + 0x60); if (!ch || n > 256) return 0;
     for (uint64_t i = 0; i < n; i++) if (ui_has(*(uint64_t *)(ch + 8 * i), want, dep + 1)) return 1;
@@ -617,7 +652,7 @@ static int tab_walk(uint64_t w, uint64_t xy, int dep, uint64_t vt_tab, int *delt
             uint64_t cvt = *(uint64_t *)c, fn = *(uint64_t *)(cvt + 0x48); if (((int (*)(uint64_t, uint64_t))fn)(c, xy) & 1) { hit = 1; hx = x; hk = kk; } }
         if (hit > 0) { static int lg; if (lg++ < 200) LOG("界面页签：页签条「%s」可见 %d 个，当前选中第 %d 个%s，点中第 %d 个", nm ? (const char *)nm : "?", nt, sel, act > 0 ? "" : "（不在可见页签里，不切）", hk); }
         if (hit > 0 && act > 0) { int d = 0; for (int i = 0; i < nt; i++) { if (tabs[i].x > ax && tabs[i].x <= hx) d++; if (tabs[i].x < ax && tabs[i].x >= hx) d--; }
-            *delta = d; *top = nm && !strcmp((const char *)nm, "UISwitcherTabs"); g_tab_k = hk; strlcpy(g_tab_name, nm ? (const char *)nm : "", sizeof g_tab_name); atomic_store(&g_tab_w, w); return 1; }
+            *delta = d; *top = nm && !strcmp((const char *)nm, "UISwitcherTabs"); g_tab_k = hk; strlcpy(g_tab_name, nm ? (const char *)nm : "", sizeof g_tab_name); dm_wref_set(&g_tab_ref, w); atomic_store(&g_tab_have, 1); return 1; }
         return 0;
     }
     for (uint64_t i = 0; i < n; i++) if (tab_walk(*(uint64_t *)(ch + 8 * i), xy, dep + 1, vt_tab, delta, top)) return 1;
@@ -636,11 +671,11 @@ void dm_cube_side_mode_leave(void) { atomic_store(&g_cube_side_close, 1); }   //
 // For skill binding: whether this hit (after snapping) lands on a skill icon in the skill tree (widget name SkillButton..., whole parent chain visible). Yes = record the snapped normalized coordinates, which the front end uses to send "cursor to point + press Y".
 static uint64_t ui_find(uint64_t w, const char *name, int dep);
 static _Atomic uint64_t g_bd_hit;   // 最高位 = 有效；[31:16] x、[15:0] y（0..65535 归一化） | Top bit = valid; [31:16] x, [15:0] y (normalized 0..65535)
-static uint64_t g_bd_hit_w;
+static dm_wref g_bd_hit_ref;
 static int bd_skill_walk(uint64_t w, uint64_t xy, int dep) {
     if (!w || dep > 14 || !*(uint8_t *)(w + 0x50)) return 0;
     uint64_t nm = *(uint64_t *)(w + 8), ch = *(uint64_t *)(w + 0x58), n = *(uint64_t *)(w + 0x60);
-    if (nm && !strncmp((const char *)nm, "SkillButton", 11) && strncmp((const char *)nm, "SkillButtonC", 12)) { uint64_t fn = *(uint64_t *)(*(uint64_t *)w + 0x48); int h = ((int (*)(uint64_t, uint64_t))fn)(w, xy) & 1; if (h) g_bd_hit_w = w; return h; }
+    if (nm && !strncmp((const char *)nm, "SkillButton", 11) && strncmp((const char *)nm, "SkillButtonC", 12)) { uint64_t fn = *(uint64_t *)(*(uint64_t *)w + 0x48); int h = ((int (*)(uint64_t, uint64_t))fn)(w, xy) & 1; if (h) dm_wref_set(&g_bd_hit_ref, w); return h; }
     if (!ch || n > 256) return 0;
     for (uint64_t i = 0; i < n; i++) if (bd_skill_walk(*(uint64_t *)(ch + 8 * i), xy, dep + 1)) return 1;
     return 0;
@@ -649,12 +684,12 @@ static int bd_skill_walk(uint64_t w, uint64_t xy, int dep) {
 // 「先选中、再确认」：技能图标与这四个「+」的点按只移光标（选中、出说明），加点由手机层的确认按钮触发。第 62 位 = 命中的是属性「+」。
 // The four "+" on the attributes page (CharacterStatsPanel > LevelUpInfo > Strength / Dex / Vitality / EnergyPointButton): one tap and the game adds 1 point on the spot, irreversibly.
 // "Select first, then confirm": taps on skill icons and these four "+" only move the cursor (select, show the tooltip), and spending the point is triggered by the phone layer's confirm button. Bit 62 = the hit is an attribute "+".
-static _Atomic uint32_t g_bd_hit_id;   // 最近一次命中的加点类按钮是哪一个（g_bd_hit_w = 它的控件，主线程写） | Which point-spending button was most recently hit (g_bd_hit_w = its widget, written by the main thread)
+static _Atomic uint32_t g_bd_hit_id;   // 最近一次命中的加点类按钮是哪一个（g_bd_hit_ref = 它的控件，主线程写） | Which point-allocation button was hit most recently (g_bd_hit_ref = its widget, written by the main thread)
 uint32_t dm_ui_hit_id(void) { return atomic_load(&g_bd_hit_id); }
 static int bd_stat_walk(uint64_t w, uint64_t xy, int dep) {
     if (!w || dep > 14 || !*(uint8_t *)(w + 0x50)) return 0;
     uint64_t nm = *(uint64_t *)(w + 8), ch = *(uint64_t *)(w + 0x58), n = *(uint64_t *)(w + 0x60); size_t L = nm ? strlen((const char *)nm) : 0;
-    if (L > 11 && !strcmp((const char *)nm + L - 11, "PointButton")) { uint64_t fn = *(uint64_t *)(*(uint64_t *)w + 0x48); int h = ((int (*)(uint64_t, uint64_t))fn)(w, xy) & 1; if (h) g_bd_hit_w = w; return h; }
+    if (L > 11 && !strcmp((const char *)nm + L - 11, "PointButton")) { uint64_t fn = *(uint64_t *)(*(uint64_t *)w + 0x48); int h = ((int (*)(uint64_t, uint64_t))fn)(w, xy) & 1; if (h) dm_wref_set(&g_bd_hit_ref, w); return h; }
     if (!ch || n > 256) return 0;
     for (uint64_t i = 0; i < n; i++) if (bd_stat_walk(*(uint64_t *)(ch + 8 * i), xy, dep + 1)) return 1;
     return 0;
@@ -667,9 +702,9 @@ static void bd_note_skill(module_t *m, uint64_t root, int x, int y) {
     // so the front end only moved the cursor and the cell got no click (reading cell by cell showed row 2 column 3 not taking effect; this is only reached once cells count as clickable widgets)
     if (modal_any(root, 1, NULL)) { atomic_store(&g_bd_hit_id, 0); return; }
     uint64_t xy = (uint64_t)(uint32_t)x | ((uint64_t)(uint32_t)y << 32), tree = ui_find(root, "SkillsTreePanel", 0), cs = ui_find(root, "CharacterStatsPanel", 0);
-    g_bd_hit_w = 0; uint64_t kind = tree && bd_skill_walk(tree, xy, 0) ? (1ull << 63) : cs && bd_stat_walk(cs, xy, 0) ? (1ull << 63) | (1ull << 62) : 0; if (!kind) { atomic_store(&g_bd_hit_id, 0); return; }
-    { const char *hn = g_bd_hit_w ? (const char *)*(uint64_t *)(g_bd_hit_w + 8) : "";   // 属性「+」：1..4 = 力量 / 敏捷 / 体力 / 精力（按名字首字母）；技能图标：控件地址低 31 位 | 最高位 | Attribute "+": 1..4 = Strength / Dexterity / Vitality / Energy (by first letter of the name); skill icon: low 31 bits of the widget address | top bit
-      uint32_t id = (kind >> 62) & 1 ? (hn[0] == 'S' ? 1 : hn[0] == 'D' ? 2 : hn[0] == 'V' ? 3 : hn[0] == 'E' ? 4 : 0) : (uint32_t)g_bd_hit_w | 0x80000000u; atomic_store(&g_bd_hit_id, id); }
+    dm_wref_set(&g_bd_hit_ref, 0); uint64_t kind = tree && bd_skill_walk(tree, xy, 0) ? (1ull << 63) : cs && bd_stat_walk(cs, xy, 0) ? (1ull << 63) | (1ull << 62) : 0; if (!kind) { atomic_store(&g_bd_hit_id, 0); return; }
+    { const char *hn = dm_wref_get(&g_bd_hit_ref) ? (const char *)*(uint64_t *)(dm_wref_get(&g_bd_hit_ref) + 8) : "";   // 属性「+」：1..4 = 力量 / 敏捷 / 体力 / 精力（按名字首字母）；技能图标：控件地址低 31 位 | 最高位 | Attribute "+": 1..4 = Strength / Dexterity / Vitality / Energy (by first letter of the name); skill icon: low 31 bits of the widget address | top bit
+      uint32_t id = (kind >> 62) & 1 ? (hn[0] == 'S' ? 1 : hn[0] == 'D' ? 2 : hn[0] == 'V' ? 3 : hn[0] == 'E' ? 4 : 0) : (uint32_t)dm_wref_get(&g_bd_hit_ref) | 0x80000000u; atomic_store(&g_bd_hit_id, id); }
     atomic_store(&g_bd_hit, kind | ((uint64_t)(x * 65535ll / w) << 16) | (uint64_t)(y * 65535ll / h));
 }
 int dm_ui_bind_skill_hit(float *nx, float *ny) { uint64_t v = atomic_load(&g_bd_hit); if (!(v >> 63)) return 0;   /* 返回 1 = 技能图标，2 = 属性「+」 | Returns 1 = skill icon, 2 = attribute "+" */ *nx = ((v >> 16) & 0xffff) / 65535.0f; *ny = (v & 0xffff) / 65535.0f; return (v >> 62) & 1 ? 2 : 1; }
@@ -728,7 +763,7 @@ static int ui_inside_panel(module_t *m, uint64_t root, uint64_t xy) {   // 从�
 // Nearest-snap (finger hot zone; audit result: clickable widgets are generally 4–5 mm high, only 12 of 246 reach 7 mm):
 // when the touch point is not on a clickable widget, look for clickable widgets within 3.5 mm (90 layout units) around it from near to far (sampling nine rings × eight directions with the widgets' own hit-test functions), and on a find move the click to that sample point.
 // Clickable widgets are recognized by type (vtable): buttons, toggle buttons, attribute "+", quest icons; tabs are handled separately (widened 90 units above and below).
-static uint64_t g_click_w;   // 最近一次命中的可点控件 | The most recently hit clickable widget
+static dm_wref g_click;   // 最近一次命中的可点控件 | The most recently hit clickable widget
 static const char *g_click_name = ""; static int g_click_exact;   // g_click_exact：这次是判触点本身（不是吸附取样）——滑块只认直接点中，不吸附（点到滑槽值会直接跳过去） | g_click_exact: this time the touch point itself is being judged (not a snap sample) - sliders are direct hits only, no snapping (a tap on the track makes the value jump straight there)
 static int click_walk(uint64_t w, uint64_t xy, int dep, uint64_t base) {
     if (!w || dep > 14 || !*(uint8_t *)(w + 0x50)) return 0;
@@ -741,7 +776,7 @@ static int click_walk(uint64_t w, uint64_t xy, int dep, uint64_t base) {
     // 0x20b91c0 / 0x20b8718 = number box / text box (the gold deposit/withdraw quantity box, the naming box): the drawn box (the quantity box's BackgroundBox, layout x 244–986) is one ring wider than the input widget itself (323–953);
     // it used not to count as a clickable widget and so was not snapped to: a tap on the left end of the box (where the number is shown) landed on the popup backing, the input box did not open, and tapping 「好」(OK) = deposit / withdraw everything at the default maximum.
     // Once counted as clickable, the existing 3.5 mm snap (90 units) covers the margins on all four sides of the box (left 79, top 19, bottom 24)
-    if (vt == 0x20b7b00 || vt == 0x208a5f8 || vt == 0x20bc110 || vt == 0x20c7d68 || vt == 0x20c80f0 || vt == 0x20c6fb8 || vt == 0x20b84d0 || vt == 0x20b8cd0 || vt == 0x20b97f8 || vt == 0x20b91c0 || vt == 0x20b8718 || vt == 0x20baff8 || (vt == 0x20bad70 && g_click_exact)) {   /* 按钮 / 技能树「综合技能」页的技能图标（普通技能、物品技能，0x208a5f8）/ 开关按钮 / 属性「+」/ 任务图标 / 职业人物 / 列表行（0x20b8cd0 = 键鼠版选角页的角色行）/ 滚动条箭头 / 滑块（含两端箭头，只认直接点中） | Buttons / skill icons on the skill tree's 「综合技能」(General Skills) page (normal skills, item skills, 0x208a5f8) / toggle buttons / attribute "+" / quest icons / class characters / list rows (0x20b8cd0 = character rows on the keyboard-mouse character select page) / scrollbar arrows / sliders (including the arrows at both ends, direct hits only) */ uint64_t fn = *(uint64_t *)(*(uint64_t *)w + 0x48); if (((int (*)(uint64_t, uint64_t))fn)(w, xy) & 1) { g_click_w = w; g_click_name = *(uint64_t *)(w + 8) ? (const char *)*(uint64_t *)(w + 8) : "?"; return 1; } }
+    if (vt == 0x20b7b00 || vt == 0x208a5f8 || vt == 0x20bc110 || vt == 0x20c7d68 || vt == 0x20c80f0 || vt == 0x20c6fb8 || vt == 0x20b84d0 || vt == 0x20b8cd0 || vt == 0x20b97f8 || vt == 0x20b91c0 || vt == 0x20b8718 || vt == 0x20baff8 || (vt == 0x20bad70 && g_click_exact)) {   /* 按钮 / 技能树「综合技能」页的技能图标（普通技能、物品技能，0x208a5f8）/ 开关按钮 / 属性「+」/ 任务图标 / 职业人物 / 列表行（0x20b8cd0 = 键鼠版选角页的角色行）/ 滚动条箭头 / 滑块（含两端箭头，只认直接点中） | Buttons / skill icons on the skill tree's 「综合技能」(General Skills) page (normal skills, item skills, 0x208a5f8) / toggle buttons / attribute "+" / quest icons / class characters / list rows (0x20b8cd0 = character rows on the keyboard-mouse character select page) / scrollbar arrows / sliders (including the arrows at both ends, direct hits only) */ uint64_t fn = *(uint64_t *)(*(uint64_t *)w + 0x48); if (((int (*)(uint64_t, uint64_t))fn)(w, xy) & 1) { dm_wref_set(&g_click, w); g_click_name = *(uint64_t *)(w + 8) ? (const char *)*(uint64_t *)(w + 8) : "?"; return 1; } }
     if (!ch || n > 256) return 0;
     for (uint64_t i = 0; i < n; i++) if (click_walk(*(uint64_t *)(ch + 8 * i), xy, dep + 1, base)) return 1;
     return 0;
@@ -841,8 +876,8 @@ static int ui_snap(module_t *m, uint64_t root, int *x, int *y) {   // 0 周围�
     for (int ring = 1; ring <= 9; ring++) for (int d = 0; d < 8; d++) { float r = R * ring / 9 * (d < 4 ? 1.0f : 0.7071f);   // 九圈（每圈约 0.4 毫米）：两个按钮之间的缝里落点归更近的那个 | Nine rings (about 0.4 mm each): a point in the gap between two buttons goes to the nearer one
         int px = *x + (int)(dx[d] * r), py = *y + (int)(dy[d] * r); if (px < 0 || py < 0 || px >= w || py >= h) continue;
         if (SNAP_AT(px, py, lo, (int)n - 1)) {   // 吸附到的点在控件边上：点击发到控件中心（沿这一点向四个方向探边）；中心若落在别的控件上（套着的子按钮）就留在取样点 | The snapped point is on the widget's edge: send the click to the widget center (probe edges in four directions from this point); if the center falls on another widget (a nested child button) stay at the sample point
-            uint64_t cw = g_click_w; int qx = px, qy = py; slot_center(cw, &qx, &qy, w, h, 0);
-            if (SNAP_AT(qx, qy, lo, (int)n - 1) && g_click_w == cw) { px = qx; py = qy; } else { SNAP_AT(px, py, lo, (int)n - 1); }
+            uint64_t cw = dm_wref_get(&g_click); int qx = px, qy = py; slot_center(cw, &qx, &qy, w, h, 0);
+            if (SNAP_AT(qx, qy, lo, (int)n - 1) && dm_wref_get(&g_click) == cw) { px = qx; py = qy; } else { SNAP_AT(px, py, lo, (int)n - 1); }
             *x = px; *y = py; return 2; } }
     return 0;
 }
@@ -1094,9 +1129,9 @@ static int ui_classify0(module_t *m, uint64_t root, int x, int y, char *hit, siz
           for (int k = 0; k < 4; k++) { snprintf(nm, sizeof nm, "TextTab%d", k); uint64_t tw = ui_find(sp, nm, 0);
               if (tw && *(uint8_t *)(tw + 0x50) && (((int (*)(uint64_t, uint64_t))*(uint64_t *)(*(uint64_t *)tw + 0x48))(tw, xy) & 1)) tgt = k;
               snprintf(nm, sizeof nm, "Tab%d", k); uint64_t tb = k < 3 ? ui_find(sp, nm, 0) : 0, bg = tb ? ui_find(tb, "Background", 0) : 0; if (bg && *(uint8_t *)(bg + 0x50)) cur = k; }
-          if (tgt >= 0) { atomic_store(&g_tab_w, 0); atomic_store(&g_tab_delta, tgt - cur); atomic_store(&g_tab_top, 0); snprintf(hit, hn, "技能树分页 %+d", tgt - cur); return 2; } } }
+          if (tgt >= 0) { dm_wref_set(&g_tab_ref, 0); atomic_store(&g_tab_have, 0); atomic_store(&g_tab_delta, tgt - cur); atomic_store(&g_tab_top, 0); snprintf(hit, hn, "技能树分页 %+d", tgt - cur); return 2; } } }
     { int sx = x, sy = y, sn = ui_snap(m, root, &sx, &sy); if (sn == 6) { snprintf(hit, hn, "盖:%s 不点", g_inside_name); return 6; }
-      if (sn == 1) { if (snap_guarded(root, g_click_name)) snap_guard_near(g_click_w, g_click_name, x, y, sx, sy, *(int32_t *)(m->base + 0x211da38), *(int32_t *)(m->base + 0x211da3c));   // 只为留一行本体点数读数 | only to leave one line of readout of the widget body's size in points
+      if (sn == 1) { if (snap_guarded(root, g_click_name)) snap_guard_near(dm_wref_get(&g_click), g_click_name, x, y, sx, sy, *(int32_t *)(m->base + 0x211da38), *(int32_t *)(m->base + 0x211da3c));   // 只为留一行本体点数读数 | only to leave one line of readout of the widget body's size in points
           snprintf(hit, hn, " 可点控件 %s", g_click_name); bd_note_skill(m, root, sx, sy); return 0; }
       // 个人仓库的翻页箭头（命中框只有 64 单位见方，手机上约 13 点）：点偏了被吸附到箭头上时，同样发翻页请求——翻个人仓库页是宿主做的（dm_pages.c），
       // 原先只有正点在命中框里才发；吸附过去的那一下只发了原版点击，原版在个人页不认，表现为「点了没反应」（的翻页偶发点不动）
@@ -1104,7 +1139,7 @@ static int ui_classify0(module_t *m, uint64_t root, int x, int y, char *hit, siz
       // and previously it was sent only for a tap squarely inside the hit box; a tap snapped over sent only the original game's click, which the original game ignores on the personal page, showing up as "tapped and nothing happened" (page flipping that occasionally would not respond)
       if (sn && (!strcmp(g_click_name, "TouchStashLeft") || !strcmp(g_click_name, "TouchStashRight")) && pg_personal(root)) {
           void dm_pages_request_flip(int); int dir = g_click_name[10] == 'R' ? 1 : -1; dm_pages_request_flip(dir); snprintf(hit, hn, "个人仓库%s一页（点偏，吸附）", dir > 0 ? "下" : "上"); return 6; }
-      if (sn && snap_guarded(root, g_click_name) && !snap_guard_near(g_click_w, g_click_name, x, y, sx, sy, *(int32_t *)(m->base + 0x211da38), *(int32_t *)(m->base + 0x211da3c))) { snprintf(hit, hn, "吸附到 %s：后果重的按钮只认本体（不足 44 点的外扩到 44 点见方），不点", g_click_name); return 6; }
+      if (sn && snap_guarded(root, g_click_name) && !snap_guard_near(dm_wref_get(&g_click), g_click_name, x, y, sx, sy, *(int32_t *)(m->base + 0x211da38), *(int32_t *)(m->base + 0x211da3c))) { snprintf(hit, hn, "吸附到 %s：后果重的按钮只认本体（不足 44 点的外扩到 44 点见方），不点", g_click_name); return 6; }
       if (sn) { snprintf(hit, hn, " 吸附 %s (%d,%d)", g_click_name, sx, sy); bd_note_skill(m, root, sx, sy); return 0; }   // 在可点控件上或它 3.5 毫米内（含面板边上的按钮外沿） | On a clickable widget or within 3.5 mm of it (including the outer rim of buttons at the panel edge)
       // 再外一圈（到 PG_REACH 单位）：周围没有别的可点控件抢这一下（上面的吸附没找到）、又不在物品格上（更前面已判）时也算点箭头——
       // 箭头连同这一圈的有效范围 = 64 + 2 × 112 = 288 单位见方，375 点高的屏上正好 50 点，更高的屏更大
@@ -1131,16 +1166,16 @@ void dm_ui_tab_go(void) {   // 前端在「点按落在页签上」（最近一�
     // after dragging something in the inventory and then tapping the 「佣兵」(Mercenary) tab, the tooltip of a skill icon on the mercenary page covers half the panel (screenshot from fixed regression run f). Tabs have no hover tooltip, so resting there is cleanest
     // Only one atomic flag is set and the pointer pump (game main thread) does the sending: there are two callers here (the front end tapping a tab, and page switching inside the skill binding box on the game main thread), so it must not be queued into the single-writer g_up_q
     atomic_store(&g_tab_unhover, 1);
-    if (atomic_load(&g_tab_w)) { atomic_store(&g_tab_left, 0); atomic_store(&g_tab_direct, 1); LOG("界面页签：切 %+d 页 → 直接选中第 %d 个（%s）", d, g_tab_k, g_tab_name); return; }
+    if (atomic_load(&g_tab_have)) { atomic_store(&g_tab_left, 0); atomic_store(&g_tab_direct, 1); LOG("界面页签：切 %+d 页 → 直接选中第 %d 个（%s）", d, g_tab_k, g_tab_name); return; }
     atomic_store(&g_tab_mask, d > 0 ? (top ? DM_BTN_R : DM_BTN_ZR) : (top ? DM_BTN_L : DM_BTN_ZL)); atomic_store(&g_tab_left, d > 0 ? d : -d);
     LOG("界面页签：切 %+d 页（%s）", d, top ? "L / R" : "ZL / ZR");
 }
-// 单件任务槽面板开着、槽里有东西（= 手上拿着）、而这次按下的不是槽本身：槽里那件之外的物品这时不许动。只许游戏主线程调，在 ui_classify 答出 1 之后用（g_slot_w = 这次命中的物品区控件）
-// The single-item quest slot panel is open, the slot holds something (= held in hand), and this press is not on the slot itself: items other than the one in the slot must not be touched now. Callable only from the game main thread, used after ui_classify answers 1 (g_slot_w = the item-area widget hit this time)
+// 单件任务槽面板开着、槽里有东西（= 手上拿着）、而这次按下的不是槽本身：槽里那件之外的物品这时不许动。只许游戏主线程调，在 ui_classify 答出 1 之后用（g_slot = 这次命中的物品区控件）
+// The single-item quest socket panel is open and the socket holds something (= held in hand), and this press is not on the socket itself: items other than the one in the socket must not move now. Game main thread only; use after ui_classify answers 1 (g_slot = the item-area widget hit this time)
 static int imbue_locked(module_t *m, uint64_t root) {
     uint64_t ip = m && root ? ui_find(root, "ImbueItemsPanel", 0) : 0; if (!ip || !*(uint8_t *)(ip + 0x50) || !has_visible_leaf(ip, 1)) return 0;
     dm_hud_info hi; dm_hud_get(&hi); if (!hi.valid || !hi.holding) return 0;
-    return !(g_slot_w && *(uint64_t *)g_slot_w == (uint64_t)m->base + 0x20898e8);
+    return !(dm_wref_get(&g_slot) && *(uint64_t *)dm_wref_get(&g_slot) == (uint64_t)m->base + 0x20898e8);
 }
 int dm_ui_item_at_now(float nx, float ny) {   // 只许游戏主线程调（Mac 宿主触点脚本在取手柄处跑） | Callable only from the game main thread (the Mac host touch point script runs where the controller is polled)
     module_t *m = main_module(); if (!m) return 0; uint64_t root = 0; memcpy(&root, m->base + 0x2f05458, 8);
@@ -1213,11 +1248,11 @@ int dm_ui_bag_point(int x, int y, int *fx100, int *fy100, int *cols, int *rows) 
     *fx100 = (int)lround((x - x0) * 100.0 / cell); *fy100 = (int)lround((y - y0) * 100.0 / cell); return *cols > 0 && *rows > 0;
 }
 // 佣兵面板里还没解锁的六个新装备格（项链 2、戒指 6 / 7、腰带 8、鞋 9、手套 10；秘境最高通关不到 10 层）：点中 / 拖到就弹一句提示（dm_rift.c，半秒内不重复）。
-// 认命中结果（g_slot_w = 这次命中的物品区控件）、不认界面焦点：空格旁边有物品时光标会吸到那件物品所在的格上（点腰带格，焦点落在身体格——实测）。佣兵格 = 属主 +0x5c8 == 1
-// The six new equipment slots in the mercenary panel that are not yet unlocked (amulet 2, rings 6 / 7, belt 8, boots 9, gloves 10; highest rift level cleared below 10): tapping / dragging onto one pops up a one-line hint (dm_rift.c, not repeated within half a second).
-// Goes by the hit result (g_slot_w = the item area widget hit this time), not by UI focus: when there is an item next to an empty cell the cursor snaps to the cell holding that item (tapping the belt cell, focus lands on the body cell -- measured). Mercenary cell = owner +0x5c8 == 1
+// 认命中结果（g_slot = 这次命中的物品区控件）、不认界面焦点：空格旁边有物品时光标会吸到那件物品所在的格上（点腰带格，焦点落在身体格——实测）。佣兵格 = 属主 +0x5c8 == 1
+// The six not-yet-unlocked new equipment slots in the mercenary panel (amulet 2, rings 6 / 7, belt 8, boots 9, gloves 10; highest Rift cleared below level 10): tapping / dragging onto one pops a hint (dm_rift.c, no repeat within half a second).
+// Matches the hit result (g_slot = the item-area widget hit this time), not UI focus: when an empty slot has an item next to it, the cursor snaps to the slot holding that item (tapping the belt slot puts focus on the body slot, measured). Mercenary slot = owner +0x5c8 == 1
 static int merc_lock_hit(const char *hit) {   // 返回 1 = 这次命中的是锁着的格（已弹提示） | Returns 1 = this hit is a locked cell (hint already shown)
-    if (!g_slot_w || !hit || strncmp(hit, "slot_", 5) || *(uint32_t *)(g_slot_w + 0x5c8) != 1) return 0; int l_ = *(int32_t *)(g_slot_w + 0x5d8); int dm_rift_merc_unlocked(void); void dm_rift_merc_locked_hint(void);
+    if (!dm_wref_get(&g_slot) || !hit || strncmp(hit, "slot_", 5) || *(uint32_t *)(dm_wref_get(&g_slot) + 0x5c8) != 1) return 0; int l_ = *(int32_t *)(dm_wref_get(&g_slot) + 0x5d8); int dm_rift_merc_unlocked(void); void dm_rift_merc_locked_hint(void);
     if ((l_ == 2 || (l_ >= 6 && l_ <= 10)) && !dm_rift_merc_unlocked()) { dm_rift_merc_locked_hint(); return 1; }
     return 0;
 }
@@ -1266,8 +1301,8 @@ static int ui_drop_kind(module_t *m, uint64_t root, int x, int yl, int yf) {
     if (belt_row_block(m, x, yl)) return 0;   // 进不了腰带的物品松手在腰带格上：放回原处 | An item that cannot go into the belt released on a belt cell: put back
     if (g_slot_panel && !strcmp(g_slot_panel, "VendorPanelLayout") && dm_shop_open()) return 7;   // 7 = 落在商人的货架上：松手时卖掉手上那件（前端调 dm_shop_sell_cursor；卖不掉的放回原处） | 7 = landed on the vendor's shelf: on release sell the held item (the front end calls dm_shop_sell_cursor; what cannot be sold is put back)
     if (merc_lock_hit(hit)) { atomic_store(&g_drop_loc, 0); return 0; }   // 松手在锁着的格上：放回原处（同上面腰带那行），不记栏位——不让松手收尾的兜底去给佣兵穿（服务端那道门本来也会拒，这里省掉那一趟） | Released on a locked cell: put back where it was (same as the belt line above), without recording a slot -- so that the release-finish fallback does not go and equip the mercenary (the server-side gate would reject it anyway; this saves that round trip)
-    atomic_store(&g_drop_loc, g_slot_w && !strncmp(hit, "slot_", 5) ? (*(int32_t *)(g_slot_w + 0x5d8) | (*(uint32_t *)(g_slot_w + 0x5c8) == 1 ? 0x100 : 0)) : 0);   // 佣兵面板里的同名格（属主 +0x5c8 == 1）带上 0x100：兜底时走「给佣兵穿」，不能按玩家的栏位放（那会把东西穿到玩家身上） | A same-named cell in the mercenary panel (owner +0x5c8 == 1) carries 0x100: the fallback then goes through "equip the mercenary" and must not place by the player's slot (that would put the item on the player)
-    if (g_slot_w) slot_center(g_slot_w, &px, &py, vw, vh, strncmp(hit, "slot_", 5) != 0);   // 装备槽取槽心；背包类用图的位置（收进边界内） | Equipment slots take the slot center; inventory-type areas use the image position (pulled inside the bounds)
+    atomic_store(&g_drop_loc, dm_wref_get(&g_slot) && !strncmp(hit, "slot_", 5) ? (*(int32_t *)(dm_wref_get(&g_slot) + 0x5d8) | (*(uint32_t *)(dm_wref_get(&g_slot) + 0x5c8) == 1 ? 0x100 : 0)) : 0);   // 佣兵面板里的同名格（属主 +0x5c8 == 1）带上 0x100：兜底时走「给佣兵穿」，不能按玩家的栏位放（那会把东西穿到玩家身上） | A same-named cell in the mercenary panel (owner +0x5c8 == 1) carries 0x100: the fallback then goes through "equip the mercenary" and must not place by the player's slot (that would put the item on the player)
+    if (dm_wref_get(&g_slot)) slot_center(dm_wref_get(&g_slot), &px, &py, vw, vh, strncmp(hit, "slot_", 5) != 0);   // 装备槽取槽心；背包类用图的位置（收进边界内） | Equipment slots take the slot center; inventory-type areas use the image position (pulled inside the bounds)
     atomic_store(&g_drop_xy, (uint64_t)(uint32_t)px | ((uint64_t)(uint32_t)py << 32));
     atomic_store(&g_drop_bag, !strcmp(hit, "grid") && g_slot_panel && !strcmp(g_slot_panel, "PlayerInventoryExpansionLayout"));
     return 5;   // 5 = 放在 g_drop_xy（dm_ui_drop_point 取） | 5 = put down at g_drop_xy (fetched via dm_ui_drop_point)
@@ -1407,7 +1442,7 @@ static void ui_use_pump(void) {   // 主线程 | Main thread
     dm_cursor_item_info ci;
     // 物品栏里腰带的空格上双击 = 一键补满（原先是长按，改成双击）；有药的格照旧走下面
     // Double tap on an empty belt cell in the inventory panel = one-tap refill (used to be long press, changed to double tap); cells holding a potion go through the code below as before
-    if (belt_widget(g_slot_w) && !finger_item(&ci, "双击")) { dm_belt_fill(g_slot_w); LOG("界面双击：腰带空格 → 一键补满"); return; }
+    if (belt_widget(dm_wref_get(&g_slot)) && !finger_item(&ci, "双击")) { dm_belt_fill(); LOG("界面双击：腰带空格 → 一键补满"); return; }
     if (!dm_cursor_item(&ci)) { LOG("界面双击：光标下没有物品，不动"); return; }
     if ((dm_ui_panel_state() & DM_PS_VAULT) && ci.container == DM_ITEM_AT_INVENTORY) { void dm_vault_request_deposit(uint32_t); dm_vault_request_deposit(ci.id); LOG("界面双击：编年史页开着，背包的 %s（id %u）→ 存进编年史仓库", ci.code, ci.id); return; }
     if (ci.container == DM_ITEM_AT_SHOP) { dm_shop_buy(); LOG("界面双击：货架上的 %s → 买", ci.code); }
@@ -1423,14 +1458,14 @@ static void ui_long_pump(void) {   // 主线程：按游戏自己的悬停对象
     if (!atomic_exchange(&g_long_req, 0)) return;
     // 物品栏里的腰带上长按：不动（补满改成腰带空格双击）。在这里先返回，不落到「空格长按 = 整理」
     // Long press on the belt in the inventory panel: nothing happens (refill was changed to a double tap on an empty belt cell). Return here first so it does not fall into "long press on empty cell = sort"
-    if (belt_widget(g_slot_w)) { LOG("界面长按：腰带 → 不动（补满改成空格双击）"); return; }
+    if (belt_widget(dm_wref_get(&g_slot))) { LOG("界面长按：腰带 → 不动（补满改成空格双击）"); return; }
     dm_cursor_item_info ci; int has = finger_item(&ci, "长按");
     if (!has) {   // 空格上长按 = 整理这一页（原版手柄「按住排序」的同一个终点 dm_inv_sort）。认页：从命中的格子控件沿父链（+0x30）看名字——储藏箱页的箱子格与背包格都叫 grid， | Long press on an empty cell = sort this page (the same endpoint as the original controller's 「按住排序」(Hold to Sort), dm_inv_sort). Identifying the page: from the hit cell widget walk up the parent chain (+0x30) and look at names - the stash cells and inventory cells on the stash page are both called grid,
         // 只能靠上层名字分：带 stash / bank 的 = 储藏箱，带 cube 的 = 方块，其余 = 背包；商人货架、装备位、腰带不整理
         // It can only be told apart by the ancestor's name: containing stash / bank = stash, containing cube = cube, the rest = inventory; the vendor shelf, equipment slots and belt are not sorted
-        const char *nm = g_slot_w ? (const char *)*(uint64_t *)(g_slot_w + 8) : NULL, *pn = g_slot_panel; char chain[160] = ""; int page = -1, grid = nm && (!strcmp(nm, "grid") || !strcmp(nm, "horadriccube_grid") || !strncmp(nm, "advancedstash_", 14) || !strcmp(nm, "basicstash_container"));
+        const char *nm = dm_wref_get(&g_slot) ? (const char *)*(uint64_t *)(dm_wref_get(&g_slot) + 8) : NULL, *pn = g_slot_panel; char chain[160] = ""; int page = -1, grid = nm && (!strcmp(nm, "grid") || !strcmp(nm, "horadriccube_grid") || !strncmp(nm, "advancedstash_", 14) || !strcmp(nm, "basicstash_container"));
         if (grid && !(pn && !strcmp(pn, "VendorPanelLayout"))) { page = 0;
-            for (uint64_t w = g_slot_w; w && strlen(chain) < 120; w = *(uint64_t *)(w + 0x30)) { const char *n = *(uint64_t *)(w + 8) ? (const char *)*(uint64_t *)(w + 8) : "?"; strlcat(chain, n, sizeof chain); strlcat(chain, "<", sizeof chain);
+            for (uint64_t w = dm_wref_get(&g_slot); w && strlen(chain) < 120; w = *(uint64_t *)(w + 0x30)) { const char *n = *(uint64_t *)(w + 8) ? (const char *)*(uint64_t *)(w + 8) : "?"; strlcat(chain, n, sizeof chain); strlcat(chain, "<", sizeof chain);
                 if (page == 0 && (strcasestr(n, "stash") || strcasestr(n, "bank")) && strcmp(n, "BankExpansionLayout") && strcmp(n, "BankOriginalLayout")) page = 4;
                 if (page == 0 && strcasestr(n, "cube")) page = 3; } }
         if (page >= 0) { void dm_inv_sort(int); dm_inv_sort(page); }
@@ -1474,7 +1509,7 @@ static void ui_item_pump(uint64_t root, int width, int height) {
     uint64_t v = atomic_load(&g_iq_xy); int x = (int)(((v >> 16) & 0xffff) / 65535.0 * width), y = (int)((v & 0xffff) / 65535.0 * height);
     char hit[40] = ""; int r; g_cls_out = atomic_load(&g_iq_out);
     if (atomic_exchange(&g_iq_drop, 0)) { r = ui_drop_kind(main_module(), root, x, y, (int)(atomic_load(&g_iq_y2) / 65535.0 * height)); 
-        if (r == 5 && g_press_stack && g_slot_w && *(uint64_t *)(g_slot_w + 8) && !strcmp((const char *)*(uint64_t *)(g_slot_w + 8), "horadriccube_grid")) r = 11;   // 11 = 从成叠格拖出、物品图落在这一页下方的魔盒格上（前端：1 件进魔盒，不是取到背包）。g_slot_w = 刚才落点分类命中的物品区控件 | 11 = dragged out of a stack cell and the item image lands on a cube cell at the bottom of this page (front end: 1 item goes into the cube, not taken into the inventory). g_slot_w = the item-area widget hit by the drop-point classification just now
+        if (r == 5 && g_press_stack && dm_wref_get(&g_slot) && *(uint64_t *)(dm_wref_get(&g_slot) + 8) && !strcmp((const char *)*(uint64_t *)(dm_wref_get(&g_slot) + 8), "horadriccube_grid")) r = 11;   // 11 = 从成叠格拖出、物品图落在这一页下方的魔盒格上（前端：1 件进魔盒，不是取到背包）。g_slot = 刚才落点分类命中的物品区控件 | 11 = dragged out of a stacked slot with the item image landing on the Horadric Cube slot below this page (front end: 1 item goes into the Cube, not taken to the backpack). g_slot = the item-area widget hit by the drop-point classification just now
         snprintf(hit, sizeof hit, "拖放落点类 %d", r); atomic_store(&g_iq_res, r); atomic_store(&g_drop_last, r); atomic_store(&g_iq_done, seq);
         if (hit_log_ok(hit)) LOG("界面命中：(%d,%d) → %s", x, y, hit); return; }
     { int dm_pouch_tip_gate(int, int); if (dm_pouch_tip_gate(x, y)) { r = 6; atomic_store(&g_iq_res, r); atomic_store(&g_iq_done, seq); return; } }   // 百宝囊清单开着：点框外只收清单（dm_pouch.c） | Pouch list open: a tap outside the box only dismisses the list (dm_pouch.c)
@@ -1485,15 +1520,15 @@ static void ui_item_pump(uint64_t root, int width, int height) {
         else LOG("界面命中：(%d,%d) → 模态框外（%s），这一下不处理", x, y, g_modal_name);
         r = 6; atomic_store(&g_iq_res, r); atomic_store(&g_iq_done, seq); return; }
     if (r != 1 && r != 7 && dm_item_targeting()) { dm_item_target_cancel(); LOG("界面鉴定：点在物品区之外，退出鉴定态"); }
-    if (r == 1) g_down_w = g_slot_w;   // 这次按下落在哪个物品区控件上（「拿起」那下算物品原位用） | Which item-area widget this press landed on (used to compute the item's original position on the "pick up" press)
+    if (r == 1) dm_wref_set(&g_down, dm_wref_get(&g_slot));   // 这次按下落在哪个物品区控件上（「拿起」那下算物品原位用） | Which item-area widget this press landed on (used to compute the item's original position on the "pick up" press)
     { dm_hud_info hh; dm_hud_get(&hh); if (r == 0 && hh.valid && hh.holding && g_inside_owner[0] && !in_item_panel_rect(main_module(), root, (uint64_t)(uint32_t)x | ((uint64_t)(uint32_t)y << 32))) r = 3; }   // 手上还拿着物品时点两侧黑网格：按面板外算（手势层 = 丢） | Tapping the black grid on either side while still holding an item: treated as outside the panel (gesture layer = drop)
-    if (r == 1 && g_slot_w && g_iw_base && *(uint64_t *)g_slot_w - g_iw_base == 0x20892f8) { r = 8; atomic_store(&g_exact_xy, (uint64_t)(uint32_t)x | (uint64_t)(uint32_t)y << 32); atomic_store(&g_stack_left, -1); atomic_store(&g_stack_want, 1); }   // 8 = 高级仓库里的成叠格（手势层照物品区处理，只有双击不同：取 1 件，不按住 Y——按住是原版的「移动 3 个」） | 8 = a stack cell in the advanced stash (the gesture layer handles it like the item area, only the double tap differs: take 1, without holding Y - holding is the original game's 「移动 3 个」(Move 3))
+    if (r == 1 && dm_wref_get(&g_slot) && g_iw_base && *(uint64_t *)dm_wref_get(&g_slot) - g_iw_base == 0x20892f8) { r = 8; atomic_store(&g_exact_xy, (uint64_t)(uint32_t)x | (uint64_t)(uint32_t)y << 32); atomic_store(&g_stack_left, -1); atomic_store(&g_stack_want, 1); }   // 8 = 高级仓库里的成叠格（手势层照物品区处理，只有双击不同：取 1 件，不按住 Y——按住是原版的「移动 3 个」） | 8 = a stack cell in the advanced stash (the gesture layer handles it like the item area, only the double tap differs: take 1, without holding Y - holding is the original game's 「移动 3 个」(Move 3))
     g_press_stack = r == 8;
     if (r == 1 && imbue_locked(main_module(), root)) r = 10;   // 10 = 单件任务槽里有东西时，背包 / 身上的别的物品：手势层照物品区，但不拿起、双击不动（原版此时这些物品上不出「放置 / 丢弃」提示） | 10 = other items in the inventory / on the body while the single-item quest slot holds something: the gesture layer treats it like the item area, but no pick-up and double tap does nothing (the original game shows no 「放置 / 丢弃」(Place / Drop) hint on these items at this time)
     if (r == 1 && g_slot_panel && !strcmp(g_slot_panel, "VendorPanelLayout") && dm_shop_open()) r = 7;   // 7 = 商人货架上的货（手势层照物品区处理，只有起拖不同：拖到背包 = 买） | 7 = an item on the vendor shelf (the gesture layer handles it like the item area, only the drag start differs: dragging to the inventory = buy)
-    if ((r == 7 || r == 8) && g_slot_w) {   // 货架控件的边界（命中函数向四个方向探），给 dm_ui_item_rect 换算那件货的屏幕矩形；成叠格同样探（探到的就是那一格自己），拖出跟手图按它认图标 | Bounds of the shelf widget (hit-test function probed in four directions), for dm_ui_item_rect to convert into the screen rect of that item; stack cells are probed the same way (what is found is that one cell itself), and the drag-out follow image identifies the icon by it
-        uint64_t fn = *(uint64_t *)(*(uint64_t *)g_slot_w + 0x48); int x0 = x, x1 = x, y0 = y, y1 = y;
-#define SHELF_HIT(px, py) (((int (*)(uint64_t, uint64_t))fn)(g_slot_w, (uint64_t)(uint32_t)(px) | ((uint64_t)(uint32_t)(py) << 32)) & 1)
+    if ((r == 7 || r == 8) && dm_wref_get(&g_slot)) {   // 货架控件的边界（命中函数向四个方向探），给 dm_ui_item_rect 换算那件货的屏幕矩形；成叠格同样探（探到的就是那一格自己），拖出跟手图按它认图标 | Bounds of the shelf widget (hit-test function probed in four directions), for dm_ui_item_rect to convert into the screen rect of that item; stack cells are probed the same way (what is found is that one cell itself), and the drag-out follow image identifies the icon by it
+        uint64_t fn = *(uint64_t *)(*(uint64_t *)dm_wref_get(&g_slot) + 0x48); int x0 = x, x1 = x, y0 = y, y1 = y;
+#define SHELF_HIT(px, py) (((int (*)(uint64_t, uint64_t))fn)(dm_wref_get(&g_slot), (uint64_t)(uint32_t)(px) | ((uint64_t)(uint32_t)(py) << 32)) & 1)
         while (x0 > 1 && SHELF_HIT(x0 - 2, y)) x0 -= 2; while (x1 < width - 2 && SHELF_HIT(x1 + 2, y)) x1 += 2;
         while (y0 > 1 && SHELF_HIT(x, y0 - 2)) y0 -= 2; while (y1 < height - 2 && SHELF_HIT(x, y1 + 2)) y1 += 2;
         atomic_store(&g_shelf_box, (uint64_t)(uint16_t)x0 | ((uint64_t)(uint16_t)y0 << 16) | ((uint64_t)(uint16_t)x1 << 32) | ((uint64_t)(uint16_t)y1 << 48));
@@ -1502,8 +1537,8 @@ static void ui_item_pump(uint64_t root, int width, int height) {
     // 锁着的格照常弹解锁提示；手上拿着物品时不拦（放东西走松手落点那条）。结果 6 = 手势层不点
     // Tapping an empty cell / a locked cell in the mercenary panel (nothing held in hand): this tap does not move the cursor -- the original game's controller cursor, landing on an empty cell, is snapped to a neighboring cell that has an item and pops up that item's tooltip, covering the panel.
     // Locked cells show the unlock hint as usual; with an item held in hand it is not blocked (placing goes through the release drop point path). Result 6 = the gesture layer does not tap
-    if (r == 1 && g_slot_w && !strncmp(hit, "slot_", 5) && *(uint32_t *)(g_slot_w + 0x5c8) == 1) { dm_hud_info hh; dm_hud_get(&hh); int dm_rift_merc_slot_empty(int);
-        if (!(hh.valid && hh.holding) && (merc_lock_hit(hit) || dm_rift_merc_slot_empty(*(int32_t *)(g_slot_w + 0x5d8)))) { r = 6; snprintf(hit + strlen(hit), sizeof hit - strlen(hit), "（佣兵空格）"); } }
+    if (r == 1 && dm_wref_get(&g_slot) && !strncmp(hit, "slot_", 5) && *(uint32_t *)(dm_wref_get(&g_slot) + 0x5c8) == 1) { dm_hud_info hh; dm_hud_get(&hh); int dm_rift_merc_slot_empty(int);
+        if (!(hh.valid && hh.holding) && (merc_lock_hit(hit) || dm_rift_merc_slot_empty(*(int32_t *)(dm_wref_get(&g_slot) + 0x5d8)))) { r = 6; snprintf(hit + strlen(hit), sizeof hit - strlen(hit), "（佣兵空格）"); } }
     atomic_store(&g_iq_res, r); atomic_store(&g_iq_done, seq);
     if (r == 1) merc_lock_hit(hit);
     if (hit_log_ok(hit)) { LOG("界面命中：(%d,%d) → %s%s", x, y, r == 1 ? "物品区 " : r == 10 ? "物品区（单件槽占用，不动）" : r == 8 ? "成叠格 " : r == 7 ? "货架 " : r == 2 ? "" : r == 3 ? "面板外" : r == 6 ? "" : "面板内控件", hit); }
@@ -1679,7 +1714,7 @@ static int swaptab_hit(uint64_t root, int x, int y) {
     for (int k = 0; k < 2; k++) { uint64_t t = swaptab_w(root, k); if (t && *(uint8_t *)(t + 0x50) && (((int (*)(uint64_t, uint64_t))*(uint64_t *)(*(uint64_t *)t + 0x48))(t, (uint64_t)(uint32_t)x | ((uint64_t)(uint32_t)y << 32)) & 1)) return 1; }
     return 0;
 }
-static void bd_tab_step(int d) { atomic_store(&g_tab_delta, d); atomic_store(&g_tab_top, 0); atomic_store(&g_tab_w, 0); dm_ui_tab_go(); }   // 绑定流程按差值走：不用直接切（g_tab_w 清掉） | The binding flow steps by delta: no direct switch (g_tab_w cleared)
+static void bd_tab_step(int d) { atomic_store(&g_tab_delta, d); atomic_store(&g_tab_top, 0); dm_wref_set(&g_tab_ref, 0); atomic_store(&g_tab_have, 0); dm_ui_tab_go(); }   // 绑定流程按差值走：不用直接切（g_tab_w 清掉） | The binding flow steps by delta: no direct switch (g_tab_w cleared)
 // 技能树里长按技能 → 游戏自己的「重新绑定技能」框（ButtonBindingModal）：两排六格，格子只认手柄键、不认点击。
 // 触摸下点格子 = 替玩家按那一格的键：按画面上从左到右的列号认，第 1..5 列 = 手柄 A / B / Y / X / R（A = 主技能 / 交互大钮；第二排先按住 ZL）。
 // 第 3 列是 Y、第 4 列是 X，不是字母顺序：mini 看绑定框前后截图量的——按 X 技能落进第 4 列、按 Y 落进第 3 列（两排都是）；
@@ -1741,7 +1776,7 @@ static int bd_top_tab(uint64_t root) {
 // Static scan (tests/native_write_scan.py): in this file, writes to widget rects +0x70–+0x7c are only allowed inside mv_offset and ui_move_ours
 enum { MV_BIND, MV_LIFT, MV_WIDE, MV_SAFE, MV_CUBE, MV_TROVE, MV_N };
 static const char *const mv_name[MV_N] = { "技能绑定框挪屏外", "真全屏贴顶上提", "储藏箱加宽", "安全区内移", "魔盒并排右移", "珍宝匣页签" };
-typedef struct { uint64_t w; int own, f, relayout; int32_t orig, val; } mvent;
+typedef struct { dm_wref r; int own, f, relayout; int32_t orig, val; } mvent;   // r：挪过的控件。认条目按 r.w 比身份、写之前用 ui_has 核在不在树上（重载布局时面板会摘下再挂回同一个对象，不能按代号作废） | r: a moved widget. Entries are matched by identity on r.w, and ui_has checks that it is still in the tree before writing (when the layout reloads, a panel is detached and reattached as the same object, so it cannot be invalidated by generation)
 static mvent g_mv[96]; static int g_nmv, g_mv_want[MV_N];
 static int mv_allowed(int own, uint64_t w) {
     const char *nm = (const char *)*(uint64_t *)(w + 8), *pn = *(uint64_t *)(w + 0x30) ? (const char *)*(uint64_t *)(*(uint64_t *)(w + 0x30) + 8) : NULL; if (!nm) return 0;
@@ -1759,24 +1794,24 @@ static int mv_allowed(int own, uint64_t w) {
 static int mv_count(int own);
 static void mv_prune(void) {   // 不在界面树上的条目直接忘掉（不写回：对象已被游戏销毁）；只在要新加条目时调（界面重建时才有，少） | Entries not on the UI tree are simply forgotten (no write-back: the object has been destroyed by the game); only called when a new entry is about to be added (only happens on a UI rebuild, rare)
     module_t *m = main_module(); uint64_t root = 0; if (!m) return; memcpy(&root, m->base + 0x2f05458, 8); if (!root) return; int n0 = g_nmv;
-    for (int i = g_nmv - 1; i >= 0; i--) if (!ui_has(root, g_mv[i].w, 0)) g_mv[i] = g_mv[--g_nmv];
+    for (int i = g_nmv - 1; i >= 0; i--) if (!ui_has(root, g_mv[i].r.w, 0)) g_mv[i] = g_mv[--g_nmv];
     if (g_nmv != n0) { static int lg; if (lg++ < 20) LOG("位置守卫：%d 条的控件已不在界面树上（界面重建过），忘掉（剩 %d）", n0 - g_nmv, g_nmv); }
 }
 static int32_t g_mv_base; static int g_mv_base_on;   // 调用方知道这个控件的原位时（如小地图面板贴边 = -宽）在调用前给出：按它算，不拿控件此刻的值当原值（界面重建出来的新控件可能带着我们上一遍挪过的值） | When the caller knows this widget's original position (e.g. the minimap panel flush against the edge = -width), it supplies it before the call: compute from that instead of taking the widget's current value as the original (a new widget produced by a UI rebuild may carry the value we shifted on the previous pass)
 static void mv_offset(int own, uint64_t w, int f, int32_t delta, int relayout) {   // f：0 x、1 y、2 宽 | f: 0 x, 1 y, 2 width
-    if (!w) return; int32_t *v = (int32_t *)(w + 0x70 + 4 * f); int i = 0; while (i < g_nmv && !(g_mv[i].w == w && g_mv[i].f == f)) i++;
+    if (!w) return; int32_t *v = (int32_t *)(w + 0x70 + 4 * f); int i = 0; while (i < g_nmv && !(g_mv[i].r.w == w && g_mv[i].f == f)) i++;   // 按原指针认条目（只比身份）：w 是调用方此刻从界面树上取的活控件；同址的新控件由下面「现值≠上次写的值 → 现值当原值」接住 | Match entries by original pointer (identity comparison only): w is the live widget the caller just took from the UI tree; a new widget at the same address is caught by the "current value ≠ last written value → treat current value as the original" rule below
     if (i == g_nmv) { if (!delta) return; if (!mv_allowed(own, w)) { static int lg; if (lg++ < 8) LOG("【红】位置守卫：%s 要挪的控件「%s」不在名单里，不写", mv_name[own], (const char *)*(uint64_t *)(w + 8)); return; }
         mv_prune();   // 游戏重建界面（如切语言）后旧控件对象没了、新对象另起一条：先把不在界面树上的条目忘掉（不写，内存可能已释放），否则条目越积越多、96 条满了新控件写不进（英文版 ×8 红） | After the game rebuilds the UI (e.g. a language switch) the old widget objects are gone and the new objects start new entries: first forget entries not on the UI tree (no write, the memory may already be freed), otherwise entries keep piling up and once the 96 entries are full new widgets cannot be written (English version: ×8 red)
         if (g_nmv >= 96) { static int lg; if (lg++ < 8) LOG("【红】位置守卫：%s 条目满了（96 条都还挂在界面树上），「%s」不写", mv_name[own], (const char *)*(uint64_t *)(w + 8)); return; }
         if (!mv_count(own)) { static int lg[MV_N]; if (lg[own]++ < 40) LOG("位置守卫：%s 开始挪（%s）", mv_name[own], (const char *)*(uint64_t *)(w + 8)); }   // 每次「开挪」留一条证据（绑定框只挪 0.2 秒，自检碰不上） | Leave one line of evidence at every "start moving" (the binding box is only moved for 0.2 s, which the self-check never catches)
-        g_mv[g_nmv++] = (mvent){ w, own, f, relayout, *v, *v }; }
+        g_mv[g_nmv] = (mvent){ { 0, 0 }, own, f, relayout, *v, *v }; dm_wref_set(&g_mv[g_nmv++].r, w); }
     mvent *e = &g_mv[i]; if (g_mv_base_on) e->orig = g_mv_base; else if (*v != e->val) e->orig = *v;   // 游戏重建 / 重排过：现值当原值（调用方给了原位就用给的） | The game has rebuilt / re-laid out the UI: take the current value as the original value (if the caller supplied an original position, use that)
     if (!delta) { if (*v == e->val && *v != e->orig) { *v = e->orig; if (e->relayout) ((void (*)(uint64_t))*(uint64_t *)(*(uint64_t *)w + 0x10))(w); } g_mv[i] = g_mv[--g_nmv]; return; }
     int32_t want = e->orig + delta; if (*v != want) { *v = want; if (relayout) ((void (*)(uint64_t))*(uint64_t *)(*(uint64_t *)w + 0x10))(w); } e->val = want;
 }
 static void mv_restore(uint64_t root, int own) {   // 这一位的条目全部写回原值（只写还挂在界面树上的，不在了就忘掉） | Write all entries of this bit back to their original values (only those still attached to the UI tree; forget the ones that are gone)
     int n0 = mv_count(own); if (!n0) return;
-    for (int i = g_nmv - 1; i >= 0; i--) if (g_mv[i].own == own) { if (root && ui_has(root, g_mv[i].w, 0)) mv_offset(own, g_mv[i].w, g_mv[i].f, 0, g_mv[i].relayout); else g_mv[i] = g_mv[--g_nmv]; }
+    for (int i = g_nmv - 1; i >= 0; i--) if (g_mv[i].own == own) { if (root && ui_has(root, g_mv[i].r.w, 0)) mv_offset(own, g_mv[i].r.w, g_mv[i].f, 0, g_mv[i].relayout); else g_mv[i] = g_mv[--g_nmv]; }
     static int lg[MV_N]; if (lg[own]++ < 40) LOG("位置守卫：%s 条件没了，%d 处全部写回（剩 %d）", mv_name[own], n0, mv_count(own));
 }
 static int mv_count(int own) { int n = 0; for (int i = 0; i < g_nmv; i++) n += g_mv[i].own == own; return n; }
@@ -1787,7 +1822,7 @@ static void mv_audit_arm(const char *path) {   // 前一条还没到点就合并
 void dm_ui_lifecycle(int background) { mv_audit_arm(background ? "切后台" : "回前台"); }   // iOS 前端进 / 出后台时调（front_ios.m） | Called by the iOS front end on entering / leaving the background (front_ios.m)
 static void mv_audit_pump(uint64_t root, uint64_t fr) {
     if (!g_mv_audit_at || fr < g_mv_audit_at) return; g_mv_audit_at = 0; int bad = 0; char line[256]; int k = 0;
-    for (int o = 0; o < MV_N; o++) { int live = 0; for (int i = 0; i < g_nmv; i++) live += g_mv[i].own == o && ui_has(root, g_mv[i].w, 0);
+    for (int o = 0; o < MV_N; o++) { int live = 0; for (int i = 0; i < g_nmv; i++) live += g_mv[i].own == o && ui_has(root, g_mv[i].r.w, 0);
         if (!g_mv_want[o] && live) { bad++; k += snprintf(line + k, sizeof line - k, "%s 还剩 %d 处没写回；", mv_name[o], live); }
         else if (k < 200) k += snprintf(line + k, sizeof line - k, "%s %s；", mv_name[o], g_mv_want[o] ? "条件成立、挪着" : "已全部写回"); }
     static const char *lp; static uint64_t lfr; if (!bad && lp == g_mv_audit_path && fr - lfr < 600) return;   // 都对：同一条路 10 秒内只记一次（关面板消息很密）；红的一律记 | All correct: the same path is logged only once per 10 s (close-panel messages are dense); failure lines are always logged
@@ -1977,14 +2012,14 @@ static uint64_t g_lift_next;
 // written only by note_dock_snap). During slide-in / slide-out +0x74 is not equal to the old target, so nothing is written; even if equal on the first frame of slide-out, the interpolation after that uses the already changed +0x19c, so they move the same way.
 // Check on the next frame after writing: +0x74 still the new target = not written during animation; if it was changed, log red (g_nd_ychk)
 static _Atomic uint64_t g_tip_fr; static int32_t g_tip_box[4];   // 说明框：最近一次提交的出图帧号、估算矩形 x0 y0 x1 y1（界面坐标；tip_note 写、ui_note_dock_pump 读，都在游戏主线程） | Description box: present frame number of the last submission and estimated rectangle x0 y0 x1 y1 (UI coordinates; written by tip_note, read by ui_note_dock_pump, both on the game main thread)
-static uint64_t g_nd_w; static int32_t g_nd_orig, g_nd_mine; static int g_nd_on = -1, g_nd_hold;   // g_nd_hold：1 = 退出中（等出局），2 = 已出局（等进局） | g_nd_hold: 1 = leaving (waiting to be out of the game), 2 = out of the game (waiting to enter)
+static dm_wref g_nd; static int32_t g_nd_orig, g_nd_mine; static int g_nd_on = -1, g_nd_hold;   // g_nd_hold：1 = 退出中（等出局），2 = 已出局（等进局） | g_nd_hold: 1 = leaving (waiting to be out of the game), 2 = out of the game (waiting to enter)
 static int g_nd_ychk; static int32_t g_nd_ywant; static unsigned g_nd_ywr, g_nd_ybad;   // 写过 +0x74 待下一帧核（核它还是 g_nd_ywant）；累计写入次数 / 动画期写入（被改）次数 | +0x74 was written, check it next frame (that it is still g_nd_ywant); total writes / writes during animation (overwritten)
 static int note_dock_snap(uint64_t w, int32_t from, int32_t to) {   // 框已停稳在 from：矩形 y 一次写成 to。返回 1 = 写了 | the box has settled at from: write the rectangle y as to in one go. Returns 1 = written
     int32_t *ry = (int32_t *)(w + 0x74); if (!*(uint8_t *)(w + 0x198) || *ry != from || from == to) return 0;
     *ry = to; g_nd_ychk = 1; g_nd_ywant = to; g_nd_ywr++; return 1;
 }
 static void note_dock_restore(uint64_t root, const char *why) {   // 只许游戏主线程 | game main thread only
-    uint64_t w = root ? ui_find(root, "NotificationPanel", 0) : 0; if (!w || w != g_nd_w) return;   // 不在树里 / 不是记下的那个对象：不碰 | not in the tree / not the object we recorded: do not touch
+    uint64_t w = root ? ui_panel(root, "NotificationPanel") : 0; if (!w || w != dm_wref_get(&g_nd)) return;   // 不在树里 / 不是记下的那个对象：不碰 | not in the tree / not the object we recorded: do not touch
     int32_t *t = (int32_t *)(w + 0x19c);
     if (*t == g_nd_mine && g_nd_mine != g_nd_orig) {
         *t = g_nd_orig; int still = note_dock_snap(w, g_nd_mine, g_nd_orig);
@@ -2002,14 +2037,14 @@ static void ui_note_dock_pump(uint64_t root) {
     // Advance the pending state after exiting to the front end first, then look for the notice box: the front-end UI tree has no notice box widget, so placing this after "return if not found" means the "left game" step never advances,
     // and on re-entering the game it is still stuck in "exiting", breaking docking for the whole run (found in testing: the game itself returns to the front end once when the Mac App starts, so docking never worked on Mac; on iOS it also broke after save and exit then re-entering the game)
     int ing = dm_uiscreen_ingame(); if (g_nd_hold == 1 && !ing) g_nd_hold = 2; else if (g_nd_hold == 2 && ing) g_nd_hold = 0;
-    uint64_t w = ui_find(root, "NotificationPanel", 0);
-    if (!w) { g_nd_w = 0; return; }
+    uint64_t w = ui_panel(root, "NotificationPanel");   // 顶层面板：只扫界面根的直接子（原先全树深搜，每帧约 73k 条指令） | Top-level panels: only the direct children of the UI root are scanned (previously a full-tree depth-first search, about 73k instructions per frame)
+    if (!w) { dm_wref_set(&g_nd, 0); return; }
     int32_t *t = (int32_t *)(w + 0x19c), h = *(int32_t *)(w + 0x7c);
     if (g_nd_ychk) { g_nd_ychk = 0; int32_t y = *(int32_t *)(w + 0x74); static int lg;
-        if (w != g_nd_w) { if (lg++ < 60) LOG("提示框停靠：写回矩形 y 后提示框对象已换（出局 / 重建），不核"); }
+        if (w != dm_wref_get(&g_nd)) { if (lg++ < 60) LOG("提示框停靠：写回矩形 y 后提示框对象已换（出局 / 重建），不核"); }
         else if (y != g_nd_ywant) { g_nd_ybad++; LOG("【红】提示框停靠：矩形 y 写成 %d 后下一帧被改成 %d（动画期写入，第 %u 次）", g_nd_ywant, y, g_nd_ybad); }
         else if (lg++ < 60) LOG("提示框停靠：停稳的框下一帧在 y %d（%s；矩形 y 写入第 %u 次，动画期 %u 次）", y, y == g_nd_orig ? "原位" : "面板态位", g_nd_ywr, g_nd_ybad); }
-    if (w != g_nd_w || *t != g_nd_mine) { g_nd_w = w; g_nd_orig = *t; g_nd_mine = *t; }
+    if (w != dm_wref_get(&g_nd) || *t != g_nd_mine) { dm_wref_set(&g_nd, w); g_nd_orig = *t; g_nd_mine = *t; }
     int panel = 0; uint64_t ch = *(uint64_t *)(root + 0x58), n = *(uint64_t *)(root + 0x60);   // 名单里的面板在屏上（可见且有可见内容）= 面板态；两种模式通用 | a panel on the list is on screen (visible and with visible content) = panel state; same for both modes
     for (uint64_t j = 0; ing && !g_nd_hold && j < n && !panel; j++) { uint64_t c = *(uint64_t *)(ch + 8 * j); const char *nm = c ? (const char *)*(uint64_t *)(c + 8) : NULL;
         if (!nm || !*(uint8_t *)(c + 0x50)) continue;
@@ -2087,14 +2122,14 @@ static void ui_trove_tabs_pump(module_t *m, uint64_t root, uint64_t fr) {
 // what the game computes is x·h/600 + (W − 800·h/600)/2 and y·h/600. Replace the classic coordinates with values that "land exactly at the intended position after going through the game's algorithm": x → 400 + (x − 400)·H/h, y → (y·H/600 − UI rect y)·600/h.
 // The classic coordinates are written by the game only once when the menu opens (0x3d9e08 / 0x3d9e14); "the game just wrote it" is recognized as = the value is not what we last wrote. When the intended position is above the UI rect (negative y) the game clamps it back to 0, i.e. flush with the top edge of the UI rect.
 static void ui_npcdlg_pump(uint64_t root) {
-    static uint64_t pw; static int ox, oy; int rx, ry, rw, rh, W = 0, H = 0; dm_ui_rect(&rx, &ry, &rw, &rh);
-    if (!dm_uiscreen_ingame() || !dm_screen_real(&W, &H) || rh <= 0 || rh >= H) { pw = 0; return; }
+    static dm_wref pw; static int ox, oy; int rx, ry, rw, rh, W = 0, H = 0; dm_ui_rect(&rx, &ry, &rw, &rh);
+    if (!dm_uiscreen_ingame() || !dm_screen_real(&W, &H) || rh <= 0 || rh >= H) { dm_wref_set(&pw, 0); return; }
     uint64_t ch = *(uint64_t *)(root + 0x58), n = *(uint64_t *)(root + 0x60), p = 0;
     for (uint64_t k = 0; ch && k < n && k < 256 && !p; k++) { uint64_t c = *(uint64_t *)(ch + 8 * k); const char *nm = c ? (const char *)*(uint64_t *)(c + 8) : 0; if (nm && !strcmp(nm, "NpcDialogPanel")) p = c; }
-    if (!p || *(uint8_t *)(p + 0x238)) { pw = 0; return; }   // +0x238 = 给的已是屏幕坐标，不经这套换算 | +0x238 = the given values are already screen coordinates and do not go through this conversion
-    int32_t *f = (int32_t *)(p + 0x220), off = *(int32_t *)(p + 0x228); if ((p == pw && f[0] == ox && f[1] == oy) || (!f[0] && !f[1])) return;   // 已换过；或还没给坐标（菜单没开） | Already converted; or no coordinates given yet (menu not open)
+    if (!p || *(uint8_t *)(p + 0x238)) { dm_wref_set(&pw, 0); return; }   // +0x238 = 给的已是屏幕坐标，不经这套换算 | +0x238 = the given values are already screen coordinates and do not go through this conversion
+    int32_t *f = (int32_t *)(p + 0x220), off = *(int32_t *)(p + 0x228); if ((p == dm_wref_get(&pw) && f[0] == ox && f[1] == oy) || (!f[0] && !f[1])) return;   // 已换过；或还没给坐标（菜单没开） | Already converted; or no coordinates given yet (menu not open)
     double lx = f[0], ly = f[1] - off; int nx = (int)lround(400 + (lx - 400) * H / rh), ny = (int)lround((ly * H / 600.0 - ry) * 600.0 / rh) + off;
-    LOG("NPC 对话菜单：经典坐标 (%d,%d) → (%d,%d)（应有位置 真实画面 y %.0f）", f[0], f[1], nx, ny, ly * H / 600.0); f[0] = ox = nx; f[1] = oy = ny; pw = p; *(uint8_t *)(p + 0x239) = 1;
+    LOG("NPC 对话菜单：经典坐标 (%d,%d) → (%d,%d)（应有位置 真实画面 y %.0f）", f[0], f[1], nx, ny, ly * H / 600.0); f[0] = ox = nx; f[1] = oy = ny; dm_wref_set(&pw, p); *(uint8_t *)(p + 0x239) = 1;
 }
 // 游戏态点世界的入口（前端每次点世界都走这里）：先看这一下是不是点在左上角佣兵头像上——是 = 开佣兵页（新入口），这一下不再交给世界点选；
 // 开法 = 替玩家按 + 开功能页、再按 R 翻到佣兵页签（ui_mercpg_pump）。不调原版键鼠的「切换佣兵页」0x36a190：它开出来的是键鼠版独立面板，没有页签条、点面板外不关（本机实测）
@@ -2284,8 +2319,28 @@ static void ui_boss_pct_pump(module_t *m, uint64_t root) {
     if (*(uint64_t *)(tx + 0x90) == (uint64_t)n && !memcmp(*(const char **)(tx + 0x88), t, (size_t)n)) return;   // 字没变不写（同 dm_update.c set_text） | Do not write if the text is unchanged (same as dm_update.c set_text)
     ((void *(*)(uint64_t, const char *, uint64_t))(m->base + 0x136e5c))(tx + 0x88, t, (uint64_t)n); ((void (*)(uint64_t))(m->base + 0xadc434))(tx);
 }
+// 来自 hubeiqiao 的 （公开仓库 诊断）
+// 只在半秒采样中状态变化时记录小地图；不写控件或可见位，缺对象也要留下证据。
+// From hubeiqiao (public repo diagnostics)
+// Records the minimap only when its state changes in the half-second sampling; never writes widgets or visibility bits, and leaves evidence even when objects are missing.
+typedef struct { uint64_t object; int valid, area, ingame, load, cfg, mini, visible, x, y, w, h, ux, uy, uw, uh, rw, rh; } map_diag_t;
+static map_diag_t g_map_diag; static int g_map_diag_have;
+static int ui_map_diag(module_t *m, uint64_t root) {
+    map_diag_t d; memset(&d, 0, sizeof d); dm_hud_info hi; dm_hud_get(&hi); d.valid = hi.valid; d.area = hi.area;
+    d.ingame = dm_uiscreen_ingame(); d.load = atomic_load(&g_load_up);
+    d.cfg = *(int32_t *)(m->base + 0x2d479f4); d.mini = *(int32_t *)(m->base + 0x2d5c748);
+    dm_ui_rect(&d.ux, &d.uy, &d.uw, &d.uh); dm_screen_real(&d.rw, &d.rh);
+    uint64_t am = ui_panel(root, "AutoMap");
+    if (am && *(uint64_t *)am == (uint64_t)m->base + 0x20c58a0) { d.object = am; d.visible = *(uint8_t *)(am + 0x50);
+        d.x = *(int32_t *)(am + 0x70); d.y = *(int32_t *)(am + 0x74); d.w = *(int32_t *)(am + 0x78); d.h = *(int32_t *)(am + 0x7c); }
+    if (g_map_diag_have && !memcmp(&d, &g_map_diag, sizeof d)) return 0;
+    int rebuilt = !g_map_diag_have || d.object != g_map_diag.object; memcpy(&g_map_diag, &d, sizeof d); g_map_diag_have = 1;
+    LOG("小地图诊断：区域 %d 玩家有效 %d 局内 %d 读取 %d 对象 %s 重建 %d 可见 %d 配置 %d 微缩 %d 矩形 %d,%d,%d,%d 界面 %d,%d,%d,%d 真实 %dx%d", d.area, d.valid, d.ingame, d.load, d.object ? "有" : "无", rebuilt, d.visible, d.cfg, d.mini, d.x, d.y, d.w, d.h, d.ux, d.uy, d.uw, d.uh, d.rw, d.rh);
+    return 1;
+}
 static void ui_minimap_pump(module_t *m, uint64_t root, int W, int H, uint64_t fr) {
     static uint64_t next; if (fr < next) return; next = fr + 30;
+    ui_map_diag(m, root);
     uint64_t w = ui_panel(root, "AutoMap"); if (!w || *(uint64_t *)w != (uint64_t)m->base + 0x20c58a0) return;
     int32_t x = *(int32_t *)(w + 0x70), y = *(int32_t *)(w + 0x74), ww = *(int32_t *)(w + 0x78), hh = *(int32_t *)(w + 0x7c); float sc = *(float *)(w + 0x80);
     if (ww <= 0 || hh <= 0 || ww > 4000 || hh > 2160 || !(sc > 0.1f && sc < 10)) return;
@@ -2563,7 +2618,7 @@ static void ui_panel_state_pump(uint64_t root) {   // 游戏主线程，每帧 |
         g_mv_want[MV_CUBE] = both; if (!both) folded = 0;
         if (both && atomic_exchange(&g_cube_side_close, 0) && !folded) { folded = 1; LOG("魔盒并排：收起魔盒面板，回到储藏箱 + 物品栏"); }
         if (both && atomic_exchange(&g_cube_side_req, 0) && folded) { folded = 0; LOG("魔盒并排：魔盒面板重新并排"); }
-        if (both) { int i_ = 0; while (i_ < g_nmv && !(g_mv[i_].w == cube && g_mv[i_].f == 0)) i_++;
+        if (both) { int i_ = 0; while (i_ < g_nmv && !(g_mv[i_].r.w == cube && g_mv[i_].f == 0)) i_++;
             int32_t cx0 = i_ < g_nmv && *(int32_t *)(cube + 0x70) == g_mv[i_].val ? g_mv[i_].orig : *(int32_t *)(cube + 0x70);
             mv_offset(MV_CUBE, cube, 0, folded ? 0 : *(int32_t *)(inv + 0x70) - 155 - cx0, 1); mv_offset(MV_CUBE, cube, 1, folded ? 6000 : 0, 1); mv_offset(MV_CUBE, inv, 1, folded ? 0 : 6000, 1); }
         else if (mv_count(MV_CUBE)) mv_restore(root, MV_CUBE);
@@ -2579,11 +2634,13 @@ static void ui_panel_state_pump(uint64_t root) {   // 游戏主线程，每帧 |
     // 面板冻结（diag.c freeze_tick，缺省关）：「算冻结的面板」有没有哪个在屏上。读面板树的可见位，不靠开关消息——消息会只开不关、会对没开的补发关。
     // 名单：物品栏 / 角色 / 高级属性 / 技能树 / 任务 / 佣兵 / 编年史 / 商人（含修理、赌博）/ 雇佣名单 / 储藏箱 / 单件任务槽 / 魔盒算；NPC 对话菜单、小站页、确认框不算（确认框叠在算的面板上时底下那个仍在屏上，照冻）；
     // 死亡弹窗、读取画面在屏上时一律不冻（换图要服务端走拍）；暂停菜单、设置页不在名单里，沿用原版暂停。
-    // Panel freeze (diag.c freeze_tick, off by default): whether any of the "panels that count for freezing" is on screen. Reads the visible bit in the panel tree and does not rely on open/close messages -- messages may open without closing, and may send a close for something not open.
-    // List: inventory panel / character / advanced stats / skill tree / quests / mercenary / chronicle / vendor (including repair, gambling) / hire list / stash / single-item quest slot / cube count; the NPC dialog menu, waypoint page and confirmation boxes do not (when a confirmation box is stacked on a counted panel, the one underneath is still on screen and it still freezes);
-    // when the death popup or loading screen is on screen, never freeze (a map change needs the server to keep ticking); the pause menu and settings page are not on the list and keep using the original game's pause.
+    // 下面这张表全是面板管理器开关的顶层面板（界面根的直接子）：只扫根下一层。原先每个名字从根全树深搜，面板没开时每帧十几遍扫完整棵树（城里每帧约 723k 条指令，宿主每帧总量的一半，玩法线 DM_PUMP_PROF 量）
+    // Panel freeze (diag.c freeze_tick, off by default): whether any of the "panels that count for freezing" is on screen. Reads the visible bits of the panel tree instead of relying on open / close messages -- messages can open without a matching close, and can send a close for a panel that was never opened.
+    // The list: inventory / character / advanced stats / skill tree / quests / mercenary / Chronicle / merchant (including repair and gambling) / hire list / stash / single-item quest socket / Horadric Cube count; the NPC dialogue menu, the waypoint page and confirmation boxes do not (when a confirmation box sits on top of a panel that counts, the one underneath is still on screen and the game stays frozen);
+    // never freeze while the death popup or the loading screen is on screen (changing levels needs the server to tick); the pause menu and the settings page are not on the list and keep the original pause.
+    // Every panel in the table below is a top-level panel opened and closed by the panel manager (a direct child of the UI root), so only the level under the root is scanned. Previously each name did a full-tree depth-first search from the root, and with the panels closed the whole tree was walked a dozen-plus times per frame (about 723k instructions per frame in town, half of the host's per-frame total, measured with DM_PUMP_PROF)
     { static const char *fz[] = {"PlayerInventoryExpansionLayout", "CharacterStatsPanel", "AdvancedStatsPanel", "SkillsTreePanel", "QuestLogPanelExpansion", "HirelingInventoryPanel", "VendorPanelLayout", "HireMenuPanel", "BankExpansionLayout", "BankOriginalLayout", "ImbueItemsPanel", "HoradricCubeLayout", "ChroniclePanel"};
-      int want = 0, which = -1; for (unsigned i = 0; i < sizeof fz / sizeof fz[0] && !want; i++) { uint64_t w = ui_find(root, fz[i], 1); if (w && *(uint8_t *)(w + 0x50) && has_visible_leaf(w, 1)) { want = 1; which = (int)i; } }
+      int want = 0, which = -1; for (unsigned i = 0; i < sizeof fz / sizeof fz[0] && !want; i++) { uint64_t w = ui_panel(root, fz[i]); if (w && *(uint8_t *)(w + 0x50) && has_visible_leaf(w, 1)) { want = 1; which = (int)i; } }
       if (want && ((st & DM_PS_DEAD) || root_panel_shown(root, "LoadScreenPanel"))) want = 0;
       extern _Atomic int g_dm_frz_want; if (atomic_exchange(&g_dm_frz_want, want) != want && getenv("DM_PANEL_FREEZE")) LOG("界面状态：算冻结的面板 %s%s", want ? "在屏上：" : "都不在屏上", want ? fz[which] : "");
       void dm_freeze_frame(int want); dm_freeze_frame(want); }
@@ -2665,6 +2722,7 @@ static int ui_touch_mode(void) { int dm_padmode_current(void), dm_padmode_busy(v
 void dm_ui_mouse_pump(void) {   // 游戏取手柄处调（hle_hid fill，主线程）；每个出图帧做一次 | called where the game fetches the controller (hle_hid fill, main thread); done once per presented frame
     static uint64_t last_frame = UINT64_MAX; uint64_t fr = dm_guest_frame();
     if (fr == last_frame) return;
+    (void)dm_ui_gen();   // 每帧核一次顶层面板（界面代号）：卸掉又在同一地址建出新面板的那种，隔帧才核会漏 | Check the top-level panels (UI generation) once per frame: a panel unloaded and rebuilt at the same address would be missed by checking every other frame
     ui_watch_pump();
     { module_t *pm0 = main_module(); uint64_t pr = 0; if (pm0) memcpy(&pr, pm0->base + 0x2f05458, 8); if (pr) { ui_panel_heal(pr, fr); ui_panel_state_pump(pr); } }
     // 设置页盖在功能页上面：点顶部页签要先按返回键退出设置页，再切页签（否则底下的页在换、设置页一直盖着）。
@@ -2679,7 +2737,7 @@ void dm_ui_mouse_pump(void) {   // 游戏取手柄处调（hle_hid fill，主线
           if (st == 1) { if (open && fr < at) return; st = 0; if (open) { atomic_store(&g_tab_left, 0); atomic_store(&g_tab_direct, 0); LOG("界面页签：设置页没关（在等确认框），这次不切页签"); return; } } }
       else if (!atomic_load(&g_tab_left) && !atomic_load(&g_tab_direct)) st = 0;
       if (atomic_exchange(&g_tab_direct, 0) && sm && hroot) {   // 直接切：页签条还在界面树里、可见、还是页签条类，才调 | direct switch: called only if the tab bar is still in the UI tree, visible, and still of the tab bar class
-          uint64_t gw = atomic_load(&g_tab_w), tw = gw && ui_has(hroot, gw, 0) ? gw : 0, us = ui_find(hroot, "UISwitcher", 0); int d = atomic_load(&g_tab_delta);
+          uint64_t gw = dm_wref_get(&g_tab_ref), tw = gw && ui_has(hroot, gw, 0) ? gw : 0, us = ui_find(hroot, "UISwitcher", 0); int d = atomic_load(&g_tab_delta);
           if (!strcmp(g_tab_name, "UISwitcherTabs") && us && *(uint8_t *)(us + 0x50) && *(uint64_t *)(*(uint64_t *)us + 0x28) == (uint64_t)sm->base + 0x404fd8) {
               // 顶部功能页（任务日志 … 选项）：页面是功能页面板 UISwitcher 自己换的，页签条的切页消息它不接。它接 L / R（消息处理 main+0x404fd8 的 0x4052a8 / 0x4052d4 两支）
               // 都是算出「当前页 ± 1」再调 main+0x405898(面板, 目标页, 方向)；这里直接把目标页给它，一步到位。当前页 +0x1b8、页数 +0x188
@@ -2690,7 +2748,7 @@ void dm_ui_mouse_pump(void) {   // 游戏取手柄处调（hle_hid fill，主线
           else if (tw && *(uint64_t *)tw == (uint64_t)sm->base + 0x20ba3a8 && *(uint8_t *)(tw + 0x50)) { int was = TAB_SEL(tw);
               ((void (*)(uint64_t, int, int))(sm->base + 0xad9b80))(tw, g_tab_k, 1); LOG("界面页签：「%s」第 %d → 第 %d 个（直接选中，现为 %d）", g_tab_name, was, g_tab_k, TAB_SEL(tw)); }
           else LOG("【红】界面页签：页签条「%s」已不在 / 不可见，这次不切", g_tab_name);
-          atomic_store(&g_tab_w, 0); } }
+          dm_wref_set(&g_tab_ref, 0); atomic_store(&g_tab_have, 0); } }
     { static uint64_t tnext; if (fr >= tnext) { if (atomic_load(&g_tab_left) > 0) { atomic_fetch_sub(&g_tab_left, 1); ui_auto_key(atomic_load(&g_tab_mask)); tnext = fr + 8; }
         else { uint64_t th = atomic_exchange(&g_tab_then, 0);
             // 对话菜单：按确认键之前核一遍菜单自己记的选中行是不是点的那一行；不是就补挪（至多两轮），还不对就不按——宁可这一下没反应，也不替玩家选错项
@@ -3179,7 +3237,7 @@ void dm_ui_cache_mode_leave(void) {
     { uint64_t bk = root ? ui_panel(root, "BankExpansionLayout") : 0, tabs = bk && *(uint8_t *)(bk + 0x50) ? ui_find(bk, "BankTabs", 0) : 0;   // 储藏箱开着：记下页签，重建后选回去（ui_pages_pump） | Stash is open: remember the tab and select it again after the rebuild (ui_pages_pump)
       g_bank_tab_keep = tabs ? TAB_SEL(tabs) : -1; g_bank_tab_until = dm_guest_frame() + 120; }
     for (int o = 0; o < MV_N; o++) mv_restore(root, o);
-    g_nmv = 0; g_down_w = g_slot_w = g_bd_hit_w = g_click_w = 0; atomic_store(&g_tab_w, 0); atomic_store(&g_ut_phase, 0);
+    g_nmv = 0; dm_wref_set(&g_down, 0); dm_wref_set(&g_slot, 0); dm_wref_set(&g_bd_hit_ref, 0); dm_wref_set(&g_click, 0); dm_wref_set(&g_tab_ref, 0); atomic_store(&g_tab_have, 0); atomic_store(&g_ut_phase, 0);
     // 在途的触摸请求（触屏专属的泵切到手柄后不再跑，留着会在切回触屏时突然落地）和保持中的悬停 / 没发完的指针事件
     // In-flight touch requests (the touch-only pumps no longer run after switching to the controller, and leaving them would make them land suddenly on switching back to touch) plus a held hover / pointer events not yet fully sent
     atomic_store(&g_wtap, 0); atomic_store(&g_buy_at, 0); atomic_store(&g_tap_req, 0); atomic_store(&g_use_req, 0); atomic_store(&g_long_req, 0); atomic_store(&g_ident_req, 0);

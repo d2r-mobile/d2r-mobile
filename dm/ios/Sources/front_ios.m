@@ -89,6 +89,14 @@ static void world_norm(UIView *v, CGFloat x, CGFloat y, float *nx, float *ny) { 
 @property (nonatomic) CGPoint scriptPoint;
 @property (nonatomic) UITouchPhase scriptPhase;   // 抬起 / 取消时置 Ended / Cancelled，与真触摸一样（扫槽兜底靠它认「已结束」） | Set to Ended / Cancelled on lift / cancel, same as a real touch (the slot-scan backstop relies on it to recognize "ended")
 @end
+@interface DmVolumeWatch : NSObject
+@end
+@implementation DmVolumeWatch
+- (void)observeValueForKeyPath:(NSString *)k ofObject:(id)o change:(NSDictionary *)c context:(void *)x {
+    (void)k; (void)o; (void)x; double mtl_link_tick_age_ms(void);
+    LOG("前端：系统音量 %.2f → %.2f（显示节拍上次回调 %.0f ms 前）", [c[NSKeyValueChangeOldKey] doubleValue], [c[NSKeyValueChangeNewKey] doubleValue], mtl_link_tick_age_ms());
+}
+@end
 @implementation DmScriptTouch
 - (CGPoint)locationInView:(UIView *)v { (void)v; return _scriptPoint; }
 - (CGPoint)previousLocationInView:(UIView *)v { (void)v; return _scriptPoint; }
@@ -1408,6 +1416,12 @@ void front_ios_lifecycle_install(void) {
         // Interruption ended: clear this reason whether or not the system gave "should resume" (cases without it, e.g. an alarm swiped away, should still produce sound back in the game); actually starting the audio device is decided by audio_apply according to whether we are in background
         g_audio_intr = 0; [AVAudioSession.sharedInstance setActive:YES error:nil]; audio_apply(); LOG("前端：打断结束%s", g_audio_bg ? "（仍在后台，回前台再出声）" : "，恢复音频");
     }];
+    // 系统音量 / 输出路由变化记一行（「按音量键黑屏、闪退」，日志里看不出按键时刻）：带上显示节拍上一次回调距今多久，好和停节拍对时刻
+    // Log one line on system volume / output route changes ("pressing the volume keys causes a black screen or crash", and the log does not show when keys were pressed): include how long since the display link's last callback, to line up with display-link stalls
+    static DmVolumeWatch *vw; vw = [DmVolumeWatch new]; [as addObserver:vw forKeyPath:@"outputVolume" options:NSKeyValueObservingOptionOld | NSKeyValueObservingOptionNew context:NULL];
+    [nc addObserverForName:AVAudioSessionRouteChangeNotification object:as queue:mq usingBlock:^(NSNotification *n) {
+        double mtl_link_tick_age_ms(void);
+        LOG("前端：音频路由变化 原因 %lu（显示节拍上次回调 %.0f ms 前）", (unsigned long)[n.userInfo[AVAudioSessionRouteChangeReasonKey] unsignedIntegerValue], mtl_link_tick_age_ms()); }];
     LOG("前端：生命周期 / 过热 / 音频会话已接（类别 Playback）");
     // 测试开关 DM_TEST_AUDIO_INTERRUPT=起始秒,时长秒：按时向本进程投递音频会话打断开始 / 结束（带 ShouldResume），模拟来电 / 闹钟；
     // 结束后 2 s 打出声卡回调增量（真出声 DM_AUDIO=1 时应 > 0）

@@ -15,6 +15,9 @@
 #include <stdatomic.h>
 #include <math.h>
 #include <time.h>
+#include "dm_unit.h"
+#include "dm_hud.h"
+#include "dm_prof.h"
 #include <TargetConditionals.h>
 
 static uint8_t *wb(void) { static uint8_t *b; if (!b) for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) b = (uint8_t *)g_mod[i].base; return b; }
@@ -27,13 +30,39 @@ static int w_unit_xy(uint64_t u, int *x, int *y) {   // 单位格坐标：物件
 _Atomic uint64_t g_dm_move_allow_until_ns;   // 「点地移动包一律丢弃」（diag.c c2s_deliver）的豁免窗：由目标触发的走近 | exemption window for "click-ground move packets are always dropped" (diag.c c2s_deliver): an approach triggered by a target
 static uint64_t w_now_ns(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (uint64_t)t.tv_sec * 1000000000ull + (uint64_t)t.tv_nsec; }
 static uint64_t g_release_at; static int g_rel_x, g_rel_y;
+// 来自 hubeiqiao 的 （公开仓库 诊断）
+// 物件交互的只读样本：不把返回 1 当换图成功，也不补发点击。新交互会明确结束旧追踪。
+// From hubeiqiao (public repo diagnostics)
+// Read-only samples of object interaction: a return of 1 is not treated as a successful level change, and no click is re-sent. A new interaction explicitly ends the old trace.
+static struct { uint64_t seq, frame; uint32_t player; int active, stage, last_lv; } g_it;
+static uint64_t w_interaction_begin(uint64_t pl, uint64_t u, uint64_t fr) {
+    if (*(uint32_t *)(u) != 2) return 0;
+    if (g_it.active) LOG("物件交互诊断：序号 %llu 被新交互替代", (unsigned long long)g_it.seq);
+    g_it.seq++; g_it.frame = fr; g_it.player = *(uint32_t *)(pl + 8); g_it.active = 1; g_it.stage = 0; g_it.last_lv = dm_unit_level(pl);
+    int x = 0, y = 0; w_unit_xy(u, &x, &y);
+    LOG("物件交互诊断：序号 %llu 帧 %llu 玩家 %u 客户端关卡 %d 目标类号 %u id %u 坐标 %d,%d", (unsigned long long)g_it.seq, (unsigned long long)fr, g_it.player, g_it.last_lv, *(uint32_t *)(u + 4), *(uint32_t *)(u + 8), x, y);
+    return g_it.seq;
+}
+static void w_interaction_poll(uint64_t pl, uint64_t fr) {
+    if (!g_it.active) return;
+    if (!pl || *(uint32_t *)(pl + 8) != g_it.player || fr < g_it.frame) { LOG("物件交互诊断：序号 %llu 玩家离局或切换，结束", (unsigned long long)g_it.seq); g_it.active = 0; return; }
+    int lv = dm_unit_level(pl); uint64_t age = fr - g_it.frame;
+    static const uint64_t at[] = { 3, 30, 120 };
+    if (lv == g_it.last_lv && (g_it.stage >= 3 || age < at[g_it.stage])) return;
+    while (g_it.stage < 3 && age >= at[g_it.stage]) g_it.stage++;
+    int x = 0, y = 0; w_unit_xy(pl, &x, &y); dm_hud_info hi; dm_hud_get(&hi);
+    LOG("物件交互诊断：序号 %llu 后 %llu 帧 客户端关卡 %d 坐标 %d,%d 模式 %u 服务端最近快照 %d 有效 %d（样本非换图成功判据）", (unsigned long long)g_it.seq, (unsigned long long)age, lv, x, y, *(uint32_t *)(pl + 0xc), hi.area, hi.valid);
+    g_it.last_lv = lv; if (age >= 120) g_it.active = 0;
+}
 static int w_interact(uint64_t u) {   // 就近交互：游戏的点击入口（按下，3 帧后松开） | interact nearby: the game's click entry (press, release 3 frames later)
     uint8_t *b = wb(); uint64_t pl = w_player(); int x = 0, y = 0; if (!b || !pl || !u || !w_unit_xy(u, &x, &y)) return 0;
     uint64_t mgr = ((uint64_t (*)(void))(b + 0x2acecc))(), keep = *(uint64_t *)(mgr + 0xd10);
     atomic_store(&g_dm_move_allow_until_ns, w_now_ns() + 500000000ull);
+    uint64_t trace = w_interaction_begin(pl, u, dm_guest_frame());
     *(uint64_t *)(mgr + 0xd10) = u;
     int r = ((int (*)(uint64_t, int, int, int, uint64_t))(b + 0x4ace20))(pl, 7, x, y, 0);
     *(uint64_t *)(mgr + 0xd10) = keep;
+    if (trace) LOG("物件交互诊断：序号 %llu 点击入口返回 %d（尚未确认换图）", (unsigned long long)trace, r);
     g_release_at = dm_guest_frame() + 3; g_rel_x = x; g_rel_y = y;
     return r;
 }
@@ -625,21 +654,22 @@ int dm_map_goals(dm_map_goal_view *v) {
     v->n = 0; return 0;
 }
 void dm_world_pump(void) {   // 取手柄处每帧调 | Called every frame at the controller poll
-    { void dm_rift_client_pump(uint8_t *); dm_rift_client_pump(wb()); }   // 秘境爬塔：认击杀（dm_rift.c） | rift tower climb: recognize kills (dm_rift.c)
+    { void dm_rift_client_pump(uint8_t *); DM_PROF(0, "w.rift_client", dm_rift_client_pump(wb())); }   // 秘境爬塔：认击杀（dm_rift.c） | rift tower climb: recognize kills (dm_rift.c)
     { int nd = atomic_load(&g_dm_dur_sync_n); uint8_t *b0 = nd ? wb() : NULL; if (b0) { atomic_store(&g_dm_dur_sync_n, 0); for (int i = 0; i < nd && i < 16; i++) { uint64_t c = w_find(4, g_dm_dur_sync[i][0]); if (c) ((void (*)(uint64_t, int, int, int))(b0 + 0x5bc1f0))(c, 72, (int)g_dm_dur_sync[i][1], 0); } } }   // DM_TEST_DUR 的客户端一半（diag.c） | client half of DM_TEST_DUR (diag.c)
-    w_test_seek_step();
+    DM_PROF(0, "w.test_seek", w_test_seek_step());
     w_test_xy_step();
     uint8_t *b = wb(); if (!b) return;
-    w_watch_step(b);
-    { void dm_potpick_step(uint8_t *); dm_potpick_step(b); }   // 药水自动拾取（dm_potpick.c） | automatic potion pickup (dm_potpick.c)
-    { void dm_padmode_step(uint8_t *, uint64_t); dm_padmode_step(b, dm_guest_frame()); }   // 手柄 / 触屏布局切换（dm_padmode.c） | Controller / touch layout switching (dm_padmode.c)
-    { void dm_beltauto_step(uint8_t *); dm_beltauto_step(b); }   // 开背包自动补腰带（dm_beltauto.c） | Auto-refill the belt when the inventory opens (dm_beltauto.c)
-    { void dm_pouch_step(uint8_t *); dm_pouch_step(b); }   // 百宝囊 / 存放（dm_pouch.c） | pouch / deposit (dm_pouch.c)
+    if (g_it.active) w_interaction_poll(w_player(), dm_guest_frame());
+    DM_PROF(0, "w.watch", w_watch_step(b));
+    { void dm_potpick_step(uint8_t *); DM_PROF(0, "w.potpick", dm_potpick_step(b)); }   // 药水自动拾取（dm_potpick.c） | automatic potion pickup (dm_potpick.c)
+    { void dm_padmode_step(uint8_t *, uint64_t); DM_PROF(0, "w.padmode", dm_padmode_step(b, dm_guest_frame())); }   // 手柄 / 触屏布局切换（dm_padmode.c） | Controller / touch layout switching (dm_padmode.c)
+    { void dm_beltauto_step(uint8_t *); DM_PROF(0, "w.beltauto", dm_beltauto_step(b)); }   // 开背包自动补腰带（dm_beltauto.c） | Auto-refill the belt when the inventory opens (dm_beltauto.c)
+    { void dm_pouch_step(uint8_t *); DM_PROF(0, "w.pouch", dm_pouch_step(b)); }   // 百宝囊 / 存放（dm_pouch.c） | pouch / deposit (dm_pouch.c)
     if (g_release_at && dm_guest_frame() >= g_release_at) { g_release_at = 0; uint64_t pl = w_player(); if (pl) { atomic_store(&g_dm_move_allow_until_ns, w_now_ns() + 500000000ull); ((int (*)(uint64_t, int, int, int, uint64_t))(b + 0x4ace20))(pl, 2, g_rel_x, g_rel_y, 0); } }
-    w_go_step();
-    w_tile_retry_step();
-    w_map_mark_step();
-    w_map_goal_step();
+    DM_PROF(0, "w.go", w_go_step());
+    DM_PROF(0, "w.tile_retry", w_tile_retry_step());
+    DM_PROF(0, "w.map_mark", w_map_mark_step());
+    DM_PROF(0, "w.map_goal", w_map_goal_step());
     // 测试开关 DM_TEST_WORLD_TAP（及 TAP2 / TAP3 / TAP4）=<类型>:c<类号>@<拍>（或 <类型>:any@<拍> = 这一类里任意一个，物品只认地上的）：到这一拍起盯住这类单位，它一进画面就在它身体框中心落一次世界点按（走 dm_world_tap 的真实命中路径，
     // 不是直接指定目标）——Mac 宿主上验「点得中、走得到、开得了」用（iOS 包用触点脚本的 tap_unit，同一个量具）。5 秒内没进画面报一行并放弃。
     // Test switch DM_TEST_WORLD_TAP (and TAP2 / TAP3 / TAP4)=<type>:c<class>@<tick> (or <type>:any@<tick> = any one of this type, items only count when on the ground): from this tick on, watch this kind of unit, and as soon as it enters the picture drop one world tap at the center of its body box (going through the real hit path of dm_world_tap,
