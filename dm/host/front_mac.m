@@ -345,6 +345,27 @@ void front_run(void (*guest)(void)) {
         // 生命周期（hle.h / dm.h）：失焦 → 2、拿回焦点 → 1；最小化 → 3 + 音频暂停 + GPU 挂起，还原 → 恢复（随后拿回焦点 → 1）
         // Lifecycle (hle.h / dm.h): focus lost → 2, focus regained → 1; minimized → 3 + audio paused + GPU suspended, restored → resume (followed by focus regained → 1)
         NSNotificationCenter *nc = NSNotificationCenter.defaultCenter;
+        // 窗口被别的窗口整个盖住（遮挡状态不含 Visible）：系统不给看不见的窗口显示节拍回调。按「看不见」处理——出图直接丢（mtl_present_discard，
+        // 同 iOS 进后台等存盘那段），游戏逻辑照走、声音照放、焦点不变；露出来就照常出图。不处理的话节拍停着、出图全靠兜底丢帧，日志报假红
+        // （mini 整表被 Mac App 窗口盖住坐实）。DM_OCCL=0 关掉这项（对照用）；
+        // DM_TEST_COVER=<秒>,<时长>：到点用一个不透明窗口把游戏窗口整个盖住，时长到了拿开（验收用，产品不设）
+        // Window fully covered by other windows (occlusion state lacks Visible): the system does not deliver display-link callbacks to invisible windows. Treat it as "not visible": discard frames directly (mtl_present_discard,
+        // same as the iOS background save-wait period); game logic keeps running, audio keeps playing, focus unchanged; once uncovered, present normally. Without this the display link stalls, presentation relies entirely on fallback frame drops, and the log reports false reds
+        // (confirmed when a full regression table on the test Mac was covered by the Mac App window). DM_OCCL=0 disables this (for comparison);
+        // DM_TEST_COVER=<seconds>,<duration>: at that time, cover the game window entirely with an opaque window and remove it after the duration (for acceptance testing, not set in the product)
+        { const char *e = getenv("DM_OCCL"); int on = !(e && !strcmp(e, "0"));
+          [nc addObserverForName:NSWindowDidChangeOcclusionStateNotification object:win queue:nil usingBlock:^(NSNotification *n) { (void)n;
+              int hidden = !(win.occlusionState & NSWindowOcclusionStateVisible); void mtl_present_discard(int on);
+              LOG("前端：窗口%s（遮挡处理%s）", hidden ? "整个被盖住 / 不可见" : "露出来了", on ? "开" : "关 DM_OCCL=0");
+              if (on) mtl_present_discard(hidden); }];
+          double at = 0, dur = 0;
+          if ((e = getenv("DM_TEST_COVER")) && sscanf(e, "%lf,%lf", &at, &dur) == 2 && at > 0 && dur > 0)
+              dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(at * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                  NSWindow *c = [[NSWindow alloc] initWithContentRect:NSInsetRect(win.frame, -40, -40) styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
+                  c.opaque = YES; c.backgroundColor = NSColor.grayColor; c.releasedWhenClosed = NO; [c orderFrontRegardless];
+                  LOG("DM_TEST_COVER：盖上 %.1f 秒，游戏窗口%s是主窗口", dur, win.isKeyWindow ? "" : "不");
+                  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(dur * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [c orderOut:nil]; LOG("DM_TEST_COVER：拿开"); });
+              }); }
         [nc addObserverForName:NSWindowDidResignKeyNotification object:win queue:nil usingBlock:^(NSNotification *n) { (void)n; if (!win.miniaturized) dm_focus_set(2); g_btn = 0; g_w = g_a = g_s = g_d = 0; push(); { void dm_gamepad_reset(void); dm_gamepad_reset(); } }];   // 失焦：键盘和手柄按着的键清掉（松开事件收不到） | Focus lost: clear the keys held on keyboard and gamepad (their release events will not arrive)
         [nc addObserverForName:NSWindowDidBecomeKeyNotification object:win queue:nil usingBlock:^(NSNotification *n) { (void)n; dm_focus_set(1); }];
         [nc addObserverForName:NSWindowDidMiniaturizeNotification object:win queue:nil usingBlock:^(NSNotification *n) { (void)n; dm_focus_set(3); dm_audio_suspend(1); dm_gfx_suspend(1); }];

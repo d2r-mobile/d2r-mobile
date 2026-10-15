@@ -1,5 +1,6 @@
 // 诊断：探针 DM_PROBE、UI 消息总线 DM_UIMSG、主线程采样 DM_SAMPLE。从 crash.c 拆出（crash.c 只管信号处理）。
 // Diagnostics: probes DM_PROBE, UI message bus DM_UIMSG, main-thread sampling DM_SAMPLE. Split out of crash.c (crash.c only handles signals).
+#include "dm_prof.h"
 #include "dm.h"
 #include "dm_hud.h"
 #include "dm_cursor.h"
@@ -427,6 +428,7 @@ static void event_msg_obs(const uint64_t *regs) {
     static int n; if (n++ < 8) LOG("秘境：拦下原版「游戏难度设为 N」提示（事件子类型 0x17）"); pkt[1] = 0xff;
 }
 static void setlang_obs(const uint64_t *regs) {
+    dm_ui_gen_bump(DM_UIGEN_LANG);   // 界面代号（dm_cursor.h）：切语言会重建整套界面 | UI generation (dm_cursor.h): switching language rebuilds the entire UI
     { void dm_padmode_lang_reset(void); dm_padmode_lang_reset(); }   // 串表清空之前：我们换进串表的指针先写回原文、记的节点清空（dm_padmode.c） | Before the string table is cleared: write the original text back over the pointers we swapped into the string table and clear the recorded nodes (dm_padmode.c)
     module_t *m = NULL; for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) m = &g_mod[i];
     uint32_t idx = 0; const char *nm = NULL; vm_size_t got = 0;   // 安全读（不用 tk_rd：它给拍状态采集计数） | Safe read (not tk_rd: that one counts toward tick state collection)
@@ -808,8 +810,13 @@ static void hud_tick(uint64_t G) {        // 每拍：受控玩家等级 / 本�
             h.hp = get(player, 6, 0) >> 8; h.hp_max = get(player, 7, 0) >> 8; h.mp = get(player, 8, 0) >> 8; h.mp_max = get(player, 9, 0) >> 8; }
         uint32_t sp = 0, kp = 0, pm = 0; stat_read(player, 4, &sp); stat_read(player, 5, &kp); h.points = (int)(sp + kp);
         if (tk_rd(player + 0xC, &pm, 4)) h.dead = dm_hud_player_mode_dead(pm);   // 单位 +0xC = 动画模式（dm_hud.h） | Unit +0xC = animation mode (dm_hud.h)
-        { uint64_t cur = 0; if (tk_rd(inv + 0x40, &cur, 8)) h.holding = cur ? (int)((cur & 0x7fffffff) | 1) : 0;
-          static uint64_t lcur; if (cur != lcur) { uint32_t id = 0; if (cur) tk_rd(cur + 8, &id, 4); LOG("手上物品：%s（物品 id %u）", cur ? "拿着" : "空了", id); lcur = cur; } }   // 每次变化记一行：「看不见的手上物品」排查用   // 非零 = 拿着；值随物品不同（dm_cursor 的「放不下往里挪」靠它认出换成了别的物品）   // 物品栏 +0x40 = 光标上拿着的物品（同 DM_STATE 的 cursor） | Log a line on every change: for investigating the "invisible item in hand" issue   // Non-zero = holding; the value differs per item (dm_cursor's "does not fit, shift inward" relies on it to recognize a swap to a different item)   // inventory object +0x40 = item held on the cursor (same as cursor in DM_STATE)
+        // 手上物品：这里是服务端玩家，只作诊断；h.holding 由 dm_hud_get 取客户端的真值（dm_hud.c）。两端持续不一致（服务端光标挂着、客户端手上空了）记红行：
+        // 卡死就是这样——服务端还挂着放进仓库的魔盒，原先拿服务端这一份当「手上有东西」，拖放收尾链一遍遍按返回关面板
+        // Held item: this is the server-side player, for diagnostics only; h.holding takes the client's true value via dm_hud_get (dm_hud.c). If the two sides stay inconsistent (server cursor still holding, client hand empty), log a red line:
+        // that is exactly the hang: the server still held the Horadric Cube that had been put into the stash, the old code took the server copy as "something in hand", and the drag-and-drop wrap-up chain kept pressing Back to close panels
+        { uint64_t cur = 0; tk_rd(inv + 0x40, &cur, 8);
+          static uint64_t lcur; if (cur != lcur) { uint32_t id = 0; if (cur) tk_rd(cur + 8, &id, 4); LOG("手上物品（服务端）：%s（物品 id %u）", cur ? "拿着" : "空了", id); lcur = cur; }   // 每次变化记一行：「看不见的手上物品」排查用 | Logs one line on every change: for investigating the "invisible held item"
+          static uint64_t mcur; static int mn; if (cur && !dm_hud_held()) { if (++mn == 50 && cur != mcur) { uint32_t id = 0; tk_rd(cur + 8, &id, 4); mcur = cur; LOG("【红】手上物品：服务端光标挂着物品（id %u）、客户端手上已空 2 秒——两端不一致，按客户端（手上空）处理", id); } } else mn = 0; }   // 非零 = 拿着；值随物品不同（dm_cursor 的「放不下往里挪」靠它认出换成了别的物品）   // 物品栏 +0x40 = 光标上拿着的物品（同 DM_STATE 的 cursor） | Nonzero = holding; the value differs per item (dm_cursor's "can't place, shift inward" relies on it to detect that the item was swapped for another)   // Inventory +0x40 = item held on the cursor (same as DM_STATE's cursor)
         h.level = (int)lv;
         { uint64_t pp = 0, r1 = 0, r2 = 0, lvl = 0; uint16_t c[4] = {0}; uint32_t no = 0;   // 坐标：单位 +0x38 → 路径头 4 个 16 位（x 小数 / x / y 小数 / y） | Coordinates: unit +0x38 → 4 16-bit values at the head of the path (x fraction / x / y fraction / y)
           if (tk_rd(player + 0x38, &pp, 8) && tk_rd(pp, c, 8)) { h.x = c[1]; h.y = c[3]; }
@@ -969,20 +976,20 @@ static void hud_tick(uint64_t G) {        // 每拍：受控玩家等级 / 本�
                               uint64_t ip = 0; uint8_t pk[17] = { 0x16 }; uint32_t one = 1; tk_rd(u + 0x38, &ip, 8); memcpy(pk + 1, (void *)(u + 8), 4); if (ip) { memcpy(pk + 5, (void *)(ip + 0x10), 4); memcpy(pk + 9, (void *)(ip + 0x14), 4); } memcpy(pk + 13, &one, 4);
                               *(uint32_t *)(G + 0x19050) = 1; ((void (*)(uint64_t, uint64_t, uint8_t *, uint32_t))(main->base + 0x6e5b40))(G, player, pk, 17); *(uint32_t *)(G + 0x19050) = 0; inv += *(uint32_t *)(u + 0xc) != 3; } } }
                   LOG("DM_TEST_GIVE：拍 %u 在玩家旁生成「%s」品质 %d：%d / %d 件成功（物品类号 %u，第一件单位 id %u）%s", tq, code, q, ok, n, cls, id0, !getenv("DM_TEST_GIVE_INV") ? "" : inv == ok ? "，已全部捡进背包" : "，【注意】有没捡进背包的（留在地上）"); } } } }
-    if (main && player) dm_elysium_stash_step(G, player, (uint8_t *)main->base);   // 新建极乐世界角色后补齐共享仓库（dm_elysium.c） | Fill in the shared stash after a new Elysium character is created (dm_elysium.c)
-    { void dm_townwp_tick(uint64_t, uint64_t, uint8_t *); if (main && player) dm_townwp_tick(G, player, (uint8_t *)main->base); }   // 进局落在城镇小站旁（dm_townwp.c） | Land next to the town waypoint on joining a run (dm_townwp.c)
+    if (main && player) DM_PROF(1, "s.elysium", dm_elysium_stash_step(G, player, (uint8_t *)main->base));   // 新建极乐世界角色后补齐共享仓库（dm_elysium.c） | Fill in the shared stash after a new Elysium character is created (dm_elysium.c)
+    { void dm_townwp_tick(uint64_t, uint64_t, uint8_t *); if (main && player) DM_PROF(1, "s.townwp", dm_townwp_tick(G, player, (uint8_t *)main->base)); }   // 进局落在城镇小站旁（dm_townwp.c） | Land next to the town waypoint on joining a run (dm_townwp.c)
     { int dm_cloud_conflict_take(void); static int shown;   // iCloud 共享仓库分叉、本机那份收进了待合并收件箱（dm_cloudsync.c）：进局后弹一次原版系统提示（每次启动一次） | the iCloud shared stash forked and the local copy was put in the to-merge inbox (dm_cloudsync.c): one original system notice after entering a run (once per launch)
       if (main && player && !shown && dm_cloud_conflict_take()) { shown = 1; dm_game_notice((uint8_t *)main->base, dm_str((uint8_t *)main->base, "dmCloudConflict")); LOG("iCloud 同步：弹了共享仓库收进收件箱的提示"); } }
     { int dm_cloud_char_conflict_take(char *, size_t); char nm[256], msg[400];   // iCloud 首次同步遇到同名角色、用了云端那份（dm_cloudsync.c）：进局后提示一次 | iCloud first sync met a character with the same name and used the cloud copy (dm_cloudsync.c): one notice after entering a run
       if (main && player && dm_cloud_char_conflict_take(nm, sizeof nm)) { snprintf(msg, sizeof msg, dm_str((uint8_t *)main->base, "dmCloudCharConflict"), nm); dm_game_notice((uint8_t *)main->base, msg); LOG("iCloud 同步：弹了同名角色用云端那份的提示（%s）", nm); } }
-    if (main && player) dm_bossrush_tick(G, player, (uint8_t *)main->base);   // 首领连战（dm_bossrush.c） | Boss rush (dm_bossrush.c)
-    if (main && player) { void dm_rift_tick(uint64_t, uint64_t, uint8_t *); dm_rift_tick(G, player, (uint8_t *)main->base); }   // 秘境爬塔（dm_rift.c） | Rift tower climb (dm_rift.c)
-    { void dm_pages_tick(uint64_t, uint64_t, uint8_t *); if (main) dm_pages_tick(G, player, (uint8_t *)main->base); }   // 个人仓库 2–5 页（dm_pages.c）；不在局内 player 为 0，模块自己清状态 | Personal stash pages 2–5 (dm_pages.c); player is 0 when not in a run, and the module clears its own state
-    { void dm_vault_tick(uint64_t, uint64_t, uint8_t *); if (main) dm_vault_tick(G, player, (uint8_t *)main->base); }
-    { void dm_autobuff_srv_tick(uint8_t *, uint64_t, uint64_t); if (main && player) dm_autobuff_srv_tick((uint8_t *)main->base, G, player); }   // 增益技能自动补：放主线程点名的技能 | Buff auto-recast: cast the skill named by the main thread
-    { void dm_pouch_srv_tick(uint8_t *, uint64_t, uint64_t); if (main) dm_pouch_srv_tick((uint8_t *)main->base, G, player); }
-    { void dm_cloudmerge_srv_tick(uint8_t *, uint64_t, uint64_t); if (main) dm_cloudmerge_srv_tick((uint8_t *)main->base, G, player); }   // iCloud 收件箱局内并回（dm_cloudmerge.c）；不在局内 player 为 0   // 百宝囊收 / 放、存放的系统提示（dm_pouch.c）；不在局内 player 为 0   // 编年史仓库存取（dm_vault.c）；同上 | iCloud inbox in-game merge (dm_cloudmerge.c); player is 0 when not in game   // System notices for pouch take / put and deposit (dm_pouch.c); player is 0 when not in game   // Chronicle stash take / store (dm_vault.c); same as above
-    if (main && player) dm_kills_tick(G, player, (uint8_t *)main->base);   // 刷怪积分牌（dm_kills.c）：在首领连战之后，连战本关的首领它已记好 id | Kill board (dm_kills.c): runs after boss rush, which has already recorded the id of the boss of the current boss rush stage
+    if (main && player) DM_PROF(1, "s.bossrush", dm_bossrush_tick(G, player, (uint8_t *)main->base));   // 首领连战（dm_bossrush.c） | Boss rush (dm_bossrush.c)
+    if (main && player) { void dm_rift_tick(uint64_t, uint64_t, uint8_t *); DM_PROF(1, "s.rift", dm_rift_tick(G, player, (uint8_t *)main->base)); }   // 秘境爬塔（dm_rift.c） | Rift tower climb (dm_rift.c)
+    { void dm_pages_tick(uint64_t, uint64_t, uint8_t *); if (main) DM_PROF(1, "s.pages", dm_pages_tick(G, player, (uint8_t *)main->base)); }   // 个人仓库 2–5 页（dm_pages.c）；不在局内 player 为 0，模块自己清状态 | Personal stash pages 2–5 (dm_pages.c); player is 0 when not in a run, and the module clears its own state
+    { void dm_vault_tick(uint64_t, uint64_t, uint8_t *); if (main) DM_PROF(1, "s.vault", dm_vault_tick(G, player, (uint8_t *)main->base)); }
+    { void dm_autobuff_srv_tick(uint8_t *, uint64_t, uint64_t); if (main && player) DM_PROF(1, "s.autobuff", dm_autobuff_srv_tick((uint8_t *)main->base, G, player)); }   // 增益技能自动补：放主线程点名的技能 | Buff auto-recast: cast the skill named by the main thread
+    { void dm_pouch_srv_tick(uint8_t *, uint64_t, uint64_t); if (main) DM_PROF(1, "s.pouch", dm_pouch_srv_tick((uint8_t *)main->base, G, player)); }
+    { void dm_cloudmerge_srv_tick(uint8_t *, uint64_t, uint64_t); if (main) DM_PROF(1, "s.cloudmerge", dm_cloudmerge_srv_tick((uint8_t *)main->base, G, player)); }   // iCloud 收件箱局内并回（dm_cloudmerge.c）；不在局内 player 为 0   // 百宝囊收 / 放、存放的系统提示（dm_pouch.c）；不在局内 player 为 0   // 编年史仓库存取（dm_vault.c）；同上 | iCloud inbox in-game merge (dm_cloudmerge.c); player is 0 when not in game   // System notices for pouch take / put and deposit (dm_pouch.c); player is 0 when not in game   // Chronicle stash take / store (dm_vault.c); same as above
+    if (main && player) DM_PROF(1, "s.kills", dm_kills_tick(G, player, (uint8_t *)main->base)); dm_ipf_frame(1);   // 刷怪积分牌（dm_kills.c）：在首领连战之后，连战本关的首领它已记好 id | Kill board (dm_kills.c): runs after boss rush, which has already recorded the id of the boss of the current boss rush stage
     cube_diag_tick(G, player);   // 合成读数 | Transmute readout
     if (main && player) seek_tp_step(G, player, main);
     if (main && h.valid) h.quest_unread = *(volatile uint8_t *)(main->base + 0x2d5ff58) != 0;   // 任务提示：收到任务更新包时游戏置 1（0x306cfc），原版只在点 HUD 任务提示按钮时清（0xbbe6ec） | Quest hint: the game sets it to 1 when a quest update packet arrives (0x306cfc); the original game only clears it when the HUD quest hint button is tapped (0xbbe6ec)

@@ -161,17 +161,21 @@ static void v4text(NSString *str, NSDictionary *glyphs, CGFloat x, CGFloat basel
     if (k <= 0) return;
     CGContextRef c = UIGraphicsGetCurrentContext();
     uint64_t hostNow=now_ns(); dm_tg_snapshot native=self.nativeMapping;
-    NSString *labels[DM_TC_COUNT] = {@"主技能",@"技能一",@"技能二",@"技能三",@"技能四",@"回城",@"药剂",@"药剂",@"药剂",@"药剂",@"功能",@"地图"};
-    if (self.navigationMode) { labels[0]=@"确认／交换"; labels[1]=@"返回"; labels[2]=@"操作"; labels[3]=@"绑定"; labels[4]=@"下一页"; }   // 底栏十字位置的「关闭」已去：关闭入口只留外框右上角那一个（dm_tc_nav_mask） | The 「关闭」(Close) at the bottom bar cross position has been removed: the only close entry left is the one at the top-right corner of the outer frame (dm_tc_nav_mask)
+    // 圆钮上可能写出来的字一律走中英表（dm/i18n/ui_text.tsv），跟游戏语言：技能钮画图标 / 键位图、不写字；腰带 / 十字由底栏画（下面整个跳过），这几格不会写字
+    // Any text that could be written on round buttons always goes through the bilingual table (dm/i18n/ui_text.tsv) and follows the game language: skill buttons draw icons / key glyphs and no text; the belt / cross are drawn by the bottom bar (skipped entirely below), so these cells never get text
+    NSString *labels[DM_TC_COUNT] = {@"",@"",@"",@"",@"",@"",@"",@"",@"",@"",@"",@(dm_ui("dmTcMap"))};
+    if (self.navigationMode) { labels[0]=@(dm_ui("dmTcNavConfirm")); labels[1]=@(dm_ui("dmTcNavBack")); labels[2]=@(dm_ui("dmTcNavAction")); labels[3]=@(dm_ui("dmTcNavBind")); labels[4]=@(dm_ui("dmTcNavNext")); }   // 底栏十字位置的「关闭」已去：关闭入口只留外框右上角那一个（dm_tc_nav_mask） | The 「关闭」(Close) at the bottom bar cross position has been removed: the only close entry left is the one at the top-right corner of the outer frame (dm_tc_nav_mask)
     for (int i=0;i<DM_TC_COUNT;i++) {
         if (!(s->enabled_targets & (1u<<i))) continue;
-        if(!self.navigationMode && i>DM_TC_PORTAL && i<=DM_TC_MENU) continue; // 底部 UI v4：腰带 / 功能入口（LevelUpButton）由原生 HUD 画；宿主只保 hit-test。回城（技能弧上方圆钮）照技能钮画 | Bottom UI v4: belt / function entry (LevelUpButton) are drawn by the native HUD; the host only keeps hit-test. Town portal (round button above the skill arc) is drawn like a skill button
+        if(i>DM_TC_PORTAL && i<=DM_TC_MENU) continue; // 底部 UI v4：腰带 / 功能入口（十字）由底栏画（drawV4 / 原生 HUD），这里只保命中区，面板态也一样—— | Bottom UI v4: the belt / function entry (cross) is drawn by the bottom bar (drawV4 / native HUD); only the hit area is kept here, in panel state too —
+                                                      // 原先只在游戏态跳过：只开着 NPC 对话菜单时（导航态 3，十字可点）这一格被画成圆底 + 写死的中文「功能」，英文界面也写中文。回城（技能弧上方圆钮）照技能钮画
+                                                      // Previously skipped only in the gameplay state: with only the NPC dialog menu open (navigation state 3, cross tappable) this cell was drawn as a round base plus the hardcoded Chinese "功能" (Functions), even in the English UI. Town Portal (the round button above the skill arc) is drawn like a skill button
         const dm_tc_target *t = &l->target[i]; CGRect b = CGRectMake(t->x-t->r,t->y-t->r,t->r*2,t->r*2);
         BOOL held = t->button != 0 && (s->buttons & t->button) == t->button;
         if(i==DM_TC_PORTAL) for(int f=0;f<DM_TC_MAX_TOUCH;f++) held|=s->finger[f].active && s->finger[f].target==DM_TC_PORTAL;   // 回城钮不出按键（宿主施放回城技能），按住态看手指 | The town portal button emits no key (the host casts the town portal skill); the held state is read from the fingers
         CGFloat opacity = held ? .6 : .28;
         if(!self.navigationMode && i==DM_TC_MAP && s->map_cancel_active) {
-            CGContextSetFillColorWithColor(c,[UIColor colorWithRed:.55 green:.05 blue:.04 alpha:.36].CGColor); CGContextFillRect(c,b); labels[i]=@"取消";
+            CGContextSetFillColorWithColor(c,[UIColor colorWithRed:.55 green:.05 blue:.04 alpha:.36].CGColor); CGContextFillRect(c,b); labels[i]=@(dm_ui("dmTcCancel"));
         }
         BOOL skillKey=!self.navigationMode && (i<=DM_TC_SKILL4 || i==DM_TC_PORTAL);   // 回城钮（圆形、和技能图标一样） | Town portal button (round, same as the skill icons)
         if (skillKey) {   // PC 定稿演示图同款：深色圆底 + 古铜圆环（外亮内暗两道） | Same as the finalized PC demo image: dark round base + bronze ring (two strokes, bright outside and dark inside)
@@ -253,6 +257,9 @@ static void v4text(NSString *str, NSDictionary *glyphs, CGFloat x, CGFloat basel
         CGContextSetLineWidth(c,lw*.5); CGContextSetStrokeColorWithColor(c,[UIColor colorWithRed:.12 green:.09 blue:.05 alpha:.9*fs].CGColor); CGContextStrokeEllipseInRect(c,CGRectInset(b,lw*1.3,lw*1.3));
         CGFloat ts = 14*k; caption(s->skill_set ? @"Ⅱ" : @"Ⅰ",CGRectMake(b.origin.x,l->swap.y-ts*.8,b.size.width,ts*1.6),ts,1);   // 只留 Ⅰ / Ⅱ、居中（「换组」小字去掉） | keep only Ⅰ / Ⅱ, centered (the small 「换组」(switch set) text is removed)
     }
+    [self drawV4:c];   // 底栏：它自己按面板栈 / 死亡判显隐（dm_hud_bar_visible）。原先放在摇杆之后，被下面「面板开着就不画摇杆」的提前返回一起跳过—— | Bottom bar: it decides its own visibility from the panel stack / death (dm_hud_bar_visible). It used to come after the joystick and was skipped along with the early return below for "don't draw the joystick while a panel is open" —
+                       // 只开着 NPC 对话菜单 / 说话框时（设计上底栏照常显示）UIKit 底栏不画，露出游戏层那份：没有数值和经验条、难度格空、十字位写着「功能」
+                       // When only the NPC dialog menu / speech box is open (by design the bottom bar stays visible), the UIKit bottom bar is not drawn and the game-layer copy shows through: no values or experience bar, the difficulty cell empty, and "功能" (Functions) written in the cross slot
     if (self.hud.valid && self.hud.dead) return;   // 死亡画面：右侧圆钮已由掩码收起，左侧摇杆圈也不画（截图：死后摇杆圈还在） | death screen: the round buttons on the right are already hidden by the mask, and the stick ring on the left is not drawn either (screenshot: the stick ring was still there after death)
     if (s->navigation_mode) return;   // 面板开着（与起摇杆同一个判定：dm_touch_controls.c 起摇杆的条件带 !navigation_mode）：摇杆起不来，静止淡影只会压在面板上（iPad 上双面板占满整宽）——不画 | a panel is open (the same check as starting the stick: the stick-start condition in dm_touch_controls.c includes !navigation_mode): the stick cannot start, and the idle faint shadow would only sit on top of the panel (on iPad the dual panels fill the whole width) - not drawn
     BOOL moving = s->joy_slot >= 0;
@@ -268,7 +275,6 @@ static void v4text(NSString *str, NSDictionary *glyphs, CGFloat x, CGFloat basel
         CGContextSetStrokeColorWithColor(c,bronze(.7).CGColor); CGContextSetLineWidth(c,2*k);
         CGContextAddArc(c,o.x,o.y,radius+3*k,angle-M_PI/6,angle+M_PI/6,0); CGContextStrokePath(c);
     }
-    [self drawV4:c];
 }
 - (NSDictionary *)controlMetadata {
     const dm_tc_state *s=self.controls; if (!s) return @{};

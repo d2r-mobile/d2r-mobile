@@ -64,7 +64,7 @@ int dm_held_size(int *w, int *h) { (void)w; (void)h; return 0; }
 int dm_item_targeting(void) { return 0; }
 int dm_vendor_repair_mode(void) { return 0; }
 void dm_item_repair(uint32_t id) { (void)id; }
-void dm_belt_fill(uint64_t w) { (void)w; }
+void dm_belt_fill(void) {}
 void dm_test_identify(int what) { (void)what; }
 uint64_t dm_diag_srv_item(uint32_t id) { (void)id; return 0; }
 void dm_belt_use(int col, int row) { (void)col; (void)row; }

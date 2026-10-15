@@ -3,6 +3,7 @@
 // nn::hid (controller / touchscreen): on the real device shared memory is read through the hid service; the host takes it from the current dm_input state, written by the front end (Mac keyboard / iOS touchscreen).
 // The connected controller follows the operation mode: DM_OPMODE=1 (console, default) → 1P full-key controller; 0 (handheld) → handheld controller. Vibration is not supported (device count 0).
 #include "hle.h"
+#include "dm_prof.h"
 #include "dm_uiscreen.h"
 #include "dm_actions.h"
 #include "dm_cursor_item.h"
@@ -371,14 +372,14 @@ static void receipt(const NpadState *s, uint32_t id, uint32_t style, uint64_t km
 void (*dm_pad_hook)(uint64_t, uint64_t *, int32_t *, int32_t *, int32_t *, int32_t *);
 static void fill(NpadState *s, uint32_t id, uint32_t style) {
     pthread_once(&g_receipt_once, receipt_init);
-    ui_taps_step();
-    dm_ui_frontend_pump();
-    { void dm_textinput_pump(void); dm_textinput_pump(); }   // 文本框补「弹键盘」那一下、数量框设值（dm_textinput.c） | the extra "bring up keyboard" press for text boxes, setting the value of quantity boxes (dm_textinput.c)
-    { void dm_update_pump(void); dm_update_pump(); }       // 选角页的构建号与新版本提示（dm_update.c） | build number and new-version notice on the character select page (dm_update.c)
-    { void dm_actions_pump(void); dm_actions_pump(); }     // 商人买卖 / 加点入口与读数（dm_actions.c） | vendor buy/sell / stat point entry and readout (dm_actions.c)
-    { void dm_world_pump(void); dm_world_pump(); }   // 点世界目标 = 交互（dm_world.c） | tapping a world target = interact (dm_world.c)
-    dm_ui_mouse_pump();   // 界面鼠标消息（原生点击）在取手柄处发：主线程、每帧一条 | UI mouse messages (native clicks) are sent at the controller read: main thread, one per frame
-    { void dm_aim_cone_pump(void); dm_aim_cone_pump(); }   // 手指方向选目标：右摇杆归零时恢复（hle_private_aim.c） | target selection by finger direction: restored when the right stick returns to zero (hle_private_aim.c)
+    DM_PROF(0, "taps", ui_taps_step());
+    DM_PROF(0, "ui_frontend", dm_ui_frontend_pump());
+    { void dm_textinput_pump(void); DM_PROF(0, "textinput", dm_textinput_pump()); }   // 文本框补「弹键盘」那一下、数量框设值（dm_textinput.c） | the extra "bring up keyboard" press for text boxes, setting the value of quantity boxes (dm_textinput.c)
+    { void dm_update_pump(void); DM_PROF(0, "update", dm_update_pump()); }       // 选角页的构建号与新版本提示（dm_update.c） | build number and new-version notice on the character select page (dm_update.c)
+    { void dm_actions_pump(void); DM_PROF(0, "actions", dm_actions_pump()); }     // 商人买卖 / 加点入口与读数（dm_actions.c） | vendor buy/sell / stat point entry and readout (dm_actions.c)
+    { void dm_world_pump(void); DM_PROF(0, "world", dm_world_pump()); }   // 点世界目标 = 交互（dm_world.c） | tapping a world target = interact (dm_world.c)
+    DM_PROF(0, "ui_mouse", dm_ui_mouse_pump());   // 界面鼠标消息（原生点击）在取手柄处发：主线程、每帧一条 | UI mouse messages (native clicks) are sent at the controller read: main thread, one per frame
+    { void dm_aim_cone_pump(void); DM_PROF(0, "aim_cone", dm_aim_cone_pump()); dm_ipf_frame(0); }   // 手指方向选目标：右摇杆归零时恢复（hle_private_aim.c） | target selection by finger direction: restored when the right stick returns to zero (hle_private_aim.c)
     if (atomic_load(&g_stall_due) && atomic_exchange(&g_stall_due, 0)) usleep((useconds_t)g_stall_ms * 1000);   // DM_TEST_HID_STALL_MS
     uint64_t read_start_ns = g_receipt_file ? now_ns() : 0; // 覆盖整个多原子字段读取区间 | covers the whole read interval of the multi-atomic fields
     memset(s, 0, sizeof *s);

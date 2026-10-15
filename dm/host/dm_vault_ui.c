@@ -25,6 +25,7 @@
 #include <string.h>
 #include "dm.h"
 #include "dm_widget.h"
+#include "dm_cursor.h"
 #include "dm_vault_tab.h"
 #include "dm_cursor_item.h"
 #include "dm_i18n.h"
@@ -127,9 +128,9 @@ static void vu_tile(uint8_t *b, uint64_t cell, const char *tile, const vt_row *r
     char nm[24]; uint64_t t = vu_find(cell, tile, 0); snprintf(nm, sizeof nm, "%sBox", tile); uint64_t box = vu_find(cell, nm, 0); snprintf(nm, sizeof nm, "%sImg", tile); uint64_t im = vu_find(cell, nm, 0);
     if (!t || !box || !im) return;
     uint64_t cg = vu_find(cell, "CellGold", 0); snprintf(nm, sizeof nm, "%sGold", tile); vu_show(vu_find(cell, nm, 0), st == ST_STORED && !cg); vu_show(cg, st == ST_STORED);   // 暗金格：整格金框（只一个框）；套装件格：那一件自己的框   // 存着 = 金框（暗金页整格、套装页那一件） | Unique cell: gold frame around the whole cell (one frame only); set item cell: that piece's own frame   // stored = gold frame (whole cell on the unique page, that piece on the set page)
-    static struct { uint64_t w; const char *icon; } cache[VPER + VSET_ROWS * VSET_N]; int ci = -1, fr = -1;
-    for (int i = 0; i < (int)(sizeof cache / sizeof cache[0]); i++) { if (cache[i].w == im) { ci = i; break; } if (fr < 0 && !cache[i].w) fr = i; }
-    if (ci < 0 && fr >= 0) { ci = fr; cache[ci].w = im; cache[ci].icon = NULL; }
+    static struct { dm_wref r; const char *icon; } cache[VPER + VSET_ROWS * VSET_N]; int ci = -1, fr = -1;   // 图标控件 → 上次换上的图（带界面代号：重建后旧条目取到 0、腾给新控件） | Icon widget → the image last swapped in (with UI generation: after a rebuild, old entries read 0 and are freed up for new widgets)
+    for (int i = 0; i < (int)(sizeof cache / sizeof cache[0]); i++) { uint64_t cw = dm_wref_get(&cache[i].r); if (cw == im) { ci = i; break; } if (fr < 0 && !cw) fr = i; }
+    if (ci < 0 && fr >= 0) { ci = fr; dm_wref_set(&cache[ci].r, im); cache[ci].icon = NULL; }
     if (ci >= 0 && cache[ci].icon != r->icon) { cache[ci].icon = r->icon; vu_image(b, im, r->icon); *(int32_t *)(im + 0x70) = 0; *(int32_t *)(im + 0x74) = 0; *(float *)(im + 0x80) = 1.0f; }
     int bw = *(int32_t *)(box + 0x78), bh = *(int32_t *)(box + 0x7c), iw = *(int32_t *)(im + 0x78), ih = *(int32_t *)(im + 0x7c);
     if (iw > 0 && ih > 0 && bw > 0 && bh > 0) { float s = (float)bw / iw < (float)bh / ih ? (float)bw / iw : (float)bh / ih; if (s > 1.0f) s = 1.0f;
@@ -237,13 +238,13 @@ static int vu_cell_at(uint64_t vt, int x, int y, int *cell) {   // 视口像素�
 // underneath is the original game's cube container; a tap would hit it, and a hover would bring up the original tooltip of its 「提取」(Withdraw) button (host screenshot: after tapping the bottom cover, 「从上赛季高级储藏箱提取物品」(Extract items from last season's advanced stash) popped up)
 int dm_vault_ui_blocks(int x, int y) {
     if (!dm_vault_ui_over(x, y)) return 0;
-    uint8_t *b = vu_base(); uint64_t root = b ? *(uint64_t *)(b + 0x2f05458) : 0, bk = root ? vu_find(root, "BankExpansionLayout", 1) : 0, vt = bk ? vu_find(bk, "TouchVault", 1) : 0; if (!vt) return 0;
+    uint8_t *b = vu_base(); uint64_t root = b ? *(uint64_t *)(b + 0x2f05458) : 0, bk = root ? dm_ui_top(root, "BankExpansionLayout") : 0, vt = bk ? vu_find(bk, "TouchVault", 1) : 0; if (!vt) return 0;
     static const char *const ours[] = { "TouchV_SubU", "TouchV_SubS", "TouchV_T0", "TouchV_T1", "TouchV_T2", "TouchV_SearchBg" };
     for (unsigned i = 0; i < sizeof ours / sizeof ours[0]; i++) if (vu_hit(vu_find(vt, ours[i], 1), x, y)) return 0;
     return 1;
 }
 int dm_vault_ui_tap(int x, int y) {
-    uint8_t *b = vu_base(); uint64_t root = b ? *(uint64_t *)(b + 0x2f05458) : 0, bk = root ? vu_find(root, "BankExpansionLayout", 1) : 0, vt = bk ? vu_find(bk, "TouchVault", 1) : 0; if (!vt) return 0;
+    uint8_t *b = vu_base(); uint64_t root = b ? *(uint64_t *)(b + 0x2f05458) : 0, bk = root ? dm_ui_top(root, "BankExpansionLayout") : 0, vt = bk ? vu_find(bk, "TouchVault", 1) : 0; if (!vt) return 0;
     { uint64_t dl = vu_find(root, "DropdownListContents", 1); if (dl && *(uint8_t *)(dl + 0x50)) return 0; }   // 下拉选项开着：这一下归选项（压在格子上，宿主实测：点选项被当成点了底下那格） | Dropdown options open: this tap belongs to the options (they sit on top of the cells; measured on the host: tapping an option was treated as tapping the cell underneath)
     // 翻页条的点按区（比箭头图形大的两块命中框）：宿主自己收。要排在格子判定之前——后面的格子逻辑有 0.4 秒双击判定，连点翻页不能落进去；说明框开着先收
     // Tap areas of the page bar (two hit boxes larger than the arrow graphics): handled by the host itself. Must come before the cell check -- the cell logic further down has a 0.4-second double-tap check, and repeated page-turn taps must not fall into it; if a tooltip is open, close it first
@@ -272,7 +273,7 @@ uint32_t dm_vault_ui_held(void) {   // 客户端玩家光标上那件的 id（�
 // 交互层查询（游戏主线程）：这一点在编年史页上（第六页开着、页在屏上；暗底或底部那块盖板 TouchV_Cover）。下拉展开的选项（另一个面板 DropdownListContents）开着时不算，让它收点击
 // Interaction layer query (game main thread): this point is on the chronicle page (page six open, page on screen; the dark background or the bottom cover TouchV_Cover). It does not count while the expanded dropdown options (another panel, DropdownListContents) are open, so that they receive the tap
 int dm_vault_ui_over(int x, int y) {
-    uint8_t *b = vu_base(); uint64_t root = b ? *(uint64_t *)(b + 0x2f05458) : 0, bk = root ? vu_find(root, "BankExpansionLayout", 1) : 0, vt = bk ? vu_find(bk, "TouchVault", 1) : 0;
+    uint8_t *b = vu_base(); uint64_t root = b ? *(uint64_t *)(b + 0x2f05458) : 0, bk = root ? dm_ui_top(root, "BankExpansionLayout") : 0, vt = bk ? vu_find(bk, "TouchVault", 1) : 0;
     if (!vt || *(int32_t *)(vt + 0x70) != 0) return 0;
     uint64_t dl = vu_find(root, "DropdownListContents", 1); if (dl && *(uint8_t *)(dl + 0x50)) return 0;
     return vu_hit(vu_find(vt, "TouchV_Back", 0), x, y) || vu_hit(vu_find(vt, "TouchV_Cover", 0), x, y);   // 原版翻页箭头压在盖板下面，这一页不用（翻页条是我们的控件，见 dm_vault_ui_pager_hit） | The original page arrows sit under the cover and are not used on this page (the page bar is our widget, see dm_vault_ui_pager_hit)
@@ -283,7 +284,7 @@ int dm_vault_ui_over(int x, int y) {
 // a tap on the tooltip = nothing happens; a tap elsewhere (another cell, our widgets, tabs, inventory, outside the panel) = close the tooltip, and this tap triggers nothing else (previously only a tap on an empty cell closed it). Returns 1 = swallowed
 int dm_vault_ui_tip_gate(int x, int y) {
     if (!g_tip_on) return 0;
-    uint8_t *b = vu_base(); uint64_t root = b ? *(uint64_t *)(b + 0x2f05458) : 0, bk = root ? vu_find(root, "BankExpansionLayout", 1) : 0, vt = bk ? vu_find(bk, "TouchVault", 1) : 0;
+    uint8_t *b = vu_base(); uint64_t root = b ? *(uint64_t *)(b + 0x2f05458) : 0, bk = root ? dm_ui_top(root, "BankExpansionLayout") : 0, vt = bk ? vu_find(bk, "TouchVault", 1) : 0;
     if (!vt || *(int32_t *)(vt + 0x70) != 0) return 0;
     { uint64_t dl = vu_find(root, "DropdownListContents", 1); if (dl && *(uint8_t *)(dl + 0x50)) return 0; }
     int cell = -1; if (vu_cell_at(vt, x, y, &cell) >= 0 && cell + 1 == g_tip_on) return 0;
@@ -330,7 +331,7 @@ static void vu_drag_place(uint64_t vt, int x, int y) {
     vu_move(im, ux - (w > 0 ? w / 2 : 49), uy - (h > 0 ? h / 2 : 49));
 }
 int dm_vault_ui_drag(int phase, int x, int y) {
-    uint8_t *b = vu_base(); uint64_t root = b ? *(uint64_t *)(b + 0x2f05458) : 0, bk = root ? vu_find(root, "BankExpansionLayout", 1) : 0, vt = bk ? vu_find(bk, "TouchVault", 1) : 0; if (!vt) { g_dg.on = 0; return 0; }
+    uint8_t *b = vu_base(); uint64_t root = b ? *(uint64_t *)(b + 0x2f05458) : 0, bk = root ? dm_ui_top(root, "BankExpansionLayout") : 0, vt = bk ? vu_find(bk, "TouchVault", 1) : 0; if (!vt) { g_dg.on = 0; return 0; }
     float dm_ui_drag_lift_get(void); int vh = *(int32_t *)(b + 0x211da3c), lift = (int)(vh * dm_ui_drag_lift_get());   // 抬起量由前端报（同各自拖放落点） | The lift amount is reported by the front end (same as each of the other drag-and-drop drop points)
     if (phase == 0) { int cell; int row = vu_cell_at(vt, x, y, &cell); if (row < 0 || !dm_vault_has(vt_rows[row].kind, vt_rows[row].row)) return 0;
         uint64_t bg = vu_find(vt, "TouchV_Back", 0); if (!bg) return 0; int a, c, x0, x1, y0, y1, vw = *(int32_t *)(b + 0x211da38);   // 面板单位 ↔ 视口像素：探暗底的四条边（暗底在布局里是 x 142–1542、y 136–1136） | Panel units ↔ viewport pixels: probe the four edges of the dark background (in the layout the dark background is x 142–1542, y 136–1136)
@@ -357,7 +358,7 @@ int dm_vault_ui_drag(int phase, int x, int y) {
 // Interaction layer (game main thread, hit query at the moment of press, dm_cursor.c): which tap area of the page bar this point falls on -- -1 previous page / +1 next page / 0 neither.
 // The tap areas are two transparent hit boxes in the layout, TouchV_PgLHit / PgRHit (larger than the arrow graphics, ≥ 44 points square); returns 0 when the sixth page is not on screen
 int dm_vault_ui_pager_hit(int x, int y) {
-    uint8_t *b = vu_base(); uint64_t root = b ? *(uint64_t *)(b + 0x2f05458) : 0, bk = root ? vu_find(root, "BankExpansionLayout", 1) : 0, vt = bk ? vu_find(bk, "TouchVault", 1) : 0;
+    uint8_t *b = vu_base(); uint64_t root = b ? *(uint64_t *)(b + 0x2f05458) : 0, bk = root ? dm_ui_top(root, "BankExpansionLayout") : 0, vt = bk ? vu_find(bk, "TouchVault", 1) : 0;
     if (!vt || *(int32_t *)(vt + 0x70) != 0) return 0;
     return vu_hit(vu_find(vt, "TouchV_PgLHit", 0), x, y) ? -1 : vu_hit(vu_find(vt, "TouchV_PgRHit", 0), x, y) ? 1 : 0;
 }
@@ -369,7 +370,7 @@ void dm_vault_on_uimsg(const char *cat, const char *act, const char *arg) {   //
     atomic_store(&g_dirty, 1);
 }
 void dm_vault_ui_pump(void) {
-    uint8_t *b = vu_base(); uint64_t root = b ? *(uint64_t *)(b + 0x2f05458) : 0, bk = root ? vu_find(root, "BankExpansionLayout", 1) : 0;
+    uint8_t *b = vu_base(); uint64_t root = b ? *(uint64_t *)(b + 0x2f05458) : 0, bk = root ? dm_ui_top(root, "BankExpansionLayout") : 0;
     static int was; if (!bk || !*(uint8_t *)(bk + 0x50)) { was = 0; return; }
     uint64_t tabs = vu_find(bk, "BankTabs", 0), vt = vu_find(bk, "TouchVault", 1); if (!tabs || !vt) return;
     if (!vu_is(tabs, VT_TABBAR)) return;
@@ -419,7 +420,7 @@ void dm_vault_ui_pump(void) {
       // （vt1：原先只在本进程第一次写，重进局后三个框全不勾、列表却照全看显示）
       // When the panel is newly built (first open, or the game rebuilds the stash after re-entering a run) the checkboxes are at the layout default "unchecked": write them back from the current filter (first time = all checked) so the picture matches the filter
       // (vt1: previously this was written only the first time in the process; after re-entering a run all three boxes were unchecked while the list still showed everything)
-      static uint64_t lastvt; if (vt != lastvt) { lastvt = vt; for (int i = 0; i < 3; i++) { char nm[16]; snprintf(nm, sizeof nm, "TouchV_T%d", i); vu_toggle(vu_find(vt, nm, 1), g_tiers >> i & 1); } tm = g_tiers; }
+      static dm_wref lastvt; if (vt != dm_wref_get(&lastvt)) { dm_wref_set(&lastvt, vt); for (int i = 0; i < 3; i++) { char nm[16]; snprintf(nm, sizeof nm, "TouchV_T%d", i); vu_toggle(vu_find(vt, nm, 1), g_tiers >> i & 1); } tm = g_tiers; }
       if (!tm) tm = 7;   // 三个都不勾 = 全看（同原版编年史） | None of the three checked = show all (same as the original game's chronicle)
       if (tm != g_tiers) { g_tiers = tm; atomic_store(&g_dirty, 1); } }
     { int dm_ui_vault_drop(void); static uint32_t held; static int wait;   // 拖进编年史页：手上那件放回原格（手空了）再隔几帧（等服务端也放好）请求存入 | Dragged into the chronicle page: put the item in hand back into its original cell (hand now empty), then a few frames later (waiting for the server to finish placing it too) request the store

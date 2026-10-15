@@ -36,6 +36,8 @@ typedef struct {
     pthread_t null_th; _Atomic int null_run;
     dispatch_semaphore_t notify_sem;
     pthread_t notify_th; _Atomic int notify_run, notify_pending, notify_armed;
+    _Atomic uint64_t notify_ns;        // 最近一次「有缓冲释放、要通知」的时刻（量通知线程被叫醒的延迟） | Time of the most recent "buffer released, needs notifying" event (to measure the notification thread's wake-up latency)
+    int dry;                           // 这次声卡回调里待播队列空了（在播放态）= 一次欠载（断音） | The pending playback queue was empty in this audio callback (while playing) = one underrun (audio dropout)
 } aout;
 
 // 打开中的输出登记表：前端生命周期（切后台）一次性暂停 / 恢复
@@ -46,16 +48,46 @@ static pthread_mutex_t g_aos_lock = PTHREAD_MUTEX_INITIALIZER;
 static int g_suspended;
 static aout *ao(const void *g) { aout *a = objmap_get(g); if (!a) die("AudioOut %p 不是宿主建的", g); return a; }
 
+// 通知线程 QoS 对照（公开 iPhone 15 Pro Max 移动时断音，提议把这条线程提到交互级、与混音线程一致）。
+// 缺省交互级（真机 iPhone18,2 野外移动 240 秒同进程交替：叫醒延迟平均约减半、超过 2 ms 的 16 → 0，7 段配对 7/7；欠载两相都是 0，没有可测的退步）。
+// DM_AUDIO_NQOS：不设 / 1 = 交互级；0 = 旧行为（继承建线程者的 QoS）；alt:<秒> = 同一进程里每 <秒> 交替一次，每段结束记一行这段的欠载次数与通知延迟——
+// 真机移动时同进程交替比，不用两次启动（热态、场景都不同）对比
+// Notification thread QoS comparison (public report of audio dropouts while moving on iPhone 15 Pro Max; proposal: raise this thread to interactive level, same as the mixer thread).
+// Default is interactive (device iPhone18,2, 240 s of wilderness movement with in-process alternation: wake-up latency roughly halved on average, cases over 2 ms 16 → 0, 7/7 paired segments; underruns 0 in both phases, no measurable regression).
+// DM_AUDIO_NQOS: unset / 1 = interactive; 0 = old behavior (inherits the QoS of the thread's creator); alt:<seconds> = alternate every <seconds> within the same process, logging at the end of each segment its underrun count and notification latency;
+// compare by in-process alternation while moving on the device, not across two launches (thermal state and scene both differ)
+static int g_nq_mode = -1, g_nq_alt; static qos_class_t g_nq_base = QOS_CLASS_UNSPECIFIED;
+static _Atomic uint64_t g_nq_dry[2], g_nq_calls[2], g_nq_wake[2], g_nq_lat_sum[2], g_nq_lat_max[2], g_nq_lat_2ms[2];
+static int nq_phase(void) { if (g_nq_mode < 0) { const char *e = getenv("DM_AUDIO_NQOS"); g_nq_mode = e && !strcmp(e, "0") ? 0 : e && !strncmp(e, "alt:", 4) ? 2 : 1; if (g_nq_mode == 2) { g_nq_alt = atoi(e + 4); if (g_nq_alt < 1) g_nq_alt = 30; } }
+    return g_nq_mode < 2 ? g_nq_mode : (int)((now_ns() / 1000000000ull / (uint64_t)g_nq_alt) & 1); }
+static void nq_report(int ph) {
+    uint64_t c = atomic_exchange(&g_nq_calls[ph], 0), d = atomic_exchange(&g_nq_dry[ph], 0), w = atomic_exchange(&g_nq_wake[ph], 0), ls = atomic_exchange(&g_nq_lat_sum[ph], 0), lm = atomic_exchange(&g_nq_lat_max[ph], 0), l2 = atomic_exchange(&g_nq_lat_2ms[ph], 0);
+    if (!c) return;
+    if (ph) LOG("音频通知线程 QoS 对照：相 交互级：声卡回调 %llu 次、欠载（断音）%llu 次；通知 %llu 次，叫醒延迟 平均 %.3f ms、最大 %.3f ms、超过 2 ms %llu 次", (unsigned long long)c, (unsigned long long)d, (unsigned long long)w, w ? ls / 1e6 / (double)w : 0.0, lm / 1e6, (unsigned long long)l2);
+    else LOG("音频通知线程 QoS 对照：相 现状：声卡回调 %llu 次、欠载（断音）%llu 次；通知 %llu 次，叫醒延迟 平均 %.3f ms、最大 %.3f ms、超过 2 ms %llu 次", (unsigned long long)c, (unsigned long long)d, (unsigned long long)w, w ? ls / 1e6 / (double)w : 0.0, lm / 1e6, (unsigned long long)l2);
+}
 static void notify_release(aout *a) {
+    atomic_store_explicit(&a->notify_ns, now_ns(), memory_order_relaxed);
     atomic_store_explicit(&a->notify_pending, 1, memory_order_release);
     if (atomic_exchange_explicit(&a->notify_armed, 1, memory_order_acq_rel) == 0)
         dispatch_semaphore_signal(a->notify_sem);
 }
 
 static void *event_notify(void *p) {
-    aout *a = p;
+    aout *a = p; int applied = -1;
+    if (g_nq_base == QOS_CLASS_UNSPECIFIED) g_nq_base = qos_class_self();
     for (;;) {
+        int ph = nq_phase();
+        if (ph != applied) {   // 换相：先报上一相这段的读数，再改本线程 QoS | Phase switch: first report the readings of the previous phase's segment, then change this thread's QoS
+            if (applied >= 0) nq_report(applied);
+            int e = pthread_set_qos_class_self_np(ph ? QOS_CLASS_USER_INTERACTIVE : (g_nq_base == QOS_CLASS_UNSPECIFIED ? QOS_CLASS_DEFAULT : g_nq_base), 0);
+            if (e) LOG("【红】音频通知线程：设 QoS 失败（%d）", e);
+            else if (g_nq_mode && ph) LOG("音频通知线程：QoS → 交互级"); else if (g_nq_mode) LOG("音频通知线程：QoS → 现状");
+            applied = ph; }
         dispatch_semaphore_wait(a->notify_sem, DISPATCH_TIME_FOREVER);
+        { uint64_t t0 = atomic_load_explicit(&a->notify_ns, memory_order_relaxed), dt = t0 ? now_ns() - t0 : 0; int q = applied < 0 ? 0 : applied;
+          atomic_fetch_add(&g_nq_wake[q], 1); atomic_fetch_add(&g_nq_lat_sum[q], dt); if (dt > 2000000) atomic_fetch_add(&g_nq_lat_2ms[q], 1);
+          uint64_t mx = atomic_load(&g_nq_lat_max[q]); while (dt > mx && !atomic_compare_exchange_weak(&g_nq_lat_max[q], &mx, dt)) {} }
         if (atomic_exchange_explicit(&a->notify_pending, 0, memory_order_acq_rel) && a->event)
             hle_signal_system_event(a->event);
         atomic_store_explicit(&a->notify_armed, 0, memory_order_release);
@@ -74,7 +106,7 @@ static void pull(aout *a, uint8_t *dst, uint64_t n) {
     uint32_t qh = atomic_load_explicit(&a->q_head, memory_order_relaxed);
     while (n) {
         uint32_t qt = atomic_load_explicit(&a->q_tail, memory_order_acquire);
-        if (qh == qt || atomic_load_explicit(&a->state, memory_order_acquire) != STATE_STARTED) { memset(dst, 0, n); break; }
+        if (qh == qt || atomic_load_explicit(&a->state, memory_order_acquire) != STATE_STARTED) { if (qh == qt && atomic_load_explicit(&a->state, memory_order_acquire) == STATE_STARTED) a->dry = 1; memset(dst, 0, n); break; }
         gbuf *b = a->q[qh & (QMAX - 1)];
         uint64_t k = b->size - a->pos; if (k > n) k = n;
         memcpy(dst, (uint8_t *)b->ptr + a->pos, k);
@@ -113,6 +145,7 @@ static OSStatus au_render(void *ctx, AudioUnitRenderActionFlags *f, const AudioT
     (void)f; (void)ts; (void)bus; (void)frames;
     aout *a = ctx;
     atomic_fetch_add_explicit(&g_render_calls, 1, memory_order_relaxed);
+    a->dry = 0;
     if (!a->mix) pull(a, bl->mBuffers[0].mData, bl->mBuffers[0].mDataByteSize);
     else { int16_t *o = bl->mBuffers[0].mData; unsigned left = bl->mBuffers[0].mDataByteSize / 4;   // 双声道 16 位：每帧 4 字节 | stereo 16-bit: 4 bytes per frame
         while (left) { unsigned k = left < MIXMAX ? left : MIXMAX; pull(a, (uint8_t *)a->mixbuf, (uint64_t)k * 12); downmix51(a->mixbuf, o, k); o += 2 * k; left -= k; } }
@@ -120,6 +153,7 @@ static OSStatus au_render(void *ctx, AudioUnitRenderActionFlags *f, const AudioT
     // Diagnostic switch DM_AUDIO_OUT_DUMP=<file>: append the data handed to CoreAudio as is (stereo after the downmix). This machine has no loopback device and cannot record the system output; to tell whether the dialogue was handed over, look at this file
     { static FILE *df; static int on = -1; if (on < 0) { const char *e = getenv("DM_AUDIO_OUT_DUMP"); on = e != NULL; if (on && !(df = fopen(e, "wb"))) LOG("【红】DM_AUDIO_OUT_DUMP 打不开 %s", e); }
       if (df) fwrite(bl->mBuffers[0].mData, 1, bl->mBuffers[0].mDataByteSize, df); }
+    { int q = nq_phase(); atomic_fetch_add_explicit(&g_nq_calls[q], 1, memory_order_relaxed); if (a->dry) atomic_fetch_add_explicit(&g_nq_dry[q], 1, memory_order_relaxed); }   // 通知线程 QoS 对照：按当前相记 | Notification thread QoS comparison: recorded per current phase
     return noErr;
 }
 #if !TARGET_OS_IPHONE

@@ -40,6 +40,7 @@
 // Writes only our own widgets (TouchPouch* / TouchStore); 「自定义」(Custom) page switches gem_pick (auto stow runes and gems + pouch box) and store_btn (Deposit button), on by default; when off the whole block is moved off-screen.
 // Threads: dm_pouch_step on the game main thread (dm_world.c); UI message callback dm_pouch_on_uimsg (diag.c); stow / release / system notices in the server tick dm_pouch_srv_tick (hud_tick in diag.c);
 // persistence in the pre-commit hook pouch_hook on the disk-write thread (start of Commit in hle_fs.c, [2]).
+#include "dm_widget.h"
 #include "hle.h"
 #include "dm_i18n.h"
 #include <stdatomic.h>
@@ -418,7 +419,11 @@ int dm_pouch_tip_gate(int x, int y) {
     tip_show(root, 0); LOG("百宝囊：点了清单外 → 收起清单，这一下不做别的"); return 1;
 }
 static void ui_pump(void) {
-    uint64_t root = *(uint64_t *)(B + 0x2f05458), boxw = root ? find_w(root, "TouchPouchBox", 2) : 0; if (!boxw) return;
+    // 百宝囊的控件全部插在物品栏布局里（pouch_layout.py）：先取物品栏面板（界面根的直接子控件，dm_widget.h），再在面板里找；物品栏没开就不扫整棵界面树
+    // All of the pouch widgets are inserted into the inventory layout (pouch_layout.py): first get the inventory panel (a direct child of the UI root, dm_widget.h), then search inside it; when the inventory is not open, the whole UI tree is not scanned
+    uint64_t root = *(uint64_t *)(B + 0x2f05458), inv = root ? dm_ui_top(root, "PlayerInventoryExpansionLayout") : 0, boxw = inv ? find_w(inv, "TouchPouchBox", 3) : 0;
+    if (dm_ui_top_chk_on()) { uint64_t old = root ? find_w(root, "TouchPouchBox", 2) : 0; if (old != boxw) { static int k; if (k++ < 20) LOG("【红】百宝囊对拍：TouchPouchBox 新找法 %#llx、旧找法 %#llx", (unsigned long long)boxw, (unsigned long long)old); } }
+    if (!boxw) return;
     int gp = dm_custom_get("gem_pick"), sb = dm_custom_get("store_btn");
     w_move(find_w(boxw, "TouchPouch", 1), gp ? 222 : 99999, 1294); w_move(find_w(boxw, "TouchPouchIcon", 1), gp ? 246 : 99999, 1310); w_move(find_w(boxw, "TouchPouchCount", 1), gp ? 350 : 99999, 1294);
     w_move(find_w(boxw, "TouchStore", 1), sb ? 916 : 99999, 1323);
@@ -487,7 +492,13 @@ void dm_pouch_srv_tick(uint8_t *b, uint64_t G, uint64_t player) {   // 服务端
         i++; }
     {   // 放：储藏箱开着、人在旁边、囊里有、收进囊的都已证明（同一件不会同时挂着收和放）；每 25 拍一批，背包放满就等下一批 | Release: stash open, player next to it, pouch not empty, everything stowed into the pouch already proven (the same item is never pending both stow and release); one batch every 25 ticks; when the inventory is full, wait for the next batch
         static uint32_t last; int puts = 0; for (int j = 0; j < g_nup; j++) puts += g_up[j].put;
-        if (atomic_load(&g_stash_open) && go63 && g_nu && !puts && nw == 0 && tq - last >= 25) { last = tq; int n = 0; while (pouch_take(b, G, player)) n++;
+        // 手上（服务端光标）拿着东西时不放：往背包里塞东西会占掉手上那件拿起时的原格，玩家松手放不回原位；卡死那一局就是拿着魔盒拖的途中
+        // 放进来 5 件、正好落在魔盒的原格上，之后服务端光标还挂着魔盒、客户端手上已空。等放下了再放（下一批 25 拍后再看）
+        // Do not deposit while the hand (server cursor) is holding something: stuffing items into the backpack takes the original slot of the held item, and the player cannot drop it back in place; the hang run was exactly this: mid-drag of the Horadric Cube,
+        // 5 items were deposited, landing right on the Cube's original slot, after which the server cursor still held the Cube while the client hand was empty. Wait until it is put down (check again with the next batch, 25 ticks later)
+        uint64_t pinv = *(uint64_t *)(player + 0x90), phand = pinv && *(uint32_t *)pinv == 0x01020304 ? *(uint64_t *)(pinv + 0x40) : 0;
+        static uint64_t lh; if (phand && phand != lh && atomic_load(&g_stash_open) && g_nu) LOG("百宝囊：手上拿着东西 → 先不往背包放，等放下"); lh = phand;
+        if (atomic_load(&g_stash_open) && go63 && g_nu && !puts && nw == 0 && !phand && tq - last >= 25) { last = tq; int n = 0; while (pouch_take(b, G, player)) n++;
             if (n) { saved = 1; LOG("百宝囊：开着储藏箱 → 放 %d 件到背包，囊里还剩 %d 件", n, g_nu); } } }
     full_notice |= stash_sweep(b, G, player, go63 && atomic_load(&g_stash_open) ? unit : 0, tq, &saved);
     { static int said_open; if (!atomic_load(&g_stash_open)) said_open = 0;   // 一次开箱只提示一次 | notify only once per stash open

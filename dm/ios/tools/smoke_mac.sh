@@ -32,7 +32,7 @@ DEVP=""; [ "${DM_MAC_DEVICE_PROFILE:-1}" != 0 ] && DEVP="--env DM_GAME_RES=2868x
 # 新加一个 source / 调用的同目录文件，就加进这里—— 漏了后加的三份，远端一起就报「DM_BUNDLE_ID 未设」，在台账留了假红。
 # The same-directory files this script needs at run time, listed in this one place only: before starting, each is checked to be present (a missing one is a failure on the spot, not reported halfway through the run), and when dispatching to the remote machine the sync also goes by this list.
 # When a new same-directory file is sourced / called, add it here -- the three added later were missed, the remote side reported 「DM_BUNDLE_ID 未设」(DM_BUNDLE_ID not set) as soon as it started, and a false failure was left in the ledger.
-SMOKE_MAC_DEPS="local_env.sh logport.py devlock.sh devbattery.sh cloud_guard.sh save_key.sh launch_guard.sh smoke_touch.txt uireg"
+SMOKE_MAC_DEPS="local_env.sh logport.py devlock.sh macwin.sh devbattery.sh cloud_guard.sh save_key.sh launch_guard.sh smoke_touch.txt uireg"
 _sm_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd); _sm_miss=
 for _sm_f in $SMOKE_MAC_DEPS; do [ -e "$_sm_dir/$_sm_f" ] || _sm_miss="$_sm_miss $_sm_f"; done
 [ -z "$_sm_miss" ] || { echo "SMOKE-MAC RED 0/${1:-1} 用时 0 秒"; echo "【红】冒烟脚本的依赖文件缺了：${_sm_miss}（目录 ${_sm_dir}），没有起跑"; exit 2; }
@@ -56,6 +56,9 @@ run_stage() {
   # All Mac smoke tests on the same Mac share one App container (same bundle id: boot.txt and saves would overwrite each other), so they are serialized: borrow the device lock's implementation, with a different lock
   export DM_DEVLOCK_DIR=${DM_ROOT:-$HOME/dm-work}/run/ios/macsmoke.lock; source "$TOOLS/devlock.sh"; source "$TOOLS/cloud_guard.sh"; source "$TOOLS/save_key.sh"; source "$TOOLS/launch_guard.sh"
   devlock_acquire "${SMOKE_OWNER:-未署名} Mac 冒烟"
+  # 窗口独占：冒烟要开窗，只拿 macsmoke 锁会盖住整表其余槽（reg1–3）的包、让它们停帧；见 macwin.sh
+  # Window exclusivity: smoke opens a window, and taking only the macsmoke lock would cover the apps of the other slots of the full table (reg1–3) and stall their frames; see macwin.sh
+  source "$TOOLS/macwin.sh"; macwin_excl_acquire "${SMOKE_OWNER:-未署名} Mac 冒烟" || { echo "SMOKE-MAC RED 0/$N 用时 0 秒"; devlock_release; return 2; }
   # 找实例：系统有时把包迁到随机路径下运行（App Translocation，/private/var/folders/…/d/Wrapper/DmIOS.app/DmIOS），不能按原路径认，按可执行文件后缀认。
   # iOS 包在 Mac 上同一 bundle id 只能有一个实例（再 open 报 -10670）：开跑前已有实例 = 别人的或上次残留的，不替人结束，报出 pid 即红
   # open 报错时把现场留下（一次合入红：玩家路径两次 open 都报 No such file or directory，90 秒后触摸玩家路径也起不来，下一次合入又好了；当时本机另有两个任务在出冒烟包，故意重叠复现 1 次没复现，因果未定）。
@@ -73,7 +76,7 @@ run_stage() {
   pids() { local p b; for p in $(ps -axo pid=,comm= | awk '{ pid=$1; $1=""; sub(/^ /,""); if ($0 ~ /\/Wrapper\/DmIOS\.app\/DmIOS$/) print pid }'); do
       b=$(lsappinfo info -only bundleID -app "$p" 2>/dev/null | sed -n 's/.*="\(.*\)"$/\1/p'); [ -z "$b" ] || [ "$b" = "$B" ] && echo "$p"; done; }
   stop_all() { local p; for p in $(pids); do kill -TERM "$p" 2>/dev/null; done; sleep 1; for p in $(pids); do kill -KILL "$p" 2>/dev/null; done; }
-  SK_C=''; CLEAN='stop_all; [ -z "$SK_C" ] || savekey_out "$SK_C"; devlock_release'   # 退出钩子由调用处统一挂（外层还要记账），这里只登记要做的清理 | The exit hook is installed centrally by the call site (the outer layer also has to record in the ledger); here only the cleanup to be done is registered
+  SK_C=''; CLEAN='stop_all; [ -z "$SK_C" ] || savekey_out "$SK_C"; macwin_excl_release; devlock_release'   # 退出钩子由调用处统一挂（外层还要记账），这里只登记要做的清理 | The exit hook is installed centrally by the call site (the outer layer also has to record in the ledger); here only the cleanup to be done is registered
   container() { local m; for m in "$HOME"/Library/Containers/*/.com.apple.containermanagerd.metadata.plist; do
       [ "$(/usr/libexec/PlistBuddy -c 'Print :MCMMetadataIdentifier' "$m" 2>/dev/null)" = "$B" ] && { echo "$(dirname "$m")/Data"; return 0; }; done; return 1; }
   freeport() { python3 -c "import socket;s=socket.socket();s.bind(('127.0.0.1',0));print(s.getsockname()[1])"; }
@@ -97,12 +100,12 @@ run_stage() {
   # 被测机器数据盘余量 < 5 GB 不跑（mini 两次红时数据盘只剩 140–476 MB：仪器原始录制没清；清到 27 GB 后的测量恢复正常。与两次红的因果未做对照）
   # Do not run when the machine under test's data disk has < 5 GB free (on the two failures on the second Mac the data disk had only 140–476 MB left: raw Instruments recordings had not been cleaned; measurements returned to normal after cleaning to 27 GB. The causal link to the two failures was not tested with a control)
   local free_gb; free_gb=$(df -g "$HOME" | awk 'NR==2 {print $4}')
-  [ "${free_gb:-0}" -ge 5 ] || { echo "【红】被测机器 $(hostname -s) 数据盘只剩 ${free_gb} GB（< 5 GB），不跑"; echo "SMOKE-MAC RED 0/$N 用时 0 秒"; devlock_release; CLEAN=''; return 2; }
+  [ "${free_gb:-0}" -ge 5 ] || { echo "【红】被测机器 $(hostname -s) 数据盘只剩 ${free_gb} GB（< 5 GB），不跑"; echo "SMOKE-MAC RED 0/$N 用时 0 秒"; macwin_excl_release; devlock_release; CLEAN=''; return 2; }
   # 屏幕睡着时取不到可绘制表面，游戏主线程卡在取图（第 1 局进局后停在拍 4、15 秒看门狗；回溯在 NVN 取图调用里，后两局正常）。跑之前唤醒屏幕并在本次运行期间保持不睡
   # When the screen is asleep no drawable surface can be obtained and the game main thread stalls acquiring the image (run 1 stopped at tick 4 after entering the game, 15-second watchdog; the backtrace was inside the NVN acquire-image call, the next two runs were normal). Wake the screen before running and keep it awake for the duration of this invocation
   caffeinate -u -t 3 >/dev/null 2>&1; caffeinate -d -w $$ >/dev/null 2>&1 &
   local pre; pre=$(pids | tr '\n' ' ')
-  [ -z "$pre" ] || { echo "【红】本机已有 $B 的实例在跑（pid ${pre}，非本次启动）：先结束它再跑"; echo "SMOKE-MAC RED 0/$N 用时 0 秒"; devlock_release; CLEAN=''; return 2; }
+  [ -z "$pre" ] || { echo "【红】本机已有 $B 的实例在跑（pid ${pre}，非本次启动）：先结束它再跑"; echo "SMOKE-MAC RED 0/$N 用时 0 秒"; macwin_excl_release; devlock_release; CLEAN=''; return 2; }
   for i in $(seq 1 "$N"); do
     local OUT="$RUN/$i" attempt=0 result=1 stage=启动 START port tA seg prev d w nm tt nv kv chan; mkdir -p "$OUT"; START=$(date +%s)
     local pk=0 tL="" tM="" tG="" tS="" exited=1
@@ -172,7 +175,7 @@ run_stage() {
   local left; left=$(pids | tr '\n' ' ')
   [ -n "$left" ] && { echo "【红】结束后仍有本包 DmIOS pid：$left"; cp "$C/Documents/boot.txt" "$RUN/boot_left.txt" 2>/dev/null; stop_all; }
   stop_all; local cg_ok=1; cat "$RUN"/*.txt "$RUN"/*/*.txt "$C/Documents/boot.txt" 2>/dev/null > "$RUN/.cg_all" ; cloud_guard_check "$RUN/.cg_all" || cg_ok=0; rm -f "$RUN/.cg_all"; cloud_guard_clean "$C/Documents"
-  savekey_out "$C"; SK_C=''; devlock_release; CLEAN=''
+  savekey_out "$C"; SK_C=''; macwin_excl_release; devlock_release; CLEAN=''
   printf '%s\n' "$segs" > "$RUN/segs.txt"; printf '%s\n' "$ok" > "$RUN/ok.txt"
   [ "$known_pk" -eq 1 ] && echo "【已知PK】占不到 pthread 键 507：已按规则补跑"
   if [ "$ok" -eq "$N" ] && [ -z "$left" ] && [ "$PLAYER_RES" != RED ] && [ "$TOUCH_RES" != RED ] && [ "$cg_ok" = 1 ]; then echo "SMOKE-MAC OK $ok/$N 用时 $(( $(date +%s) - T0 )) 秒"; return 0; fi

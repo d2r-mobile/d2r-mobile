@@ -58,6 +58,7 @@ SRC=\
 	dm_vault.c \
 	dm_vault_ui.c \
 	dm_world.c \
+	dm_prof.c \
 	thread.c \
 	touch_mac.c \
 	../ios/Sources/cloud_ios.m \

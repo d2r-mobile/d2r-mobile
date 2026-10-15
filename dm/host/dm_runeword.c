@@ -27,6 +27,7 @@
 #include "dm_rwlv_core.h"
 #include "dm_i18n.h"
 #include "dm_actions.h"
+#include "dm_cursor.h"
 #include "dm_input.h"
 #include "dm_cursor_item.h"
 #include "dm_textbox_core.h"
@@ -228,10 +229,12 @@ static void place(uint64_t w, int x, int y) { if (!w) return; int32_t *r = (int3
 enum { RW_X = 262, RW_W = 1125, RW_Y0 = 60, RW_HEAD = 80, RW_L1 = 56, RW_LH = 48, RW_RGAP = 28, RW_PAD = 36, RW_GAP = 22, RW_NAV_H = 80, RW_PG_W = 230, RW_YMAX = 1470, RW_PER_PAGE = 8 };   // 每页最多 8 个，每两个之间一条分隔线 | At most 8 per page, with one separator between every two
 static int g_inv_open;   // 物品栏面板开着：按界面消息 OpenPanel / ClosePanel PlayerInventoryExpansionLayout 记（面板控件的可见位在没打开时也可能是 1，真机实测靠不住） | Inventory panel open: tracked by the UI messages OpenPanel / ClosePanel PlayerInventoryExpansionLayout (the panel widget's visible bit can also be 1 when it is not open; measured on a real device, unreliable)
 static uint64_t inv_panel(uint8_t *b) { if (!g_inv_open) return 0; uint64_t root = *(uint64_t *)(b + 0x2f05458); return root ? find_w(root, "PlayerInventoryExpansionLayout", 0) : 0; }
-// 打开时把控件指针缓存下来（面板活着期间不变），每帧重排只读宽度、写位置
-// Cache the widget pointers on open (they do not change while the panel is alive); the per-frame re-layout only reads widths and writes positions
+// 打开时把控件指针缓存下来（面板活着期间不变），每帧重排只读宽度、写位置。整组带界面代号 ui_gen（dm_cursor.h）：代号变了且物品栏面板已不在界面树上 = 重建过，整组作废，
+// 清单当作已关、不碰旧控件（w_stale；切布局 / 切语言 / 面板卸载都会重建，旧控件已释放）
+// Cache the widget pointers on open (unchanged while the panel is alive); each per-frame re-layout only reads widths and writes positions. The whole group carries the UI generation ui_gen (dm_cursor.h): generation changed and the inventory panel no longer in the UI tree = rebuilt, the whole group is invalidated,
+// the list is treated as closed and old widgets are not touched (w_stale; layout switch / language switch / panel unload all rebuild, and old widgets are freed)
 static struct { uint64_t panel, bg, title, prev, next, pg, sep[RW_PER_PAGE - 1], desc, descs, back, backtxt, dgo, sel, name[NROW], lv[NROW], rw[NROW][6], rr[NROW][6], go[NROW], hint[NROW];
-    int page, pages, shown_pg, shown_pages, first, last, bot, det, psel, rowy[NROW], red[NROW][6], rx[NROW][6], ry[NROW][6], rh[NROW], pstart[NROW + 1]; uint8_t *b; } W;   // 当前页（从 0 起）显示第 first..last-1 个 | The current page (counting from 0) shows entries first..last-1
+    int page, pages, shown_pg, shown_pages, first, last, bot, det, psel, rowy[NROW], red[NROW][6], rx[NROW][6], ry[NROW][6], rh[NROW], pstart[NROW + 1]; uint8_t *b; uint32_t ui_gen; } W;   // 当前页（从 0 起）显示第 first..last-1 个 | The current page (counting from 0) shows entries first..last-1
 static int g_check_at;   // 打开后第几帧做排版自检（等 fitToText 量完） | Which frame after opening to run the layout self-check (wait for fitToText to finish measuring)
 static int text_w(uint64_t w) { int x = w ? *(int32_t *)(w + 0x78) : 0; return x > 0 && x < 2000 ? x : 0; }   // fitToText 每帧把量出的字宽写回 +0x78（dm_update.c 同法） | fitToText writes the measured text width back to +0x78 every frame (same approach as dm_update.c)
 static int text_h(uint64_t w) { return w ? *(int32_t *)(w + 0x7c) : 0; }
@@ -244,7 +247,7 @@ static int real_h(uint64_t w) { return w ? (int)(*(int32_t *)(w + 0x7c) * *(floa
 static int btn_w(void) { return real_w(W.go[0]); }
 static int btn_h(void) { return real_h(W.go[0]); }
 static void ui_cache(uint8_t *b) {
-    uint64_t p = inv_panel(b); memset(&W, 0, sizeof W); W.panel = p; if (!p) return; char nm[40];
+    uint64_t p = inv_panel(b); memset(&W, 0, sizeof W); W.ui_gen = dm_ui_gen(); W.panel = p; if (!p) return; char nm[40];
     W.bg = find_w(p, "TouchRwBg", 0); W.title = find_w(p, "TouchRwTitle", 0); W.prev = find_w(p, "TouchRwPgPrev", 0); W.next = find_w(p, "TouchRwPgNext", 0); W.pg = find_w(p, "TouchRwPage", 0); W.shown_pg = -1;
     for (int k = 0; k < RW_PER_PAGE - 1; k++) { snprintf(nm, sizeof nm, "TouchRwSep%d", k); W.sep[k] = find_w(p, nm, 0); }
     W.desc = find_w(p, "TouchRwDesc", 0); W.descs = find_w(p, "TouchRwDescS", 0); W.back = find_w(p, "TouchRwBack", 0); W.backtxt = find_w(p, "TouchRwBackTxt", 0); W.dgo = find_w(p, "TouchRwDetGo", 0); W.sel = find_w(p, "TouchRwSel", 0); W.det = -1;
@@ -415,7 +418,8 @@ static void ui_fill(uint8_t *b, uint64_t it) {
             int total = h.inv + h.stash + h.shared + h.stack + h.cube; W.red[i][j] = total <= seen;   // 同号要两颗时：有一颗就第一颗白、第二颗红 | When two of the same rune are needed: with only one owned, the first is white and the second red
             snprintf(s, sizeof s, "#%d %s", num, rn); set_text(b, W.rw[i][j], s); set_text(b, W.rr[i][j], s); } }
 }
-static void ui_show(uint8_t *b, int on) { if (on) { ui_cache(b); ui_layout(); } else { if (!W.panel) ui_cache(b); ui_hide_all(); memset(&W, 0, sizeof W); } }
+static int w_stale(void) { return W.panel && W.ui_gen != dm_ui_gen() && !dm_ui_gen_revalidate(&W.ui_gen, W.panel); }   // 缓存的是重建前的控件（代号变了、物品栏面板也不在树上了） | The cache holds widgets from before the rebuild (generation changed and the inventory panel is no longer in the tree)
+static void ui_show(uint8_t *b, int on) { if (on) { ui_cache(b); ui_layout(); } else { if (!W.panel) ui_cache(b); if (!w_stale()) ui_hide_all(); memset(&W, 0, sizeof W); } }   // 旧控件已释放：不碰，新建出来的清单控件缺省就在屏外 | Old widgets are freed: don't touch them; newly created list widgets are off screen by default
 static void list_close(uint8_t *b, const char *why) { if (!g_list.open) return; g_list.open = 0; ui_show(b, 0); LOG("符文之语：清单关闭（%s）", why); }
 // 手柄 / 触屏切换（dm_padmode.c，游戏主线程，在让游戏重载布局之前调）：整套界面马上要销毁重建，W 里缓存的控件指针全部作废。
 // 清单开着的话这里直接当它关了——只清自己的状态，不碰控件（重建出来的清单控件缺省就在屏外）。不这样做，重建时游戏发的 ClosePanel 会走到 list_close → ui_show，
@@ -647,8 +651,10 @@ void dm_runeword_on_uimsg(const char *cat, const char *act, const char *arg) {  
 }
 void dm_runeword_pump(void) {   // 取手柄处每帧调（游戏主线程，dm_actions_pump 转来） | Called every frame at the controller sampling point (game main thread, forwarded from dm_actions_pump)
     uint8_t *b = rb(); if (!b) return;
+    if (g_list.open && dm_ui_unstable()) return;   // 界面正在重建：这一帧不排版、不找控件 | The UI is rebuilding: no layout and no widget lookup this frame
+    if (w_stale()) { int was = g_list.open; g_list.open = 0; memset(&W, 0, sizeof W); W.b = b; g_check_at = 0; if (was) LOG("符文之语：界面重建过（界面代号变了）→ 清单当作已关，缓存的控件作废"); }
+    if (g_list.open) { uint64_t it = unit_item(b, g_list.base); if (!inv_panel(b) || !it || *(uint32_t *)(it + 0xc) > 1) list_close(b, "底材挪走了或面板没了"); }   // 先核面板与底材，再用缓存排版 | Check the panel and base item first, then use the cached layout
     if (g_list.open) { ui_layout(); if (g_check_at > 0 && --g_check_at == 0) ui_check(1); }
-    if (g_list.open) { uint64_t it = unit_item(b, g_list.base); if (!inv_panel(b) || !it || *(uint32_t *)(it + 0xc) > 1) list_close(b, "底材挪走了或面板没了"); }
     job_pump(b);
     pad_pump(b);
     // 测试开关 DM_TEST_RW_OPEN=<秒>:<物品码>[@inv|@stash|@shared]：进程起来后到这一秒（且物品栏开着）对第一件这个码、能开清单的物品按长按打开清单（不经触摸，宿主 / 真机脚本造现场用）。

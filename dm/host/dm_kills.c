@@ -24,6 +24,7 @@
 // Called only in the server tick (diag.c, after boss rush).
 #include "dm_bossrush.h"
 #include "dm_input.h"
+#include "dm_cursor.h"
 #include "dm.h"
 #include "dm_rift.h"
 #include "hle.h"
@@ -224,7 +225,7 @@ static uint64_t kb_find(uint64_t w, const char *name, int dep) {   // 按名字�
     return 0;
 }
 static uint8_t *kb_base(void) { static uint8_t *b; if (!b) for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, "main")) b = (uint8_t *)g_mod[i].base; return b; }
-static uint64_t kb_board(void) { uint8_t *b = kb_base(); uint64_t root = b ? *(uint64_t *)(b + 0x2f05458) : 0, cp = root ? kb_find(root, "ChroniclePanel", 1) : 0; uint64_t bd = cp ? kb_find(cp, "TouchKillBoard", 1) : 0; return bd ? kb_find(bd, "TouchKB_Body", 0) : 0; }   // 里层（缺省在屏外） | Inner layer (off-screen by default)
+static uint64_t kb_board(void) { uint8_t *b = kb_base(); uint64_t root = b ? *(uint64_t *)(b + 0x2f05458) : 0, cp = root ? dm_ui_top(root, "ChroniclePanel") : 0; uint64_t bd = cp ? kb_find(cp, "TouchKillBoard", 1) : 0; return bd ? kb_find(bd, "TouchKB_Body", 0) : 0; }   // 里层（缺省在屏外） | Inner layer (off-screen by default)
 static void kb_show(uint64_t w, int on) { const char *nm = (const char *)*(uint64_t *)(w + 8); if (!nm || strncmp(nm, "Touch", 5)) { LOG("【红】积分牌：要改可见的控件「%s」不是我们的，不写", nm ? nm : "?"); return; } *(uint8_t *)(w + 0x50) = (uint8_t)on; *(uint8_t *)(w + 0x51) = (uint8_t)on; }   // +0x50 可见、+0x51 收点击（同 dm_cursor.c 技能树页签） | +0x50 visible, +0x51 receives clicks (same as the skill tree tabs in dm_cursor.c)
 static void kb_rect(uint64_t w, int x, int y, int h);
 static void kb_body(uint64_t w, int on) { kb_rect(w, on ? 0 : 99999, 0, -1); }   // 积分牌整页挪进 / 挪出屏幕（布局里缺省在屏外，见 touch_layout.py _kb_board） | Move the whole kill board page on / off screen (off-screen by default in the layout, see _kb_board in touch_layout.py)
@@ -273,7 +274,7 @@ void dm_kills_ui_pump(void) {
     // 编年史页签条右端的触屏关闭 X（布局 touch_layout.py _chronicle_touch 的 TouchCloseBox，两种模式共用这份布局）：手柄模式挪到屏外（手柄按 B 关），触屏模式放回布局里的位置
     // The touch close X at the right end of the Chronicle tab bar (TouchCloseBox in layout touch_layout.py _chronicle_touch; both modes share this layout):
     // moved off-screen in controller mode (the controller closes with B), put back at its layout position in touch mode
-    { int dm_padmode_current(void); uint64_t root = *(uint64_t *)(b + 0x2f05458), cp = root ? kb_find(root, "ChroniclePanel", 1) : 0, cx = cp ? kb_find(cp, "TouchCloseBox", 1) : 0; if (cx) kb_rect(cx, dm_padmode_current() ? 99999 : -998, 256, -1); }
+    { int dm_padmode_current(void); uint64_t root = *(uint64_t *)(b + 0x2f05458), cp = root ? dm_ui_top(root, "ChroniclePanel") : 0, cx = cp ? kb_find(cp, "TouchCloseBox", 1) : 0; if (cx) kb_rect(cx, dm_padmode_current() ? 99999 : -998, 256, -1); }
     int on = atomic_load(&g_kb_on); kb_body(bw, on); if (!on) return;   // 打开编年史时那两条消息比面板挂上界面树早、回调里够不着它：这里每帧对齐一次 | When the chronicle opens, those two messages arrive before the panel is attached to the UI tree, so the callback cannot reach it: align once per frame here
     if (!B) B = b;
     // 手柄模式：原版编年史面板的焦点不认识这一页的控件——十字键上下 = 列表滚动、左右 = 上 / 下一幕、X = 难度筛选轮换（全部 → 普通 → 噩梦 → 地狱）、Y = 排序轮换
@@ -291,7 +292,7 @@ void dm_kills_ui_pump(void) {
               int to = (cur + 1) % 4; for (int d = 0; d < 3; d++) if (c[d]) kb_toggle(c[d], to == d + 1, 4); LOG("刷怪积分牌：手柄难度筛选 → %s", to == 0 ? "全部" : to == 1 ? "普通" : to == 2 ? "噩梦" : "地狱"); }
           if (ev & DM_BTN_Y) { const char *const nm[3] = { dm_str(b, "dmKbSortAct"), dm_str(b, "dmKbSortCount"), dm_str(b, "dmKbSortFast") }; uint64_t dd = kb_find(bw, "TouchKB_Sort", 0); int to = (kb_sort(b, dd) + 1) % 3;
               if (dd) { kb_text(b, dd + 0x718, nm[to]); atomic_store(&g_kb_dirty, 1); LOG("刷怪积分牌：手柄排序 → %s", nm[to]); } } } }
-    static uint64_t last_bw; static int frame; if (bw != last_bw) { last_bw = bw; atomic_store(&g_kb_dirty, 1); }
+    static dm_wref last_bw; static int frame; if (bw != dm_wref_get(&last_bw)) { dm_wref_set(&last_bw, bw); atomic_store(&g_kb_dirty, 1); }
     int dsel[3], nsel = 0; for (int d = 0; d < 3; d++) { char nm[16]; snprintf(nm, sizeof nm, "TouchKB_D%d", d); uint64_t c = kb_find(bw, nm, 0); dsel[d] = dm_widget_is(b, c, DM_VT_TOGGLE) && *(uint8_t *)(c + 0xa88); nsel += dsel[d]; }
     static int dlast = -1; int dm = dsel[0] | dsel[1] << 1 | dsel[2] << 2; if (dm != dlast) { dlast = dm; atomic_store(&g_kb_dirty, 1); }
     if (!atomic_exchange(&g_kb_dirty, 0) && ++frame % 30) return;   // 计数在服务端拍里变：开着时每半秒重写一次（字没变不写） | Counts change in the server tick: while open, rewrite every half second (not written if the text is unchanged)
