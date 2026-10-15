@@ -178,6 +178,33 @@ int main(void) {
         P(nvnMemoryPoolFinalize)(&hp); free(heap);
     }
 
+    // 5c. 同一个拷贝编码器里的连续拷贝必须按录制顺序：Metal 4 同一编码器内的命令不保证先后，复用编码器时要补屏障（nvn_mtl.m blit()）。
+    //     每轮：A→D、B→D（同区间两次写，最后写的应留下）、D→E（先写后读，读到的应是 B）。16 轮连发、每块 16 MiB，放大乱序的机会
+    // 5c. Consecutive copies in the same blit encoder must follow recording order: Metal 4 does not guarantee ordering of commands within one encoder, so a barrier is needed when reusing an encoder (nvn_mtl.m blit()).
+    //     Each round: A→D, B→D (two writes to the same range; the last write should remain), D→E (write then read; the read should get B). 16 rounds back to back, 16 MiB per block, to amplify the chance of reordering
+    {
+        size_t big = 16u << 20, pgsz = 16384; int rounds = 16;
+        uint8_t *heap; posix_memalign((void **)&heap, pgsz, 4 * big);
+        uint8_t *ba = heap, *bb = heap + big, *bd = heap + 2 * big, *be = heap + 3 * big;
+        memset(ba, 0x11, big); memset(bb, 0x22, big); memset(bd, 0, big); memset(be, 0, big);
+        NVNmemoryPoolBuilder hb; NVNmemoryPool hp; P(nvnMemoryPoolBuilderSetDefaults)(&hb); P(nvnMemoryPoolBuilderSetStorage)(&hb, heap, 4 * big);
+        P(nvnMemoryPoolInitialize)(&hp, &hb);
+        P(nvnCommandBufferBeginRecording)(&cb);
+        for (int r = 0; r < rounds; r++) {
+            P(nvnCommandBufferCopyBufferToBuffer)(&cb, (NVNbufferAddress)ba, (NVNbufferAddress)bd, big, 0);
+            P(nvnCommandBufferCopyBufferToBuffer)(&cb, (NVNbufferAddress)bb, (NVNbufferAddress)bd, big, 0);
+            P(nvnCommandBufferCopyBufferToBuffer)(&cb, (NVNbufferAddress)bd, (NVNbufferAddress)be, big, 0);
+        }
+        NVNcommandHandle hc = P(nvnCommandBufferEndRecording)(&cb);
+        NVNsync sc; P(nvnSyncInitialize)(&sc, &dev);
+        P(nvnQueueSubmitCommands)(&q, 1, &hc); P(nvnQueueFenceSync)(&q, &sc, NVN_SYNC_CONDITION_ALL_GPU_COMMANDS_COMPLETE, 0);
+        EXPECT("连续拷贝提交后等待满足(1)", 1, P(nvnSyncWait)(&sc, 10000000000ull));
+        size_t bad_d = 0, bad_e = 0; for (size_t i = 0; i < big; i += 4096) { bad_d += bd[i] != 0x22; bad_e += be[i] != 0x22; }
+        EXPECT("同区间两次写：留下的是后写的 B（抽 4096 处）", 0, bad_d);
+        EXPECT("先写后读：读到的是后写的 B（抽 4096 处）", 0, bad_e);
+        P(nvnMemoryPoolFinalize)(&hp); free(heap);
+    }
+
     // 6. 同步 / 窗口 / 出图
     // 6. Sync / window / present
     NVNsync s1, s2; P(nvnSyncInitialize)(&s1, &dev); P(nvnSyncInitialize)(&s2, &dev);

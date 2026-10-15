@@ -152,6 +152,69 @@ targets:
       CODE_SIGN_STYLE: Automatic
       GENERATE_INFOPLIST_FILE: YES
       TEST_TARGET_NAME: DmIOS
+  DmTV:   # Apple TV 版（社区移植，作者 yinqingyan；dm/tvos/README.md）：共用宿主 / 图形层 / 手柄，独立的入口与 Info，不带触屏、iCloud、资源下载扩展；iOS 目标一处不动 | Apple TV version (community port by yinqingyan; dm/tvos/README.md): shares the host / graphics layer / gamepad, with its own entry and Info, without touch, iCloud, or the resource download extension; the iOS target is untouched
+    type: application
+    platform: tvOS
+    deploymentTarget: "26.0"
+    preBuildScripts:
+      - name: 生成 tvOS 图标   # 直接在 Xcode 里构建时：图标不在就生成（要 Pillow；dm/tvos/build.sh 已生成过就跳过） | When building directly in Xcode: generate the icon if missing (requires Pillow; skipped if dm/tvos/build.sh already generated it)
+        basedOnDependencyAnalysis: false
+        script: |
+          [ -f "$SRCROOT/Gen/tvos/Assets.xcassets/Contents.json" ] || python3 "$SRCROOT/../tvos/gen_icon.py" "$SRCROOT/Assets.xcassets/AppIcon.appiconset/AppIcon1024.png" "$SRCROOT/Gen/tvos/Assets.xcassets"
+    sources:
+      - ../tvos/main.m
+      - Sources/dm_gamepad.m
+      - Sources/dm_metal_cache_guard.c
+      - Sources/dm_touch_controls.c
+      - path: Gen/tvos/Assets.xcassets   # 由 iOS 图标生成（上面的构建前脚本，dm/tvos/gen_icon.py），不另存一份图 | Generated from the iOS icon (pre-build script above, dm/tvos/gen_icon.py); no separate copy of the image is kept
+        optional: true
+      - path: Gen/romfs_overlay
+        type: folder
+        buildPhase: resources
+      - path: Gen/embed.S
+      - path: Gen/dm
+        type: folder
+        buildPhase: resources
+      - path: Gen/tvos/msl           # tvOS 版 metallib + 反射 json（dm/tvos/build_shaders.py 编） | tvOS metallib + reflection json (built by dm/tvos/build_shaders.py)
+        type: folder
+        buildPhase: resources
+        optional: true
+      - path: Gen/save_ref
+        type: folder
+        buildPhase: resources
+      - path: Gen/src
+      - path: Gen/main/main.c
+        compilerFlags: "-Dmain=dm_main"
+    info:
+      path: Gen/tvos/Info.plist
+      properties:
+        CFBundleDisplayName: D2R Mobile TV
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        GCSupportedGameControllers: [{ProfileName: ExtendedGamepad}]   # 只认扩展手柄；Siri 遥控器不是扩展手柄，玩不了 | Extended gamepads only; the Siri Remote is not an extended gamepad and cannot play
+        GCSupportsControllerUserInteraction: true
+        ITSAppUsesNonExemptEncryption: false
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+          UISceneConfigurations:
+            UIWindowSceneSessionRoleApplication:
+              - UISceneConfigurationName: Default
+                UISceneDelegateClassName: SceneDelegate
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: ${DM_BUNDLE_ID}.tv
+      ENABLE_USER_SCRIPT_SANDBOXING: NO
+      ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+      MARKETING_VERSION: "1.0"
+      CURRENT_PROJECT_VERSION: "1"
+      DEVELOPMENT_TEAM: ${DM_TEAM_ID}
+      CODE_SIGN_STYLE: Automatic
+      TARGETED_DEVICE_FAMILY: "3"
+      ENABLE_BITCODE: NO
+      GCC_C_LANGUAGE_STANDARD: gnu11
+      OTHER_CFLAGS: $(inherited) -mcpu=apple-a15   # Apple TV 4K 第三代（A15） | Apple TV 4K 3rd generation (A15)
+      CLANG_ENABLE_OBJC_ARC: YES
+      DEBUG_INFORMATION_FORMAT: dwarf
 schemes:
   DmIOS:
     build:
@@ -161,3 +224,7 @@ schemes:
     test:
       targets:
         - TouchSmokeTests
+  DmTV:
+    build:
+      targets:
+        DmTV: all

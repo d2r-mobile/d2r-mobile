@@ -133,6 +133,9 @@ void mtl_present_wait(uint64_t ticket);                    // 等该票号的出
 void mtl_present_flush(void);                              // 等已入队的出图全部处理完 | Wait until all enqueued presents have been processed
 void mtl_present_test_stall(uint64_t ns);                  // 单测：出图线程每次出图前额外停顿 ns | Unit test: extra pause in ns before each present on the present thread
 int mtl_display_hz(void);                                   // 有窗口时屏幕最高刷新率（Hz），无窗口 0 | Maximum refresh rate of the screen (Hz) when there is a window, 0 without a window
+double mtl_display_refresh(void);                           // 同上，不取整（窗口所在屏） | Same as above, not rounded (screen the window is on)
+double mtl_pace_hz(void);                                   // 出图帧率：刷新率的整数分之一里不低于目标（60 / 省电 30）的最小一档 | Present frame rate: the smallest tier among integer fractions of the refresh rate that is not below the target (60 / power saving 30)
+double dm_pace_hz(double screen_hz, double floor_hz);       // 上面的纯算式（单测用） | Pure formula of the above (for unit tests)
 void mtl_set_tex_pool_n(int n);                            // 贴图描述符池容量：池外的贴图号按「空槽」处理（读出 0） | Texture descriptor pool capacity: texture IDs outside the pool are treated as 'empty slots' (read 0)
 // 计时埋点（Mac / iOS 共用）：提交按帧号打标；GPU 时间 = 该帧全部命令缓冲 GPUEnd−GPUStart 之和，全部完成后才可读（否则 −1）
 // Timing instrumentation (shared by Mac / iOS): submissions are tagged with the frame number; GPU time = sum of GPUEnd−GPUStart over all of that frame's command buffers, readable only after all complete (otherwise −1)

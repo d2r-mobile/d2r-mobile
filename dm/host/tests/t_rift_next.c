@@ -8,7 +8,7 @@
 // Not covered: which sentence the line on screen picks (in the iOS shell's dm_rift_hud.m: next > tier -> "next: level N"; advanced but next = tier -> "highest level cleared"; not advanced -> "next: this level again").
 #include "../dm_rift.c"
 
-void (*g_dm_pre_commit_hook[4])(const char *);
+void (*g_dm_pre_commit_hook[5])(const char *);
 uint64_t dm_fs_commit_count(void) { return 0; }
 
 int main(void) {

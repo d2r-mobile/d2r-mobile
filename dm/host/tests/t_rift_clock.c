@@ -10,7 +10,7 @@
 // Not covered: locking the screen on a real device, the timeout verdict and settlement (those two are in dm_rift_tick / finish and need a real run).
 #include "../dm_rift.c"
 
-void (*g_dm_pre_commit_hook[4])(const char *);
+void (*g_dm_pre_commit_hook[5])(const char *);
 uint64_t dm_fs_commit_count(void) { return 0; }
 
 static int fails, checks;

@@ -170,7 +170,7 @@ static void rec_pre_commit(const char *wd) {
         else { static int n; if (n++ < 20) LOG("秘境：进度待落盘，这次提交没有改写 %s 的角色档，等下一次", RS.who); } }
     pthread_mutex_unlock(&RS.mu);
 }
-__attribute__((constructor)) static void rec_hook_install(void) { extern void (*g_dm_pre_commit_hook[4])(const char *); g_dm_pre_commit_hook[3] = rec_pre_commit; }
+__attribute__((constructor)) static void rec_hook_install(void) { extern void (*g_dm_pre_commit_hook[5])(const char *); g_dm_pre_commit_hook[3] = rec_pre_commit; }
 
 // ---- 通关点数（秘境里人物能力要跟上怪物成长；配套技能硬点上限 40，见 dm_actions.c skill_cap_pump）：
 //   最高通关层每 PTS_EVERY 层给 PTS_SKILL 个技能点、PTS_STAT 个属性点，按角色、按最高通关层只发一次；侧文件键 pts = 已发到最高通关第几层
@@ -891,7 +891,14 @@ static void merc_test(uint64_t G, uint64_t pl, uint32_t t) {
 // When the completion sweep kills monsters with a null attacker, the original game picks a player by itself to trigger this event (0x71106c); the same gate blocks that too
 static void rift_quest_obs(const uint64_t *regs) {
     static uint8_t stand_in[0x200]; uint64_t G = regs[0], mon = regs[1]; int st = atomic_load(&K.st);
-    if ((st != ST_RUN && st != ST_DONE) || !G || G != L.G || !mon || !in_rift_map(any_level(mon))) return;
+    // 判「这是秘境里的击杀」不能只看怪死时在哪张图：秘境图和相邻的原版图在野外是连着的，秘境刷出的怪会追着人越过边界、死在邻图的房间里
+    // （冰河高原 111 东边紧挨血腥丘陵 110；验收轮把本体推过边界复现：死在 110 的那几位门都放行了，原版任务事件照走）。
+    // 秘境期间人只会在秘境图或城里（出口已改道），所以「人在秘境图里」时这一击杀一律算秘境的；人不在时再看怪自己在哪
+    // Deciding "this is a kill inside the Rift" cannot rely only on which level the monster died in: Rift levels and adjacent original levels connect in the wilderness, so Rift monsters can chase the player across the boundary and die in a room of the adjacent level
+    // (Frigid Highlands 111 borders Bloody Foothills 110 to the east; the acceptance round reproduced it by pushing the boss across the boundary: the gate let through those that died in 110, and the original quest events fired).
+    // During a Rift the player is only in the Rift level or in town (the exit has been rerouted), so while "the player is in the Rift level" every kill counts as a Rift kill; when not, look at where the monster itself is
+    if ((st != ST_RUN && st != ST_DONE) || !G || G != L.G || !mon || !(in_rift_map(any_level(L.player)) || in_rift_map(any_level(mon)))) return;
+    { int ml = any_level(mon); static int nb; if (!in_rift_map(ml) && nb++ < 20) LOG("秘境：怪物类号 %u（单位 id %u）死在邻图 %d（人在秘境图里），照样不走原版任务事件", *(uint32_t *)(uintptr_t)(mon + 4), *(uint32_t *)(uintptr_t)(mon + 8), ml); }
     static int n; if (n++ < 6 || (g_suseq_id && *(uint32_t *)(uintptr_t)(mon + 8) == g_suseq_id)) LOG("秘境：怪物类号 %u（单位 id %u）死在秘境图里，不走原版任务事件", *(uint32_t *)(uintptr_t)(mon + 4), *(uint32_t *)(uintptr_t)(mon + 8));
     ((uint64_t *)(uintptr_t)regs)[1] = (uint64_t)(uintptr_t)stand_in;
 }
@@ -1270,7 +1277,15 @@ static int start_rift(uint64_t G, uint64_t player, uint32_t t, int tier) {
 // Spawn the Guardians of the current wave (K.wave). One: 6 tiles to the player's lower right; two: 6 tiles to the left and 6 to the right. Each is first scaled by level as usual (Guardian = this level's monster level + 3, the starting level also + 3, taking this level's total multiplier as well),
 // then multiplied by this wave's life factor (before capping) and damage factor
 #define WAVE_GAP 75
-static void guard_wave(uint64_t G, uint64_t player, uint32_t t, int lowhp) {
+static int guard_wave_due(uint32_t t, int lv) {
+    // 回城时保留待刷波，返回本场秘境图后再刷；服务端地图决定实际生成房间（hubeiqiao）
+    // Keep pending waves when returning to town and spawn them after returning to this Rift level; the server map decides the actual spawn room (hubeiqiao)
+    return K.wave_t && t >= K.wave_t + WAVE_GAP && atomic_load(&K.st) == ST_RUN && in_rift_map(lv);
+}
+static int guard_wave(uint64_t G, uint64_t player, uint32_t t, int lowhp) {
+    // 所有刷波入口都守住服务端地图边界；拒绝时不消费待刷状态
+    // All wave spawn entries respect the server map boundary; a rejection does not consume the pending spawn state
+    int lv = unit_level(player); if (!in_rift_map(lv) || !unit_room(player)) return 0;
     static const int ox[2][2] = { { 6, 0 }, { 6, -6 } }, oy[2][2] = { { 6, 0 }, { 6, 6 } }; int w = K.wave, nw = K.wn[w] < 1 ? 1 : K.wn[w] > 2 ? 2 : K.wn[w], x, y, n = 0; unit_xy(player, &x, &y); hs_sync();
     for (int i = 0; i < nw; i++) { int32_t pos[2] = { x + ox[nw - 1][i], y + oy[nw - 1][i] }; uint64_t rr = free_spot(G, unit_room(player), pos);
         uint64_t u = rr ? ((uint64_t (*)(uint64_t, uint64_t, int, int, int, int, int, int, uint64_t))(B + 0x7ce630))(G, rr, 1, K.wcls[w][i], pos[0], pos[1], 1, 0, 0x10) : 0;
@@ -1279,9 +1294,12 @@ static void guard_wave(uint64_t G, uint64_t player, uint32_t t, int lowhp) {
         if (lowhp) ss(u, 6, 256); else if (K.tier >= 9) { g_hp_mul = K.whp[w]; scale_monster(G, u, target_level(player) + 3, dm_rift_tier_level(9, gs(player, 12)) + 3); g_hp_mul = 1000; }
         if (K.wdm[w] != 1000 && !lowhp) ss(u, 25, (int)((100LL + gs(u, 25)) * K.wdm[w] / 1000 - 100));   // 伤害：属性 25 是「伤害 +N%」，整体乘 d 即 (100 + N) × d − 100 | damage: stat 25 is "damage +N%", so multiplying the whole by d gives (100 + N) x d - 100
         HS.guard_hp += gs(u, 7) >> 8;
-        LOG("秘境：拍 %u 刷守护者%s%s 类号 %d id %u 等级 %d 生命 %d 伤害百分比 %d", t, K.nwave > 1 ? (w == 0 ? "（第 1 波）" : w == 1 ? "（第 2 波）" : "（第 3 波）") : "", nw == 2 ? (i ? "（第二位）" : "（第一位）") : "", K.wcls[w][i], K.guards[i], gs(u, 12), gs(u, 7) >> 8, gs(u, 25)); }
+        LOG("秘境：拍 %u 刷守护者%s%s 类号 %d id %u 等级 %d 生命 %d 伤害百分比 %d", t, K.nwave > 1 ? (w == 0 ? "（第 1 波）" : w == 1 ? "（第 2 波）" : "（第 3 波）") : "", nw == 2 ? (i ? "（第二位）" : "（第一位）") : "", K.wcls[w][i], K.guards[i], gs(u, 12), gs(u, 7) >> 8, gs(u, 25));
+        LOG("秘境：守护者落点 第 %d 波 id %u 服务端关卡 %d 客户端关卡 %d 坐标 %d,%d", w + 1, K.guards[i], lv, atomic_load(&g_cli_lv), pos[0], pos[1]); }
     atomic_store(&K.gdead, 0); atomic_store(&K.gtotal, n);
-    if (n) { if (w == 0) say(nw == 2 && n == 2 ? "dmRiftSayGuardians" : "dmRiftSayGuardian"); else say("dmRiftSayWave", w + 1, K.nwave); } }
+    // 返回 1 表示已尝试生成；保留原有工厂失败语义，不自动重试未知结果
+    // Returns 1 when spawning was attempted; keeps the existing factory failure semantics and does not auto-retry unknown results
+    if (n) { if (w == 0) say(nw == 2 && n == 2 ? "dmRiftSayGuardians" : "dmRiftSayGuardian"); else say("dmRiftSayWave", w + 1, K.nwave); } return 1; }
 void dm_rift_tick(uint64_t G, uint64_t player, uint8_t *main_base) {
     B = main_base; if (!G || !player || !B) return;
     atomic_store(&g_merc_req, 0); if (getenv("DM_TEST_MERC_EQUIP") || getenv("DM_TEST_MERC_DUMP")) merc_test(G, player, *(uint32_t *)(uintptr_t)(G + 0x170));
@@ -1538,7 +1556,15 @@ void dm_rift_tick(uint64_t G, uint64_t player, uint8_t *main_base) {
               for (int d = 0; d < 8 && !u; d++) { static const int ox[8] = { 12, 9, 0, -9, -12, -9, 0, 9 }, oy[8] = { 0, 9, 12, 9, 0, -9, -12, -9 }; pos[0] = x + ox[d]; pos[1] = y + oy[d]; rr = free_spot(G, unit_room(player), pos);   /* 原版函数在同一点试 5 次，那点被残留的随从占着就返回 0：换个方向再试 | the original function tries 5 times at the same point and returns 0 if that point is occupied by leftover minions: try again in another direction */
                   u = rr ? su_spawn(G, rr, pos[0], pos[1], row) : 0; }
               if (!u) { LOG("[验收轮] 拍 %u 行 %d 刷不出（房间 %s，函数返回 0）", t, row, rr ? "有" : "无"); idx++; t0 = t; }
-              else { g_suseq_id = *(uint32_t *)(uintptr_t)(u + 8); cls = *(uint32_t *)(uintptr_t)(u + 4); t0 = t; ph = 1; } }
+              else { g_suseq_id = *(uint32_t *)(uintptr_t)(u + 8); cls = *(uint32_t *)(uintptr_t)(u + 4); t0 = t; ph = 1;
+                  if (getenv("DM_RIFT_TEST_SUPUSH")) { int plv = atoi(getenv("DM_RIFT_TEST_SUPUSH"));   /* 测试开关 DM_RIFT_TEST_SUPUSH=<邻图关卡号>：验收轮的本体刷出后传送到那张邻图里离人最近的房间（边界内 3 格），验「怪越界死在邻图」时任务事件门照拦 | Test switch DM_RIFT_TEST_SUPUSH=<adjacent level ID>: after the acceptance round boss spawns, teleport it to the room nearest the player in that adjacent level (3 cells inside the boundary), to verify the quest event gate still blocks when "a monster crosses the boundary and dies in the adjacent level" */ int px, py, bd = 1 << 30; uint64_t br = 0; unit_xy(player, &px, &py); uint64_t dr = rd(level_of(player) + 0x1c8); int n2 = 0;
+                      for (uint64_t l2 = dr ? rd(dr + 0x868) : 0; l2 && n2 < 200; l2 = rd(l2 + 0x1b8), n2++) { if (*(int32_t *)(uintptr_t)(l2 + 0x1f8) != plv) continue; int m3 = 0;
+                          for (uint64_t r3 = dm_level_rooms(l2); r3 && m3 < 2000; r3 = rd(r3 + 0x48), m3++) { int rx = *(int32_t *)(uintptr_t)(r3 + 0x60) * 5, ry = *(int32_t *)(uintptr_t)(r3 + 0x64) * 5, rw = *(int32_t *)(uintptr_t)(r3 + 0x68) * 5, rh = *(int32_t *)(uintptr_t)(r3 + 0x6c) * 5;
+                              int cx = px < rx + 3 ? rx + 3 : px > rx + rw - 4 ? rx + rw - 4 : px, cy = py < ry + 3 ? ry + 3 : py > ry + rh - 4 ? ry + rh - 4 : py, d3 = abs(cx - px) + abs(cy - py); if (d3 < bd) { bd = d3; br = r3; } } }
+                      if (br) { int rx = *(int32_t *)(uintptr_t)(br + 0x60) * 5, ry = *(int32_t *)(uintptr_t)(br + 0x64) * 5, rw = *(int32_t *)(uintptr_t)(br + 0x68) * 5, rh = *(int32_t *)(uintptr_t)(br + 0x6c) * 5;
+                          int32_t pos[2] = { px < rx + 3 ? rx + 3 : px > rx + rw - 4 ? rx + rw - 4 : px, py < ry + 3 ? ry + 3 : py > ry + rh - 4 ? ry + rh - 4 : py };
+                          if (!rd(br + 0x58)) ((void (*)(int, uint64_t))(B + 0x52dcc0))(*(uint8_t *)(uintptr_t)(G + 0x106), br); uint64_t rr = rd(br + 0x58) ? free_spot(G, rd(br + 0x58), pos) : 0; int ok = rr && dm_teleport(B, G, u, rr, pos[0], pos[1]);
+                          LOG("[验收轮] 本体 id %u 推过界 → 关卡 %d 的 %d,%d（人 %d,%d）%s；落地关卡 %d", g_suseq_id, plv, pos[0], pos[1], px, py, ok ? "成" : "不成", any_level(u)); } } } }
           else if (ph == 1) { uint64_t u = find_unit(G, 1, g_suseq_id); uint32_t m = u ? *(uint32_t *)(uintptr_t)(u + 0xc) : 0; int dead = !u || m == 0 || m == 12, x, y;
               if (t - t0 == 20) { int px, py; unit_xy(player, &px, &py); for (int b = 0; b < 128; b++) for (uint64_t v = rd(G + 0x2230 + 1 * 0x400 + 8 * b); v; v = rd(v + 0x158)) { uint64_t md = rd(v + 0x10); if (md && (*(uint8_t *)(uintptr_t)(md + 0x1a) & 0x10) && unit_xy(v, &x, &y) && abs(x - px) + abs(y - py) <= 40) minions++; } }
               if (!dead && t % 25 == 0 && unit_xy(u, &x, &y)) dm_teleport(B, G, player, unit_room(u), x + 2, y + 2);
@@ -1585,7 +1611,7 @@ void dm_rift_tick(uint64_t G, uint64_t player, uint8_t *main_base) {
         guard_wave(G, player, t, lowhp); }
     // 两波之间：上一波全倒 WAVE_GAP 拍后刷下一波
     // Between two waves: WAVE_GAP ticks after the previous wave is all down, the next wave is spawned
-    if (K.wave_t && t >= K.wave_t + WAVE_GAP && atomic_load(&K.st) == ST_RUN) { guard_wave(G, player, t, lowhp); K.wave_t = 0; }   /* 先刷、再清「两波之间」：顶部条在两波之间报刚打完的那一波，刷出来才跳到下一波 | spawn first, then clear "between two waves": between waves the top bar reports the wave just finished, and moves to the next wave only once it has spawned */
+    if (guard_wave_due(t, lv) && guard_wave(G, player, t, lowhp)) K.wave_t = 0;   /* 先刷、再清「两波之间」：顶部条在两波之间报刚打完的那一波，刷出来才跳到下一波 | spawn first, then clear "between two waves": between waves the top bar reports the wave just finished, and moves to the next wave only once it has spawned */
     // 测试替身 DM_RIFT_TEST_DUMMY=<每秒点数>：对在场的每位守护者按固定输出扣当前生命（留 1 点，由随从补最后一下）——人物不用真打，用来出「承伤每秒峰值」的相对值
     // Test stand-in DM_RIFT_TEST_DUMMY=<points per second>: deduct current life from every Guardian present at a fixed output (leaving 1 point, with a minion delivering the last hit) - the character does not have to fight for real; used to obtain relative values of the "per-second peak of damage taken"
     { static int dps = -1; if (dps < 0) { const char *e = getenv("DM_RIFT_TEST_DUMMY"); dps = e ? atoi(e) : 0; }

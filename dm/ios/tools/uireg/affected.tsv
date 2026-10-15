@@ -53,6 +53,7 @@ dm/host/dm_actions*	a g n
 dm/host/dm_hud*	a f pk bd bdm q g
 dm/host/dm_uiscreen*	a f pk bd q sb
 dm/host/dm_cloudsync*	rf3 e pg2 vt1 v
+dm/host/dm_cloudmerge*	t u s sb vt1 c sa rf3 v
 dm/host/dm_update*	e
 dm/host/dm_custom*	e kbb
 dm/host/hle_charname*	e v

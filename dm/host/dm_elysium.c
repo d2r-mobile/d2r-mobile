@@ -338,6 +338,11 @@ static void stash_gold_notify(uint8_t *b, uint64_t G, uint64_t player, uint32_t 
     uint8_t pk[13] = { 0x20 }; uint32_t st = 15; memcpy(pk + 1, &st, 4); memcpy(pk + 5, &uid, 4); memcpy(pk + 9, &value, 4); rg.a = pk; rg.z = pk + 13; send(obj, *(uint32_t *)cn, &rg);
     *(uint32_t *)(G + 0x19050) = 0;
 }
+// iCloud 收件箱并回（dm_cloudmerge.c）也要：找共享页单位、改金币后通知客户端
+// Also needed by the iCloud inbox merge (dm_cloudmerge.c): find the shared page unit and notify the client after changing gold
+int dm_stash_pages(uint64_t G, uint64_t player, uint64_t pg[8], uint32_t id[8]) { return stash_pages(G, player, pg, id); }
+void dm_stash_gold_notify(uint8_t *b, uint64_t G, uint64_t player, uint32_t uid, int value) { stash_gold_notify(b, G, player, uid, value); }
+uint64_t dm_unit_inv(uint64_t u) { return unit_inv(u); }
 static int inv_toa(uint8_t *b, uint64_t unit) {   // 这个单位的物品栏里有几枚赦免之证（玩家：背包 / 私人箱 / 魔盒 / 身上都在这一条链上） | how many Tokens of Absolution are in this unit's inventory (for a player: backpack / personal stash / Horadric Cube / equipped all sit on this one chain)
     uint64_t iv = unit_inv(unit); int c = 0, k = 0; if (!iv) return 0;
     for (uint64_t it = *(uint64_t *)(iv + 0x10); it && c < 600; c++) { uint64_t d = *(uint64_t *)(it + 0x10); if (!d) break; if ((((uint32_t (*)(uint64_t))(b + 0x570260))(it) & 0xffffff) == 0x616f74) k++; it = *(uint64_t *)(d + 0xb0); }

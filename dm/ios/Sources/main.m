@@ -1182,13 +1182,14 @@ int main(int argc, char *argv[]) {
     g_mode = @"boot";   // 缺省 = 玩家点图标 = 起游戏。原缺省是早期探针 anon（匿名页写后执行），TestFlight 版点图标即被代码签名杀掉（崩溃日志 CODESIGNING Invalid Page）；探针须显式 -mode anon | Default = player taps the icon = start the game. The old default was the early probe anon (write to an anonymous page then execute); in the TestFlight build tapping the icon got it killed by code signing right away (crash log CODESIGNING Invalid Page); the probe now requires an explicit -mode anon
     for (int i = 1; i + 1 < argc; i++) if (!strcmp(argv[i], "-mode")) g_mode = @(argv[i + 1]);
     // -mode thermal：轻探温——只读系统温控档位写一行就退出，不起宿主、不建窗口 / Metal 层（原先探温要拉起主菜单 60 帧渲染 20 s，探温本身在给手机加热）。
-    // 输出到标准输出（devicectl launch --console 可见）并落 Documents/thermal.txt
-    // -mode thermal: light thermal probe -- only read the system thermal state, write one line and exit; do not start the host, do not create a window / Metal layer (the probe used to bring up the main menu rendering at 60 fps for 20 s, so the probe itself was heating the phone).
-    // Output goes to stdout (visible with devicectl launch --console) and to Documents/thermal.txt
+    // 输出到标准输出（devicectl launch --console 可见）并落 Documents/thermal.txt（整份原子替换，一行：档位 + 本次时刻）
+    // -mode thermal: lightweight thermal probe; only reads the system thermal state, writes one line and exits, without starting the host or creating a window / Metal layer (the probe used to bring up the main menu rendering at 60 fps for 20 s, so the probe itself was heating the phone).
+    // Output goes to stdout (visible with devicectl launch --console) and to Documents/thermal.txt (replaced atomically as a whole, one line: state + time of this run)
     if ([g_mode isEqualToString:@"thermal"]) {
         int th = (int)NSProcessInfo.processInfo.thermalState;
         NSString *d0 = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)[0];
-        NSString *line = [NSString stringWithFormat:@"温控档位 %d（轻探）\n", th];
+        NSDateFormatter *df = [NSDateFormatter new]; df.dateFormat = @"yyyy-MM-dd HH:mm:ss ZZZ";   // 带上时刻：读的一方据此认「是这一次写的」，不会读到上一次的旧文件 | Include the time: the reader uses it to recognize "written this time" and never reads a stale file from last time
+        NSString *line = [NSString stringWithFormat:@"温控档位 %d（轻探）时间 %@\n", th, [df stringFromDate:NSDate.date]];
         [line writeToFile:[d0 stringByAppendingPathComponent:@"thermal.txt"] atomically:YES encoding:NSUTF8StringEncoding error:nil];
         fputs(line.UTF8String, stdout); fflush(stdout);
         return 0;

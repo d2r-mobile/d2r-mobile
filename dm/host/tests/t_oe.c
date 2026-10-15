@@ -17,6 +17,8 @@ uint64_t dm_nvn_frame_count(void) { return 0; }
 int dm_nvn_ruler_truth(void) { return 0; }
 int dm_ingame_now(void) { return 1; }
 int mtl_fps_target(void) { return 60; }   // 目标帧率（nvn_mtl.m）：单测里恒为 60，30 帧档的用例直接给 period_ms | target frame rate (nvn_mtl.m): always 60 in the unit test, and the 30 fps mode cases pass period_ms directly
+double mtl_display_refresh(void) { return 0; }   // 屏幕刷新率（nvn_mtl.m）：单测里没有窗口，读不到 → 出图帧率按目标 | Screen refresh rate (nvn_mtl.m): unit tests have no window, so it cannot be read → present frame rate uses the target
+double dm_pace_hz(double screen_hz, double floor_hz) { return screen_hz > 0 ? screen_hz : floor_hz; }   // 只在读不到刷新率时被调，按目标 | Only called when the refresh rate cannot be read; uses the target
 pthread_key_t g_keyres[2];                                   // 分辨率参数位（loader.c）的桩：没建键，取走 31 时不写线程槽 | stub for the resolution parameter slot (loader.c): no key created, so taking 31 does not write the thread slot
 uint64_t dm_game_res(int docked) { (void)docked; return 0; }  // 出图分辨率（dm_uiscreen.c）的桩 | stub for the render resolution (dm_uiscreen.c)
 void dm_uiscreen_res_reread(void) {}

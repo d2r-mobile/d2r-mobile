@@ -42,6 +42,7 @@ SRC=\
 	dm_pages.c \
 	dm_potpick.c \
 	dm_pouch.c \
+	dm_cloudmerge.c \
 	dm_rift.c \
 	dm_rift_ui.c \
 	dm_runeword.c \

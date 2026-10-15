@@ -49,6 +49,26 @@ static int inbox_has(const char *dev, const char *f) {   // 收件箱里有没�
     while (dp && (e = readdir(dp))) { if (e->d_name[0] == '.') continue; char p[1400]; snprintf(p, sizeof p, "%s/%s/%s", d, e->d_name, f); k |= !stat(p, &st); } if (dp) closedir(dp); return k; }
 static int d2i_items(const char *dev, const char *rel) { char p[1024]; path(p, dev, rel); FILE *f = fopen(p, "rb"); if (!f) return -1; uint8_t b[70]; size_t n = fread(b, 1, 70, f); fclose(f); return n >= 67 ? b[66] : -1; }
 
+// 带合法编年史段的共享仓库档：一页物品（items 件）+ 编年史段（A 组 n 条：序号 id[i]、时刻 t[i]；B、C 组空），格式见 dm_cloudsync.c chron_union
+// Shared stash file with a valid Chronicle segment: one item page (items items) + Chronicle segment (group A n records: index id[i], time t[i]; groups B and C empty); format see dm_cloudsync.c chron_union
+static void put_chron(const char *dev, int items, int n, const uint32_t *id, const uint32_t *t, long sec) {
+    static uint8_t b[8192]; memset(b, 0, sizeof b); uint32_t l1 = 68, l2 = 84 + 10 * (uint32_t)n + 64; uint16_t one = 1, a = (uint16_t)n;
+    memcpy(b, "\x55\xaa\x55\xaa", 4); memcpy(b + 16, &l1, 4); memcpy(b + 64, "JM", 2); b[66] = (uint8_t)items;
+    uint8_t *c = b + 68; memcpy(c, "\x55\xaa\x55\xaa", 4); memcpy(c + 16, &l2, 4); memcpy(c + 64, "\xc0\xed\xea\xc0", 4); memcpy(c + 68, &one, 2); memcpy(c + 70, &a, 2);
+    for (int i = 0; i < n; i++) { memcpy(c + 84 + 10 * i, &id[i], 4); uint16_t u = 0x6a5d; memcpy(c + 88 + 10 * i, &u, 2); memcpy(c + 90 + 10 * i, &t[i], 4); }
+    put_bin(dev, "save/ModernSharedStashSoftCoreV2/ModernSharedStashSoftCoreV2.d2i", b, 68 + l2, sec);
+}
+// 读回编年史 A 组：「序号@时刻」按序号升序拼成串（比对用）；格式不对返回 "坏"
+// Read back Chronicle group A: "index@time" joined in ascending index order (for comparison); returns "坏" on bad format
+static const char *chron_str(const char *dev) {
+    static char o[512]; char p[1024]; path(p, dev, "save/ModernSharedStashSoftCoreV2/ModernSharedStashSoftCoreV2.d2i"); FILE *f = fopen(p, "rb"); uint8_t b[8192]; size_t n = f ? fread(b, 1, sizeof b, f) : 0; if (f) fclose(f);
+    if (n < 68 + 148 || memcmp(b + 68 + 64, "\xc0\xed\xea\xc0", 4)) return "坏";
+    uint16_t a; uint32_t ln; memcpy(&a, b + 68 + 70, 2); memcpy(&ln, b + 68 + 16, 4); if (ln != 84u + 10u * a + 64u || 68 + ln != n) return "坏";
+    uint32_t id[64], t[64]; for (int i = 0; i < a && i < 64; i++) { memcpy(&id[i], b + 68 + 84 + 10 * i, 4); memcpy(&t[i], b + 68 + 90 + 10 * i, 4); }
+    for (int i = 0; i < a; i++) for (int j = i + 1; j < a; j++) if (id[j] < id[i]) { uint32_t x = id[i]; id[i] = id[j]; id[j] = x; x = t[i]; t[i] = t[j]; t[j] = x; }
+    o[0] = 0; for (int i = 0; i < a; i++) snprintf(o + strlen(o), sizeof o - strlen(o), "%s%u@%u", i ? " " : "", id[i], t[i]); return o;
+}
+
 int main(void) {
     snprintf(R, sizeof R, "%s/t_cloudsync.%d", getenv("TMPDIR") ? getenv("TMPDIR") : "/tmp", getpid()); mkdir(R, 0755);
     char c[1024]; snprintf(c, sizeof c, "%s/cloud", R); mkdir(c, 0755);
@@ -256,6 +276,27 @@ int main(void) {
         CHECK(dm_cloud_inbox_add(s7, ts7, "/nonexistent.pack") == -1, "㉑③ 读不了的冲突版本：返回 -1"); }
       #undef S7
       #undef D2I7
+    }
+    // ㉒ 编年史段并集（第三笔）：两台设备各自找到过的条目都留下，同一条取更早的时刻
+    // ㉒ Chronicle segment union (part three): entries found on each of the two devices are all kept; for the same entry the earlier time is taken
+    { char c8[1024], s8[1024], b8[1024], t8[1024]; snprintf(c8, sizeof c8, "%s/cloud8", R); mkdir(c8, 0755);
+      #define S8(dev, down) (path(s8, dev, "save"), path(b8, dev, "bak"), path(t8, dev, "state"), dm_cloud_sync(s8, c8, b8, t8, down, 0, NULL))
+      uint32_t ia[] = { 1, 2 }, ta[] = { 100, 200 }, in_[] = { 2, 3 }, tn[] = { 150, 300 };
+      put_chron("A8", 2, 2, ia, ta, 1000); CHECK(S8("A8", 1) == 1, "㉒ 准备：A 上传（1@100 2@200）");
+      put_chron("N8", 0, 2, in_, tn, 5000);
+      CHECK(S8("N8", 1) == 1 && !strcmp(chron_str("N8"), "1@100 2@150 3@300"), "㉒① N 首次同步：云端为现行版、编年史并进本机的 → 1@100 2@150 3@300，实为 %s", chron_str("N8"));
+      CHECK(d2i_items("N8", "save/ModernSharedStashSoftCoreV2/ModernSharedStashSoftCoreV2.d2i") == 2 && inbox_n("N8") == 1, "㉒① 物品页是云端的 2 件，本机那份照常进收件箱");
+      CHECK(S8("N8", 0) == 1, "㉒② N 运行中：并过的本地当改过、传上去");
+      CHECK(S8("A8", 1) == 1 && !strcmp(chron_str("A8"), "1@100 2@150 3@300"), "㉒② A 启动拿到并集，实为 %s", chron_str("A8"));
+      CHECK(S8("A8", 1) == 0 && S8("N8", 1) == 0 && S8("N8", 0) == 0, "㉒② 之后两边都无动作（不来回传）");
+      // ③ 本机后写赢（上传）时：启动时把云端多出的并进本机再传；运行中不动本地
+      // ③ When local last-write wins (upload): at startup merge the extra cloud entries into local and then upload; at runtime leave local untouched
+      uint32_t i4[] = { 1, 2, 3, 4 }, t4[] = { 100, 150, 300, 400 }, i5[] = { 1, 2, 3, 5 }, t5[] = { 100, 150, 300, 500 };
+      put_chron("N8", 2, 4, i5, t5, 6000); CHECK(S8("N8", 0) == 1, "㉒③ 准备：N 加了 5、上传");
+      put_chron("A8", 2, 4, i4, t4, 7000);
+      CHECK(S8("A8", 1) == 1 && !strcmp(chron_str("A8"), "1@100 2@150 3@300 4@400 5@500"), "㉒③ A 后写赢、启动时上传：本机先并进云端的 5 → 实为 %s", chron_str("A8"));
+      CHECK(S8("N8", 1) == 1 && !strcmp(chron_str("N8"), "1@100 2@150 3@300 4@400 5@500"), "㉒③ N 启动拿到五条，实为 %s", chron_str("N8"));
+      #undef S8
     }
     printf("t_cloudsync: %d 项，%d 失败\n", checks, fails);
     return fails != 0;

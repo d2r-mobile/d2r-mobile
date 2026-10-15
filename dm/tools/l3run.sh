@@ -14,4 +14,4 @@ done
 rc=0; for p in $pids; do wait "$p" || rc=1; done
 grep -hE 'REGRESSION|METRIC_RED|L3SEG|推进|存档完整性' "$root"/*.log || true
 if [ "$rc" -eq 0 ] && ! grep -q 'L3SEG .* RED' "$root"/*.log; then result=OK; else result=RED; fi
-wall=$(( $(date +%s)-start )); echo "L3 $result 用时 $wall 秒"; timeout 20s ssh -o BatchMode=yes -o ConnectTimeout=5 "$remote" "pgrep -af dmhost || true" || true; du -sh "$root"; exit 0
+wall=$(( $(date +%s)-start )); echo "L3 $result 用时 $wall 秒"; timeout 20s ssh -o BatchMode=yes -o ConnectTimeout=5 "$remote" "pgrep -af dmhost || true" || true; du -sh "$root"; exit 0   # pgrep 只列不判 | pgrep only lists, does not decide

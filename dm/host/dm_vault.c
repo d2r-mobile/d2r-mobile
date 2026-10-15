@@ -295,4 +295,4 @@ static void vault_pre_commit(const char *wd) {
     }
     pthread_mutex_unlock(&g_vmu);
 }
-__attribute__((constructor)) static void vault_hook_install(void) { extern void (*g_dm_pre_commit_hook[4])(const char *); g_dm_pre_commit_hook[1] = vault_pre_commit; }
+__attribute__((constructor)) static void vault_hook_install(void) { extern void (*g_dm_pre_commit_hook[5])(const char *); g_dm_pre_commit_hook[1] = vault_pre_commit; }

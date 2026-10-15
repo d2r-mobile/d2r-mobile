@@ -16,6 +16,12 @@ DEVLOCK_TICKET=
 # Only the holder's own process tree is touched (except the watchdog itself), nobody else's. Reentrant cases (nested acquire / child processes inheriting DM_DEVLOCK_HELD) start no extra watchdog and do not change the limit
 DEVLOCK_WD_PID=
 DEVLOCK_WD_LOG=${DM_DEVLOCK_WD_LOG:-${DM_ROOT:-$HOME/dm-work}/run/ios/devlock_watchdog.log}
+# 持锁记录（追加式，一行一事件，制表符分列：时刻 取/放 pid 锁目录 持有者 秒数）：取 = 排队等了几秒，放 = 持有了几秒。
+# 用来统计测试机被谁占了多久、排队等了多久；看门狗强收的那次没有「放」行，看 devlock_watchdog.log
+# Lock hold log (append only, one event per line, tab separated: time take/release pid lock-directory holder seconds): take = seconds spent queued, release = seconds held.
+# Used to track who occupied the test device and for how long, and how long the queue waited; a forced reclaim by the watchdog has no "release" line, see devlock_watchdog.log
+DEVLOCK_HIST=${DM_DEVLOCK_HIST:-${DM_ROOT:-$HOME/dm-work}/run/ios/devlock_hist.tsv}
+devlock_hist() { mkdir -p "$(dirname "$DEVLOCK_HIST")" 2>/dev/null; printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$(date '+%F %T')" "$1" "$$" "$DEVLOCK_DIR" "$2" "$3" >> "$DEVLOCK_HIST" 2>/dev/null || true; }
 devlock_default_max() {
   [ "$DEVLOCK_DIR" = "${DM_ROOT:-$HOME/dm-work}/run/ios/device.lock" ] || { echo 0; return; }
   [ "${DM_DEVLOCK_CLASS:-}" = measure ] && echo 1200 || echo 600
@@ -120,6 +126,7 @@ devlock_acquire() {
 _devlock_acquire() {
   local owner=${1:-unknown} max=${2:-${DM_DEVLOCK_MAX_S:-}} held_lstart pid lock_owner started now held lock_lstart self_lstart lock_pid_lstart current_pid last_notice=0 lock_max over_notice=0
   [ -n "$max" ] || max=$(devlock_default_max)
+  local q0=$SECONDS
   mkdir -p "$(dirname "$DEVLOCK_DIR")" 2>/dev/null && [ -w "$(dirname "$DEVLOCK_DIR")" ] || return 98   # 锁的父目录建不出 / 写不了：下面的抢锁循环会空转，直接报失败 | The lock's parent directory cannot be created / written: the lock-grabbing loop below would spin, so report failure directly
   current_pid=${BASHPID:-$$}
   self_lstart=$(devlock_lstart $$)
@@ -204,6 +211,7 @@ _devlock_acquire() {
   export DM_DEVLOCK_HELD=$$
   devlock_ticket_drop
   DEVLOCK_DEPTH=1
+  devlock_hist 取 "$owner" $((SECONDS - q0))
   if [ "${max:-0}" -gt 0 ]; then
     devlock_watchdog "$$" "$self_lstart" "$max" "$owner" </dev/null >/dev/null &
     DEVLOCK_WD_PID=$!; disown "$DEVLOCK_WD_PID" 2>/dev/null || true
@@ -226,6 +234,7 @@ devlock_release() {
   # leaving a lock whose holder is dead (seen in run j; offline reproduction: hold the lock 2 seconds then release, exit code 1, lock directory still there)
   if [ -n "$DEVLOCK_WD_PID" ]; then local wk; wk=$(pgrep -P "$DEVLOCK_WD_PID" 2>/dev/null) || true; kill -KILL "$DEVLOCK_WD_PID" 2>/dev/null || true; [ -z "$wk" ] || kill -KILL $wk 2>/dev/null || true; DEVLOCK_WD_PID=; fi
   [ "$(cat "$DEVLOCK_DIR/pid" 2>/dev/null)" = "$$" ] || return 0
+  devlock_hist 放 "$(cat "$DEVLOCK_DIR/owner" 2>/dev/null)" $(( $(date +%s) - $(cat "$DEVLOCK_DIR/started" 2>/dev/null || date +%s) ))
   rm -rf "$DEVLOCK_DIR"
   DEVLOCK_DEPTH=0
 }

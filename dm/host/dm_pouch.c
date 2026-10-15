@@ -145,7 +145,7 @@ static void pouch_hook(const char *wd) {   // 提交前钩子（写盘线程，�
     }
     pthread_mutex_unlock(&g_umu);
 }
-__attribute__((constructor)) static void pouch_hook_install(void) { extern void (*g_dm_pre_commit_hook[4])(const char *); g_dm_pre_commit_hook[2] = pouch_hook; }
+__attribute__((constructor)) static void pouch_hook_install(void) { extern void (*g_dm_pre_commit_hook[5])(const char *); g_dm_pre_commit_hook[2] = pouch_hook; }
 
 // 收进囊：背包里的这件符文 / 宝石（服务端物品）→ 写位流 → 摘下 → 通知 → 释放；记一条「收」（持 g_umu 调）
 // Stow into the pouch: this rune / gem in the inventory (server item) -> write bitstream -> remove -> notify -> free; record one "stow" entry (called holding g_umu)

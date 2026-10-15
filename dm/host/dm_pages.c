@@ -35,7 +35,11 @@ int dm_item_write(uint8_t *b, uint64_t it, uint8_t *buf) {   // 原版写位流�
 }
 // 读位流建物品（含孔里镶的，照原版复制物品 0x65a840：母件后面紧跟孔里的件数 = 信息块 +0x14），清「新物品」位。room = 落在哪个房间（0 = 不进房间，放进物品栏用）
 // Read a bitstream and build the item (including socketed ones, following the original game's item copy 0x65a840: the parent item is immediately followed by the socketed items, count = info block +0x14), clearing the "new item" bit. room = which room it lands in (0 = not placed in a room, used when putting it into an item container)
-uint64_t dm_item_make(uint8_t *b, uint64_t G, uint64_t room, const uint8_t *buf, int len, int *socks_out) {
+uint64_t dm_item_make_n(uint8_t *b, uint64_t G, uint64_t room, const uint8_t *buf, int len, int *socks_out, int *bytes_out);
+uint64_t dm_item_make(uint8_t *b, uint64_t G, uint64_t room, const uint8_t *buf, int len, int *socks_out) { return dm_item_make_n(b, G, room, buf, len, socks_out, NULL); }
+// 同上，另给出这件（连同孔里的）在位流里占了多少字节（bytes_out）：从一页里连续排着的物品逐件拆开用（dm_cloudmerge.c）
+// Same as above, and also reports how many bytes this item (with its socketed items) takes in the bitstream (bytes_out): used to split items packed consecutively in a page one by one (dm_cloudmerge.c)
+uint64_t dm_item_make_n(uint8_t *b, uint64_t G, uint64_t room, const uint8_t *buf, int len, int *socks_out, int *bytes_out) {
     uint8_t info[0x100]; int used = 0; memset(info, 0, sizeof info);
     ((void (*)(int, const void *, int64_t, int, void *, int))(b + 0x5793a0))(*(uint8_t *)(G + 0x106), buf, len, 1, info, 0x69);
     uint64_t nu = ((uint64_t (*)(uint64_t, uint64_t, const void *, int, int, void *, int *, int))(b + 0x6564e0))(G, room, buf, len, 1, info, &used, 0x69);
@@ -50,7 +54,7 @@ uint64_t dm_item_make(uint8_t *b, uint64_t G, uint64_t room, const uint8_t *buf,
         if (!((int (*)(uint64_t, uint64_t, uint32_t, uint32_t, int))(b + 0x64d080))(G, nu, *(uint32_t *)(ch + 8), *(uint32_t *)(nu + 8), 2)) LOG("【红】建物品：孔里第 %d 件镶不回去", s + 1); else okn++;
         { uint64_t cd = *(uint64_t *)(ch + 0x10); if (cd) *(uint32_t *)(cd + 0x18) &= ~0x2000u; }
         off += cu; rem -= cu; }
-    if (socks_out) *socks_out = okn; return nu;
+    if (socks_out) *socks_out = okn; if (bytes_out) *bytes_out = off; return nu;
 }
 static uint64_t pf_now(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (uint64_t)t.tv_sec * 1000000000ull + (uint64_t)t.tv_nsec; }
 void *dm_memfind(const uint8_t *h, size_t hn, const uint8_t *n, size_t nn) { if (!nn || hn < nn) return NULL; for (size_t i = 0; i + nn <= hn; i++) if (h[i] == n[0] && !memcmp(h + i, n, nn)) return (void *)(h + i); return NULL; }
@@ -231,4 +235,4 @@ void dm_pages_tick(uint64_t G, uint64_t player, uint8_t *b) {   // 服务端拍�
     if (dir) { pthread_mutex_lock(&g_pmu); pages_flip(b, G, player, dir); pthread_mutex_unlock(&g_pmu); }
 }
 static void pages_hook(const char *wd) { pthread_mutex_lock(&g_pmu); pages_pre_commit(wd); pthread_mutex_unlock(&g_pmu); }
-__attribute__((constructor)) static void pages_hook_install(void) { extern void (*g_dm_pre_commit_hook[4])(const char *); g_dm_pre_commit_hook[0] = pages_hook; }
+__attribute__((constructor)) static void pages_hook_install(void) { extern void (*g_dm_pre_commit_hook[5])(const char *); g_dm_pre_commit_hook[0] = pages_hook; }

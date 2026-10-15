@@ -256,17 +256,21 @@ static void restart_cover_hook(int on) { dispatch_async(dispatch_get_main_queue(
     if(_uiDragOn) { _uiDragOn=NO; dm_ui_drag_end(); }
     _mapTouch=_mapBackTouch=_bindTouch=nil;
 }
-// 技能绑定入口（技能为空时一个单色十字，点击进入绑定技能）：游戏态下触点落在技能钮（F1–F4，含当前组）上——
+// 技能绑定入口（技能为空时一个单色十字，点击进入绑定技能）：游戏态下触点落在技能钮（主攻击大钮 A 与 F1–F4，含当前组）上——
 //   空位：这根手指不进手势层，点一下 = 给这个位选技能（dm_ui_bind_begin，宿主开技能树）；
 //   已绑定：照常进手势层（按下瞄准、松手施放、拖拽定方向）；按住不动超过 0.5 秒且位移 ≤ 10 点 = 长按换绑，取消这次施放（tickTouchControls 里判）。攻击键按住是连续攻击，不做长按。
-// 返回这个点命中的技能钮要绑的手柄键（第二组带 ZL），没命中返回 0；*empty = 该位当前是空的
-// Skill binding entry (a single-color cross when the skill is empty; tap to bind a skill): in game mode a touch point lands on a skill button (F1–F4, including the current set) --
-//   empty slot: this finger does not enter the gesture layer, and one tap = choose a skill for this slot (dm_ui_bind_begin, the host opens the skill tree);
-//   bound: enters the gesture layer as usual (press to aim, release to cast, drag to set direction); held still over 0.5 seconds with displacement ≤ 10 points = long press to rebind, cancelling this cast (judged in tickTouchControls). Holding the attack button is continuous attack, with no long press.
-// Returns the controller key to bind for the skill button hit by this point (the second set carries ZL), or 0 if none is hit; *empty = this slot is currently empty
+// 返回这个点命中的技能钮要绑的手柄键（第二组带 ZL），没命中返回 0；*empty = 该位当前是空的。
+// 主攻击大钮（DM_TC_MAIN，A 键）也在内（复现：主技能置空后点它的「＋」弹不出选技能——原先这里只认 F1–F4，主钮空着时这一下进了手势层当攻击按下去）；
+// 宿主的绑定流程本来就认 A（绑定框第 1 列 = A = 主技能，dm_cursor.c ui_bind_modal_tap）。长按换绑只给 F1–F4（攻击键按住是连续攻击），这里只管「空位点一下」
+// Skill binding entry (a monochrome cross when the skill is empty; tap to bind a skill): in game state, a touch landing on a skill button (main attack button A and F1–F4, including the current set):
+//   Empty slot: this finger does not enter the gesture layer; a tap = choose a skill for this slot (dm_ui_bind_begin, the host opens the skill tree);
+//   Bound: enters the gesture layer as usual (press to aim, release to cast, drag to set direction); holding still for over 0.5 seconds with movement ≤ 10 points = long-press rebind, cancelling this cast (decided in tickTouchControls). Holding the attack key is continuous attack, so it has no long press.
+// Returns the gamepad key to bind for the skill button hit by this point (second set includes ZL), 0 if none hit; *empty = the slot is currently empty.
+// The main attack button (DM_TC_MAIN, A key) is included too (repro: after clearing the main skill, tapping its "+" did not bring up skill selection; this used to accept only F1–F4, so with the main button empty the tap entered the gesture layer as an attack press);
+// the host binding flow already accepts A (binding dialog column 1 = A = main skill, dm_cursor.c ui_bind_modal_tap). Long-press rebind is only for F1–F4 (holding the attack key is continuous attack); this only handles "tap on an empty slot"
 - (uint64_t)skillKeyAt:(CGPoint)p empty:(BOOL *)empty {
     int i=dm_tc_hit(&_controls.layout,(float)p.x,(float)p.y);   // 与手势层同一个命中判定 | Same hit test as the gesture layer
-    if(i>=DM_TC_SKILL1 && i<=DM_TC_SKILL4 && (_controls.enabled_targets&(1u<<i))) { const dm_tc_target *t=&_controls.layout.target[i];
+    if((i==DM_TC_MAIN || (i>=DM_TC_SKILL1 && i<=DM_TC_SKILL4)) && (_controls.enabled_targets&(1u<<i))) { const dm_tc_target *t=&_controls.layout.target[i];
         dm_tg_snapshot n=_overlay.nativeMapping; uint64_t now_ns(void);
         dm_ta_glyph g=dm_ta_current_set(&n,t->button,now_ns(),_controls.skill_set); *empty=g.status==DM_TA_EMPTY;   // 与画十字用同一份读数（DmTouchOverlay） | Same reading as used for drawing the cross (DmTouchOverlay)
         return t->button|(_controls.skill_set?DM_BTN_ZL:0); }
@@ -1315,8 +1319,12 @@ static void touch_script_start(void) {
             else if([op isEqualToString:@"tap_unit"] && f.count>=4) { dm_world_watch([f[2] intValue],(uint32_t)[f[3] intValue]); tu_on=1; tu_tick=0; tu_dead=now+(f.count>4?[f[4] doubleValue]:10);
                 NSString *last=f.lastObject; tu_dx=tu_dy=0; if([last hasPrefix:@"+"]) { NSArray *o=[[last substringFromIndex:1] componentsSeparatedByString:@","]; if(o.count==2) { tu_dx=[o[0] doubleValue]; tu_dy=[o[1] doubleValue]; } }
                 tu_rect=f.count>=9 && ![f[5] hasPrefix:@"+"]; if(tu_rect) for(int i=0;i<4;i++) tu_r[i]=[f[5+i] doubleValue]; }
-            else if([op isEqualToString:@"tap_ui"] && f.count>=3) { ui_name=f[2]; dm_ui_watch(ui_name.UTF8String); ui_on=1; ui_tick=0; ui_dead=now+(f.count>3?[f[3] doubleValue]:10); }
-            else if([op isEqualToString:@"await"] && f.count>=4 && [f[2] isEqualToString:@"ui"]) { aui_name=f[3]; dm_ui_watch(aui_name.UTF8String); aui_on=1; aui_tick=0; aui_dead=now+(f.count>4?[f[4] doubleValue]:30); }
+            // tap_ui / await ui 的控件名里「+」代表空格：脚本按空格拆参数，带空格的控件名（技能树的技能格 SkillButton3 2,0 = 第 3 页第 2 列第 0 行）要这样写，
+            // 如 tap_ui SkillButton3+2,0@SkillsTreePanel。按名字点不受屏幕比例 / 真全屏贴顶上提影响（真机按 16:9 量的裸坐标点技能树偏了 134 单位）
+            // In widget names for tap_ui / await ui, "+" stands for a space: scripts split arguments on spaces, so widget names with spaces (skill tree slot SkillButton3 2,0 = page 3, column 2, row 0) must be written this way,
+            // e.g. tap_ui SkillButton3+2,0@SkillsTreePanel. Tapping by name is unaffected by screen aspect / the top shift in true fullscreen (raw coordinates measured at 16:9 on a real device missed the skill tree by 134 units)
+            else if([op isEqualToString:@"tap_ui"] && f.count>=3) { ui_name=[f[2] stringByReplacingOccurrencesOfString:@"+" withString:@" "]; dm_ui_watch(ui_name.UTF8String); ui_on=1; ui_tick=0; ui_dead=now+(f.count>3?[f[3] doubleValue]:10); }
+            else if([op isEqualToString:@"await"] && f.count>=4 && [f[2] isEqualToString:@"ui"]) { aui_name=[f[3] stringByReplacingOccurrencesOfString:@"+" withString:@" "]; dm_ui_watch(aui_name.UTF8String); aui_on=1; aui_tick=0; aui_dead=now+(f.count>4?[f[4] doubleValue]:30); }
             else if([op isEqualToString:@"await"] && f.count>=3 && [f[2] isEqualToString:@"rw"]) { int dm_runeword_done_count(void); awr_on=1; awr_tick=0; awr_base=dm_runeword_done_count(); awr_dead=now+(f.count>3?[f[3] doubleValue]:30); }
             else if([op isEqualToString:@"await"] && f.count>=3 && [f[2] isEqualToString:@"pos"]) { aw_on=1; aw_tick=0; aw_r=f.count>=6?[f[5] intValue]:0; aw_x=f.count>=6?[f[3] intValue]:0; aw_y=f.count>=6?[f[4] intValue]:0; }
             else if([op isEqualToString:@"pad"] && f.count>=3) { void dm_gamepad_inject(uint64_t,int32_t,int32_t,int32_t,int32_t); uint64_t m=strtoull([f[2] UTF8String],NULL,0);   // pad <按键位（同 dm_input.h）> [lx ly rx ry]：模拟手柄（没有实体手柄时测手柄路径） | pad <button bits (same as dm_input.h)> [lx ly rx ry]: simulated controller (tests the controller path without a physical controller)

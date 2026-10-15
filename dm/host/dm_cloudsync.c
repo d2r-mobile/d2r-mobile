@@ -114,6 +114,46 @@ static cs_rich rich_of(const cs_file *f) {
     else if (L > 8 && !strcmp(f->path + L - 8, ".swvault")) { r.kind = 2; if (f->size >= 8 && !memcmp(f->data, "SWVT", 4)) { uint16_t c; memcpy(&c, f->data + 6, 2); r.vault = c; } }
     return r;
 }
+// ---- 编年史段并集（iCloud 离线冲突第三笔）：编年史只增不减，两份共享仓库档里找到过的条目都该留着。
+// 段格式（游戏写段函数 main+0x4cb6cc、读段 0x4cc5cc，读码）：段头 64 字节后 +64 魔数 C0 ED EA C0、+68 u16 版本 1、+70 / +72 / +74 u16 三组条数 A / B / C、
+// +76 8 字节 0、+84 起 (A + B + C) 条记录按组排、每条 10 字节（u32 表内序号、u16、u32 时刻 = 1970 年起的分钟数），段长 = 84 + 10 × 条数 + 64（末尾 64 字节游戏不写、是零）。
+// 并法：src 里有、dst 同一组里没有同一个序号的条目追加到 dst 那一组末尾（组内次序游戏不认，它读进哈希表）；两边都有的取更早的时刻。返回加了几条，-1 = 格式不认（不动）
+// ---- Chronicle segment union (iCloud offline conflict part three): the Chronicle only grows, so entries found in either shared stash file should all be kept.
+// Segment format (game segment write function main+0x4cb6cc, segment read 0x4cc5cc, from reading the code): after the 64-byte segment header, +64 magic C0 ED EA C0, +68 u16 version 1, +70 / +72 / +74 u16 counts of three groups A / B / C,
+// +76 8 bytes of 0, from +84 (A + B + C) records ordered by group, 10 bytes each (u32 table index, u16, u32 time = minutes since 1970); segment length = 84 + 10 × count + 64 (the last 64 bytes are not written by the game and are zero).
+// Merge: entries in src with no same index in the same group of dst are appended to the end of that group in dst (the game ignores in-group order; it reads into a hash table); for entries in both, the earlier time is taken. Returns the number added, -1 = unrecognized format (untouched)
+static int chron_seg(const uint8_t *d, uint32_t n, uint32_t *at, uint32_t *len) {   // 找编年史段：1 = 找到 | Find the Chronicle segment: 1 = found
+    for (uint32_t o = 0; o + 84 <= n && !memcmp(d + o, "\x55\xaa\x55\xaa", 4); ) { uint32_t ln; memcpy(&ln, d + o + 16, 4); if (ln < 68 || o + ln > n) return 0;
+        if (!memcmp(d + o + 64, "\xc0\xed\xea\xc0", 4)) { uint16_t v, a, b, c; memcpy(&v, d + o + 68, 2); memcpy(&a, d + o + 70, 2); memcpy(&b, d + o + 72, 2); memcpy(&c, d + o + 74, 2);
+            if (v != 1 || ln != 84u + 10u * (uint32_t)(a + b + c) + 64u) return 0; *at = o; *len = ln; return 1; }
+        o += ln; }
+    return 0;
+}
+static int chron_union(cs_file *dst, const cs_file *src) {
+    uint32_t da, dl, sa, sl; if (!chron_seg(dst->data, dst->size, &da, &dl) || !chron_seg(src->data, src->size, &sa, &sl)) return -1;
+    uint16_t dc[3], sc[3]; memcpy(dc, dst->data + da + 70, 6); memcpy(sc, src->data + sa + 70, 6);
+    uint32_t dn = dc[0] + dc[1] + dc[2], sn = sc[0] + sc[1] + sc[2];
+    uint8_t *rec = malloc(10u * (dn + sn) + 1); if (!rec) return -1;
+    uint32_t out[3] = {0}, w = 0, add = 0; const uint8_t *dr = dst->data + da + 84, *sr = src->data + sa + 84;
+    for (int g = 0, d0 = 0, s0 = 0; g < 3; d0 += dc[g], s0 += sc[g], g++) {
+        for (int i = 0; i < dc[g]; i++) { memcpy(rec + 10 * w, dr + 10 * (d0 + i), 10); uint32_t id, t; memcpy(&id, rec + 10 * w, 4); memcpy(&t, rec + 10 * w + 6, 4);
+            for (int j = 0; j < sc[g]; j++) { uint32_t sid, st; memcpy(&sid, sr + 10 * (s0 + j), 4); memcpy(&st, sr + 10 * (s0 + j) + 6, 4); if (sid == id && st < t) { t = st; memcpy(rec + 10 * w + 6, &t, 4); } }
+            w++; out[g]++; }
+        for (int j = 0; j < sc[g]; j++) { uint32_t sid; memcpy(&sid, sr + 10 * (s0 + j), 4); int have = 0;
+            for (int i = 0; i < dc[g] && !have; i++) { uint32_t id; memcpy(&id, dr + 10 * (d0 + i), 4); have = id == sid; }
+            if (!have) { memcpy(rec + 10 * w, sr + 10 * (s0 + j), 10); w++; out[g]++; add++; } } }
+    uint32_t nl = 84 + 10 * w + 64, nsz = dst->size - dl + nl; uint8_t *nd = malloc(nsz + 1); if (!nd) { free(rec); return -1; }
+    memcpy(nd, dst->data, da + 84); memcpy(nd + da + 84, rec, 10 * w); memcpy(nd + da + 84 + 10 * w, dst->data + da + dl - 64, 64);
+    memcpy(nd + da + nl, dst->data + da + dl, dst->size - da - dl);
+    memcpy(nd + da + 16, &nl, 4); for (int g = 0; g < 3; g++) { uint16_t c = (uint16_t)out[g]; memcpy(nd + da + 70 + 2 * g, &c, 2); }
+    free(rec); free(dst->data); dst->data = nd; dst->size = nsz; return (int)add;
+}
+static int chron_union_unit(cs_unit *dst, const cs_unit *src, const char *who) {   // 同路径的 .d2i 逐个并；返回一共加了几条 | Merge .d2i files with the same path one by one; returns the total number of records added
+    int tot = 0; for (int i = 0; i < dst->n; i++) { size_t L = strlen(dst->f[i].path); if (L < 5 || strcmp(dst->f[i].path + L - 4, ".d2i")) continue;
+        for (int j = 0; j < src->n; j++) if (!strcmp(src->f[j].path, dst->f[i].path)) { int a = chron_union(&dst->f[i], &src->f[j]);
+            if (a > 0) { tot += a; LOG("iCloud 同步：%s 的编年史并进%s多出的 %d 条", dst->f[i].path, who, a); } } }
+    return tot;
+}
 // 用 w 换掉 x 会不会丢东西：会就返回原因（写日志用），不会返回 NULL
 // Whether replacing x with w would lose anything: if so return the reason (for the log), otherwise return NULL
 static const char *stash_shrinks(const cs_unit *w, const cs_unit *x, char *why, size_t cap) {
@@ -168,6 +208,13 @@ static int pack_read(const char *path, cs_unit *u) {   // 1 = 读到，0 = 没�
         if (ok) ok = !strstr(x->path, "..") && x->path[0] != '/'; }
     fclose(f); if (!ok) { unit_free(u); return -1; }
     uint64_t st = u->stamp; u->tomb = fl & 1; unit_finish(u); u->stamp = st; return 1;   // 时刻以包头为准（删除标记没有文件） | the timestamp follows the pack header (a deletion marker has no files)
+}
+// 局内并回收件箱用（dm_cloudmerge.c）：读一个包，逐个文件交给 cb（rel = 包里的相对路径）。返回包里文件数，没有 / 坏包返回 -1
+// For the in-game inbox merge (dm_cloudmerge.c): reads a pack and hands each file to cb (rel = relative path in the pack). Returns the number of files in the pack; -1 for missing / corrupt pack
+int dm_cloud_pack_each(const char *path, void (*cb)(const char *rel, const uint8_t *d, uint32_t n, void *ctx), void *ctx) {
+    cs_unit *u = malloc(sizeof *u); if (!u) return -1; int r = pack_read(path, u), n = -1;
+    if (r == 1) { n = u->n; for (int i = 0; i < u->n; i++) cb(u->f[i].path, u->f[i].data, u->f[i].size, ctx); unit_free(u); }
+    free(u); return n;
 }
 // ---- 本地写入 / 移除 / 备份
 // ---- Local write / remove / backup
@@ -322,16 +369,22 @@ int dm_cloud_sync(const char *save, const char *cloud, const char *bak, const ch
                 act = DOWN; } }
         if (act == UP) {
             if (hc && !C->tomb && C->hash != L->hash && cchg && backup_copy(bak, un, C, "云端（被本机后写覆盖）")) goto next;
+            if (!strcmp(un, "_stash") && allow_down && hc && !C->tomb && C->hash != L->hash && chron_union_unit(L, C, "云端那份") > 0) {   // 编年史并集：启动时（游戏还没读档）先写回本地再上传；运行中不动本地 | Chronicle union: at startup (game has not loaded saves yet) write back locally first, then upload; at runtime leave local untouched
+                uint64_t st0 = L->stamp; if (write_files(save, L)) { LOG("【红】iCloud 同步：%s 并好的编年史写不回本地 errno=%d，本次不上传", un, errno); goto next; } unit_finish(L); L->stamp = st0; }
             L->tomb = 0; if (pack_write(cp, L)) { LOG("【红】iCloud 同步：%s 上传失败 errno=%d", un, errno); goto next; }
             LOG("iCloud 同步：%s 上传（时刻 %llu，%d 个文件）", un, (unsigned long long)L->stamp, L->n); acts++;
             W = state_get(st, &ns, 256, un, 1); if (W) { W->hash = L->hash; W->stamp = L->stamp; W->tomb = 0; }
             if (!strcmp(un, "_stash")) base_put(statef, L);
         } else if (act == DOWN) {
-            if (local_apply(save, bak, un, hl ? L : NULL, C)) { LOG("【红】iCloud 同步：%s 下载后换进本地失败 errno=%d（本地不变）", un, errno); goto next; }
+            uint64_t ch = C->hash; cs_unit *O = NULL;   // O = 云端原样（并编年史之前），基准要记它（下次分叉判「云端是不是基准的后代」用） | O = the cloud as is (before Chronicle merge); the baseline must record it (used on the next fork to decide "is the cloud a descendant of the baseline")
+            if (!strcmp(un, "_stash") && hl && L->hash != C->hash && (O = malloc(sizeof *O))) { *O = *C; for (int i = 0; i < O->n; i++) { O->f[i].data = malloc(C->f[i].size + 1); memcpy(O->f[i].data, C->f[i].data, C->f[i].size); }
+                if (chron_union_unit(C, L, "本机那份") > 0) { uint64_t st0 = C->stamp; unit_finish(C); C->stamp = st0; } }   // 编年史并集：本机那份找到过的条目并进要换进来的云端那份 | Chronicle union: entries found in the local copy are merged into the cloud copy being swapped in
+            if (local_apply(save, bak, un, hl ? L : NULL, C)) { if (O) { unit_free(O); free(O); } LOG("【红】iCloud 同步：%s 下载后换进本地失败 errno=%d（本地不变）", un, errno); goto next; }
             LOG("iCloud 同步：%s 下载（时刻 %llu，%d 个文件）", un, (unsigned long long)C->stamp, C->n); acts++;
             if (!S && hl && strcmp(un, "_stash")) { char_conf_add(un); LOG("iCloud 同步：%s 两台设备各有一份同名角色，用云端那份，本机那份已进备份；进局提示", un); }
-            W = state_get(st, &ns, 256, un, 1); if (W) { W->hash = C->hash; W->stamp = C->stamp; W->tomb = 0; }
-            if (!strcmp(un, "_stash")) base_put(statef, C);
+            W = state_get(st, &ns, 256, un, 1); if (W) { W->hash = ch; W->stamp = C->stamp; W->tomb = 0; }   // 记云端原样的摘要：并过编年史的本地 ≠ 它 → 下次同步当本地改过、传上去 | Record the digest of the cloud as is: a local copy with the Chronicle merged ≠ it → on next sync it is treated as locally modified and uploaded
+            if (!strcmp(un, "_stash")) base_put(statef, O ? O : C);
+            if (O) { unit_free(O); free(O); }
         } else if (act == DEL_LOCAL) {
             { char d[1300]; if (move_to_bak(save, bak, un, L, "本机（另一台删了这个角色）", d, sizeof d)) goto next; }   // 删 = 整份挪进备份，挪不动就不删 | delete = move the whole copy into the backup; if it cannot be moved, do not delete
             LOG("iCloud 同步：%s 另一台删了，本机也删（备份已留）", un); acts++;

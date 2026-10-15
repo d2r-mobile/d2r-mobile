@@ -12,7 +12,7 @@
 // Expected values written by hand from the rules. Not covered: "Continue" landing back at the old run's position in a real game, and clearing the position when a new run starts / on abandon (those two are in start_rift / dm_rift_tick and need a real game).
 #include "../dm_rift.c"
 
-void (*g_dm_pre_commit_hook[4])(const char *);
+void (*g_dm_pre_commit_hook[5])(const char *);
 uint64_t dm_fs_commit_count(void) { return 0; }
 
 int main(void) {

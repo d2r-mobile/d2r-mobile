@@ -924,22 +924,32 @@ NVN(nvnQueueSubmitCommands, void, NVNqueue *q, int n, const NVNcommandHandle *h)
     gfx_leave();
 }
 
-// 只影响 GPU 状态 / 只在 GPU 上执行的命令：空设备只计数（跳板已计）
-// Commands that only affect GPU state / only execute on the GPU: the null device only counts them (the thunk has already counted)
+// 只影响 GPU 状态 / 只在 GPU 上执行的命令：空设备只计数（跳板已计）。
+// SetPatchSize、MultiDrawArrays / ElementsIndirectCount、DownsampleTextureView 不在这里：营地 / 野外 / NPC 对话 / 秘境 90 层共约 4.2 万帧调用 0 次，
+// 改走未实现桩（调到即报红），免得哪天真被调到时静默漏画。
+// Commands that only affect GPU state / only run on the GPU: the null device only counts them (the trampoline already counted).
+// SetPatchSize, MultiDrawArrays / ElementsIndirectCount and DownsampleTextureView are not here: across camp / wilderness / NPC dialog / Rift level 90, about 42,000 frames in total, they were called 0 times,
+// so they go to unimplemented stubs (red when called), to avoid silently missing draws if they are ever really called.
 static void nvn_nop(void) {}
 static const char *const g_nops[] = {
-    "nvnCommandBufferSetPatchSize",
-    "nvnCommandBufferMultiDrawArraysIndirectCount",
-    "nvnCommandBufferMultiDrawElementsIndirectCount",
     "nvnCommandBufferDispatchComputeIndirect",
     "nvnCommandBufferSetDepthBounds",
-    "nvnCommandBufferDownsampleTextureView",
-    "nvnCommandBufferWaitSync",
+    "nvnCommandBufferWaitSync",    // 每帧 1 次。GPU 侧等一个同步对象，不是 CPU 读回（CPU 等 GPU 走 nvnSyncWait，已按栅栏真等）。同步对象只有两种来源： | 1 time per frame. A GPU-side wait on a sync object, not a CPU readback (CPU waits on the GPU via nvnSyncWait, which already truly waits on the fence). Sync objects have only two sources:
+                                   // QueueFenceSync 与 WindowAcquireTexture，栅栏值都取「记录时已提交的最大值」，含 WaitSync 的命令缓冲必在其后提交到同一条队列。
+                                   // 翻译层只有一条 Metal 队列（游戏各帧与出图都提交到它）：Metal 4 每个编码器开头都设「等队列上此前全部阶段」的屏障，
+                                   // 老接口（iOS 18）资源都是跟踪模式、参数块引用的逐个 useResource，读写先后由 Metal 保证——两支都已按序，空跑即正确。
+                                   // 前提是只有一条队列：哪天加第二条（如异步计算），这里必须改成真等
+                                   // For QueueFenceSync and WindowAcquireTexture, the fence value is "the max already submitted at recording time", and a command buffer containing WaitSync is always submitted after it to the same queue.
+                                   // The translation layer has only one Metal queue (all game frames and presents are submitted to it): Metal 4 sets a barrier at the start of each encoder that "waits for all previous stages on the queue",
+                                   // and on the legacy API (iOS 18) resources are all tracked and argument block references are useResource one by one, so Metal guarantees read/write order. Both paths are already ordered, so a no-op is correct.
+                                   // This assumes a single queue: if a second one is ever added (e.g. async compute), this must become a real wait
     "nvnCommandBufferSetShaderScratchMemory",
     "nvnCommandBufferPushDebugGroupDynamic",
     "nvnCommandBufferPopDebugGroup",
     "nvnCommandBufferInsertDebugMarkerDynamic",
-    "nvnCommandBufferWaitEvent",
+    "nvnCommandBufferWaitEvent",   // 每帧 2 次。等的是同一命令流里更早的 SignalEvent（每帧 4 次）或 CPU 的 EventSignal（只在初始化时 6 次，早已到位）； | 2 times per frame. Waits on an earlier SignalEvent in the same command stream (4 times per frame) or a CPU EventSignal (only 6 times at init, long since reached);
+                                   // 单队列按序执行，GPU 不会越过前面的命令，空跑即正确（若等的是其后才发的信号，Switch 真机单队列会卡死，不可能）
+                                   // A single queue executes in order and the GPU never passes earlier commands, so a no-op is correct (if it waited on a signal issued later, a single queue on real Switch hardware would deadlock, which cannot happen)
     "nvnWindowFinalize",
 };
 __attribute__((constructor)) static void nvn_nops_register(void) {
@@ -1073,6 +1083,9 @@ static double g_pres_iv[TWIN]; static unsigned g_presn;   // 上屏间隔（ms�
 __attribute__((weak)) double dm_brightness_now(void) { return -1; }
 __attribute__((weak)) void dm_perf_present(double iv_ms) { (void)iv_ms; }   // 缺省（单测）；宿主 diag.c 的强定义：常开性能记录 perf.txt | Default (unit tests); strong definition in the host's diag.c: always-on performance record perf.txt
 uint64_t dm_nvn_sub_cpu_ns(void) { return atomic_load(&g_cum_sub_cpu_ns); }   // 提交（不含出图）累计 CPU 纳秒 | Cumulative CPU nanoseconds of submit (excluding present)
+static uint64_t sub_cyc(void) { return atomic_load(&g_cum_sub_cyc); }
+extern uint64_t (*g_ub_sub_cpu_ns)(void), (*g_ub_sub_cyc)(void);
+__attribute__((constructor)) static void ub_sub_register(void) { g_ub_sub_cpu_ns = dm_nvn_sub_cpu_ns; g_ub_sub_cyc = sub_cyc; }   // 同进程交替测量（nvn_mtl.m ub_frame）按相取翻译 CPU / 周期 | In-process alternating measurement (nvn_mtl.m ub_frame) takes translation CPU / cycles per phase
 __attribute__((weak)) int dm_thermal_now(void) { return -1; }   // 缺省（Mac）；iOS front_ios.m 覆盖   // 缺省（Mac）；iOS 前端 front_ios.m 的强定义覆盖它 | Default (Mac); overridden by iOS front_ios.m   // default (Mac); the strong definition in the iOS front end front_ios.m overrides it
 // 长帧日志的逐帧环（GPU 时间滞后 8 帧才有，所以先存后判）
 // Per-frame ring for the long-frame log (GPU time only arrives 8 frames late, so store first and judge later)
@@ -1110,7 +1123,10 @@ static void tsummary(uint64_t frame) {
       for (unsigned i = 0; i < n; i++) { double x = g_pres_iv[i]; if (x < 0) { drop++; discard++; } else if (x > 0) { v[k++] = x; drop += x > 25.0; } }
       task_vm_info_data_t vi; mach_msg_type_number_t vc = TASK_VM_INFO_COUNT; double fp = task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vi, &vc) == KERN_SUCCESS ? vi.phys_footprint / 1048576.0 : -1;
       double br = dm_brightness_now();   // footprint / 亮度随上屏行带出：不依赖拍入口观测门（营地局也有） | footprint / brightness are carried on the on-screen present row: does not depend on the tick-entry observation gate (camp runs have it too)
-      if (k) { qsort(v, k, sizeof *v, dcmp); LOG("[nvn] 上屏 至帧 %llu：%u 帧，掉帧 %u（丢弃 %u），p99 %.2f ms；footprint %.0f MiB；亮度 %.2f；温控 %d", frame, k + discard, drop, discard, v[(k * 99) / 100 < k ? (k * 99) / 100 : k - 1], fp, br, dm_thermal_now()); }
+      // 上屏间隔 p5 / p50 / p95：整除的帧率三个数相同（144 Hz 屏 72 帧都是 13.9）；不整除时两档交替（60 帧在 144 Hz 屏上 13.9 / 20.8）
+      // Present interval p5 / p50 / p95: with an evenly dividing frame rate all three are equal (72 fps on a 144 Hz screen is 13.9 for all); otherwise two tiers alternate (60 fps on a 144 Hz screen gives 13.9 / 20.8)
+      if (k) { qsort(v, k, sizeof *v, dcmp); LOG("[nvn] 上屏 至帧 %llu：%u 帧，掉帧 %u（丢弃 %u），间隔 p5 %.2f / p50 %.2f / p95 %.2f，p99 %.2f ms；footprint %.0f MiB；亮度 %.2f；温控 %d", frame, k + discard, drop, discard,
+          v[(k * 5) / 100], v[k / 2], v[(k * 95) / 100 < k ? (k * 95) / 100 : k - 1], v[(k * 99) / 100 < k ? (k * 99) / 100 : k - 1], fp, br, dm_thermal_now()); }
       g_presn = 0; }
     { static uint64_t pi, pc, pd, pf; uint64_t ci = atomic_load(&g_cum_sub_instr), cc = atomic_load(&g_cum_sub_cpu_ns), ps_, dr_; mtl_stats(&ps_, &dr_);   // 翻译层 | translation layer
       if (pf && frame > pf && dr_ > pd) LOG("[nvn] 翻译 至帧 %llu：每次绘制 %.0f 条指令，每帧提交 %.2f M 条 / CPU %.3f ms，每帧绘制 %.0f", frame,
@@ -1215,14 +1231,15 @@ static void sleep_until_ns(uint64_t dl) {   // 单调时钟上的绝对时刻 | 
 // Present is fixed at 60 Hz: the adaptive mechanism stepped down at frame 60 in 24/24 real-device logs and never came back up, so for this phase 60 fps is the hard floor.
 // DM_PRESENT_HZ=0 (uncapped frame rate) serves only as an explicit performance profiling switch: some of the game's UI logic counts frames (with the same save, uncapped gives
 // 4181 SaveIndicatorPanel entries and capped at 60 fps gives 0, which matches the ground truth), so uncapped is a semantically wrong way to run and must not be used as a criterion / cross-check / default. Unit tests set it directly with nvn_present_config
-static int g_hz = -1, g_display_mode;
-void nvn_present_config(int hz, int display_mode) { g_hz = hz; g_display_mode = display_mode; }
+static int g_hz = -1, g_display_mode, g_hz_auto;   // g_hz_auto：有窗口、没用 DM_PRESENT_HZ 钉住——帧率跟着窗口所在屏的刷新率取整除档（每帧重读，换屏即换） | g_hz_auto: has a window and not pinned by DM_PRESENT_HZ; the frame rate takes the evenly dividing tier of the refresh rate of the screen the window is on (re-read every frame, changes with the screen)
+void nvn_present_config(int hz, int display_mode) { g_hz = hz; g_display_mode = display_mode; g_hz_auto = 0; }
+double front_display_refresh(char *name, size_t n);
 static void present_cfg(const win_t *o) {
     if (g_hz >= 0) return;
     // 有窗口仍缺省 display 间隔模式；无窗口缺省 game 模式。环境变量可覆盖固定 60 Hz。
     // With a window the default is still display interval mode; without a window the default is game mode. Environment variables can override the fixed 60 Hz.
     int scr = mtl_display_hz();
-    const char *e = getenv("DM_PRESENT_HZ"); g_hz = e ? atoi(e) : 60;
+    const char *e = getenv("DM_PRESENT_HZ"); g_hz = e ? atoi(e) : 60; g_hz_auto = !e && scr > 0;
     if (!g_hz) LOG("[nvn] 【警告】DM_PRESENT_HZ=0：不限帧率，帧节奏非真机，界面逻辑可能偏离（仅供性能剖析，不能用于判据 / 对拍）");
     // 剪口（有意偏离原版行为）：DM_PRESENT_INTERVAL=display 时不按游戏设的出图间隔，每个节拍出一帧，
     // 固定 60 帧硬底；逻辑 25 拍不变，且客户端按帧计数的界面逻辑不受影响——
@@ -1233,13 +1250,16 @@ static void present_cfg(const win_t *o) {
     // with the same save and the same input, the UI message streams of the two modes match message by message. Proof (before character select): r9 game / display 60 ×3 / display 120 ×2, 6 groups in total, uicmp consistent
     // (the save indicator is exempted as a timing race), and the timing differences of key messages are within game mode's own noise band; proof after entering a run is still missing, pending action script coverage
     const char *m = getenv("DM_PRESENT_INTERVAL"); g_display_mode = m ? !strcmp(m, "display") : scr > 0;
-    LOG("[nvn] 出图节拍 %d Hz，间隔模式 %s（游戏设的出图间隔 %d；%s）", g_hz, g_display_mode ? "display（每节拍一帧，剪口）" : "game（原版语义）", o->interval,
-        scr > 0 ? "有窗口，固定 60 Hz" : "无窗口，固定 60 Hz");
+    char name[128]; front_display_refresh(name, sizeof name);
+    if (g_hz_auto) LOG("[nvn] 出图节拍 %.2f Hz，间隔模式 %s（游戏设的出图间隔 %d；屏幕 %s，刷新率 %.2f Hz，取整除的一档）", dm_pace_hz(mtl_display_refresh(), 60), g_display_mode ? "display（每节拍一帧，剪口）" : "game（原版语义）", o->interval,
+        *name ? name : "主屏", mtl_display_refresh());
+    else LOG("[nvn] 出图节拍 %d Hz，间隔模式 %s（游戏设的出图间隔 %d；%s）", g_hz, g_display_mode ? "display（每节拍一帧，剪口）" : "game（原版语义）", o->interval,
+        e ? "DM_PRESENT_HZ 钉住" : "无窗口，固定 60 Hz");
 }
 static uint64_t present_period(const win_t *o) {
     present_cfg(o);
-    int itv = g_display_mode ? 1 : o->interval > 0 ? o->interval : 1, hz = g_hz;
-    return hz > 0 ? (uint64_t)itv * 1000000000ull / (uint64_t)hz : 0;
+    int itv = g_display_mode ? 1 : o->interval > 0 ? o->interval : 1; double hz = g_hz_auto ? dm_pace_hz(mtl_display_refresh(), 60) : g_hz;   // 省电模式的 30 帧由显示节拍决定，这里照旧按 60 档（60 / 120 Hz 屏与原先逐字相同） | Power saving 30 fps is determined by display pacing; here the 60 tier is used as before (identical to before on 60 / 120 Hz screens)
+    return hz > 0 ? (uint64_t)(itv * 1e9 / hz) : 0;
 }
 int (*g_nvn_loadscreen_up)(void);   // 宿主登记：读取画面此刻是否开着（diag.c 订阅界面消息时填；图形单测里为空 = 不设闸） | host registration: whether the loading screen is up right now (filled in when diag.c subscribes to UI messages; null in graphics unit tests = no gate)
 NVN(nvnQueuePresentTexture, void, NVNqueue *q, NVNwindow *w, int idx) {

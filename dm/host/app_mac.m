@@ -19,8 +19,22 @@
 #endif
 static NSString *const kRomfsKey = @"RomfsDir";
 
-// 这个文件夹是不是游戏资源：认 data/build_manifest.psv。选到上一两层（解包目录的根、Update）也认，往里找一层
-// Whether this folder is the game resources: recognized by data/build_manifest.psv. Choosing one or two levels up (the root of the unpacked directory, Update) is accepted too, looking one level in
+// 提示文字里带一个参数（中英表里的格式是 C 的 %s）：按 UTF-8 拼。-[NSString stringWithFormat:] 的 %s 按系统旧编码解读字节，
+// 中文文件夹名（的「D2R Mobile」）在提示框里显示成空的引号
+// The prompt text carries one argument (the format in the i18n table is C %s): concatenated as UTF-8. The %s of -[NSString stringWithFormat:] interprets bytes in the legacy system encoding,
+// so a Chinese folder name (e.g. "D2R Mobile" in Chinese) showed up as empty quotes in the alert
+static NSString *fmt1(const char *key, NSString *arg) {
+    const char *dm_ui(const char *key); char b[1024]; snprintf(b, sizeof b, dm_ui(key), arg.UTF8String ?: ""); return @(b) ?: @"";
+}
+static NSString *g_sup;   // 应用支持目录（dm_app_bootstrap 里定）：选的是 data 那一层、文件夹名又不叫 data 时，在这里建个壳目录 | Application Support directory (set in dm_app_bootstrap): when the pick is the data level and the folder is not named data, a shell directory is created here
+// 这个文件夹是不是游戏资源。只看 build_manifest.psv 在哪，两种摆法都认（选了一个直接装着各个 .data 和 build_manifest.psv 的文件夹，被拒）：
+//   ① 选的是资源根（里面有 data/build_manifest.psv）；选到上一两层（解包目录的根、Update）也认，往里找一层；
+//   ② 选的就是 data 那一层（文件夹里直接有 build_manifest.psv）：文件夹名就叫 data → 用它的上一层；名字不叫 data → 在应用支持目录里建壳目录
+//      romfs_flat，里面一个指向它的 data 链接，壳目录当资源根（游戏读「根/data/…」的写法不变）。返回资源根，不对返回 nil 并给出原因
+// Whether this folder is the game resources. Only looks at where build_manifest.psv is; both layouts are accepted (picking a folder that directly holds the .data files and build_manifest.psv used to be rejected):
+//   ① The pick is the resource root (contains data/build_manifest.psv); picking one or two levels above (the root of the unpacked directory, Update) is also accepted, searching one level down;
+//   ② The pick is the data level itself (build_manifest.psv directly inside the folder): if the folder is named data → use its parent; if not named data → create a shell directory
+//      romfs_flat in the Application Support directory containing a data link pointing to it, and use the shell directory as the resource root (the game's "root/data/..." reads stay unchanged). Returns the resource root; otherwise returns nil and gives the reason
 static NSString *romfs_root(NSString *dir, NSString **why) {
     NSFileManager *fm = NSFileManager.defaultManager;
     for (NSString *sub in @[@"", @"RomFS", @"romfs", @"Update/RomFS"]) {
@@ -30,7 +44,17 @@ static NSString *romfs_root(NSString *dir, NSString **why) {
             return d;
         }
     }
-    if (why) *why = [NSString stringWithFormat:T("dmAppNotRomfs"), dir.lastPathComponent.UTF8String];
+    NSString *m = [dir stringByAppendingPathComponent:@"build_manifest.psv"];
+    if ([fm fileExistsAtPath:m]) {
+        if (![fm isReadableFileAtPath:m]) { if (why) *why = T("dmAppNoRead"); return nil; }
+        if ([dir.lastPathComponent isEqualToString:@"data"]) return dir.stringByDeletingLastPathComponent;
+        if (g_sup) { NSString *shim = [g_sup stringByAppendingPathComponent:@"romfs_flat"], *link = [shim stringByAppendingPathComponent:@"data"];
+            [fm createDirectoryAtPath:shim withIntermediateDirectories:YES attributes:nil error:nil];
+            NSString *cur = [fm destinationOfSymbolicLinkAtPath:link error:nil];
+            if (![cur isEqualToString:dir]) { [fm removeItemAtPath:link error:nil]; [fm createSymbolicLinkAtPath:link withDestinationPath:dir error:nil]; }
+            if ([fm fileExistsAtPath:[link stringByAppendingPathComponent:@"build_manifest.psv"]]) { LOG("App：选的是 data 那一层（%s），经壳目录 %s 当资源根", dir.UTF8String, shim.UTF8String); return shim; } }
+    }
+    if (why) *why = fmt1("dmAppNotRomfs", dir.lastPathComponent);
     return nil;
 }
 static void alert(NSString *title, NSString *text) {
@@ -43,7 +67,7 @@ static NSString *pick_romfs(NSString *first_why) {
     for (;;) {
         NSOpenPanel *p = [NSOpenPanel openPanel];
         p.canChooseDirectories = YES; p.canChooseFiles = NO; p.allowsMultipleSelection = NO; p.prompt = T("dmAppPickUse");
-        p.message = why ? [NSString stringWithFormat:T("dmAppPickAgain"), why.UTF8String] : T("dmAppPickMsg");
+        p.message = why ? fmt1("dmAppPickAgain", why) : T("dmAppPickMsg");
         if ([p runModal] != NSModalResponseOK) return nil;
         NSString *w = nil, *r = romfs_root(p.URL.path, &w);
         if (r) return r;
@@ -76,6 +100,7 @@ int dm_app_bootstrap(int *argc, char ***argv) {
         NSString *logd = [[NSSearchPathForDirectoriesInDomains(NSLibraryDirectory, NSUserDomainMask, YES).firstObject stringByAppendingPathComponent:@"Logs/" APP_NAME] copy];
         NSString *save = [sup stringByAppendingPathComponent:@"save"], *temp = [sup stringByAppendingPathComponent:@"temp"];
         for (NSString *d in @[sup, logd, save, temp]) [fm createDirectoryAtPath:d withIntermediateDirectories:YES attributes:nil error:nil];
+        g_sup = sup;
         // 双击起没有终端：日志落文件，上一次的留一份
         // A double-click start has no terminal: the log goes to a file, and the previous one is kept
         NSString *lf = [logd stringByAppendingPathComponent:@"host.log"];
@@ -102,7 +127,7 @@ int dm_app_bootstrap(int *argc, char ***argv) {
             rom = romfs_root(@(getenv("DM_APP_ROMFS")), &why);
             if (!rom) { LOG("【红】App：DM_APP_ROMFS 给的不是游戏资源文件夹：%s", why.UTF8String); exit(2); }
         } else if (!rom) {
-            rom = pick_romfs(saved ? [NSString stringWithFormat:T("dmAppRomfsGone"), why.UTF8String] : nil);
+            rom = pick_romfs(saved ? fmt1("dmAppRomfsGone", why) : nil);
             if (!rom) { LOG("App：没有选资源文件夹，退出"); exit(0); }
             [ud setObject:rom forKey:kRomfsKey];
         }

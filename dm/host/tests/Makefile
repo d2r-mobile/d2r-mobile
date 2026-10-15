@@ -30,6 +30,7 @@ run: \
 	$(B)/t_rift_clock \
 	$(B)/t_rift_next \
 	$(B)/t_rift_oldrun \
+	$(B)/t_rift_wave \
 	$(B)/t_romfs_validate \
 	$(B)/t_rwlv \
 	$(B)/t_swkbd \
@@ -48,6 +49,7 @@ run: \
 	$(B)/t_rift_clock
 	$(B)/t_rift_next
 	$(B)/t_rift_oldrun
+	$(B)/t_rift_wave
 	$(B)/t_textbox
 	$(B)/t_rwlv
 	$(B)/t_touch
@@ -150,5 +152,7 @@ $(B)/t_rift_next: t_rift_next.c ../dm_rift.c ../dm_rift.h ../hle_os.c ../hle.h .
 	clang -O1 -Wall -Wno-unused-function -ffunction-sections -fdata-sections -Wl,-dead_strip -I.. -o $@ t_rift_next.c ../hle_os.c
 $(B)/t_rift_oldrun: t_rift_oldrun.c ../dm_rift.c ../dm_rift.h ../hle_os.c ../hle.h ../dm.h | $(B)
 	clang -O1 -Wall -Wno-unused-function -ffunction-sections -fdata-sections -Wl,-dead_strip -I.. -o $@ t_rift_oldrun.c ../hle_os.c
+$(B)/t_rift_wave: t_rift_wave.c ../dm_rift.c ../dm_rift.h ../hle_os.c ../hle.h ../dm.h | $(B)
+	clang -O1 -Wall -Wno-unused-function -ffunction-sections -fdata-sections -Wl,-dead_strip -I.. -o $@ t_rift_wave.c ../hle_os.c
 $(B)/t_thread_leak: t_thread_leak.c ../thread.c ../dm.h | $(B)
 	clang -O1 -Wall -Wno-unused-function -I.. -I../../ios/Sources -o $@ t_thread_leak.c

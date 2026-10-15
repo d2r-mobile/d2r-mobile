@@ -1976,6 +1976,7 @@ static uint64_t g_lift_next;
 // over the inventory cells when a panel opens, over the bottom-bar numbers when it closes (both directions were sent back). So both directions also write +0x74 to the new target in one go (the second registered exception,
 // written only by note_dock_snap). During slide-in / slide-out +0x74 is not equal to the old target, so nothing is written; even if equal on the first frame of slide-out, the interpolation after that uses the already changed +0x19c, so they move the same way.
 // Check on the next frame after writing: +0x74 still the new target = not written during animation; if it was changed, log red (g_nd_ychk)
+static _Atomic uint64_t g_tip_fr; static int32_t g_tip_box[4];   // 说明框：最近一次提交的出图帧号、估算矩形 x0 y0 x1 y1（界面坐标；tip_note 写、ui_note_dock_pump 读，都在游戏主线程） | Description box: present frame number of the last submission and estimated rectangle x0 y0 x1 y1 (UI coordinates; written by tip_note, read by ui_note_dock_pump, both on the game main thread)
 static uint64_t g_nd_w; static int32_t g_nd_orig, g_nd_mine; static int g_nd_on = -1, g_nd_hold;   // g_nd_hold：1 = 退出中（等出局），2 = 已出局（等进局） | g_nd_hold: 1 = leaving (waiting to be out of the game), 2 = out of the game (waiting to enter)
 static int g_nd_ychk; static int32_t g_nd_ywant; static unsigned g_nd_ywr, g_nd_ybad;   // 写过 +0x74 待下一帧核（核它还是 g_nd_ywant）；累计写入次数 / 动画期写入（被改）次数 | +0x74 was written, check it next frame (that it is still g_nd_ywant); total writes / writes during animation (overwritten)
 static int note_dock_snap(uint64_t w, int32_t from, int32_t to) {   // 框已停稳在 from：矩形 y 一次写成 to。返回 1 = 写了 | the box has settled at from: write the rectangle y as to in one go. Returns 1 = written
@@ -1996,22 +1997,41 @@ static void ui_note_dock_pump(uint64_t root) {
         "SettingsPanel", "SoundOptionsPanel", "VideoOptionsPanel", "GameplayOptionsPanel" };
     static int py = 1;
     if (py > 0) { const char *e = getenv("DM_TEST_NOTE_PANEL_Y"); py = e ? atoi(e) : NOTE_PANEL_Y; }
-    uint64_t w = ui_find(root, "NotificationPanel", 0); if (!w) { g_nd_w = 0; return; }
+    // 退出到前端后的挂起状态先推进、再找提示框：前端界面树里没有提示框控件，放在「找不到就返回」后面的话「已出局」那一步永远推进不到，
+    // 再进局时还卡在「退出中」、停靠整局失效（查出：Mac App 启动时游戏自己发一次回到前端，停靠在 Mac 上从没生效；iOS 保存并退出再进局后同样失效）
+    // Advance the pending state after exiting to the front end first, then look for the notice box: the front-end UI tree has no notice box widget, so placing this after "return if not found" means the "left game" step never advances,
+    // and on re-entering the game it is still stuck in "exiting", breaking docking for the whole run (found in testing: the game itself returns to the front end once when the Mac App starts, so docking never worked on Mac; on iOS it also broke after save and exit then re-entering the game)
+    int ing = dm_uiscreen_ingame(); if (g_nd_hold == 1 && !ing) g_nd_hold = 2; else if (g_nd_hold == 2 && ing) g_nd_hold = 0;
+    uint64_t w = ui_find(root, "NotificationPanel", 0);
+    if (!w) { g_nd_w = 0; return; }
     int32_t *t = (int32_t *)(w + 0x19c), h = *(int32_t *)(w + 0x7c);
     if (g_nd_ychk) { g_nd_ychk = 0; int32_t y = *(int32_t *)(w + 0x74); static int lg;
         if (w != g_nd_w) { if (lg++ < 60) LOG("提示框停靠：写回矩形 y 后提示框对象已换（出局 / 重建），不核"); }
         else if (y != g_nd_ywant) { g_nd_ybad++; LOG("【红】提示框停靠：矩形 y 写成 %d 后下一帧被改成 %d（动画期写入，第 %u 次）", g_nd_ywant, y, g_nd_ybad); }
         else if (lg++ < 60) LOG("提示框停靠：停稳的框下一帧在 y %d（%s；矩形 y 写入第 %u 次，动画期 %u 次）", y, y == g_nd_orig ? "原位" : "面板态位", g_nd_ywr, g_nd_ybad); }
     if (w != g_nd_w || *t != g_nd_mine) { g_nd_w = w; g_nd_orig = *t; g_nd_mine = *t; }
-    int ing = dm_uiscreen_ingame(); if (g_nd_hold == 1 && !ing) g_nd_hold = 2; else if (g_nd_hold == 2 && ing) g_nd_hold = 0;
     int panel = 0; uint64_t ch = *(uint64_t *)(root + 0x58), n = *(uint64_t *)(root + 0x60);   // 名单里的面板在屏上（可见且有可见内容）= 面板态；两种模式通用 | a panel on the list is on screen (visible and with visible content) = panel state; same for both modes
     for (uint64_t j = 0; ing && !g_nd_hold && j < n && !panel; j++) { uint64_t c = *(uint64_t *)(ch + 8 * j); const char *nm = c ? (const char *)*(uint64_t *)(c + 8) : NULL;
         if (!nm || !*(uint8_t *)(c + 0x50)) continue;
         for (unsigned i = 0; i < sizeof big / sizeof *big && !panel; i++) panel = !strcmp(nm, big[i]) && has_visible_leaf(c, 1); }
     int32_t pv = h > 0 ? (int32_t)lroundf(py * h / 244.0f) : g_nd_orig;
+    // 说明框开着时提示框不压它（iOS / Mac 同一条）：面板态下这一帧或上一帧提交过说明、估算矩形与提示框相交，就把提示框挪到说明框正上 / 正下
+    // （离原位近、又不出屏的那侧），说明框没了回原位。提示框中心 y = 界面高 + 目标 × 界面高 / 2160、半高 = 矩形高 × 界面高 / 4320、半宽 = 矩形宽 × 界面高 / 4320（布局单位，界面高对应 2160）
+    // While the description box is open the notice box does not cover it (same for iOS / Mac): in panel state, if a description was submitted this frame or the previous one and the estimated rectangle intersects the notice box, move the notice box directly above / below the description box
+    // (the side closer to the original position that stays on screen); return to the original position when the description box is gone. Notice box center y = UI height + target × UI height / 2160, half height = rect height × UI height / 4320, half width = rect width × UI height / 4320 (layout units, UI height corresponds to 2160)
+    { module_t *mm = main_module(); int UW = mm ? *(int32_t *)(mm->base + 0x211da38) : 0, UH = mm ? *(int32_t *)(mm->base + 0x211da3c) : 0; uint64_t fr = dm_guest_frame(), tf = atomic_load(&g_tip_fr);
+      static int moved; int32_t rw = *(int32_t *)(w + 0x78);
+      if (panel && UH > 0 && h > 0 && rw > 0 && tf && fr - tf <= 2) {
+          int cy = UH + (int)lroundf((float)pv * UH / 2160.0f), hh = (int)lroundf((float)h * UH / 4320.0f), hw = (int)lroundf((float)rw * UH / 4320.0f), gap = UH / 90;
+          const int32_t *b = g_tip_box; int hit = UW / 2 - hw < b[2] && UW / 2 + hw > b[0] && cy - hh < b[3] + gap && cy + hh > b[1] - gap;
+          if (hit) { int up = b[1] - gap - hh, dn = b[3] + gap + hh, ok_up = up - hh >= 0, ok_dn = dn + hh <= UH;
+              int to = ok_up && ok_dn ? (abs(up - cy) <= abs(dn - cy) ? up : dn) : ok_up ? up : ok_dn ? dn : cy;
+              if (to != cy) { pv = (int32_t)lroundf((float)(to - UH) * 2160.0f / UH); if (!moved) { moved = 1; LOG("提示框停靠：说明框占 (%d,%d)–(%d,%d) 压到提示框（中心 y %d）→ 挪到说明框%s，中心 y %d", b[0], b[1], b[2], b[3], cy, to < cy ? "上方" : "下方", to); } } }
+          else moved = 0; }
+      else if (moved) { moved = 0; LOG("提示框停靠：说明框没了 → 回面板态位"); } }
     if (!(panel && pv > g_nd_orig)) { if (g_nd_on) note_dock_restore(root, ing ? "面板关了" : "不在局内"); }   // 只往下挪：布局本来就不低于面板态高度时不动 | only move it down: if the layout is already no higher than the panel-state height, leave it
     else if (*t != pv) { int32_t was = *t; *t = pv; g_nd_mine = pv;
-        if (note_dock_snap(w, was, pv)) { static int lg; if (lg++ < 60) LOG("提示框停靠：开面板时框已停稳在 y %d，矩形 y 一并写成面板态位 %d", was, pv); } }
+        if (note_dock_snap(w, was, pv)) { static int lg; if (lg++ < 60) LOG("提示框停靠：目标换成 %d 时框已停稳在 y %d，矩形 y 一并写成新目标", pv, was); } }
     if (panel != g_nd_on) { g_nd_on = panel; static int lg; if (lg++ < 40) LOG("提示框停靠：%s，目标 y %d（布局原值 %d，矩形高 %d）", panel ? "面板态" : "无面板", *t, g_nd_orig, h); }
 }
 static void ui_lift_pump(uint64_t root, uint64_t fr) {
@@ -2603,7 +2623,22 @@ static void ui_panel_state_pump(uint64_t root) {   // 游戏主线程，每帧 |
 // Game main thread only (the gate callback runs there).
 // Test switch DM_TEST_TIPDOCK=1: ignore the mode (the Mac host is the gamepad version; use it to see the effect); =0: turn it off entirely
 static int ui_touch_mode(void);
-void dm_ui_tooltip_obs(const uint64_t *regs) {
+// 说明框占的地方（给提示框让位用，见 ui_note_dock_pump）：提交时只有目标矩形和文字，框的大小游戏在提交函数里面量（main+0xb0f998），入口拿不到，
+// 按文字估：行数 = 换行数 + 1，每行 0.038 × 屏高，上下边 0.03 × 屏高（Mac 16:10 截图标定：15 行长说明在 900 高界面里占 515）；
+// 横向以目标中线为中、半宽 0.25 × 屏高（比实测最宽的一行还宽，宁可多让）；纵向照原版：目标正下方放得下就在下、否则在上。界面坐标（与提交参数同一套）
+// Area taken by the description box (for making room for the notice box, see ui_note_dock_pump): at submission there is only the target rectangle and text; the game measures the box size inside the submit function (main+0xb0f998), unreachable from the entry,
+// so it is estimated from the text: lines = newlines + 1, 0.038 × screen height per line, top and bottom margins 0.03 × screen height (calibrated on a Mac 16:10 screenshot: a 15-line description takes 515 in a 900-high UI);
+// horizontally centered on the target center line with half width 0.25 × screen height (wider than the widest measured line; better to give more room); vertically as in the original game: below the target if it fits, otherwise above. UI coordinates (same system as the submit arguments)
+static void tip_note(const uint64_t *regs) {
+    module_t *m = main_module(); if (!m) return; int H = *(int32_t *)(m->base + 0x211da3c); const char *txt = (const char *)(uintptr_t)regs[1]; if (H <= 0 || !txt) return;
+    int n = 1; for (const char *c = txt; *c && n < 64; c++) n += *c == '\n';
+    int tx = (int32_t)regs[2], ty = (int32_t)(regs[2] >> 32), tw = (int32_t)regs[3], th = (int32_t)(regs[3] >> 32), bh = (int)lroundf((0.038f * n + 0.03f) * H), hw = H / 4, cx = tx + tw / 2;
+    int below = ty + th + bh <= H, y0 = below ? ty + th : ty - bh;
+    g_tip_box[0] = cx - hw; g_tip_box[1] = y0; g_tip_box[2] = cx + hw; g_tip_box[3] = y0 + bh; atomic_store(&g_tip_fr, dm_guest_frame());
+}
+static void tip_dock(const uint64_t *regs);
+void dm_ui_tooltip_obs(const uint64_t *regs) { tip_dock(regs); tip_note(regs); }   // 先按触屏规则改停靠目标，再按最终目标记占位 | First change the dock target by touch rules, then record the occupied area by the final target
+static void tip_dock(const uint64_t *regs) {
     static int force = -2; if (force == -2) { const char *e = getenv("DM_TEST_TIPDOCK"); force = e ? atoi(e) : -1; }
     if (force == 0 || (force < 0 && !ui_touch_mode())) return;
     module_t *m = main_module(); uint64_t root = 0; if (!m) return; memcpy(&root, m->base + 0x2f05458, 8); if (!root) return;
