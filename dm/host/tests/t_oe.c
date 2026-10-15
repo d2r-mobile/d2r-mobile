@@ -110,7 +110,7 @@ static void test_scale3d(void) {
     CHECK(s3_n(1799, F60) == 2, "升档：零掉帧 14 窗多 → 还不升");
     CHECK(s3_n(1, F60) == 1, "升档：连续 15 窗（30 秒）零掉帧 → 升到 1 档");
     s3 = (scale3d_ctl){.max_level = 2, .level = 2}; s3_now = 3500 * S3_SEC;
-    s3_n(1500, F60); s3_one(D60); 
+    s3_n(1500, F60); s3_one(D60);
     CHECK(s3_n(1500, F60) == 2, "升档：中途一帧掉帧把连续计数清零 → 30 秒内不升");
     // 防抖：刚升上去 15 秒内又被打回 → 下一次升要 45 窗
     // Debounce: knocked back within 15 s of being raised → the next raise needs 45 windows
