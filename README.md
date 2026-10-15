@@ -1,10 +1,10 @@
 # D2R Mobile
 
-**An open-source iOS / macOS compatibility layer for Diablo II: Resurrected with the Reign of the Warlock expansion.** It brings the Nintendo Switch release you bought, expansion included, to iPhone, iPad and Mac in full: the original game code runs natively, every control is rebuilt for touch, the frame rate holds at 60 fps, and you are in a game one second after the main menu. There is now a native macOS version as well (first version): on an Apple silicon Mac it starts on double-click and works with keyboard, mouse and gamepad.
+**An open-source iOS / macOS compatibility layer for Diablo II: Resurrected with the Reign of the Warlock expansion.** It brings the Nintendo Switch release you bought, expansion included, to iPhone, iPad and Mac in full: the original game code runs natively, every control is rebuilt for touch, the frame rate holds at 60 fps, and you are in a game one second after the main menu. There is now a native macOS version as well (first version): on an Apple silicon Mac it starts on double-click and works with keyboard, mouse and gamepad. Apple TV 4K (3rd generation, A15) has a community port (developer preview) that has reached the character-selection screen only on its author's device; see the device table below.
 
 This is not a tech demo that "sort of runs". It is a mobile version polished for daily play, from your first character all the way through the endgame.
 
-Platforms: iPhone / iPad (iOS 26 and later; iOS 18 – 25 with the older-API build) · Mac (Apple silicon, macOS 26 or later; macOS 15 – 25 with the older-API build) · Game version: Switch release with Reign of the Warlock, 1.0.34.0 (corresponds to PC version 3.3.94012) · English / 中文 · License: MIT · **Bring your own game files**
+Platforms: iPhone / iPad (iOS 26 and later; iOS 18 – 25 with the older-API build) · Mac (Apple silicon, macOS 26 or later; macOS 15 – 25 with the older-API build) · Apple TV 4K (3rd generation, A15; community port, developer preview) · Game version: Switch release with Reign of the Warlock, 1.0.34.0 (corresponds to PC version 3.3.94012) · English / 中文 · License: MIT · **Bring your own game files**
 
 中文: [README.zh-CN.md](README.zh-CN.md)
 
@@ -299,7 +299,7 @@ Download our prebuilt "shell" package (`D2RMobile-shell-build-input.zip`; `D2RMo
 - For the items marked not verified, tell us whether they worked. Either answer helps.
 - To change the code, get the test entry points above passing first. Every change has to pass the regression gates.
 
-**Taking it to other platforms:** this approach is not limited to iPhone and iPad. Apple silicon Macs already have a native version (see "Playing directly on a Mac" above), built from the same game program and the same host. Android phones use the same class of processor, so the game program executes natively there as well, and the route is fully open: the only parts to replace are the sides of the host and the graphics layer that face the platform. The author has no Android phone at hand, and would love to see someone bring it to Android.
+**Taking it to other platforms:** this approach is not limited to iPhone and iPad. Apple silicon Macs already have a native version (see "Playing directly on a Mac" above), built from the same game program and the same host; Apple TV also has a community port (developer preview, see the device table). Android phones use the same class of processor, so the game program executes natively there as well, and the route is fully open: the only parts to replace are the sides of the host and the graphics layer that face the platform. The author has no Android phone at hand, and would love to see someone bring it to Android.
 
 **Taking it to other games:** someone has already tried other Switch games on the same host. The host has some behaviour that is on by default on iOS and was written for this one game; another game runs into these first, so turn them off or move them out before you start:
 
