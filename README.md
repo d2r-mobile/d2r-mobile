@@ -1,15 +1,15 @@
-# D2R Mobile
+# D2R Mobile · Diablo II: Resurrected for iPhone, iPad & Mac
 
-**An open-source iOS / macOS compatibility layer for Diablo II: Resurrected with the Reign of the Warlock expansion.** It brings the Nintendo Switch release you bought, expansion included, to iPhone, iPad and Mac in full: the original game code runs natively, every control is rebuilt for touch, the frame rate holds at 60 fps, and you are in a game one second after the main menu. There is now a native macOS version as well (first version): on an Apple silicon Mac it starts on double-click and works with keyboard, mouse and gamepad. Apple TV 4K (3rd generation, A15) has a community port (developer preview) that has reached the character-selection screen only on its author's device; see the device table below.
+**Play Diablo II: Resurrected offline on iPhone, iPad and Apple silicon Mac.** Native ARM code, Metal graphics, touch controls and the Reign of the Warlock expansion. Bring your own Nintendo Switch game files.
 
-This is not a tech demo that "sort of runs". It is a mobile version polished for daily play, from your first character all the way through the endgame.
+Drag to aim. Make Runewords in one tap. Clear Hell, then take on 100 levels of Greater Rift and a 12-stage Boss Rush. Play with touch or a controller; the native Mac app also supports keyboard and mouse.
 
-Platforms: iPhone / iPad (iOS 26 and later; iOS 18 – 25 with the older-API build) · Mac (Apple silicon, macOS 26 or later; macOS 15 – 25 with the older-API build) · Apple TV 4K (3rd generation, A15; community port, developer preview) · Game version: Switch release with Reign of the Warlock, 1.0.34.0 (corresponds to PC version 3.3.94012) · English / 中文 · License: MIT · **Bring your own game files**
+**[Build & install](#getting-started)** · [Supported devices](#which-devices-are-supported) · [Releases](https://github.com/d2r-mobile/d2r-mobile/releases) · [中文](README.zh-CN.md)
 
-中文: [README.zh-CN.md](README.zh-CN.md)
+MIT · English / 中文 · iOS 26+ / macOS 26+; older-API builds support iOS 18+ / macOS 15+. Apple TV 4K has a [community developer preview](dm/tvos/README.md), verified through character selection only.
 
 <p align="center">
-  <img src="https://github.com/d2r-mobile/d2r-mobile/releases/download/assets/hero_en.jpg" width="100%" alt="The game filling the whole edge-to-edge screen of an iPhone: Harrogath on Hell, with the red portal to the Greater Rift">
+  <img src="https://github.com/d2r-mobile/d2r-mobile/releases/download/assets/hero_en.jpg" width="100%" alt="Diablo II: Resurrected running natively on iPhone, with Harrogath and the red portal to the Greater Rift">
 </p>
 <p align="center">
   <img src="https://github.com/d2r-mobile/d2r-mobile/releases/download/assets/en_boss.jpg" width="49%" alt="Touch combat with the boss health bar pinned to the top">
@@ -18,7 +18,9 @@ Platforms: iPhone / iPad (iOS 26 and later; iOS 18 – 25 with the older-API bui
 
 | Locked 60 fps | 10 h battery | 1-tap Runewords | 100-level Greater Rift | Uber Boss Rush | 1 s to play |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| No drops once the phone warms up | Per charge, in power saver mode | Long-press a base, socket every rune | Skill cap rises from 20 to 40 | 12 stages, Diablo Clone to the Ubers | From the main menu into a game |
+| No drops once the phone warms up | Per charge, in power saver mode | Long-press a base, socket every rune | Skill cap rises from 20 to 40 | 12 stages, ending with Diablo Clone and the Ubers | From the main menu into a game |
+
+Performance readings are from iPhone 17 Pro Max. Battery life is estimated from measured power use at 30 fps. [Measurement conditions](#speed-and-battery).
 
 ## Build it with one sentence
 
@@ -352,4 +354,4 @@ This project stands on the open-source work below. Thank you to its authors and 
 
 MIT, see [LICENSE](LICENSE). Third-party code keeps its own license in its own directory; see [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md).
 
-If D2R Mobile runs on your phone, a ⭐ helps the next player find it.
+**⭐ Star D2R Mobile to help the next player find it.**

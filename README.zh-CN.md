@@ -1,12 +1,12 @@
-# D2R Mobile
+# D2R Mobile · 在 iPhone、iPad 和 Mac 上玩《暗黑破坏神 II：狱火重生》
 
-**开源的《暗黑破坏神 II：狱火重生》术士君临 iOS / macOS 兼容层。** 把你自己购买的 Nintendo Switch 版游戏（含「术士君临」资料片）完整带到 iPhone、iPad 和 Mac 上：原版内核原生执行，整套操作为触屏重做，稳定 60 帧，一秒进局。现在也有原生的 macOS 版（第一版）：Apple 芯片的 Mac 上双击启动，键盘、鼠标、手柄都能用。Apple TV 4K（第三代 A15）有社区移植（开发者预览），只在作者的实机上到过职业选择画面，详见下面的设备表。
+**用你自己的 Nintendo Switch 版游戏文件，在 iPhone、iPad 和 Apple 芯片 Mac 上离线玩《暗黑破坏神 II：狱火重生》。** 包含「术士君临」资料片，原版程序原生执行，图形走 Metal，支持触屏和手柄。
 
-这不是一个「勉强能跑」的技术演示，而是一个打磨到可以天天玩、从开荒一路玩到终局的移动版。
+拖动瞄准，一键镶好符文之语。打通地狱，再挑战 100 层大秘境和 12 关首领连战。Mac 上还能用键盘和鼠标操作。
 
-平台：iPhone / iPad（iOS 26 起；iOS 18 – 25 用老接口版）· Mac（Apple 芯片，macOS 26 及以上；macOS 15 – 25 用老接口版）· Apple TV 4K（第三代 A15，社区移植，开发者预览）· 游戏版本：Switch 版「术士君临」1.0.34.0（对应 PC 版 3.3.94012）· 中文 / English · 许可证：MIT · **需要自备游戏文件**
+**[构建与安装](#开始使用)** · [支持哪些设备](#支持哪些设备) · [发布页](https://github.com/d2r-mobile/d2r-mobile/releases) · [English](README.md)
 
-English: [README.md](README.md)
+MIT · 中文 / English · iOS 26+ / macOS 26+；老接口版支持 iOS 18+ / macOS 15+。Apple TV 4K 有[社区开发者预览版](dm/tvos/README.md)，目前只验证到职业选择画面。
 
 <p align="center">
   <img src="https://github.com/d2r-mobile/d2r-mobile/releases/download/assets/hero_zh.jpg" width="100%" alt="iPhone 上全面屏铺满的游戏画面：地狱难度的哈洛加斯，红门通往秘境">
@@ -19,6 +19,8 @@ English: [README.md](README.md)
 | 满帧 60 fps | 续航 10 小时 | 一键符文之语 | 100 层大秘境 | 终局首领连战 | 1 秒进局 |
 |:---:|:---:|:---:|:---:|:---:|:---:|
 | 热机不掉帧 | 省电模式，一次充电 | 长按底材，符文一键全镶 | 技能上限 20 → 40 | 12 关，超级三首领压轴 | 主菜单到开打只要一秒 |
+
+性能数据来自 iPhone 17 Pro Max；续航由 30 帧省电模式的实测功耗估算。完整条件见[速度与续航](#速度与续航)。
 
 ## 一句话复刻
 
@@ -352,4 +354,4 @@ DM_MAC_M3=1 dm/tools/mac_app.sh      # macOS 15 – 25：产出 D2R Mobile M3.ap
 
 MIT，见 [LICENSE](LICENSE)。第三方代码各自的许可证在其目录内，见 [docs/DEPENDENCIES.zh-CN.md](docs/DEPENDENCIES.zh-CN.md)。
 
-装好能玩的话，点个 ⭐，让下一位玩家找得到它。
+**⭐ 点个 Star，让下一位暗黑玩家找到 D2R Mobile。**
