@@ -49,9 +49,9 @@ int dm_touch_host_world_active(void) {
 // ---- 真鼠标（Mac App，front_mac.m）：事件来自前端而不是脚本表。界面沿用触屏状态机，世界点击在按下时直接点选。界面用原版手柄 HUD，屏上没有触屏圆钮与摇杆：
 // 非面板态一个按钮目标都不开、左下角不起摇杆（点到目标走过去交互，点空地走过去）；面板态照旧（点控件、页签、物品格）。
 // 前端页（主菜单 / 选角 / 建角，不在局内）不经状态机，触点直接当界面点击（同 iOS 前端的 frontendMode）。
-// ---- Real mouse (Mac App, front_mac.m): events come from the front end rather than the script table. UI gestures use the touch state machine; world clicks pick directly on down. The UI is the original gamepad HUD, with no touch buttons or stick on screen:
-// outside panels no button target is opened and no stick is raised at the bottom left (clicking a target walks over and interacts, clicking empty ground walks there); in panels it works as before (clicking controls, tabs, item cells).
-// Front-end pages (main menu / character select / character creation, not in a game) bypass the state machine and the touch point is taken directly as a UI click (same as frontendMode in the iOS front end).
+// ---- Real mouse (Mac App, front_mac.m): events come from the front end, not a script table. The UI reuses the touch state machine, and world clicks pick on press. The UI uses the original controller HUD, with no touch buttons or stick on screen:
+// outside panels no button targets are enabled and the lower-left corner does not start a stick (click a target to walk over and interact, click empty ground to walk there); inside panels it works as before (widgets, tabs, item cells).
+// Front-end pages (main menu / character select / character creation, not in game) bypass the state machine and touches are UI clicks directly (same as frontendMode on the iOS front end).
 #include <stdatomic.h>
 static uint32_t g_live_tick0; static int g_live_based; static uint64_t g_live_btn; static uint32_t g_live_btn_until;
 static struct { _Atomic unsigned head, tail; struct { int op; float nx, ny; } q[64]; } g_live;
@@ -249,8 +249,8 @@ void dm_touch_host_step(uint64_t now, uint64_t *buttons, int32_t *lx, int32_t *l
         }
         // 空地答案一到就走；按住时每 30 Hz 拍更新目的地，不再等 0.3 秒起步、每 0.2 秒转向。
         // 面板、暂停或离局会取消这一笔世界手势，直到抬起都不交给界面。
-        // Walk as soon as the ground answer arrives; update the held destination every 30 Hz tick, without the 0.3 s start delay or 0.2 s steering interval.
-        // A panel, pause or game exit cancels this world gesture; consume it through release rather than handing it to the UI.
+        // Walk as soon as the empty-ground answer arrives; while held, update the destination every 30 Hz tick instead of waiting 0.3 s to start and steering every 0.2 s.
+        // A panel, pause or leaving the game cancels this world gesture, and nothing is handed to the UI until release.
         { void dm_world_walk(float, float); int dm_world_tap_result(unsigned), dm_game_paused(void); uint32_t tk = touch_cur_tick();
           dm_tc_set_joy_block(&g_touch.state, 1);
           if (!in || g_touch.state.navigation_mode || dm_game_paused()) { g_lm.down = g_lm.repeat = 0; g_lm.tap_seq = 0; }
