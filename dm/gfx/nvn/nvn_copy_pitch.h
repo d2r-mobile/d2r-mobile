@@ -4,7 +4,6 @@
 
 // 两个方向共享字节间距；零表示紧排，在访问内存池前拒绝无效或溢出的范围。
 // Both copy directions use the same recorded byte strides. Zero selects tight
-// packing; reject invalid or overflowing ranges before addressing a memory pool.
 static inline int nvn_copy_pitch(int width, int height, int depth, int bw, int bh,
                                 int bpb, int64_t row_stride, int64_t image_stride,
                                 size_t *row, size_t *image, size_t *extent) {

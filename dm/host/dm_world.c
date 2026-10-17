@@ -425,9 +425,9 @@ static void w_walk_step(uint8_t *b) {
 // ---- Mac 鼠标：点怪 = 攻击 ----
 // 发令走游戏自己的点击入口（同 w_interact：手柄主键与键鼠左键共用的 main+0x4ace20，带上这只怪当指定目标）：近战它自己走过去打，主键上绑的是技能就对它放那个技能，不另写攻击逻辑。
 // 按住不放时 touch_mac.c 每 30 Hz 拍更新「朝光标走」（dm_world_walk）：敌对怪改成攻击（追着打），重复攻击仍至少间隔 0.2 秒，不是怪才走路。
-// ---- Mac mouse: clicking a monster = attack ----
-// The order goes through the game's own click entry (same as w_interact: main+0x4ace20, shared by the gamepad main button and the keyboard-and-mouse left button, with this monster as the designated target): for melee it walks over and hits by itself, and if a skill is bound to the main button it uses that skill on it; no separate attack logic is written.
-// While held, touch_mac.c updates "walk towards the pointer" every 30 Hz tick (dm_world_walk): a hostile monster becomes an attack (chasing it), with repeat attacks still at least 0.2 s apart; only otherwise is it walking.
+// ---- Mac mouse: click a monster = attack ----
+// Issued through the game's own click entry (same as w_interact: main+0x4ace20, shared by the controller main button and the keyboard/mouse left button, with this monster as the explicit target): melee walks over and hits; if the main button is bound to a skill, that skill is cast on it; no separate attack logic.
+// While held, touch_mac.c updates "walk toward the cursor" (dm_world_walk) every 30 Hz tick: a hostile monster turns into an attack (chasing it), repeated attacks are still at least 0.2 s apart, and only non-monsters mean walking.
 static _Atomic int g_tap_mouse;
 unsigned dm_world_click(float nx, float ny) { atomic_store(&g_tap_mouse, 1); return dm_world_tap(nx, ny); }   // 任意线程：鼠标左键点世界（比触屏的点按多认敌对怪） | any thread: left mouse click on the world (recognises hostile monsters in addition to what a touch tap does)
 // 世界泵早于鼠标 hook：消费前也要取消暂停、面板或离局期间排队的鼠标指令，触屏/脚本点按不动。
