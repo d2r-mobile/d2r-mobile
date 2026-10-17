@@ -1416,7 +1416,12 @@ void front_ios_lifecycle_install(void) {
     if (NSProcessInfo.processInfo.thermalState >= NSProcessInfoThermalStateSerious) thermal_apply();   // 启动时已经热 | Already hot at launch
 
     AVAudioSession *as = AVAudioSession.sharedInstance; NSError *e = nil;
-    if (![as setCategory:AVAudioSessionCategoryPlayback error:&e] || ![as setActive:YES error:&e]) LOG("前端：音频会话设置失败 %s", e.localizedDescription.UTF8String);
+    // 类别 Playback：静音开关开着也出声。带 MixWithOthers：Playback 缺省是独占的，激活会话会打断别的 App 的声音——
+    // #77：游戏在前台时 ChatGPT 实时语音 / 屏幕共享、后台音乐都被打断，切走就恢复，游戏音量调到 0 也一样（打断发生在激活会话那一下，与音量无关）
+    // Category Playback: sound plays with the silent switch on. With MixWithOthers: Playback is non-mixable by default, and activating the session interrupts other apps' audio —
+    // #77: with the game in the foreground, ChatGPT live voice / screen sharing and background music were interrupted and came back when switching away, even with the in-game volume at 0 (the interruption happens when the session is activated, regardless of volume)
+    if (![as setCategory:AVAudioSessionCategoryPlayback withOptions:AVAudioSessionCategoryOptionMixWithOthers error:&e] || ![as setActive:YES error:&e]) LOG("前端：音频会话设置失败 %s", e.localizedDescription.UTF8String);
+    LOG("前端：音频会话 类别 %s 选项 %#lx（MixWithOthers %s）、别的 App 正在出声 %d", as.category.UTF8String, (unsigned long)as.categoryOptions, (as.categoryOptions & AVAudioSessionCategoryOptionMixWithOthers) ? "开" : "关", as.isOtherAudioPlaying);
     [nc addObserverForName:AVAudioSessionInterruptionNotification object:as queue:mq usingBlock:^(NSNotification *n) {
         AVAudioSessionInterruptionType t = [n.userInfo[AVAudioSessionInterruptionTypeKey] unsignedIntegerValue];
         if (t == AVAudioSessionInterruptionTypeBegan) { LOG("前端：音频被打断"); g_audio_intr = 1; audio_apply(); return; }
@@ -1430,7 +1435,7 @@ void front_ios_lifecycle_install(void) {
     [nc addObserverForName:AVAudioSessionRouteChangeNotification object:as queue:mq usingBlock:^(NSNotification *n) {
         double mtl_link_tick_age_ms(void);
         LOG("前端：音频路由变化 原因 %lu（显示节拍上次回调 %.0f ms 前）", (unsigned long)[n.userInfo[AVAudioSessionRouteChangeReasonKey] unsignedIntegerValue], mtl_link_tick_age_ms()); }];
-    LOG("前端：生命周期 / 过热 / 音频会话已接（类别 Playback）");
+    LOG("前端：生命周期 / 过热 / 音频会话已接（类别 Playback，与别的 App 混音）");
     // 测试开关 DM_TEST_AUDIO_INTERRUPT=起始秒,时长秒：按时向本进程投递音频会话打断开始 / 结束（带 ShouldResume），模拟来电 / 闹钟；
     // 结束后 2 s 打出声卡回调增量（真出声 DM_AUDIO=1 时应 > 0）
     // 测试开关 DM_TEST_BG=起始秒,时长秒[;起始秒,时长秒…]：应用内模拟「进后台 → 回前台」（可排几组）——先暂停显示节拍（模仿系统停回调），再走与真实场景事件同一个处理函数。
