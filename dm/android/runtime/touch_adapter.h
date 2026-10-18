@@ -38,6 +38,21 @@ extern "C" {
 // rejected with 0 before they touch core state; read/cancel operations remain
 // available so the consumer can drain. This is explicit backpressure, not an
 // unbounded queue and not a silent drop.
+//
+// A core pulse with a non-zero pulse_hold_s (inventory hold-Y, belt hold, etc.)
+// is queued with its hold duration. The standalone adapter starts that hold
+// clock on the first dm_android_touch_read of the pulse, using the last accepted
+// timestamp; ticks before the first read cannot expire it. While the deadline
+// has not passed, repeated reads keep returning the held button; a tick at or
+// after the deadline releases it (with a neutral read before a same-button
+// successor). This is a standalone consumption boundary, not an acknowledgement
+// of real guest/cursor delivery, and no such acknowledgement is invented.
+// When the ring is full, a tick may still expire an already observed timed head
+// so the held key can release and the queue can drain; an unobserved head stays
+// queued for its full first-read hold. New mutating input remains rejected while
+// the ring is full.
+// Zero-hold release-to-cast pulses keep their existing one-read ordering and
+// same-button neutral separation.
 #define DM_ANDROID_TOUCH_PULSE_CAPACITY 16
 
 typedef struct dm_android_touch dm_android_touch;
