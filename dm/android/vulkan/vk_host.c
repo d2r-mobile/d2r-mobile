@@ -1,10 +1,17 @@
 // Vulkan 设备与单队列初始化；Apple 验证时显式启用 portability，Android 直接用原生 Vulkan loader。
 // Vulkan device / single-queue initialization; explicitly enable portability for Apple verification, use native Vulkan loader on Android.
 #include "vk_host.h"
+#if defined(__ANDROID__)
+#include <android/native_window.h>
+#include <vulkan/vulkan_android.h>
+#endif
 #include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME
+#define VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME "VK_KHR_portability_subset"
+#endif
 
 #define DM_VK_VALIDATION_LAYER "VK_LAYER_KHRONOS_validation"
 
@@ -65,6 +72,134 @@ static int dm_instance_extension_present(const char *name) {
             if (!strcmp(p[i].extensionName, name)) { found = 1; break; }
     free(p);
     return found;
+}
+
+static int dm_device_extension_present(VkPhysicalDevice physical, const char *name) {
+    uint32_t count = 0;
+    if (vkEnumerateDeviceExtensionProperties(physical, NULL, &count, NULL) != VK_SUCCESS || !count) return 0;
+    VkExtensionProperties *props = calloc(count, sizeof *props);
+    if (!props) return 0;
+    int found = 0;
+    if (vkEnumerateDeviceExtensionProperties(physical, NULL, &count, props) == VK_SUCCESS)
+        for (uint32_t i = 0; i < count; i++)
+            if (!strcmp(props[i].extensionName, name)) { found = 1; break; }
+    free(props);
+    return found;
+}
+
+VkResult dm_vk_create_present(const dm_vk_present_options *options, dm_vk *out) {
+    if (!out) return VK_ERROR_INITIALIZATION_FAILED;
+    memset(out, 0, sizeof *out);
+    if (!options || options->struct_size != sizeof *options || !options->window)
+        return VK_ERROR_INITIALIZATION_FAILED;
+#ifndef __ANDROID__
+    if (!options->create_surface) return VK_ERROR_EXTENSION_NOT_PRESENT;
+#endif
+    if (!dm_instance_extension_present(VK_KHR_SURFACE_EXTENSION_NAME))
+        return VK_ERROR_EXTENSION_NOT_PRESENT;
+#ifdef __ANDROID__
+    if (!options->create_surface && !dm_instance_extension_present(VK_KHR_ANDROID_SURFACE_EXTENSION_NAME))
+        return VK_ERROR_EXTENSION_NOT_PRESENT;
+#endif
+    dm_vk vk = {0};
+    const char *instance_extensions[4];
+    uint32_t instance_extension_count = 0;
+    instance_extensions[instance_extension_count++] = VK_KHR_SURFACE_EXTENSION_NAME;
+#ifdef __ANDROID__
+    if (!options->create_surface) instance_extensions[instance_extension_count++] = VK_KHR_ANDROID_SURFACE_EXTENSION_NAME;
+#endif
+    int portability = dm_instance_extension_present(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+    if (portability) instance_extensions[instance_extension_count++] = VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME;
+    VkResult result = vkEnumerateInstanceVersion(&vk.api_version);
+    if (result != VK_SUCCESS) vk.api_version = VK_API_VERSION_1_0;
+    uint32_t requested_api = VK_API_VERSION_1_1;
+    if (vk.api_version < requested_api) requested_api = vk.api_version;
+    VkApplicationInfo app = {.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
+        .pApplicationName = "D2R present Vulkan foundation", .apiVersion = requested_api};
+    VkInstanceCreateInfo create = {.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO, .pApplicationInfo = &app,
+        .flags = portability ? VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR : 0,
+        .enabledExtensionCount = instance_extension_count, .ppEnabledExtensionNames = instance_extensions};
+    result = vkCreateInstance(&create, NULL, &vk.instance);
+    if (result != VK_SUCCESS) return result;
+
+    if (options->create_surface) {
+        result = options->create_surface(vk.instance, options->window, &vk.surface);
+    } else {
+#ifdef __ANDROID__
+        PFN_vkCreateAndroidSurfaceKHR make = (PFN_vkCreateAndroidSurfaceKHR)
+            vkGetInstanceProcAddr(vk.instance, "vkCreateAndroidSurfaceKHR");
+        if (!make) { result = VK_ERROR_EXTENSION_NOT_PRESENT; }
+        else {
+            VkAndroidSurfaceCreateInfoKHR surface_info = {.sType = VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR,
+                .window = (ANativeWindow *)options->window};
+            result = make(vk.instance, &surface_info, NULL, &vk.surface);
+        }
+#else
+        result = VK_ERROR_EXTENSION_NOT_PRESENT;
+#endif
+    }
+    if (result != VK_SUCCESS || !vk.surface) {
+        if (result == VK_SUCCESS) result = VK_ERROR_INITIALIZATION_FAILED;
+        dm_vk_destroy(&vk);
+        return result;
+    }
+    vk.surface_owned = 1;
+
+    uint32_t count = 0;
+    result = vkEnumeratePhysicalDevices(vk.instance, &count, NULL);
+    if (result != VK_SUCCESS || !count) {
+        if (result == VK_SUCCESS) result = VK_ERROR_FEATURE_NOT_PRESENT;
+        dm_vk_destroy(&vk);
+        return result;
+    }
+    VkPhysicalDevice *devices = calloc(count, sizeof *devices);
+    if (!devices) { dm_vk_destroy(&vk); return VK_ERROR_OUT_OF_HOST_MEMORY; }
+    result = vkEnumeratePhysicalDevices(vk.instance, &count, devices);
+    for (uint32_t i = 0; result == VK_SUCCESS && i < count && !vk.physical; i++) {
+        if (!dm_device_extension_present(devices[i], VK_KHR_SWAPCHAIN_EXTENSION_NAME)) continue;
+        uint32_t families_count = 0;
+        vkGetPhysicalDeviceQueueFamilyProperties(devices[i], &families_count, NULL);
+        VkQueueFamilyProperties *families = calloc(families_count ? families_count : 1, sizeof *families);
+        if (!families) { result = VK_ERROR_OUT_OF_HOST_MEMORY; break; }
+        vkGetPhysicalDeviceQueueFamilyProperties(devices[i], &families_count, families);
+        for (uint32_t q = 0; q < families_count; q++) {
+            VkQueueFlags need = VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT;
+            if (!families[q].queueCount || (families[q].queueFlags & need) != need) continue;
+            VkBool32 supported = VK_FALSE;
+            if (vkGetPhysicalDeviceSurfaceSupportKHR(devices[i], q, vk.surface, &supported) == VK_SUCCESS && supported) {
+                vk.physical = devices[i]; vk.family = q; break;
+            }
+        }
+        free(families);
+    }
+    free(devices);
+    if (result != VK_SUCCESS) { dm_vk_destroy(&vk); return result; }
+    if (!vk.physical) { dm_vk_destroy(&vk); return VK_ERROR_FEATURE_NOT_PRESENT; }
+
+    vkGetPhysicalDeviceProperties(vk.physical, &vk.properties);
+    vk.driver_api_version = vk.properties.apiVersion;
+    vk.driver_version = vk.properties.driverVersion;
+    vkGetPhysicalDeviceMemoryProperties(vk.physical, &vk.memory);
+    const char *device_extensions[2];
+    uint32_t device_extension_count = 0;
+    device_extensions[device_extension_count++] = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
+    int portability_subset = dm_device_extension_present(vk.physical, VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME);
+    if (portability_subset) device_extensions[device_extension_count++] = VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME;
+    float priority = 1;
+    VkDeviceQueueCreateInfo queue = {.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+        .queueFamilyIndex = vk.family, .queueCount = 1, .pQueuePriorities = &priority};
+    VkDeviceCreateInfo device = {.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+        .queueCreateInfoCount = 1, .pQueueCreateInfos = &queue,
+        .enabledExtensionCount = device_extension_count, .ppEnabledExtensionNames = device_extensions};
+    result = vkCreateDevice(vk.physical, &device, NULL, &vk.device);
+    if (result != VK_SUCCESS) { dm_vk_destroy(&vk); return result; }
+    vkGetDeviceQueue(vk.device, vk.family, 0, &vk.queue);
+    VkCommandPoolCreateInfo pool = {.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        .queueFamilyIndex = vk.family, .flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT};
+    result = vkCreateCommandPool(vk.device, &pool, NULL, &vk.pool);
+    if (result != VK_SUCCESS) { dm_vk_destroy(&vk); return result; }
+    *out = vk;
+    return VK_SUCCESS;
 }
 
 VkResult dm_vk_create(dm_vk *out) { return dm_vk_create_ex(NULL, out); }
@@ -220,6 +355,9 @@ void dm_vk_destroy(dm_vk *vk) {
         vkDeviceWaitIdle(vk->device);
         if (vk->pool) vkDestroyCommandPool(vk->device, vk->pool, NULL);
         vkDestroyDevice(vk->device, NULL);
+    }
+    if (vk->instance && vk->surface && vk->surface_owned) {
+        vkDestroySurfaceKHR(vk->instance, vk->surface, NULL);
     }
     if (vk->instance) {
         if (vk->messenger) {   // messenger 必须先于实例销毁 | the messenger must go before the instance

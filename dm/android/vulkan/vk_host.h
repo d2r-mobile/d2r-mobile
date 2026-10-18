@@ -24,6 +24,8 @@ typedef struct {
 typedef struct {
     VkInstance instance; VkPhysicalDevice physical; VkDevice device; VkQueue queue;
     uint32_t family; VkCommandPool pool;
+    VkSurfaceKHR surface;            // 仅 present init 拥有；离屏为 NULL | owned only by present init; NULL offscreen
+    int surface_owned;               // surface 由本上下文创建并负责销毁 | created and owned by this context
     VkPhysicalDeviceMemoryProperties memory;
     VkPhysicalDeviceProperties properties;
     // 验证诊断：仅当通过 dm_vk_create_ex 请求时分配（堆上，生命周期与实例一致）。
@@ -46,6 +48,20 @@ typedef struct { uint32_t width, height; uint8_t *bytes; size_t capacity; } dm_v
 // Host must serialize calls using the same context; complete all GPU jobs before destruction.
 VkResult dm_vk_create(dm_vk *out);
 VkResult dm_vk_create_ex(const dm_vk_options *options, dm_vk *out);   // 显式 opt-in 诊断；options == NULL 等价于 dm_vk_create
+
+// 显式 opt-in 的 surface/present 初始化。window 借用且不需要持久化；surface 在本实例上创建并由本上下文拥有。
+// 仅在 queue 同时支持 graphics/compute 与 surface present、且 VK_KHR_swapchain 可用时成功。
+// Explicit opt-in surface/present initialization. window is borrowed and need not outlive the call; the surface is
+// created on this context's instance and owned by it. Success requires a graphics+compute queue that presents to the
+// surface and VK_KHR_swapchain availability.
+typedef VkResult (*dm_vk_surface_factory)(VkInstance instance, void *window, VkSurfaceKHR *surface);
+typedef struct {
+    uint32_t struct_size;            // 必须是 sizeof(dm_vk_present_options) | must equal sizeof(dm_vk_present_options)
+    void *window;                    // Android ANativeWindow*；其他平台由 factory 解释 | Android ANativeWindow*, factory-interpreted elsewhere
+    dm_vk_surface_factory create_surface; // NULL = Android vkCreateAndroidSurfaceKHR；host 测试可注入 seam
+} dm_vk_present_options;
+#define DM_VK_PRESENT_OPTIONS_INIT { sizeof(dm_vk_present_options), NULL, NULL }
+VkResult dm_vk_create_present(const dm_vk_present_options *options, dm_vk *out);
 int dm_vk_validation_enabled(const dm_vk *vk);
 uint32_t dm_vk_validation_errors(const dm_vk *vk);
 uint32_t dm_vk_validation_warnings(const dm_vk *vk);
