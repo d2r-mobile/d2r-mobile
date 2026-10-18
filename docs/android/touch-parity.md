@@ -325,6 +325,30 @@ Mutants that restore dirty-gated external composition or pre-post
 acknowledgement fail the CPU test. Android ARM64 cross-builds the diagnostic
 shared library, CPU seam and live seam test.
 
+## Invalid touch reason diagnostics (#128)
+
+The bridge's existing `dm_touch_diag::invalid_events` total is unchanged. A
+fixed `dm_touch_invalid_reason` enum now classifies the existing `valid_event`
+rejects at the single decision point that also increments the total:
+time-negative, action-range, count-range, action-index, point-id-negative,
+coordinate-nonfinite, duplicate-id, unknown-pointer, pointer-already-owned and
+pointer-capacity. Each reason has a bounded `uint64_t` counter plus fixed
+first/last reason fields; no coordinates, pointer IDs, event text or private
+content is recorded. A reject still leaves acceptance/rejection counters,
+active ownership, timestamps, queued pulses and the snapshot unchanged.
+
+The native diagnostic status includes these bounded counts and the fixed
+first/last reason names only in the existing 250 ms/changed-state throttled log.
+This is observability, not acceptance: the historical Xiaomi run accumulated
+107 invalid events, but those events were not captured with per-event details
+and therefore cannot be retroactively classified. A future device reproduction
+is required to establish whether any specific stream is malformed; no device,
+game or total-touch acceptance is claimed here.
+
+Host tests drive distinct real bridge invalid cases, aggregate reasons against
+the unchanged total, verify ownership/output and valid retry after cancel/reused
+IDs, and retain the existing HID/action/portal tests.
+
 ## What remains unknown
 
 - Whether every source-backed Apple gesture has an exact game-visible equivalent

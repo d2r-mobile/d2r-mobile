@@ -41,6 +41,21 @@ typedef struct dm_touch_event {
     int64_t time_ns;
 } dm_touch_event;
 
+typedef enum dm_touch_invalid_reason {
+    DM_TOUCH_INVALID_NONE = 0,
+    DM_TOUCH_INVALID_TIME_NEGATIVE,
+    DM_TOUCH_INVALID_ACTION_RANGE,
+    DM_TOUCH_INVALID_COUNT_RANGE,
+    DM_TOUCH_INVALID_ACTION_INDEX,
+    DM_TOUCH_INVALID_POINT_ID_NEGATIVE,
+    DM_TOUCH_INVALID_COORDINATE_NONFINITE,
+    DM_TOUCH_INVALID_DUPLICATE_ID,
+    DM_TOUCH_INVALID_UNKNOWN_POINTER,
+    DM_TOUCH_INVALID_POINTER_ALREADY_OWNED,
+    DM_TOUCH_INVALID_POINTER_CAPACITY,
+    DM_TOUCH_INVALID_COUNT
+} dm_touch_invalid_reason;
+
 typedef struct dm_touch_diag {
     dm_npad_state state;
     uint64_t accepted_events;
@@ -50,7 +65,12 @@ typedef struct dm_touch_diag {
     uint64_t up_retries;
     uint64_t cancel_fallbacks;
     uint64_t diagnostic_reads;  /* consumed by this diagnostic bridge, not a guest HID */
+    uint64_t invalid_reason[DM_TOUCH_INVALID_COUNT]; /* fixed bounded counters */
+    dm_touch_invalid_reason first_invalid_reason;
+    dm_touch_invalid_reason last_invalid_reason;
 } dm_touch_diag;
+
+const char *dm_touch_invalid_reason_name(dm_touch_invalid_reason reason);
 
 typedef struct dm_touch_bridge dm_touch_bridge;
 

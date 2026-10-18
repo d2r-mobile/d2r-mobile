@@ -196,6 +196,118 @@ static void invalid_events(void) {
     dm_touch_bridge_destroy(b, NULL);
 }
 
+static uint64_t reason_count(dm_touch_bridge *bridge, dm_touch_invalid_reason reason) {
+    const dm_touch_diag *diag = dm_touch_bridge_diag(bridge);
+    return diag ? diag->invalid_reason[reason] : 0;
+}
+
+static int same_state(const dm_npad_state *a, const dm_npad_state *b) {
+    return a->attributes == b->attributes && a->buttons == b->buttons &&
+           a->lx == b->lx && a->ly == b->ly && a->rx == b->rx && a->ry == b->ry;
+}
+
+static void reject_with_reason(dm_touch_bridge *bridge, dm_touch_event *event,
+                               dm_touch_invalid_reason reason) {
+    dm_npad_state before = dm_touch_bridge_snapshot(bridge);
+    const dm_touch_diag *diag = dm_touch_bridge_diag(bridge);
+    uint64_t total = diag->invalid_events;
+    uint64_t reason_before = diag->invalid_reason[reason];
+    uint64_t accepted = diag->accepted_events;
+    uint64_t rejected = diag->rejected_events;
+    CHECK(!dm_touch_bridge_event(bridge, event));
+    CHECK(diag->invalid_events == total + 1);
+    CHECK(reason_count(bridge, reason) == reason_before + 1);
+    CHECK(diag->last_invalid_reason == reason);
+    CHECK(diag->accepted_events == accepted);
+    CHECK(diag->rejected_events == rejected);
+    dm_npad_state after = dm_touch_bridge_snapshot(bridge);
+    CHECK(same_state(&before, &after));
+}
+
+static void invalid_reason_coding(void) {
+    dm_touch_bridge *b = dm_touch_bridge_create(667, 375, 2.0f);
+    dm_touch_event e;
+    CHECK(b != NULL);
+
+    e = event(DM_TOUCH_ACTION_DOWN, 0, -1);
+    point(&e, 1, 100, 100, 2.0f);
+    reject_with_reason(b, &e, DM_TOUCH_INVALID_TIME_NEGATIVE);
+
+    e = event((dm_touch_action)99, 0, 2);
+    point(&e, 1, 100, 100, 2.0f);
+    reject_with_reason(b, &e, DM_TOUCH_INVALID_ACTION_RANGE);
+
+    e = event(DM_TOUCH_ACTION_DOWN, 0, 3);
+    reject_with_reason(b, &e, DM_TOUCH_INVALID_COUNT_RANGE);
+    e = event(DM_TOUCH_ACTION_DOWN, 0, 4);
+    e.pointer_count = DM_TOUCH_MAX_POINTS + 1;
+    reject_with_reason(b, &e, DM_TOUCH_INVALID_COUNT_RANGE);
+
+    e = event(DM_TOUCH_ACTION_DOWN, 5, 5);
+    point(&e, 1, 100, 100, 2.0f);
+    reject_with_reason(b, &e, DM_TOUCH_INVALID_ACTION_INDEX);
+
+    e = event(DM_TOUCH_ACTION_DOWN, 0, 6);
+    point(&e, -1, 100, 100, 2.0f);
+    reject_with_reason(b, &e, DM_TOUCH_INVALID_POINT_ID_NEGATIVE);
+
+    e = event(DM_TOUCH_ACTION_DOWN, 0, 7);
+    point(&e, 1, NAN, 100, 2.0f);
+    reject_with_reason(b, &e, DM_TOUCH_INVALID_COORDINATE_NONFINITE);
+
+    e = event(DM_TOUCH_ACTION_DOWN, 0, 8);
+    point(&e, 1, 100, 100, 2.0f);
+    point(&e, 1, 110, 110, 2.0f);
+    reject_with_reason(b, &e, DM_TOUCH_INVALID_DUPLICATE_ID);
+
+    e = event(DM_TOUCH_ACTION_MOVE, 0, 9);
+    point(&e, 77, 100, 100, 2.0f);
+    reject_with_reason(b, &e, DM_TOUCH_INVALID_UNKNOWN_POINTER);
+
+    e = event(DM_TOUCH_ACTION_UP, 0, 10);
+    point(&e, 77, 100, 100, 2.0f);
+    reject_with_reason(b, &e, DM_TOUCH_INVALID_UNKNOWN_POINTER);
+
+    down(b, 1, 100, 100, 11);
+    e = event(DM_TOUCH_ACTION_DOWN, 0, 12);
+    point(&e, 1, 100, 100, 2.0f);
+    reject_with_reason(b, &e, DM_TOUCH_INVALID_POINTER_ALREADY_OWNED);
+
+    e = event(DM_TOUCH_ACTION_DOWN, 0, 13);
+    point(&e, 2, 100, 100, 2.0f);
+    point(&e, 99, 110, 110, 2.0f);
+    reject_with_reason(b, &e, DM_TOUCH_INVALID_UNKNOWN_POINTER);
+
+    for (int32_t id = 2; id <= DM_TOUCH_MAX_POINTS; ++id) down(b, id, 100, 100, 14 + id);
+    e = event(DM_TOUCH_ACTION_DOWN, 0, 40);
+    point(&e, 17, 100, 100, 2.0f);
+    reject_with_reason(b, &e, DM_TOUCH_INVALID_POINTER_CAPACITY);
+
+    const dm_touch_diag *diag = dm_touch_bridge_diag(b);
+    uint64_t sum = 0;
+    for (int i = 0; i < DM_TOUCH_INVALID_COUNT; ++i) sum += diag->invalid_reason[i];
+    CHECK(sum == diag->invalid_events);
+    CHECK(diag->first_invalid_reason == DM_TOUCH_INVALID_TIME_NEGATIVE);
+    CHECK(diag->last_invalid_reason == DM_TOUCH_INVALID_POINTER_CAPACITY);
+    CHECK(strcmp(dm_touch_invalid_reason_name(diag->last_invalid_reason), "pointer_capacity") == 0);
+
+    /* Focus/cancel then MOVE: unknown-pointer reason, neutral output, valid retry. */
+    dm_touch_bridge *c = dm_touch_bridge_create(667, 375, 2.0f);
+    CHECK(c != NULL);
+    down(c, 42, 100, 100, 50);
+    CHECK(dm_touch_bridge_cancel_all(c, 51));
+    e = event(DM_TOUCH_ACTION_MOVE, 0, 52);
+    point(&e, 42, 100, 100, 2.0f);
+    reject_with_reason(c, &e, DM_TOUCH_INVALID_UNKNOWN_POINTER);
+    down(c, 42, 100, 100, 53); /* reused ID is accepted after cancel */
+    up(c, 42, 100, 100, 54);
+    CHECK(dm_touch_bridge_diag(c)->accepted_events == 3);
+    CHECK(dm_touch_bridge_diag(c)->invalid_events == 1);
+
+    dm_touch_bridge_destroy(b, NULL);
+    dm_touch_bridge_destroy(c, NULL);
+}
+
 static void timer_without_touch(void) {
     dm_touch_bridge *b = dm_touch_bridge_create(667, 375, 2.0f);
     dm_tc_layout layout;
@@ -1152,6 +1264,7 @@ int main(void) {
     CASE(cancel_without_points);
     CASE(malformed_event_sets);
     CASE(invalid_events);
+    CASE(invalid_reason_coding);
     CASE(timer_without_touch);
     CASE(ring_full_up_retry);
     CASE(cancel_clears_queued_pulses);
