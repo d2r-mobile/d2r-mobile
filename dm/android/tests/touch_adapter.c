@@ -38,6 +38,13 @@ static dm_npad_state read_pad(fixture *f) {
     return s;
 }
 
+static void belt_upper_point(const dm_tc_layout *l, int col, int row, float *x, float *y) {
+    const dm_tc_target *t = &l->target[DM_TC_BELT1 + col];
+    float u = l->height / 1320.0f;
+    *x = t->x;
+    *y = t->y - (165.0f + 162.0f * (row - 1)) * u;
+}
+
 static void tap(fixture *f, int32_t id, float x, float y, int64_t t) {
     CHECK(dm_android_touch_down(f->touch, id, x, y, t));
     CHECK(dm_android_touch_up(f->touch, id, t + 1000000));
@@ -560,6 +567,126 @@ static void held_second_set_skill_vs_belt(fixture *f) {
     s = read_pad(f); CHECK(s.buttons == 0);
 }
 
+/* Expanded upper belt rows through the adapter. rows/open come from the host
+   snapshot (dm_belt_rows); the request codes are the frozen upstream encoding
+   0x100 | row << 4 | col (row 1-3 above the bottom row), computed here from the
+   documented rule, not read back from the adapter. A request is consumed once;
+   a second take returns nothing. Bottom-row taps still drink, and a tap outside
+   the expanded belt asks the host to collapse without a world tap. */
+static void belt_context_expanded_rows(fixture *f) {
+    dm_npad_state s;
+    dm_android_touch_action a;
+    float x, y;
+    CHECK(dm_android_touch_set_belt_context(f->touch, 4, 1));
+    belt_upper_point(&f->layout, 1, 1, &x, &y);   /* row 1, column 1 */
+    CHECK(dm_android_touch_down(f->touch, 60, x, y, 17000000000));
+    s = read_pad(f); CHECK(s.buttons == 0);
+    CHECK(dm_android_touch_take_action(f->touch, &a));
+    CHECK(a.kind == DM_ANDROID_ACTION_BELT && (int)a.x == (0x100 | 1 << 4 | 1));
+    CHECK(!dm_android_touch_take_action(f->touch, &a));   /* one-shot */
+    CHECK(dm_android_touch_up(f->touch, 60, 17005000000));
+    CHECK(!dm_android_touch_take_action(f->touch, &a));
+    belt_upper_point(&f->layout, 3, 2, &x, &y);   /* row 2, column 3 */
+    CHECK(dm_android_touch_down(f->touch, 61, x, y, 17100000000));
+    CHECK(dm_android_touch_take_action(f->touch, &a));
+    CHECK(a.kind == DM_ANDROID_ACTION_BELT && (int)a.x == (0x100 | 2 << 4 | 3));
+    CHECK(!dm_android_touch_take_action(f->touch, &a));
+    CHECK(dm_android_touch_up(f->touch, 61, 17105000000));
+    /* bottom row while expanded = drink pulse, not a request */
+    CHECK(dm_android_touch_down(f->touch, 62, f->layout.target[DM_TC_BELT2].x,
+                                f->layout.target[DM_TC_BELT2].y, 17200000000));
+    s = read_pad(f); CHECK(s.buttons == 0);
+    CHECK(dm_android_touch_up(f->touch, 62, 17208000000));
+    s = read_pad(f); CHECK(s.buttons == DM_BTN_UP);
+    s = read_pad(f); CHECK(s.buttons == 0);
+    CHECK(!dm_android_touch_take_action(f->touch, &a));
+    /* tap outside the expanded belt = collapse request, no world tap */
+    CHECK(dm_android_touch_down(f->touch, 63, 100, 250, 17300000000));
+    CHECK(dm_android_touch_take_action(f->touch, &a));
+    CHECK(a.kind == DM_ANDROID_ACTION_BELT && (int)a.x == 2);
+    CHECK(dm_android_touch_up(f->touch, 63, 17305000000));
+    CHECK(!dm_android_touch_take_action(f->touch, &a));
+}
+
+/* Host-requested expand/collapse and context validation through the adapter:
+   only rows 1-4 and open 0/1 are accepted, before any mutation; rejected input
+   leaves the previous context in force. A real change neutralizes a held
+   pointer and its pulse, while cancel/focus/resize keep the host snapshot.
+   Expected request codes use the same frozen encoding as above. */
+static void belt_context_requests_validation_and_reset(fixture *f) {
+    dm_npad_state s;
+    dm_android_touch_action a;
+    dm_tc_layout wide;
+    float x, y, bx = f->layout.target[DM_TC_BELT1].x, by = f->layout.target[DM_TC_BELT1].y;
+    CHECK(dm_android_touch_set_belt_context(f->touch, 0, 0));   /* host reading empty: core default, single row */
+    /* invalid snapshots are rejected before mutation */
+    CHECK(!dm_android_touch_set_belt_context(NULL, 4, 0));
+    CHECK(!dm_android_touch_set_belt_context(f->touch, 5, 0));
+    CHECK(!dm_android_touch_set_belt_context(f->touch, -1, 0));
+    CHECK(!dm_android_touch_set_belt_context(f->touch, 4, 2));
+    CHECK(!dm_android_touch_set_belt_context(f->touch, 4, -1));
+    /* rows are still 0: a vertical swipe sends no request and no drink */
+    CHECK(dm_android_touch_down(f->touch, 70, bx, by, 17350000000));
+    CHECK(dm_android_touch_move(f->touch, 70, bx, by - 30, 17351000000));
+    CHECK(dm_android_touch_up(f->touch, 70, 17352000000));
+    s = read_pad(f); CHECK(s.buttons == 0);
+    CHECK(!dm_android_touch_take_action(f->touch, &a));
+    CHECK(dm_android_touch_set_belt_context(f->touch, 1, 0));
+    /* 4 rows, closed: swipe up asks the host to expand, exactly once */
+    CHECK(dm_android_touch_set_belt_context(f->touch, 4, 0));
+    CHECK(dm_android_touch_down(f->touch, 71, bx, by, 17360000000));
+    CHECK(dm_android_touch_move(f->touch, 71, bx, by - 30, 17361000000));
+    CHECK(dm_android_touch_up(f->touch, 71, 17362000000));
+    CHECK(dm_android_touch_take_action(f->touch, &a));
+    CHECK(a.kind == DM_ANDROID_ACTION_BELT && (int)a.x == 1);
+    CHECK(!dm_android_touch_take_action(f->touch, &a));
+    /* invalid open value while closed: an upper-row tap stays a world tap */
+    CHECK(!dm_android_touch_set_belt_context(f->touch, 4, 2));
+    CHECK(!dm_android_touch_set_belt_context(f->touch, 4, -1));
+    belt_upper_point(&f->layout, 1, 1, &x, &y);
+    CHECK(dm_android_touch_down(f->touch, 72, x, y, 17370000000));
+    CHECK(dm_android_touch_up(f->touch, 72, 17375000000));
+    CHECK(dm_android_touch_take_action(f->touch, &a));
+    CHECK(a.kind == DM_ANDROID_ACTION_WORLD_TAP);
+    CHECK(!dm_android_touch_take_action(f->touch, &a));
+    /* host applied the expand: the same tap now requests that exact cell */
+    CHECK(dm_android_touch_set_belt_context(f->touch, 4, 1));
+    CHECK(dm_android_touch_down(f->touch, 73, x, y, 17380000000));
+    CHECK(dm_android_touch_take_action(f->touch, &a));
+    CHECK(a.kind == DM_ANDROID_ACTION_BELT && (int)a.x == (0x100 | 1 << 4 | 1));
+    CHECK(dm_android_touch_up(f->touch, 73, 17385000000));
+    /* swipe down while open asks the host to collapse */
+    CHECK(dm_android_touch_down(f->touch, 74, bx, by, 17390000000));
+    CHECK(dm_android_touch_move(f->touch, 74, bx, by + 30, 17391000000));
+    CHECK(dm_android_touch_up(f->touch, 74, 17392000000));
+    CHECK(dm_android_touch_take_action(f->touch, &a));
+    CHECK(a.kind == DM_ANDROID_ACTION_BELT && (int)a.x == 2);
+    CHECK(!dm_android_touch_take_action(f->touch, &a));
+    /* a real context change cancels a held pointer: its up is no longer known */
+    CHECK(dm_android_touch_down(f->touch, 75, f->layout.target[DM_TC_BELT2].x,
+                                f->layout.target[DM_TC_BELT2].y, 17400000000));
+    s = read_pad(f); CHECK(s.buttons == 0);
+    CHECK(dm_android_touch_set_belt_context(f->touch, 4, 0));
+    CHECK(!dm_android_touch_move(f->touch, 75, bx, by, 17401000000));
+    CHECK(!dm_android_touch_up(f->touch, 75, 17402000000));
+    s = read_pad(f); CHECK(s.buttons == 0);
+    CHECK(!dm_android_touch_take_action(f->touch, &a));
+    /* cancel/focus and resize keep the host snapshot */
+    CHECK(dm_android_touch_set_belt_context(f->touch, 4, 1));
+    CHECK(dm_android_touch_focus_lost(f->touch, 17410000000));
+    CHECK(dm_android_touch_resume(f->touch, 17411000000));
+    s = read_pad(f); CHECK(s.buttons == 0);
+    CHECK(dm_android_touch_set_belt_context(f->touch, 4, 1));   /* same values: no-op */
+    CHECK(dm_android_touch_resize(f->touch, 812, 375, 17420000000));
+    s = read_pad(f); CHECK(s.buttons == 0 && s.attributes == 1);
+    dm_tc_layout_make(&wide, 812, 375);
+    belt_upper_point(&wide, 1, 1, &x, &y);
+    CHECK(dm_android_touch_down(f->touch, 76, x, y, 17430000000));
+    CHECK(dm_android_touch_take_action(f->touch, &a));
+    CHECK(a.kind == DM_ANDROID_ACTION_BELT && (int)a.x == (0x100 | 1 << 4 | 1));
+    CHECK(dm_android_touch_up(f->touch, 76, 17435000000));
+}
+
 int main(void) {
     CASE(two_ids_live);
     CASE(ids_are_not_slots);
@@ -589,6 +716,8 @@ int main(void) {
     CASE(cancel_and_resize_neutralize_owned_gestures);
     CASE(belt_tap_release_and_double_tap);
     CASE(held_second_set_skill_vs_belt);
+    CASE(belt_context_expanded_rows);
+    CASE(belt_context_requests_validation_and_reset);
     printf("PASS %d/%d cases; %d/%d checks\n", cases, cases, checks, checks);
     return 0;
 }

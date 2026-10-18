@@ -310,6 +310,20 @@ int dm_android_touch_set_game_context(dm_android_touch *touch, int navigation_mo
     return 1;
 }
 
+int dm_android_touch_set_belt_context(dm_android_touch *touch, int rows, int open) {
+    if (!touch || rows < 0 || rows > 4 || (open != 0 && open != 1)) return 0;
+    if (touch->state.belt_rows == rows && touch->state.belt_open == open) return 1;
+    /* A real context change is a gesture boundary: a finger pressed under the
+       old rows/open must not be resolved against the new one. Use the core's
+       cancel-all semantics (same path as scene/panel changes), then store the
+       host snapshot. Requests already produced stay one-shot in the core. */
+    release_all(touch);
+    touch->state.belt_rows = rows;
+    touch->state.belt_open = open;
+    publish(touch);
+    return 1;
+}
+
 int dm_android_touch_pointer_hit(dm_android_touch *touch, int32_t pointer_id, int kind) {
     if (!touch || pointer_id < 0 || kind < 0 || kind > 11) return 0;
     int slot = find_pointer(touch, pointer_id);
