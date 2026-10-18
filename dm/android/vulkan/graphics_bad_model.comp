@@ -1,0 +1,5 @@
+#version 450
+// 负例：计算模型不能冒充 VS。 | Negative: compute model cannot masquerade as VS.
+layout(local_size_x = 1) in;
+layout(set = 0, binding = 0, std430) buffer Out { uint v[]; } outbuf;
+void main() { outbuf.v[0] = 1u; }
