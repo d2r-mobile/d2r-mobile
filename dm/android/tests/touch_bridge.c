@@ -458,6 +458,209 @@ static void belt_action_null_and_context_retention(void) {
     dm_touch_bridge_destroy(b, NULL);
 }
 
+typedef struct {
+    uint64_t now;
+    uint64_t scene_epoch;
+    uint64_t world_epoch;
+    uint64_t object_generation;
+    uint64_t generation;
+    uint64_t ui_identity;
+    uint32_t module_id;
+    int scene;
+    int available;
+    int action_result;
+    int fail_on_call;
+    int snap_calls;
+    int actions;
+    int acked;
+    int rejected_action;
+    int last_kind;
+    float last_x;
+    float last_y;
+    uint64_t last_scene;
+    uint64_t last_generation;
+} provider_fixture;
+
+static int provider_snap(void *context, dm_tgp_snapshot *out) {
+    provider_fixture *f = context;
+    memset(out, 0, sizeof(*out));
+    f->snap_calls++;
+    if (f->fail_on_call > 0 && f->snap_calls == f->fail_on_call) return 0;
+    out->abi_version = DM_TGP_ABI_VERSION;
+    out->module_id = f->module_id;
+    out->generation = f->generation;
+    out->scene_epoch = f->scene_epoch;
+    out->world_epoch = f->world_epoch;
+    out->object_generation = f->object_generation;
+    out->captured_ns = f->now;
+    out->ui_identity = f->ui_identity;
+    out->available = f->available;
+    out->scene = f->scene;
+    out->dialogue_only = f->scene == DM_TGP_SCENE_DIALOG;
+    out->dead = f->scene == DM_TGP_SCENE_DEAD;
+    return 1;
+}
+
+static int provider_hit(void *context, float x, float y, dm_tgp_hit *out) {
+    provider_fixture *f = context;
+    (void)x; (void)y;
+    memset(out, 0, sizeof(*out));
+    out->valid = 1;
+    out->kind = DM_TGP_HIT_NONE;
+    out->object_generation = f->object_generation;
+    out->scene_epoch = f->scene_epoch;
+    return 1;
+}
+
+static int provider_action(void *context, const dm_tgp_action *action, uint64_t now_ns) {
+    provider_fixture *f = context;
+    (void)now_ns;
+    f->actions++;
+    f->last_kind = action->kind;
+    f->last_x = action->x;
+    f->last_y = action->y;
+    f->last_scene = action->scene_epoch;
+    f->last_generation = action->generation;
+    if (!f->action_result) { f->rejected_action++; return 0; }
+    f->acked++;
+    return 1;
+}
+
+static dm_tgp_provider provider_from(provider_fixture *f) {
+    dm_tgp_provider p;
+    memset(&p, 0, sizeof(p));
+    p.abi_version = DM_TGP_ABI_VERSION;
+    p.module_id = f->module_id;
+    p.generation = f->generation;
+    p.module_base = 0x10000;
+    p.module_size = 0x1000;
+    p.object_range_base = 0x20000;
+    p.object_range_size = 0x1000;
+    p.context = f;
+    p.snapshot = provider_snap;
+    p.hit = provider_hit;
+    p.action = provider_action;
+    return p;
+}
+
+static void provider_reset(provider_fixture *f) {
+    memset(f, 0, sizeof(*f));
+    f->scene_epoch = 1;
+    f->world_epoch = 1;
+    f->object_generation = 10;
+    f->generation = 10;
+    f->ui_identity = 5;
+    f->module_id = 7;
+    f->scene = DM_TGP_SCENE_GAME;
+    f->available = 1;
+    f->action_result = 1;
+}
+
+static void provider_belt_action_exactly_once(void) {
+    provider_fixture f;
+    provider_reset(&f);
+    dm_tgp_provider p = provider_from(&f);
+    dm_touch_bridge *b = dm_touch_bridge_create(667, 375, 2.0f);
+    dm_tc_layout layout;
+    dm_android_touch_action a;
+    dm_npad_state s;
+    float x, y;
+    CHECK(b != NULL);
+    CHECK(dm_touch_bridge_attach_game(b, &p));
+    CHECK(dm_touch_bridge_set_belt_context(b, 4, 1));
+    dm_tc_layout_make(&layout, 667, 375);
+    belt_upper_point(&layout, 1, 1, &x, &y);
+    f.now = 9000000000;
+    down(b, 51, x, y, 9000000000);
+    /* Actual outer event -> core belt request -> attached provider callback,
+       exactly once, with the player expanded-cell encoding and scene tag. */
+    CHECK(f.actions == 1 && f.acked == 1 && f.rejected_action == 0);
+    CHECK(f.last_kind == DM_TGP_ACTION_BELT && (int)f.last_x == (0x100 | 1 << 4 | 1));
+    CHECK(f.last_scene == 1 && f.last_generation == 10);
+    /* The standalone outlet defers to the attached provider; it cannot steal. */
+    CHECK(!dm_touch_bridge_take_action(b, &a));
+    f.now = 9001000000;
+    CHECK(dm_touch_bridge_tick(b, 9001000000));
+    CHECK(f.actions == 1 && f.acked == 1);   /* no duplicate dispatch */
+    up(b, 51, x, y, 9002000000);
+    /* Bottom row remains a pad pulse and never becomes a belt action. */
+    f.now = 9003000000;
+    tap(b, 52, layout.target[DM_TC_BELT2].x, layout.target[DM_TC_BELT2].y, 9003000000);
+    s = read_state(b); CHECK(s.buttons == DM_BTN_UP);
+    CHECK(f.actions == 1);
+    dm_touch_bridge_destroy(b, NULL);
+}
+
+static void provider_action_reject_not_acked(void) {
+    provider_fixture f;
+    provider_reset(&f);
+    f.action_result = 0;
+    dm_tgp_provider p = provider_from(&f);
+    dm_touch_bridge *b = dm_touch_bridge_create(667, 375, 2.0f);
+    dm_tc_layout layout;
+    float x, y;
+    CHECK(b != NULL);
+    CHECK(dm_touch_bridge_attach_game(b, &p));
+    CHECK(dm_touch_bridge_set_belt_context(b, 4, 1));
+    dm_tc_layout_make(&layout, 667, 375);
+    belt_upper_point(&layout, 1, 1, &x, &y);
+    f.now = 9020000000;
+    down(b, 53, x, y, 9020000000);
+    CHECK(f.actions == 1 && f.acked == 0 && f.rejected_action == 1);
+    f.now = 9021000000;
+    CHECK(dm_touch_bridge_tick(b, 9021000000));
+    CHECK(f.actions == 1);   /* a rejected action is never retried or acked */
+    dm_touch_bridge_destroy(b, NULL);
+}
+
+static void provider_stale_action_not_retagged(void) {
+    provider_fixture f;
+    provider_reset(&f);
+    dm_tgp_provider p = provider_from(&f);
+    dm_touch_bridge *b = dm_touch_bridge_create(667, 375, 2.0f);
+    dm_tc_layout layout;
+    dm_touch_event e;
+    float x, y;
+    CHECK(b != NULL);
+    CHECK(dm_touch_bridge_attach_game(b, &p));
+    CHECK(dm_touch_bridge_set_belt_context(b, 4, 1));
+    dm_tc_layout_make(&layout, 667, 375);
+    belt_upper_point(&layout, 1, 1, &x, &y);
+    /* The belt request is produced while the tick's snapshot refresh fails,
+       so it stays pending in the adapter. */
+    f.now = 9100000000;
+    f.fail_on_call = 3;
+    down(b, 55, x, y, 9100000000);
+    CHECK(f.actions == 0 && f.acked == 0);
+    /* A later scene must not receive that old action retagged with its epoch. */
+    f.fail_on_call = 0;
+    f.scene_epoch = 2;
+    f.object_generation = 11;
+    f.now = 9101000000;
+    CHECK(dm_touch_bridge_tick(b, 9101000000));
+    CHECK(f.actions == 0 && f.acked == 0);   /* pre-fix: one call tagged scene 2 */
+    /* Unavailable and identity-mismatched snapshots fail closed before input. */
+    f.available = 0;
+    f.now = 9110000000;
+    e = event(DM_TOUCH_ACTION_DOWN, 0, 9110000000);
+    point(&e, 56, x, y, 2.0f);
+    CHECK(!dm_touch_bridge_event(b, &e));
+    f.available = 1;
+    f.module_id = 8;   /* snapshot identity no longer matches the provider */
+    f.now = 9111000000;
+    e = event(DM_TOUCH_ACTION_DOWN, 0, 9111000000);
+    point(&e, 57, x, y, 2.0f);
+    CHECK(!dm_touch_bridge_event(b, &e));
+    /* Stale snapshot (older than DM_TGP_MAX_AGE_NS) also fails closed. */
+    f.module_id = 7;
+    f.now = 8900000000;   /* 300 ms older than the event: beyond DM_TGP_MAX_AGE_NS */
+    e = event(DM_TOUCH_ACTION_DOWN, 0, 9200000000);
+    point(&e, 58, x, y, 2.0f);
+    CHECK(!dm_touch_bridge_event(b, &e));
+    CHECK(f.actions == 0);
+    dm_touch_bridge_destroy(b, NULL);
+}
+
 int main(void) {
     CASE(density_and_noncontiguous_ids);
     CASE(action_index_multifinger);
@@ -475,6 +678,9 @@ int main(void) {
     CASE(belt_context_survives_cancel_and_resize);
     CASE(belt_action_expanded_cell_one_shot);
     CASE(belt_action_null_and_context_retention);
+    CASE(provider_belt_action_exactly_once);
+    CASE(provider_action_reject_not_acked);
+    CASE(provider_stale_action_not_retagged);
     printf("PASS touch bridge: %d checks\n", checks);
     return 0;
 }
