@@ -2,6 +2,7 @@
 // NativeActivity engineering diagnostics: synthetic ARM64 gates / Vulkan pattern inside the APK domain, borrow windows only during callbacks, never run the game.
 #include "../artifact.h"
 #include "../vulkan/vk_host.h"
+#include "lifecycle.h"
 #include <android/asset_manager.h>
 #include <android/log.h>
 #include <android/native_activity.h>
@@ -14,7 +15,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #define LOG(...) __android_log_print(ANDROID_LOG_INFO,"D2R-Diagnostic",__VA_ARGS__)
-typedef struct{dm_vk vk;AInputQueue*input;char vertex[4096],fragment[4096];}app_state;
+typedef struct{dm_vk vk;AInputQueue*input;dm_app_lifecycle*lifecycle;ANativeActivity*activity;char vertex[4096],fragment[4096];}app_state;
 static int copy_asset(ANativeActivity*a,const char*name,char path[4096]){
     int n=snprintf(path,4096,"%s/%s",a->internalDataPath,name);if(n<0||n>=4096)return 1;
     AAsset*asset=AAssetManager_open(a->assetManager,name,AASSET_MODE_STREAMING);if(!asset)return 1;
@@ -34,6 +35,38 @@ static int native_smoke(ANativeActivity*a){
     if(dm_guest_detach()){LOG("guest detach failed");abort();}
 done:
     if(host&&dm_host_destroy(host))result=1;if(dm_artifacts_unmap(&mapped))result=1;dm_rewrite_free(&input);return result;
+}
+static int host_load(void*ctx){
+    app_state*s=ctx;
+    int failed=native_smoke(s->activity);
+    LOG("synthetic APK-process ARM64 gate smoke=%s",failed?"FAIL":"PASS");
+    if(failed)return 1;
+    if(copy_asset(s->activity,"fullscreen.vert.spv",s->vertex)||
+       copy_asset(s->activity,"pixels.frag.spv",s->fragment)){
+        LOG("shader asset copy failed");return 1;
+    }
+    return 0;
+}
+static int host_stop(void*ctx){
+    app_state*s=ctx;
+    if(s->vk.device)dm_vk_destroy(&s->vk);
+    return 0;
+}
+static int host_pause(void*ctx){(void)ctx;return 0;}
+static int host_resume(void*ctx){(void)ctx;return 0;}
+static int host_surface_acquire(void*ctx,void*surface){
+    (void)ctx;
+    if(!surface)return 1;
+    ANativeWindow_acquire((ANativeWindow*)surface);
+    return 0;
+}
+static void host_surface_release(void*ctx,void*surface){
+    (void)ctx;
+    if(surface)ANativeWindow_release((ANativeWindow*)surface);
+}
+static void lifecycle_state(void*ctx,dm_app_state state){
+    (void)ctx;
+    LOG("app lifecycle state=%s",dm_app_lifecycle_state_name(state));
 }
 static void draw(ANativeActivity*a,ANativeWindow*window){
     app_state*s=a->instance;if(!s)return;
@@ -75,17 +108,55 @@ static void input_created(ANativeActivity*a,AInputQueue*queue){app_state*s=a->in
     if(!looper){LOG("input looper unavailable");return;}s->input=queue;AInputQueue_attachLooper(queue,looper,1,input_ready,a);
 }
 static void input_destroyed(ANativeActivity*a,AInputQueue*queue){AInputQueue_detachLooper(queue);app_state*s=a->instance;if(s&&s->input==queue)s->input=NULL;}
-static void destroy(ANativeActivity*a){app_state*s=a->instance;if(s){if(s->input)AInputQueue_detachLooper(s->input);dm_vk_destroy(&s->vk);free(s);a->instance=NULL;}}
-static void low_memory(ANativeActivity*a){app_state*s=a->instance;if(s)dm_vk_destroy(&s->vk);}
-static void pause_app(ANativeActivity*a){(void)a;LOG("paused");}
-static void resume_app(ANativeActivity*a){(void)a;LOG("resumed");}
+static void window_ready(ANativeActivity*a,ANativeWindow*window){
+    app_state*s=a->instance;if(!s||!s->lifecycle)return;
+    if(!dm_app_lifecycle_surface_created(s->lifecycle,window)){
+        LOG("surface callback rejected: state=%s pending=%u",
+            dm_app_lifecycle_state_name(dm_app_lifecycle_state(s->lifecycle)),
+            dm_app_lifecycle_pending_work(s->lifecycle));
+        return;
+    }
+    if(dm_app_lifecycle_state(s->lifecycle)==DM_APP_STATE_OWNED_DIAGNOSTIC)draw(a,window);
+}
+static void window_destroyed(ANativeActivity*a,ANativeWindow*window){
+    app_state*s=a->instance;if(!s||!s->lifecycle)return;
+    if(!dm_app_lifecycle_surface_destroyed(s->lifecycle,window))
+        LOG("stale surface destroy ignored");
+}
+static void destroy(ANativeActivity*a){app_state*s=a->instance;if(s){
+    if(s->input)AInputQueue_detachLooper(s->input);
+    if(s->lifecycle){
+        dm_app_lifecycle_stop(s->lifecycle);
+        if(!dm_app_lifecycle_destroy(s->lifecycle)){
+            LOG("lifecycle destroy deferred: state=%s pending=%u",
+                dm_app_lifecycle_state_name(dm_app_lifecycle_state(s->lifecycle)),
+                dm_app_lifecycle_pending_work(s->lifecycle));
+            return; /* keep controller and app state alive; no borrowed Surface release */
+        }
+    } else if(s->vk.device)dm_vk_destroy(&s->vk);
+    free(s);a->instance=NULL;
+}}
+static void low_memory(ANativeActivity*a){app_state*s=a->instance;if(s&&s->vk.device){dm_vk_destroy(&s->vk);LOG("low memory: GPU context released; redraw recreates diagnostic");}}
+static void pause_app(ANativeActivity*a){app_state*s=a->instance;if(!s||!s->lifecycle)return;
+    if(!dm_app_lifecycle_pause(s->lifecycle))LOG("pause rejected: state=%s",dm_app_lifecycle_state_name(dm_app_lifecycle_state(s->lifecycle)));}
+static void resume_app(ANativeActivity*a){app_state*s=a->instance;if(!s||!s->lifecycle)return;
+    if(!dm_app_lifecycle_resume(s->lifecycle))LOG("resume rejected: state=%s",dm_app_lifecycle_state_name(dm_app_lifecycle_state(s->lifecycle)));}
 __attribute__((visibility("default"))) void ANativeActivity_onCreate(ANativeActivity*a,void*saved,size_t saved_size){
     (void)saved;(void)saved_size;app_state*s=calloc(1,sizeof(*s));if(!s){ANativeActivity_finish(a);return;}a->instance=s;
+    s->activity=a;
     a->callbacks->onDestroy=destroy;a->callbacks->onLowMemory=low_memory;
-    a->callbacks->onNativeWindowCreated=draw;a->callbacks->onNativeWindowRedrawNeeded=draw;
+    a->callbacks->onNativeWindowCreated=window_ready;a->callbacks->onNativeWindowRedrawNeeded=window_ready;
+    a->callbacks->onNativeWindowDestroyed=window_destroyed;a->callbacks->onNativeWindowResized=window_ready;
     a->callbacks->onPause=pause_app;a->callbacks->onResume=resume_app;
     a->callbacks->onInputQueueCreated=input_created;a->callbacks->onInputQueueDestroyed=input_destroyed;
     mkdir(a->internalDataPath,0700);
-    LOG("synthetic APK-process ARM64 gate smoke=%s",native_smoke(a)?"FAIL":"PASS");
-    if(copy_asset(a,"fullscreen.vert.spv",s->vertex)||copy_asset(a,"pixels.frag.spv",s->fragment))LOG("shader asset copy failed");
+    dm_app_host_ops ops={.ctx=s,.load=host_load,.stop=host_stop,.pause=host_pause,.resume=host_resume,
+        .surface_acquire=host_surface_acquire,.surface_release=host_surface_release};
+    s->lifecycle=dm_app_lifecycle_create(&ops,lifecycle_state,s);
+    if(!s->lifecycle){LOG("app lifecycle create failed");ANativeActivity_finish(a);return;}
+    if(!dm_app_lifecycle_start(s->lifecycle)){
+        LOG("app lifecycle start failed: state=%s",dm_app_lifecycle_state_name(dm_app_lifecycle_state(s->lifecycle)));
+        ANativeActivity_finish(a);return;
+    }
+    LOG("app backend=%s state=%s",dm_app_lifecycle_backend_name(),dm_app_lifecycle_state_name(dm_app_lifecycle_state(s->lifecycle)));
 }
