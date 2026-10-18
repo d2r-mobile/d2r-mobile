@@ -6,6 +6,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "dm_touch_controls.h"
+#include "touch_adapter.h"
 #include "vk_host.h"
 
 #ifdef __cplusplus
@@ -20,8 +21,18 @@ typedef struct {
     uint32_t pixel_width, pixel_height;
     uint32_t available_mask;       /* target has a proven binding/resource */
     uint32_t enabled_mask;         /* target is shown in this context */
-    uint32_t pressed_mask;         /* pressed visual only for available+enabled */
+    uint32_t pressed_mask;         /* diagnostic pressed state; drawn for enabled targets even when availability is unknown */
+    int joystick_active;           /* live observed joystick, not a guess */
+    float joy_origin_x_pt, joy_origin_y_pt;
+    float joy_current_x_pt, joy_current_y_pt;
 } dm_touch_hud_snapshot;
+
+// Convert an adapter observation into HUD input without inventing bindings or
+// consuming anything. pixel_width/height must match width_pt/height_pt*density
+// within one pixel; invalid input returns 0 and leaves *out untouched.
+int dm_touch_hud_snapshot_from_observation(const dm_android_touch_observation *observation,
+                                           uint32_t pixel_width, uint32_t pixel_height,
+                                           dm_touch_hud_snapshot *out);
 
 typedef struct {
     int target;                    /* DM_TC_* */

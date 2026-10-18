@@ -8,6 +8,8 @@
 #include "lifecycle.h"
 #include "present_policy.h"
 #include "touch_bridge.h"
+#include "touch_hud.h"
+#include "touch_hud_overlay.h"
 #include "view_policy.h"
 #include <android/asset_manager.h>
 #include <android/configuration.h>
@@ -18,7 +20,9 @@
 #include <android/keycodes.h>
 #include <android/looper.h>
 #include <errno.h>
+#include <math.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -26,7 +30,7 @@
 #include <time.h>
 #include <unistd.h>
 #define LOG(...) __android_log_print(ANDROID_LOG_INFO,"D2R-Diagnostic",__VA_ARGS__)
-typedef struct{dm_vk vk;AInputQueue*input;dm_app_lifecycle*lifecycle;ANativeActivity*activity;ANativeWindow*window;dm_touch_bridge*touch;dm_view_policy view;dm_input_policy gate;ALooper*looper;int timer_fd;int resumed,focused,touch_allowed;float density,touch_width_pt,touch_height_pt;uint64_t last_touch_buttons;int32_t last_touch_lx,last_touch_ly,last_touch_rx,last_touch_ry;int64_t last_touch_log_ns;char vertex[4096],fragment[4096];}app_state;
+typedef struct{dm_vk vk;AInputQueue*input;dm_app_lifecycle*lifecycle;ANativeActivity*activity;ANativeWindow*window;dm_touch_bridge*touch;dm_view_policy view;dm_input_policy gate;ALooper*looper;int timer_fd;int resumed,focused,touch_allowed;float density,touch_width_pt,touch_height_pt;uint64_t last_touch_buttons;int32_t last_touch_lx,last_touch_ly,last_touch_rx,last_touch_ry;int64_t last_touch_log_ns;dm_android_touch_observation hud_obs;dm_touch_hud_frame hud_frame;int hud_obs_valid;char vertex[4096],fragment[4096];}app_state;
 static int copy_asset(ANativeActivity*a,const char*name,char path[4096]){
     int n=snprintf(path,4096,"%s/%s",a->internalDataPath,name);if(n<0||n>=4096)return 1;
     AAsset*asset=AAssetManager_open(a->assetManager,name,AASSET_MODE_STREAMING);if(!asset)return 1;
@@ -92,8 +96,37 @@ static float activity_density(ANativeActivity*a){
     AConfiguration_delete(config);
     return dpi>0?(float)dpi/160.0f:1.0f;
 }
+/* Read-only diagnostic HUD observation. Motion events only mark the coalesced
+   scheduler dirty; the existing 8 ms looper timer performs the actual draw. */
+static void touch_refresh_hud(app_state*s){
+    if(!s||!s->touch||s->density<=0){if(s){s->hud_obs_valid=0;dm_touch_hud_frame_suppress(&s->hud_frame);}return;}
+    dm_android_touch_observation o;
+    if(!dm_touch_bridge_observe(s->touch,s->density,&o)){
+        s->hud_obs_valid=0;dm_touch_hud_frame_suppress(&s->hud_frame);return;
+    }
+    if(!s->hud_obs_valid||memcmp(&s->hud_obs,&o,sizeof o)!=0){
+        s->hud_obs=o;s->hud_obs_valid=1;dm_touch_hud_frame_dirty(&s->hud_frame);
+    }
+}
+/* Production CPU overlay seam. The platform-neutral module validates, clips
+   and writes only visible pixels; this wrapper only adapts the Android buffer. */
+static int draw_hud_overlay(app_state*s,ANativeWindow_Buffer*buffer){
+    if(!s||!s->touch||!buffer||!buffer->bits||!buffer->width||!buffer->height)return 0;
+    if(buffer->format!=WINDOW_FORMAT_RGBA_8888||buffer->stride<(int32_t)buffer->width)return 0;
+    if(!s->hud_obs_valid)return 0;
+    if((uint32_t)buffer->width!=s->view.view_width_px||(uint32_t)buffer->height!=s->view.view_height_px)return 0;
+    dm_touch_hud_snapshot h;
+    if(!dm_touch_hud_snapshot_from_observation(&s->hud_obs,(uint32_t)buffer->width,(uint32_t)buffer->height,&h))return 0;
+    uint64_t cap64=(uint64_t)(uint32_t)buffer->stride*(uint64_t)(uint32_t)buffer->height;
+    if(cap64>UINT64_MAX/4u)return 0;
+    cap64*=4u;
+    if(cap64>(uint64_t)SIZE_MAX)return 0;
+    return dm_touch_hud_overlay_draw(&h,buffer->bits,(uint32_t)buffer->width,
+                                     (uint32_t)buffer->height,(uint32_t)buffer->stride,(size_t)cap64);
+}
 static void touch_consume(app_state*s,const char*reason){
     if(!s||!s->touch)return;
+    touch_refresh_hud(s);
     dm_npad_state state=dm_touch_bridge_read(s->touch);
     if(state.attributes!=1)return;
     int64_t now=monotonic_ns();
@@ -140,14 +173,16 @@ static void touch_resize_window(app_state*s,ANativeWindow*window){
 // 诊断读回目标尺寸；窗口缓冲尺寸与它无关（居中裁剪由 app/present_policy.c 决定）。
 // Diagnostic readback extent; the window buffer size is independent and handled by the centred crop in app/present_policy.c.
 #define DM_DIAG_TARGET_EXTENT 256u
-static void draw_diagnostic(ANativeActivity*a,ANativeWindow*window){
+static void draw_diagnostic(ANativeActivity*a,ANativeWindow*window,int external_redraw){
     app_state*s=a->instance;if(!s||!window)return;
+    touch_refresh_hud(s);
     if(!dm_diag_scene_ready(s->lifecycle,window)){
         LOG("graphics draw suppressed: state=%s owned-surface=%s",
             dm_app_lifecycle_state_name(dm_app_lifecycle_state(s->lifecycle)),
             dm_app_lifecycle_surface(s->lifecycle)?"yes":"no");
         return;
     }
+    if(external_redraw&&s->hud_obs_valid)dm_touch_hud_frame_dirty(&s->hud_frame);
     if(!s->vertex[0]||!s->fragment[0]){LOG("graphics draw skipped: no staged shader assets");return;}
     if(!s->vk.device){VkResult created=dm_vk_create(&s->vk);if(created!=VK_SUCCESS){LOG("Vulkan create failed: %d",created);return;}}
     const size_t target_bytes=(size_t)DM_DIAG_TARGET_EXTENT*DM_DIAG_TARGET_EXTENT*4u;
@@ -193,14 +228,36 @@ static void draw_diagnostic(ANativeActivity*a,ANativeWindow*window){
         .format_rgba8888=buffer.format==WINDOW_FORMAT_RGBA_8888};
     dm_present_rect copied;
     int presented=dm_present_copy(&source,&present,&copied);
-    if(!presented)
+    int frame_open=0;
+    int overlaid=0;
+    if(presented&&s->hud_obs_valid){
+        if(buffer.format!=WINDOW_FORMAT_RGBA_8888||buffer.stride<(int32_t)buffer.width||
+           (uint32_t)buffer.width!=s->view.view_width_px||(uint32_t)buffer.height!=s->view.view_height_px){
+            dm_touch_hud_frame_suppress(&s->hud_frame);
+        }else{
+            frame_open=dm_touch_hud_frame_begin(&s->hud_frame,external_redraw,!external_redraw,1,1);
+            if(frame_open){
+                overlaid=draw_hud_overlay(s,&buffer);
+                dm_touch_hud_frame_composed(&s->hud_frame,overlaid);
+            }
+        }
+    }
+    if(!presented){
         LOG("window copy rejected: format=%d %dx%d stride=%d; readback kept out of the window",
             (int)buffer.format,(int)buffer.width,(int)buffer.height,(int)buffer.stride);
+        dm_touch_hud_frame_suppress(&s->hud_frame);
+    }
     else (void)dm_view_policy_set_buffer(&s->view,present.width,present.height);
-    if(ANativeWindow_unlockAndPost(window))LOG("window post failed");
-    else if(presented)LOG("indexed textured diagnostic: %ux%u pixel-check=PASS (%u probes), copy %ux%u at %u,%u into %dx%d view / %dx%d buffer; game presenter not implemented",
+    int post_failed=ANativeWindow_unlockAndPost(window);
+    if(post_failed)LOG("window post failed");
+    if(frame_open){
+        int ack=dm_touch_hud_frame_complete(&s->hud_frame,post_failed==0&&presented);
+        if(!ack)LOG("touch HUD frame not acknowledged; retry pending");
+    }
+    if(!post_failed&&presented){
+        LOG("indexed textured diagnostic: %ux%u pixel-check=PASS (%u probes), copy %ux%u at %u,%u into %dx%d view / %dx%d buffer; hud=%s; game presenter not implemented",
         target.width,target.height,probes,copied.width,copied.height,copied.x,copied.y,
-        window_width,window_height,(int)buffer.width,(int)buffer.height);
+        window_width,window_height,(int)buffer.width,(int)buffer.height,overlaid?"geometry":"unavailable");}
     free(pixels);
 }
 static void stop_input_timer(app_state*s){
@@ -228,7 +285,10 @@ static int input_timer(int fd,int events,void*data){
     }
     if(!s->touch_allowed)return 1;
     int64_t now=monotonic_ns();if(now<0)return 1;
-    if(dm_touch_bridge_tick(s->touch,now))touch_consume(s,"timer");
+    int ticked=dm_touch_bridge_tick(s->touch,now);
+    if(ticked)touch_consume(s,"timer");
+    if(dm_touch_hud_frame_timer_ready(&s->hud_frame,s->window!=NULL&&s->touch_allowed))
+        draw_diagnostic(s->activity,s->window,0);
     return 1;
 }
 static int start_input_timer(app_state*s){
@@ -359,11 +419,12 @@ static void window_ready(ANativeActivity*a,ANativeWindow*window){
     s->window=window;
     touch_resize_window(s,window);
     update_touch_state(s);
-    if(dm_diag_scene_ready(s->lifecycle,window))draw_diagnostic(a,window);
+    if(dm_diag_scene_ready(s->lifecycle,window))draw_diagnostic(a,window,1);
 }
 static void window_destroyed(ANativeActivity*a,ANativeWindow*window){
     app_state*s=a->instance;if(!s||!s->lifecycle)return;
     if(s->window==window){s->window=NULL;update_touch_state(s);
+        s->hud_obs_valid=0;dm_touch_hud_frame_suppress(&s->hud_frame);
         int64_t now=monotonic_ns();touch_cancel(s,"window_destroyed",now<0?0:now);}
     if(!dm_app_lifecycle_surface_destroyed(s->lifecycle,window))
         LOG("stale surface destroy ignored");
@@ -406,7 +467,7 @@ static void configuration_changed(ANativeActivity*a){app_state*s=a->instance;if(
     update_touch_state(s);
 }
 __attribute__((visibility("default"))) void ANativeActivity_onCreate(ANativeActivity*a,void*saved,size_t saved_size){
-    (void)saved;(void)saved_size;app_state*s=calloc(1,sizeof(*s));if(!s){ANativeActivity_finish(a);return;}a->instance=s;
+    (void)saved;(void)saved_size;app_state*s=calloc(1,sizeof(*s));if(!s){ANativeActivity_finish(a);return;}a->instance=s;dm_touch_hud_frame_init(&s->hud_frame);
     s->activity=a;s->timer_fd=-1;s->resumed=0;s->focused=0;
     dm_view_policy_init(&s->view);
     dm_input_policy_init(&s->gate);

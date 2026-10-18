@@ -112,6 +112,13 @@ int dm_touch_bridge_tick(dm_touch_bridge *bridge, int64_t time_ns);
 // Applies ACTION_CANCEL/focus-loss/pause semantics and queues a neutral state.
 int dm_touch_bridge_cancel_all(dm_touch_bridge *bridge, int64_t time_ns);
 
+// Read-only visual observation forwarded to the adapter. No pad read, action/
+// pulse/portal-request consumption, timer advance, ownership mutation or
+// retained pointer. density is caller-owned view metric; invalid input returns
+// 0 without changing *out.
+int dm_touch_bridge_observe(const dm_touch_bridge *bridge, float density,
+                            dm_android_touch_observation *out);
+
 // One-shot host action outlet over the adapter's existing action ownership
 // (dm_android_touch_take_action, same dm_android_touch_action type/encoding).
 // Returns 1 and fills *out when one core action was pending, 0 otherwise.
