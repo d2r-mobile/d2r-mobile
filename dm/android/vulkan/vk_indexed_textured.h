@@ -2,6 +2,7 @@
 // #115 bounded indexed+textured offscreen draw: fixed float2 position + float2 UV, uint16 indices, one RGBA8 2D texture.
 #pragma once
 #include "vk_host.h"
+#include "vk_graphics_interface.h"
 
 #define DM_VK_INDEXED_TEXTURED_VERTEX_STRIDE 16u
 #define DM_VK_INDEXED_TEXTURED_MAX_VERTICES 65536u
@@ -30,3 +31,7 @@ typedef struct {
 // Fixed nearest/clamp single-level RGBA8 sampler; borrowed inputs are copied synchronously. Failure never writes the
 // canvas and never frees caller pointers.
 VkResult dm_vk_draw_indexed_textured_offscreen(dm_vk *vk, const dm_vk_indexed_textured_draw *draw, dm_vk_pixels *pixels);
+// 用已校验的纹理 plan-owned shader、UV location 和 sampler binding 构建实际 pipeline。
+// Build the actual pipeline from a checked textured plan's owned shaders, UV location and sampler binding.
+VkResult dm_vk_draw_indexed_textured_plan_offscreen(dm_vk *vk, const dm_vk_indexed_textured_draw *draw,
+                                                     const dm_vk_graphics_plan *plan, dm_vk_pixels *pixels);

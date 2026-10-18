@@ -15,6 +15,9 @@
 #define OP_TYPE_INT 21u
 #define OP_TYPE_FLOAT 22u
 #define OP_TYPE_VECTOR 23u
+#define OP_TYPE_IMAGE 25u
+#define OP_TYPE_SAMPLER 26u
+#define OP_TYPE_SAMPLED_IMAGE 27u
 #define OP_TYPE_STRUCT 30u
 #define OP_TYPE_POINTER 32u
 #define OP_TYPE_FUNCTION 33u
@@ -25,7 +28,10 @@
 #define OP_MEMBER_DECORATE 72u
 #define DEC_BUILTIN 11u
 #define DEC_BLOCK 2u
+#define DEC_BINDING 33u
+#define DEC_DESCRIPTOR_SET 34u
 #define DEC_LOCATION 30u
+#define STORAGE_UNIFORM_CONSTANT 0u
 #define STORAGE_INPUT 1u
 #define STORAGE_OUTPUT 3u
 #define STORAGE_FUNCTION 7u
@@ -97,6 +103,10 @@ static int type_vec_float(gmodule *m, uint32_t id, uint32_t components) {
     if (!t || t->kind != OP_TYPE_VECTOR || t->b != components) return 0;
     gtype *c = gtype_find(m, t->a);
     return c && c->kind == OP_TYPE_FLOAT && c->a == 32;
+}
+static int type_float(gmodule *m, uint32_t id) {
+    gtype *t = gtype_find(m, id);
+    return t && t->kind == OP_TYPE_FLOAT && t->a == 32;
 }
 static gdecor *member_decor_find(gmodule *m, uint32_t id, uint32_t member, uint32_t dec) {
     for (uint32_t i = 0; i < m->decor_count; i++)
@@ -217,6 +227,31 @@ static int scan_module(const uint8_t *data, size_t size, gmodule *m, char *why, 
             t->id = o[0]; t->kind = op; t->a = o[1]; t->b = o[2];
             break;
         }
+        case OP_TYPE_IMAGE:
+            if (n != 8) { set_why(why, cap, "OpTypeImage 操作数个数非法"); return 0; }
+            if (!add_definition(m, o[0], "image type", why, cap)) return 0;
+            if (!check_id(m, o[1], "image sampled type", why, cap)) return 0;
+            if (m->type_count >= MAX_TYPES) { set_why(why, cap, "类型过多"); return 0; }
+            {
+                gtype *t = &m->types[m->type_count++];
+                memset(t, 0, sizeof *t);
+                t->id = o[0]; t->kind = OP_TYPE_IMAGE; t->a = o[1]; t->b = o[2];
+                for (uint32_t k = 0; k < 5; k++) t->members[k] = o[k + 3];
+            }
+            break;
+        case OP_TYPE_SAMPLED_IMAGE:
+            if (n != 2) { set_why(why, cap, "OpTypeSampledImage 操作数个数非法"); return 0; }
+            if (!add_definition(m, o[0], "sampled image type", why, cap)) return 0;
+            if (!check_id(m, o[1], "sampled image base type", why, cap)) return 0;
+            if (m->type_count >= MAX_TYPES) { set_why(why, cap, "类型过多"); return 0; }
+            {
+                gtype *t = &m->types[m->type_count++];
+                memset(t, 0, sizeof *t);
+                t->id = o[0]; t->kind = OP_TYPE_SAMPLED_IMAGE; t->a = o[1];
+            }
+            break;
+        case OP_TYPE_SAMPLER:
+            set_why(why, cap, "独立 sampler 类型不支持（仅 combined image sampler）"); return 0;
         case OP_TYPE_STRUCT:
             if (n < 1 || n - 1 > 8) { set_why(why, cap, "OpTypeStruct 成员数非法"); return 0; }
             if (!add_definition(m, o[0], "type", why, cap)) return 0;
@@ -272,10 +307,11 @@ static int scan_module(const uint8_t *data, size_t size, gmodule *m, char *why, 
             m->vars[m->var_count++] = (gvar){o[1], o[0], o[2]};
             break;
         case OP_DECORATE:
-            if (n >= 2 && (o[1] == DEC_LOCATION || o[1] == DEC_BUILTIN || o[1] == DEC_BLOCK)) {
+            if (n >= 2 && (o[1] == DEC_LOCATION || o[1] == DEC_BUILTIN || o[1] == DEC_BLOCK ||
+                o[1] == DEC_BINDING || o[1] == DEC_DESCRIPTOR_SET)) {
                 if (!check_id(m, o[0], "decoration target", why, cap)) return 0;
                 if (m->decor_count >= MAX_DECORS) { set_why(why, cap, "装饰过多"); return 0; }
-                if (o[1] != DEC_BLOCK && n < 3) { set_why(why, cap, "Location/BuiltIn 装饰缺少参数"); return 0; }
+                if (o[1] != DEC_BLOCK && n < 3) { set_why(why, cap, "装饰缺少参数"); return 0; }
                 if (decor_find(m, o[0], o[1])) { set_why(why, cap, "重复装饰 id %u dec %u", o[0], o[1]); return 0; }
                 m->decors[m->decor_count++] = (gdecor){o[0], UINT32_MAX, o[1], o[1] == DEC_BLOCK ? 0 : o[2]};
             }
@@ -314,7 +350,7 @@ static int check_entry_function(gmodule *m, char *why, size_t cap) {
 
 // 检查每个全局输入/输出变量：必须出现在 entry interface；拒绝 descriptor/push 和其他存储类。
 // Check each global input/output variable: must be in the entry interface; reject descriptors/push and other storage classes.
-static int check_vars(gmodule *m, uint32_t expected_model, char *why, size_t cap) {
+static int check_vars(gmodule *m, uint32_t expected_model, int allow_sampler, char *why, size_t cap) {
     if (m->entry_count != 1) { set_why(why, cap, "模块没有恰好一个 OpEntryPoint"); return 0; }
     if (m->entry_model != expected_model) { set_why(why, cap, "执行模型 %u 不是期望的 %u", m->entry_model, expected_model); return 0; }
     if (!check_entry_function(m, why, cap)) return 0;
@@ -331,13 +367,18 @@ static int check_vars(gmodule *m, uint32_t expected_model, char *why, size_t cap
         gtype *p = gtype_find(m, v->type);
         if (!p || p->kind != OP_TYPE_POINTER || p->a != v->storage) { set_why(why, cap, "变量 %%%u 指针/存储类非法", v->id); return 0; }
         if (v->storage == STORAGE_FUNCTION) continue;
-        if (v->storage != STORAGE_INPUT && v->storage != STORAGE_OUTPUT) {
+        if (v->storage == STORAGE_UNIFORM_CONSTANT && allow_sampler) {
+            // 仅纹理 FS 的单个 combined sampler 描述符；数量与类型在 sampler_descriptor 中校验。
+            // Only the textured FS single combined-sampler descriptor; count/type checked in sampler_descriptor.
+        } else if (v->storage != STORAGE_INPUT && v->storage != STORAGE_OUTPUT) {
             set_why(why, cap, "变量 %%%u 的存储类 %u 是 descriptor/push/其他，图形接口子集不支持", v->id, v->storage);
             return 0;
         }
         int listed = 0;
         for (uint32_t k = 0; k < m->iface_count; k++) if (m->iface[k] == v->id) listed = 1;
-        if (!listed) { set_why(why, cap, "接口变量 %%%u 未出现在 OpEntryPoint interface", v->id); return 0; }
+        if (!listed && v->storage != STORAGE_UNIFORM_CONSTANT) {
+            set_why(why, cap, "接口变量 %%%u 未出现在 OpEntryPoint interface", v->id); return 0;
+        }
     }
     for (uint32_t k = 0; k < m->iface_count; k++) {
         int found = 0;
@@ -347,9 +388,53 @@ static int check_vars(gmodule *m, uint32_t expected_model, char *why, size_t cap
     return 1;
 }
 
-static int collect_interface(gmodule *m, uint32_t expected_model, uint32_t *pos_loc, uint32_t *color_loc,
-                             uint32_t *pos_comp, uint32_t *color_comp, uint32_t *varying, char *why, size_t cap) {
-    if (!check_vars(m, expected_model, why, cap)) return 0;
+static int sampler_descriptor(gmodule *m, uint32_t plan_kind, uint32_t expected_model,
+                              uint32_t *set, uint32_t *binding, char *why, size_t cap) {
+    uint32_t count = 0;
+    gvar *desc = NULL;
+    for (uint32_t i = 0; i < m->var_count; i++) {
+        if (m->vars[i].storage != STORAGE_UNIFORM_CONSTANT) continue;
+        count++; desc = &m->vars[i];
+    }
+    if (plan_kind == DM_VK_PLAN_TEXTURED && expected_model == MODEL_FRAGMENT) {
+        if (count != 1) { set_why(why, cap, "纹理 FS 必须恰好一个 combined sampler descriptor（实际 %u）", count); return 0; }
+    } else if (count != 0) {
+        set_why(why, cap, "非纹理 FS 不允许 descriptor（实际 %u）", count);
+        return 0;
+    }
+    if (!count) { *set = 0; *binding = 0; return 1; }
+    gtype *p = gtype_find(m, desc->type);
+    if (!p || p->kind != OP_TYPE_POINTER || p->a != STORAGE_UNIFORM_CONSTANT) {
+        set_why(why, cap, "sampler 变量不是 UniformConstant 指针"); return 0;
+    }
+    gtype *si = gtype_find(m, p->b);
+    if (!si || si->kind != OP_TYPE_SAMPLED_IMAGE) {
+        set_why(why, cap, "sampler 类型不是 OpTypeSampledImage（不支持数组/分离 sampler）"); return 0;
+    }
+    gtype *im = gtype_find(m, si->a);
+    if (!im || im->kind != OP_TYPE_IMAGE) { set_why(why, cap, "sampled image 基类型缺失"); return 0; }
+    if (!type_float(m, im->a)) { set_why(why, cap, "sampler sampled type 不是 float32"); return 0; }
+    if (im->b != 1u) { set_why(why, cap, "sampler 不是 2D"); return 0; }
+    if (im->members[0] != 0u || im->members[1] != 0u || im->members[2] != 0u ||
+        im->members[3] != 1u || im->members[4] != 0u) {
+        set_why(why, cap, "sampler 必须是 non-depth、non-array、non-MS、sampled、Unknown format");
+        return 0;
+    }
+    gdecor *ds = decor_find(m, desc->id, DEC_DESCRIPTOR_SET);
+    gdecor *bd = decor_find(m, desc->id, DEC_BINDING);
+    if (!ds || !bd) { set_why(why, cap, "sampler 缺少 DescriptorSet/Binding 装饰"); return 0; }
+    if (ds->a != 0u || bd->a != 0u) { set_why(why, cap, "sampler set/binding 必须为 0/0（实际 %u/%u）", ds->a, bd->a); return 0; }
+    *set = 0; *binding = 0;
+    return 1;
+}
+
+static int collect_interface(gmodule *m, uint32_t expected_model, uint32_t plan_kind,
+                             uint32_t *pos_loc, uint32_t *color_loc, uint32_t *pos_comp, uint32_t *color_comp,
+                             uint32_t *varying, uint32_t *varying_comp, uint32_t *uv_loc, uint32_t *uv_comp,
+                             uint32_t *sampler_set, uint32_t *sampler_binding, char *why, size_t cap) {
+    if (!check_vars(m, expected_model, plan_kind == DM_VK_PLAN_TEXTURED && expected_model == MODEL_FRAGMENT,
+                    why, cap)) return 0;
+    if (!sampler_descriptor(m, plan_kind, expected_model, sampler_set, sampler_binding, why, cap)) return 0;
     uint32_t in_loc[8], in_comp[8], in_count = 0, out_loc[8], out_comp[8], out_count = 0, pos_builtin = 0;
     for (uint32_t i = 0; i < m->var_count; i++) {
         gvar *v = &m->vars[i];
@@ -389,18 +474,30 @@ static int collect_interface(gmodule *m, uint32_t expected_model, uint32_t *pos_
             out_loc[out_count] = loc->a; out_comp[out_count] = t->b; out_count++;
         }
     }
+    uint32_t want = plan_kind == DM_VK_PLAN_TEXTURED ? 2u : 4u;
     if (expected_model == MODEL_VERTEX) {
-        if (in_count != 2 || in_comp[0] != 2 || in_comp[1] != 4 || in_loc[0] != 0 || in_loc[1] != 1) {
-            set_why(why, cap, "VS 输入必须恰好 location 0 vec2 + location 1 vec4"); return 0;
+        if (in_count != 2 || in_comp[0] != 2 || in_comp[1] != want || in_loc[0] != 0 || in_loc[1] != 1) {
+            set_why(why, cap, "VS 输入必须恰好 location 0 vec2 + location 1 %s", plan_kind == DM_VK_PLAN_TEXTURED ? "vec2 UV" : "vec4 color");
+            return 0;
         }
-        if (out_count != 1 || out_comp[0] != 4) { set_why(why, cap, "VS 必须恰好一个 float4 varying"); return 0; }
+        if (out_count != 1 || out_comp[0] != want) {
+            set_why(why, cap, "VS 必须恰好一个 float%u varying", want); return 0;
+        }
         if (pos_builtin != 1) { set_why(why, cap, "VS 必须恰好一个 gl_Position"); return 0; }
-        *pos_loc = 0; *color_loc = 1; *pos_comp = in_comp[0]; *color_comp = in_comp[1]; *varying = out_loc[0];
+        *pos_loc = 0; *pos_comp = in_comp[0]; *varying = out_loc[0]; *varying_comp = out_comp[0];
+        *uv_loc = 1; *uv_comp = in_comp[1];
+        if (plan_kind == DM_VK_PLAN_TEXTURED) { *color_loc = 0; *color_comp = 0; }
+        else { *color_loc = 1; *color_comp = in_comp[1]; }
     } else {
-        if (in_count != 1 || in_comp[0] != 4) { set_why(why, cap, "FS 必须恰好一个 float4 varying 输入"); return 0; }
+        if (in_count != 1 || in_comp[0] != want) {
+            set_why(why, cap, "FS 必须恰好一个 float%u varying 输入", want); return 0;
+        }
         if (out_count != 1 || out_comp[0] != 4 || out_loc[0] != 0) { set_why(why, cap, "FS 必须恰好一个 location 0 float4 输出"); return 0; }
         if (pos_builtin) { set_why(why, cap, "FS 不允许 BuiltIn"); return 0; }
-        *pos_loc = 0; *color_loc = 1; *pos_comp = 2; *color_comp = 4; *varying = in_loc[0];
+        *pos_loc = 0; *pos_comp = 2; *varying = in_loc[0]; *varying_comp = in_comp[0];
+        *uv_loc = in_loc[0]; *uv_comp = in_comp[0];
+        if (plan_kind == DM_VK_PLAN_TEXTURED) { *color_loc = 0; *color_comp = 0; }
+        else { *color_loc = 1; *color_comp = 4; }
     }
     return 1;
 }
@@ -503,27 +600,32 @@ static int load_meta(const char *path, const dm_vk_graphics_plan *plan, char *wh
     return 1;
 }
 
-static int build_plan(const uint8_t *vs, size_t vs_size, const uint8_t *ps, size_t ps_size,
+static int build_plan(const uint8_t *vs, size_t vs_size, const uint8_t *ps, size_t ps_size, uint32_t kind,
                       dm_vk_graphics_plan *plan, char *why, size_t cap) {
+    if (kind != DM_VK_PLAN_COLORED && kind != DM_VK_PLAN_TEXTURED) { set_why(why, cap, "未知 plan kind"); return 0; }
     gmodule *vm = calloc(1, sizeof *vm), *pm = calloc(1, sizeof *pm);
     if (!vm || !pm) { free(vm); free(pm); set_why(why, cap, "解析内存不足"); return 0; }
     int ok = scan_module(vs, vs_size, vm, why, cap) && scan_module(ps, ps_size, pm, why, cap);
-    uint32_t p = 0, c = 0, v = 0, pc = 0, cc = 0;
-    if (ok) ok = collect_interface(vm, MODEL_VERTEX, &p, &c, &pc, &cc, &v, why, cap);
-    uint32_t fp = 0, fc = 0, fv = 0, fpc = 0, fcc = 0;
-    if (ok) ok = collect_interface(pm, MODEL_FRAGMENT, &fp, &fc, &fpc, &fcc, &fv, why, cap);
-    if (ok && (v != fv || v > 7)) { set_why(why, cap, "VS output location %u 与 FS input %u 不匹配", v, fv); ok = 0; }
+    uint32_t p = 0, c = 0, pc = 0, cc = 0, v = 0, vc = 0, uv = 0, uc = 0, ss = 0, sb = 0;
+    if (ok) ok = collect_interface(vm, MODEL_VERTEX, kind, &p, &c, &pc, &cc, &v, &vc, &uv, &uc, &ss, &sb, why, cap);
+    uint32_t fp = 0, fc = 0, fpc = 0, fcc = 0, fv = 0, fvc = 0, fuv = 0, fuc = 0, fss = 0, fsb = 0;
+    if (ok) ok = collect_interface(pm, MODEL_FRAGMENT, kind, &fp, &fc, &fpc, &fcc, &fv, &fvc, &fuv, &fuc, &fss, &fsb, why, cap);
+    if (ok && (v != fv || v > 7 || vc != fvc)) {
+        set_why(why, cap, "VS varying location/components %u/%u 与 FS %u/%u 不匹配", v, vc, fv, fvc); ok = 0;
+    }
     if (ok) {
         memset(plan, 0, sizeof *plan);
-        plan->position_location = p; plan->color_location = c; plan->varying_location = v;
-        plan->position_components = pc; plan->color_components = cc;
+        plan->kind = kind;
+        plan->position_location = p; plan->color_location = c; plan->position_components = pc; plan->color_components = cc;
+        plan->varying_location = v; plan->varying_components = vc; plan->uv_location = uv;
+        plan->sampler_set = fss; plan->sampler_binding = fsb;
     }
     free(vm); free(pm);
     return ok;
 }
 
-VkResult dm_vk_graphics_plan_load(const char *vs_spv, const char *ps_spv, const char *metadata_path,
-                                  dm_vk_graphics_plan *plan, char *why, size_t why_cap) {
+static VkResult plan_load_mode(const char *vs_spv, const char *ps_spv, const char *metadata_path, uint32_t kind,
+                               dm_vk_graphics_plan *plan, char *why, size_t why_cap) {
     if (why && why_cap) why[0] = 0;
     if (!vs_spv || !ps_spv || !plan) { set_why(why, why_cap, "参数为空"); return VK_ERROR_INITIALIZATION_FAILED; }
     memset(plan, 0, sizeof *plan);
@@ -531,7 +633,7 @@ VkResult dm_vk_graphics_plan_load(const char *vs_spv, const char *ps_spv, const 
     if (!read_file(vs_spv, &vs, &vs_size, DM_VK_GRAPHICS_MAX_CODE, why, why_cap)) return VK_ERROR_INITIALIZATION_FAILED;
     if (!read_file(ps_spv, &ps, &ps_size, DM_VK_GRAPHICS_MAX_CODE, why, why_cap)) { free(vs); return VK_ERROR_INITIALIZATION_FAILED; }
     dm_vk_graphics_plan tmp;
-    int ok = build_plan(vs, vs_size, ps, ps_size, &tmp, why, why_cap);
+    int ok = build_plan(vs, vs_size, ps, ps_size, kind, &tmp, why, why_cap);
     if (ok) {
         dm_vk_sha256_hex(vs, vs_size, tmp.vs_sha256);
         dm_vk_sha256_hex(ps, ps_size, tmp.ps_sha256);
@@ -544,6 +646,15 @@ VkResult dm_vk_graphics_plan_load(const char *vs_spv, const char *ps_spv, const 
     }
     free(vs); free(ps);
     return ok ? VK_SUCCESS : VK_ERROR_INITIALIZATION_FAILED;
+}
+
+VkResult dm_vk_graphics_plan_load(const char *vs_spv, const char *ps_spv, const char *metadata_path,
+                                  dm_vk_graphics_plan *plan, char *why, size_t why_cap) {
+    return plan_load_mode(vs_spv, ps_spv, metadata_path, DM_VK_PLAN_COLORED, plan, why, why_cap);
+}
+VkResult dm_vk_textured_plan_load(const char *vs_spv, const char *ps_spv, const char *metadata_path,
+                                  dm_vk_graphics_plan *plan, char *why, size_t why_cap) {
+    return plan_load_mode(vs_spv, ps_spv, metadata_path, DM_VK_PLAN_TEXTURED, plan, why, why_cap);
 }
 
 void dm_vk_graphics_plan_free(dm_vk_graphics_plan *plan) {
@@ -564,9 +675,13 @@ int dm_vk_graphics_plan_check(const dm_vk_graphics_plan *plan, char *why, size_t
     dm_vk_sha256_hex(plan->ps_code, plan->ps_code_bytes, h);
     if (strcmp(h, plan->ps_sha256)) { set_why(why, why_cap, "PS sha256 与字节不一致"); return 0; }
     dm_vk_graphics_plan ref;
-    if (!build_plan(plan->vs_code, plan->vs_code_bytes, plan->ps_code, plan->ps_code_bytes, &ref, why, why_cap)) return 0;
-    if (ref.position_location != plan->position_location || ref.color_location != plan->color_location ||
+    if (!build_plan(plan->vs_code, plan->vs_code_bytes, plan->ps_code, plan->ps_code_bytes, plan->kind, &ref, why, why_cap)) return 0;
+    if (ref.kind != plan->kind || ref.position_location != plan->position_location || ref.color_location != plan->color_location ||
         ref.position_components != plan->position_components || ref.color_components != plan->color_components ||
-        ref.varying_location != plan->varying_location) { set_why(why, why_cap, "plan 字段与模块字节不一致"); return 0; }
+        ref.uv_location != plan->uv_location || ref.varying_location != plan->varying_location ||
+        ref.varying_components != plan->varying_components ||
+        ref.sampler_set != plan->sampler_set || ref.sampler_binding != plan->sampler_binding) {
+        set_why(why, why_cap, "plan 字段与模块字节不一致"); return 0;
+    }
     return 1;
 }

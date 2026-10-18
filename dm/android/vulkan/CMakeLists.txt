@@ -67,6 +67,41 @@ add_custom_command(OUTPUT ${graphics_bad_push}
     DEPENDS graphics_bad_push.vert VERBATIM)
 add_custom_target(dm_vk_graphics_interface_fixtures DEPENDS ${graphics_bad_model} ${graphics_bad_type}
     ${graphics_bad_varying} ${graphics_bad_descriptor} ${graphics_bad_scalar} ${graphics_bad_push})
+set(textured_bad_uv ${CMAKE_CURRENT_BINARY_DIR}/textured_bad_uv.spv)
+add_custom_command(OUTPUT ${textured_bad_uv}
+    COMMAND ${DM_GLSLC} --target-env=vulkan1.1 -O ${CMAKE_CURRENT_SOURCE_DIR}/textured_bad_uv.vert -o ${textured_bad_uv}
+    DEPENDS textured_bad_uv.vert VERBATIM)
+set(textured_bad_link ${CMAKE_CURRENT_BINARY_DIR}/textured_bad_link.spv)
+add_custom_command(OUTPUT ${textured_bad_link}
+    COMMAND ${DM_GLSLC} --target-env=vulkan1.1 -O ${CMAKE_CURRENT_SOURCE_DIR}/textured_bad_link.vert -o ${textured_bad_link}
+    DEPENDS textured_bad_link.vert VERBATIM)
+set(textured_bad_set ${CMAKE_CURRENT_BINARY_DIR}/textured_bad_set.spv)
+add_custom_command(OUTPUT ${textured_bad_set}
+    COMMAND ${DM_GLSLC} --target-env=vulkan1.1 -O ${CMAKE_CURRENT_SOURCE_DIR}/textured_bad_set.frag -o ${textured_bad_set}
+    DEPENDS textured_bad_set.frag VERBATIM)
+set(textured_bad_binding ${CMAKE_CURRENT_BINARY_DIR}/textured_bad_binding.spv)
+add_custom_command(OUTPUT ${textured_bad_binding}
+    COMMAND ${DM_GLSLC} --target-env=vulkan1.1 -O ${CMAKE_CURRENT_SOURCE_DIR}/textured_bad_binding.frag -o ${textured_bad_binding}
+    DEPENDS textured_bad_binding.frag VERBATIM)
+set(textured_bad_array ${CMAKE_CURRENT_BINARY_DIR}/textured_bad_array.spv)
+add_custom_command(OUTPUT ${textured_bad_array}
+    COMMAND ${DM_GLSLC} --target-env=vulkan1.1 -O ${CMAKE_CURRENT_SOURCE_DIR}/textured_bad_array.frag -o ${textured_bad_array}
+    DEPENDS textured_bad_array.frag VERBATIM)
+set(textured_extra_desc ${CMAKE_CURRENT_BINARY_DIR}/textured_extra_desc.spv)
+add_custom_command(OUTPUT ${textured_extra_desc}
+    COMMAND ${DM_GLSLC} --target-env=vulkan1.1 -O ${CMAKE_CURRENT_SOURCE_DIR}/textured_extra_desc.frag -o ${textured_extra_desc}
+    DEPENDS textured_extra_desc.frag VERBATIM)
+set(textured_no_desc ${CMAKE_CURRENT_BINARY_DIR}/textured_no_desc.spv)
+add_custom_command(OUTPUT ${textured_no_desc}
+    COMMAND ${DM_GLSLC} --target-env=vulkan1.1 -O ${CMAKE_CURRENT_SOURCE_DIR}/textured_no_desc.frag -o ${textured_no_desc}
+    DEPENDS textured_no_desc.frag VERBATIM)
+set(textured_uint ${CMAKE_CURRENT_BINARY_DIR}/textured_uint.spv)
+add_custom_command(OUTPUT ${textured_uint}
+    COMMAND ${DM_GLSLC} --target-env=vulkan1.1 -O ${CMAKE_CURRENT_SOURCE_DIR}/textured_uint.frag -o ${textured_uint}
+    DEPENDS textured_uint.frag VERBATIM)
+add_custom_target(dm_vk_textured_interface_fixtures DEPENDS ${textured_bad_uv} ${textured_bad_link}
+    ${textured_bad_set} ${textured_bad_binding} ${textured_bad_array} ${textured_extra_desc}
+    ${textured_no_desc} ${textured_uint})
 add_custom_target(dm_vk_shaders DEPENDS ${pattern} ${vertex} ${fragment})
 # #13 采样绘制片段着色器（自有合成着色器） | #13 sampled-draw fragment shader (owned synthetic shader)
 set(sample_frag ${CMAKE_CURRENT_BINARY_DIR}/sample2d.frag.spv)
@@ -100,6 +135,37 @@ else()
     if(APPLE AND DM_MOLTENVK_ICD)
         set_tests_properties(vulkan_graphics_interface PROPERTIES ENVIRONMENT "VK_DRIVER_FILES=${DM_MOLTENVK_ICD}")
     endif()
+endif()
+
+add_executable(dm_vulkan_textured_interface_test ../tests/vulkan_textured_interface.c)
+target_link_libraries(dm_vulkan_textured_interface_test PRIVATE dm_android_vk)
+target_compile_options(dm_vulkan_textured_interface_test PRIVATE -Wall -Wextra -Werror)
+add_dependencies(dm_vulkan_textured_interface_test dm_vk_indexed_shaders dm_vk_graphics_interface_fixtures
+    dm_vk_textured_interface_fixtures)
+if(ANDROID)
+    target_link_options(dm_vulkan_textured_interface_test PRIVATE "-Wl,-z,max-page-size=16384")
+else()
+    add_test(NAME vulkan_textured_interface COMMAND dm_vulkan_textured_interface_test
+        ${indexed_textured_vert} ${indexed_textured_frag} ${textured_bad_uv} ${textured_bad_link}
+        ${textured_bad_set} ${textured_bad_binding} ${textured_bad_array} ${textured_extra_desc}
+        ${textured_no_desc} ${textured_uint} ${graphics_bad_model})
+    set_tests_properties(vulkan_textured_interface PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77)
+    if(APPLE AND DM_MOLTENVK_ICD)
+        set_tests_properties(vulkan_textured_interface PROPERTIES ENVIRONMENT "VK_DRIVER_FILES=${DM_MOLTENVK_ICD}")
+    endif()
+endif()
+
+add_executable(dm_vulkan_crosskind_test ../tests/vulkan_crosskind.c vk_indexed.c vk_indexed_textured.c)
+target_compile_definitions(dm_vulkan_crosskind_test PRIVATE vkGetPhysicalDeviceFormatProperties=dm_test_probe_format_properties)
+target_link_libraries(dm_vulkan_crosskind_test PRIVATE dm_android_vk)
+target_compile_options(dm_vulkan_crosskind_test PRIVATE -Wall -Wextra -Werror)
+add_dependencies(dm_vulkan_crosskind_test dm_vk_indexed_shaders)
+if(ANDROID)
+    target_link_options(dm_vulkan_crosskind_test PRIVATE "-Wl,-z,max-page-size=16384")
+else()
+    add_test(NAME vulkan_crosskind COMMAND dm_vulkan_crosskind_test ${indexed_vert} ${indexed_frag}
+        ${indexed_textured_vert} ${indexed_textured_frag})
+    set_tests_properties(vulkan_crosskind PROPERTIES TIMEOUT 60)
 endif()
 
 add_executable(dm_vulkan_indexed_test ../tests/vulkan_indexed.c)

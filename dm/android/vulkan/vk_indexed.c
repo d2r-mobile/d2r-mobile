@@ -224,6 +224,7 @@ VkResult dm_vk_draw_indexed_offscreen(dm_vk *vk, const dm_vk_indexed_draw *draw,
 VkResult dm_vk_draw_indexed_plan_offscreen(dm_vk *vk, const dm_vk_indexed_draw *draw,
                                            const dm_vk_graphics_plan *plan, dm_vk_pixels *pixels) {
     char why[DM_VK_GRAPHICS_WHY] = {0};
-    if (!plan || !dm_vk_graphics_plan_check(plan, why, sizeof why)) return VK_ERROR_INITIALIZATION_FAILED;
+    if (!plan || plan->kind != DM_VK_PLAN_COLORED || !dm_vk_graphics_plan_check(plan, why, sizeof why))
+        return VK_ERROR_INITIALIZATION_FAILED;
     return draw_indexed_impl(vk, draw, pixels, plan);
 }
