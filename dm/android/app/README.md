@@ -2,7 +2,7 @@
 
 中文：[README.zh-CN.md](README.zh-CN.md)
 
-This NativeActivity development app bundles **only owned synthetic fixtures**. It is not a playable D2R build. No game data or Switch keys enter the APK. Package: `org.d2rmobile.android.diagnostic`; ARM64 only, minimum API 29, target API 35. No network or shared-storage permission is requested.
+This NativeActivity development app bundles **only owned synthetic fixtures**. It is not a playable D2R build. No game data or Switch keys enter the APK. Package: `org.d2rmobile.android.diagnostic`; ARM64 only, minimum API 29, target API 35. No network or shared-storage permission is requested. The Activity is declared `android:screenOrientation="sensorLandscape"`, so both landscape directions are accepted and portrait is excluded; the existing `orientation|keyboardHidden|screenSize` configChanges and the real view/density resize path are unchanged. No global rotation, `wm size`/density or buffer-geometry change is involved.
 
 At startup it reads a synthetic artifact, rebinds gates, maps RX/R/RW pages and attempts a native guest-TLS round trip in the actual app process. Log tag: `D2R-Diagnostic`. When a window exists and the lifecycle is ready it draws the owned indexed-textured scene (#117, see below), reads it back and copies it into an Android native window. This is a one-frame engineering diagnostic, not an optimized game presenter. Pause/resume are logged; low memory releases the GPU context, and redraw recreates it. No background rendering loop, game resource importer, saves, game controls or audio is implemented here.
 
