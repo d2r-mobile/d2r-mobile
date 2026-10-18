@@ -332,7 +332,7 @@ int main(void) {
     CHECK(f.rejected == 1);
     dm_touch_bridge_destroy(blocked, NULL);
 
-    /* Object-specific actions are explicitly rejected in this bounded slice. */
+    /* USE is the only enabled object action; it carries the retained item. */
     f.scene = DM_TGP_SCENE_MENU;
     f.scene_epoch = 5;
     f.world_epoch = 1;
@@ -354,8 +354,8 @@ int main(void) {
         f.now = (uint64_t)up.time_ns;
         CHECK(dm_touch_bridge_event(object, &up));
     }
-    CHECK(f.acked == 0);
-    CHECK(f.rejected == 0); /* object action was filtered before provider action */
+    CHECK(f.acked == 1 && f.rejected == 0);
+    CHECK(f.last_action == DM_TGP_ACTION_USE);
     dm_touch_bridge_destroy(object, NULL);
 
     /* Scene switch changes navigation context and clears the old gesture. */

@@ -8,6 +8,8 @@ struct dm_android_touch {
     dm_android_pad *pad;
     dm_tc_state state;
     int32_t pointer_id[DM_TC_MAX_TOUCH];
+    uint64_t pointer_token[DM_TC_MAX_TOUCH];
+    uint64_t next_token;
     uint8_t used[DM_TC_MAX_TOUCH];
     int64_t last_ns;
     int suspended;
@@ -38,6 +40,10 @@ struct dm_android_touch {
     uint64_t seen_tab_tap;
     uint64_t seen_shop_drop;
     uint64_t seen_mouse_click;
+    int32_t use_pointer;
+    uint64_t use_token;
+    float use_x, use_y;
+    int use_ambiguous;
     int portal_available;
     uint64_t portal_mask;
     uint64_t portal_identity;
@@ -196,9 +202,14 @@ static void action_baseline(dm_android_touch *touch) {
 
 static void release_all(dm_android_touch *touch) {
     memset(touch->pointer_id, 0, sizeof touch->pointer_id);
+    memset(touch->pointer_token, 0, sizeof touch->pointer_token);
     memset(touch->used, 0, sizeof touch->used);
     touch->pulse_head = touch->pulse_count = 0;
     touch->release_waiting = 0;
+    touch->use_pointer = -1;
+    touch->use_token = 0;
+    touch->use_x = touch->use_y = 0;
+    touch->use_ambiguous = 0;
     dm_tc_cancel_all(&touch->state);
     action_baseline(touch);
     dm_android_pad_clear_edges(touch->pad);
@@ -244,6 +255,8 @@ int dm_android_touch_down(dm_android_touch *touch, int32_t pointer_id,
     if (!touch->state.finger[slot].active) return 0;
     touch->used[slot] = 1;
     touch->pointer_id[slot] = pointer_id;
+    if (++touch->next_token == 0) touch->next_token = 1;
+    touch->pointer_token[slot] = touch->next_token;
     publish(touch);
     return 1;
 }
@@ -269,9 +282,19 @@ int dm_android_touch_up(dm_android_touch *touch, int32_t pointer_id, int64_t tim
     if (slot < 0) return 0;
     double now_s;
     if (!accept_time(touch, time_ns, &now_s)) return 0;
+    uint64_t token = touch->pointer_token[slot];
+    uint64_t use_before = touch->state.use_seq;
+    if (touch->state.use_seq != touch->seen_use) touch->use_ambiguous = 1;
     dm_tc_end_at(&touch->state, slot, now_s);
+    if (touch->state.use_seq != use_before) {
+        touch->use_pointer = pointer_id;
+        touch->use_token = token;
+        touch->use_x = touch->state.pointer_x;   /* freeze the originating gesture point */
+        touch->use_y = touch->state.pointer_y;
+    }
     touch->used[slot] = 0;
     touch->pointer_id[slot] = -1;
+    touch->pointer_token[slot] = 0;
     publish(touch);
     return 1;
 }
@@ -295,6 +318,7 @@ int dm_android_touch_cancel(dm_android_touch *touch, int32_t pointer_id, int64_t
     dm_tc_cancel_finger(&touch->state, slot);
     touch->used[slot] = 0;
     touch->pointer_id[slot] = -1;
+    touch->pointer_token[slot] = 0;
     dm_android_pad_clear_edges_mask(touch->pad, canceled_mask);
     publish(touch);
     return 1;
@@ -439,6 +463,31 @@ int dm_android_touch_has_pointer(const dm_android_touch *touch, int32_t pointer_
     return touch && pointer_id >= 0 && find_pointer(touch, pointer_id) >= 0;
 }
 
+int dm_android_touch_pointer_token(const dm_android_touch *touch, int32_t pointer_id,
+                                   uint64_t *out_token) {
+    if (!touch || !out_token || pointer_id < 0) return 0;
+    int slot = find_pointer(touch, pointer_id);
+    if (slot < 0 || touch->pointer_token[slot] == 0) return 0;
+    *out_token = touch->pointer_token[slot];
+    return 1;
+}
+
+int dm_android_touch_pending_use_token(const dm_android_touch *touch,
+                                       uint64_t *out_token) {
+    if (!touch || !out_token) return 0;
+    if (touch->state.use_seq == touch->seen_use) return 0;
+    if (touch->use_ambiguous || touch->use_token == 0) return 0;
+    *out_token = touch->use_token;
+    return 1;
+}
+
+int dm_android_touch_token_active(const dm_android_touch *touch, uint64_t token) {
+    if (!touch || token == 0) return 0;
+    for (int i = 0; i < DM_TC_MAX_TOUCH; ++i)
+        if (touch->used[i] && touch->pointer_token[i] == token) return 1;
+    return 0;
+}
+
 int dm_android_touch_pointer_hit(dm_android_touch *touch, int32_t pointer_id, int kind) {
     if (!touch || pointer_id < 0 || kind < 0 || kind > 11) return 0;
     int slot = find_pointer(touch, pointer_id);
@@ -460,6 +509,7 @@ int dm_android_touch_take_action(dm_android_touch *touch, dm_android_touch_actio
     if (!touch || !out) return 0;
     dm_tc_state *s = &touch->state;
     memset(out, 0, sizeof(*out));
+    out->source_pointer = -1;
     if (s->world_tap_seq != touch->seen_world_tap) {
         touch->seen_world_tap = s->world_tap_seq;
         out->kind = DM_ANDROID_ACTION_WORLD_TAP;
@@ -475,10 +525,14 @@ int dm_android_touch_take_action(dm_android_touch *touch, dm_android_touch_actio
         return 1;
     }
     if (s->use_seq != touch->seen_use) {
-        touch->seen_use = s->use_seq;
+        touch->seen_use++;   /* one action per sequence; do not collapse two pending USEs */
         out->kind = DM_ANDROID_ACTION_USE;
-        out->x = s->pointer_x; out->y = s->pointer_y;
-        out->sequence = s->use_seq;
+        out->x = touch->use_ambiguous ? 0 : touch->use_x;
+        out->y = touch->use_ambiguous ? 0 : touch->use_y;
+        out->sequence = touch->seen_use;
+        out->source_pointer = touch->use_pointer;
+        out->source_token = touch->use_ambiguous ? 0 : touch->use_token;
+        if (touch->seen_use == s->use_seq) touch->use_ambiguous = 0;
         return 1;
     }
     if (s->long_press_seq != touch->seen_long_press) {
