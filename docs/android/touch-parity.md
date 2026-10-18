@@ -484,6 +484,27 @@ precise remaining blocker instead of inventing a core or bridge API. Portal
 request state is not manipulated here either. Full request-ownership clearing
 must be owned by a later bridge/core slice with its existing public contract.
 
+## NativeActivity input source gate (#161)
+
+The actual `native.c` input entry now checks Android source-bit membership
+`(AInputEvent_getSource(event) & AINPUT_SOURCE_TOUCHSCREEN) ==
+AINPUT_SOURCE_TOUCHSCREEN` before calling the existing `handle_motion` path.
+This includes a source that combines the touchscreen mask with unrelated flag
+bits, but does not use the generic `AINPUT_SOURCE_CLASS_POINTER` class: pure
+mouse, joystick, gamepad and unknown MotionEvents remain rejected. Source is not
+inferred from pointer count. Rejected MotionEvents are not translated, do not
+call the touch bridge, and are finished with `handled=0`. Keyboard/BACK
+handling, preDispatch, finishEvent exactly once, lifecycle gates and valid
+touch DOWN/MOVE/UP stay on the existing paths.
+
+Host callback tests extract the real `input_ready`, `handle_motion` and
+`motion_action` bodies and replace only the narrow NDK/input-queue getters.
+They cover valid touch actions, rejected non-touch sources with state
+preservation/unhandled finish, preDispatch without finish, BACK and unknown
+keys, and lifecycle-gated touch. A private actual-native mutant removing the
+source guard must fail. No App gamepad route, guest HID, physical-device or
+full-touch acceptance is claimed; parents #19/#39/#18 remain open.
+
 ## What remains unknown
 
 - Whether every source-backed Apple gesture has an exact game-visible equivalent
