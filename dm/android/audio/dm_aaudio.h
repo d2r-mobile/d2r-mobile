@@ -74,6 +74,7 @@ typedef struct {
     uint64_t underrun_events;
     uint64_t callbacks;
     uint64_t xruns;              // 驱动报告值，仅诊断，不与 underrun 混同 | driver-reported, diagnostic only
+    uint32_t gain_q15;           // 当前音量（Q15，0..32768） | current gain in Q15
     int disconnected;
     int closing;
 } dm_audio_stats;
@@ -92,6 +93,15 @@ int dm_audio_stop(dm_audio *audio);
 // 生产线程追加 interleaved PCM16；返回实际写入帧，overflow/partial 由 stats 明确记录，不伪造写入。
 // Producer appends interleaved PCM16; returns frames actually written and records overflow/partial explicitly.
 uint32_t dm_audio_write(dm_audio *audio, const int16_t *samples, uint32_t frames);
+// 有界有限音量（0..1），在真实 data callback 输出 PCM 时生效，因此已入队但尚未回调的数据也服从最新音量。
+// 1.0 位精确保留样本，0 是有意静音（不计 underrun）；非法/越界值返回 -EINVAL 且不改变现有音量。
+// 回调内只做一次原子读取与整数定点乘法，不分配、不加锁、不做文件 IO；量化规则见实现（Q15，四舍五入，防溢出）。
+// Bounded finite gain (0..1) applied inside the real data callback, so frames already queued but not yet delivered
+// still obey the latest gain. 1.0 preserves samples bit-exactly and 0 is intentional mute (not underrun); invalid or
+// out-of-range input returns -EINVAL and leaves the current gain unchanged. The callback only performs one atomic load
+// and integer fixed-point multiplies: no allocation, locking or file IO. Quantisation is documented in the source.
+int dm_audio_set_gain(dm_audio *audio, float gain);
+uint32_t dm_audio_gain_q15(const dm_audio *audio);   // 诊断/测试用 | diagnostic/test accessor
 void dm_audio_get_stats(const dm_audio *audio, dm_audio_stats *stats);
 // 停止 → 等已进入回调退出 → close/free；从回调内调用返回 -EBUSY，不重入 close。
 // close 失败保留 stream，串行 retry 可再次 close；close 成功但 stop/wait 未证明时保留 CLOSED，retry 只做最终释放。
