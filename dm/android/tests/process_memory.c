@@ -12,6 +12,7 @@
 #include <sys/mman.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include "generated_entry.h"
 #if defined(__APPLE__)
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
@@ -187,7 +188,7 @@ static void layout_boundaries(size_t page) {
 extern void dm_gate(void);
 typedef returned (*gate_function)(uint64_t,uint64_t,uint64_t,uint64_t);
 static void word(unsigned char *p,uint32_t instruction) { memcpy(p,&instruction,4); }
-static void native_gates(size_t page) {
+static void DM_NO_UBSAN_FUNCTION native_gates(size_t page) {
     dm_nso_image image={.header.image_size=page};dm_image_mapping program;dm_gate_site sites[2];
     image.header.segments[0].size=192;image.header.segments[1].memory_offset=(uint32_t)page;image.header.segments[2].memory_offset=(uint32_t)page;
     image.bytes=calloc(1,page);CHECK(image.bytes);

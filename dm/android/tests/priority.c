@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include "generated_entry.h"
 #define CHECK(c) do { if (!(c)) { fprintf(stderr,"FAIL %d: %s\n",__LINE__,#c); abort(); } } while (0)
 #define UNIT (2u*1024u*1024u)
 #define CURRENT 0xffff8000u
@@ -37,7 +38,7 @@ static void prepare(void) {
     gates=(dm_gate_table){sites,2};
 }
 #endif
-static void query(dm_host *host,uint64_t handle,uint64_t expected_result,uint64_t expected_priority,int real_gate) {
+static void DM_NO_UBSAN_FUNCTION query(dm_host *host,uint64_t handle,uint64_t expected_result,uint64_t expected_priority,int real_gate) {
     uint64_t r[31];for(unsigned i=0;i<31;i++)r[i]=0x1234567800000000ull+i;r[1]=handle;
     CHECK(dm_host_svc(host,0x0c,r)==expected_result&&r[0]==expected_result&&r[1]==expected_priority);
     for(unsigned i=2;i<31;i++)CHECK(r[i]==0x1234567800000000ull+i);

@@ -7,11 +7,14 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include "generated_entry.h"
 
 #define CHECK(c) do { if (!(c)) { fprintf(stderr, "FAIL line %d: %s\n", __LINE__, #c); abort(); } } while (0)
+#if defined(__aarch64__)
 static void put_word(uint8_t *where, uint32_t word) {
     for (unsigned b = 0; b < 4; b++) where[b] = (uint8_t)(word >> (b * 8));
 }
+#endif
 
 static void rejects_patch_when_instruction_unsupported(void) {
     dm_patch_request request = {.instruction = 0xd503201f, .original_offset = 0, .stub_offset = 128, .host_gate = 1};
@@ -41,7 +44,7 @@ void dm_gate(void);
 // 故意在宿主门重新建立预留，验证 SVC 返回清除而非依赖 C 调用偶然使 STXR 失败。
 // Deliberately rearm the reservation in the host gate, checking SVC return clearing rather than incidental STXR failure across C calls.
 __attribute__((naked)) static void reservation_gate(void){__asm__ volatile("ldxr x9, [x0]\nret");}
-static void svc_clears_a_reservation_rearmed_by_host(void){
+static void DM_NO_UBSAN_FUNCTION svc_clears_a_reservation_rearmed_by_host(void){
     size_t page=(size_t)sysconf(_SC_PAGESIZE);
     dm_nso_image image={.header.image_size=page};image.header.segments[0].size=160;
     image.header.segments[1].memory_offset=(uint32_t)page;
@@ -57,7 +60,7 @@ static void svc_clears_a_reservation_rearmed_by_host(void){
     CHECK(((uint32_t(*)(uint64_t*,uint64_t))(void*)mapped.base)(&value,22)!=0&&value==11);
     CHECK(!dm_image_unmap(&mapped));dm_nso_free(&image);
 }
-static void executes_address_svc_through_gate(void){
+static void DM_NO_UBSAN_FUNCTION executes_address_svc_through_gate(void){
     size_t page=(size_t)sysconf(_SC_PAGESIZE);
     dm_nso_image image={.header.image_size=page};image.header.segments[0].size=192;
     image.header.segments[1].memory_offset=(uint32_t)page;image.header.segments[2].memory_offset=(uint32_t)page;
@@ -80,7 +83,7 @@ static void executes_address_svc_through_gate(void){
     CHECK(wait(value,1,2,0)==0xea01&&*value==0);
     CHECK(!dm_guest_detach());CHECK(!dm_host_destroy(h));CHECK(!dm_image_unmap(&mapped));dm_nso_free(&image);
 }
-static void executes_system_instructions_when_rewritten(void) {
+static void DM_NO_UBSAN_FUNCTION executes_system_instructions_when_rewritten(void) {
     size_t page = (size_t)sysconf(_SC_PAGESIZE);
     dm_nso_image image = {.header.image_size = page};
     image.header.segments[0].size = 128 + 10 * 32;

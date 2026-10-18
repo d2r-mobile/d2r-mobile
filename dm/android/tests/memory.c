@@ -12,10 +12,13 @@
 #include <sys/mman.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include "generated_entry.h"
 #define CHECK(c)do{if(!(c)){fprintf(stderr,"FAIL line %d: %s\n",__LINE__,#c);abort();}}while(0)
 #define UNIT (2u*1024u*1024u)
 #define STACK 65536u
+#if defined(__aarch64__)
 static const dm_gate_table gates={0};
+#endif
 typedef struct{uint64_t base,size;uint32_t state,attr,perm,ipc,device,pad;}info;
 static uint64_t heap_size(dm_host*h,size_t size){uint64_t r[31]={[1]=size};return dm_host_svc(h,1,r);}
 static uint64_t alias(dm_host*h,unsigned n,void*dst,void*src,size_t size){
@@ -134,7 +137,7 @@ extern void dm_gate(void);
 typedef struct{uint64_t result,value;}gate_result;
 typedef gate_result(*gate_fn)(uint64_t,uint64_t,uint64_t,uint64_t);
 static void put(uint8_t*p,uint32_t word){memcpy(p,&word,4);}
-static void native_gates(void){
+static void DM_NO_UBSAN_FUNCTION native_gates(void){
     size_t page=(size_t)sysconf(_SC_PAGESIZE);dm_nso_image image={.header.image_size=page};dm_image_mapping program;
     image.header.segments[0].size=256;image.header.segments[1].memory_offset=(uint32_t)page;image.header.segments[2].memory_offset=(uint32_t)page;
     image.bytes=calloc(1,page);CHECK(image.bytes);unsigned numbers[]={4,5,6,0x29};dm_gate_site sites[4];

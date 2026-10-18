@@ -105,9 +105,10 @@ _dm_gate:
     ldp q28, q29, [sp, #704]
     ldp q30, q31, [sp, #736]
     // 门可改任意通用寄存器：svc 出参在 x0..x8，mrs cntpct 的目标可以是任意 xN（sdk 33 处里 14 处是 x19..x23）
-    // ⇒ x0..x29 全部回读（x18 是苹果平台寄存器，客体的 x18 已改写到线程槽，跳过不碰）
+    // ⇒ x0..x29 全部回读（包括 x18：它在 ELF 上是调用者保存寄存器，在 Darwin 上是平台寄存器；都只恢复保存值）
+
     // A gate may modify any general-purpose register: svc out-parameters are in x0..x8, and the target of mrs cntpct can be any xN (14 of the 33 sites in sdk are x19..x23)
-    // ⇒ read back all of x0..x29 (x18 is the Apple platform register; the guest's x18 has been rewritten to the thread slot, so skip it and leave it alone)
+    // ⇒ read back all of x0..x29 (including x18: caller-saved on ELF and a platform register on Darwin; both restore only the saved value)
     ldp x0, x1, [sp, #0]
     ldp x2, x3, [sp, #16]
     ldp x4, x5, [sp, #32]
@@ -117,6 +118,7 @@ _dm_gate:
     ldp x12, x13, [sp, #96]
     ldp x14, x15, [sp, #112]
     ldp x16, x17, [sp, #128]
+    ldr x18, [sp, #144]
     ldr x19, [sp, #152]
     ldp x20, x21, [sp, #160]
     ldp x22, x23, [sp, #176]

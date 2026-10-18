@@ -9,6 +9,7 @@
 #include <signal.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include "generated_entry.h"
 #define CHECK(c)do{if(!(c)){fprintf(stderr,"FAIL line %d: %s\n",__LINE__,#c);abort();}}while(0)
 static void put32(uint8_t*p,uint32_t v){for(unsigned b=0;b<4;b++)p[b]=(uint8_t)(v>>(8*b));}
 static void put64(uint8_t*p,uint64_t v){for(unsigned b=0;b<8;b++)p[b]=(uint8_t)(v>>(8*b));}
@@ -74,7 +75,7 @@ static void failures(dm_nso_image*image){
     CHECK(dm_rewrite_prepare(image,0x8000040,1,&r,&sentinel)==ENOTSUP&&r.emitter_errors);
     CHECK(sentinel.count==123&&!sentinel.image.bytes);
 }
-static void referenced_literal_words_are_preserved(void){
+static void DM_NO_UBSAN_FUNCTION referenced_literal_words_are_preserved(void){
     dm_nso_image im=fixture(0);dm_rewrite_report r;dm_rewrite_output out={0};
     const uint32_t pool[]={0x18000060,0xd65f03c0,0xd65f03c0,0xffffffff,0xd503201f};
     program(&im,0x900,pool,5);
@@ -121,7 +122,7 @@ static void referenced_literal_words_are_preserved(void){
     CHECK((!status||status==ENOTSUP)&&r.literal_words==0);dm_rewrite_free(&out);
     dm_nso_free(&im);
 }
-int main(void){
+int DM_NO_UBSAN_FUNCTION main(void){
     referenced_literal_words_are_preserved();
     dm_nso_image images[2]={fixture(0),fixture(1)};failures(&images[1]);
     dm_nso_image metadata=fixture(0);put32(metadata.bytes+4,0x900);memcpy(metadata.bytes+0x900,metadata.bytes+0x4000,28);
