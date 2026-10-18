@@ -42,6 +42,15 @@ int main(void) {
         reads++;
     } while (!atomic_load(&job.done));
     CHECK(!pthread_join(thread, NULL)); CHECK(reads > 0);
+    /* Selective edge discard: only the cancelled button's unread edge goes; another finger's edge survives. */
+    dm_pad_sample edges = {.buttons = (1u << 0) | (1u << 1), .connected = 1};
+    dm_android_pad_publish(pad, &edges);
+    dm_android_pad_clear_edges_mask(pad, 1u << 0);
+    edges.buttons = 0; dm_android_pad_publish(pad, &edges);
+    CHECK(dm_android_pad_read(pad).buttons == (1u << 1));
+    dm_android_pad_publish(pad, &edges);
+    dm_android_pad_clear_edges(pad);
+    CHECK(dm_android_pad_read(pad).buttons == 0);
     dm_android_pad_destroy(pad);
     puts("PASS: latched quick taps, held keys, disconnect clearing, axis limits, coherent concurrent Npad snapshots");
     return 0;
