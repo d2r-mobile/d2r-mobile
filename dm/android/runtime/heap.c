@@ -104,7 +104,7 @@ int dm_host_configure_virtual_cores(dm_host *host, uint64_t mask, uint32_t prefe
 int dm_host_destroy(dm_host *host) {
     if (!host) return EINVAL;
     pthread_mutex_lock(&host->mutex);
-    if (host->attached||host->alias_count||host->memory_pins||dm_host_sync_busy(host)||dm_host_ipc_busy(host)||dm_host_arbiter_waiters(host)||dm_host_mutex_waiters(host)||dm_host_accounting_busy(host)) { pthread_mutex_unlock(&host->mutex); return EBUSY; }
+    if (host->attached||host->alias_count||host->memory_pins||dm_host_sync_busy(host)||dm_host_ipc_busy(host)||dm_host_arbiter_waiters(host)||dm_host_mutex_waiters(host)||dm_host_accounting_busy(host)||dm_lm_busy_locked(host)) { pthread_mutex_unlock(&host->mutex); return EBUSY; }
     if (munmap(host->heap, host->reservation_size)) {
         int error = errno; pthread_mutex_unlock(&host->mutex); return error;
     }
@@ -112,7 +112,7 @@ int dm_host_destroy(dm_host *host) {
     dm_host_romfs_close(host);
     dm_host_mutex_close(host);
     dm_host_ipc_close(host);
-    dm_lm_close(host);
+    dm_lm_close_locked(host);
     dm_host_sync_close(host);
     dm_host_arbiter_close(host);
     if(host->backing_fd>=0)close(host->backing_fd);
