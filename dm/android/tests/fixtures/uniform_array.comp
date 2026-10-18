@@ -1,0 +1,9 @@
+#version 450
+// 负例：数组 uniform 布局，必须在 GPU 前拒绝。 | Negative: array uniform layout; must reject before GPU.
+layout(local_size_x = 4) in;
+layout(set = 0, binding = 0, std140) uniform U { uvec4 u[2]; } ub;
+layout(set = 0, binding = 1, std430) buffer Out { uint v[]; } outbuf;
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i < 4u) outbuf.v[i] = ub.u[0].x + i;
+}
