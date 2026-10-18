@@ -21,6 +21,7 @@ static int contains(uintptr_t base,size_t size,uintptr_t address,size_t length){
 static int overlap(uintptr_t base,size_t size,uintptr_t address,size_t length){
     return size&&length&&base<address+length&&address<base+size;
 }
+int dm_host_accounting_busy(dm_host*h){return h&&h->accounting&&(h->accounting->locals||h->accounting->local_bytes);}
 size_t dm_host_accounting_used(dm_host*h){return h->committed+h->accounting->module_bytes+h->accounting->local_bytes;}
 size_t dm_host_accounting_budget(dm_host*h){return h->accounting->budget;}
 int dm_host_accounting_fits(dm_host*h,size_t additional){
