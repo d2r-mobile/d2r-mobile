@@ -16,6 +16,8 @@ English: [README.md](README.md)
 
 `app/present_policy.c` 是呈现接缝：要求 `WINDOW_FORMAT_RGBA_8888`、`stride >= width`、容量覆盖精确的 `width*height*4` 字节，并用 64 位尺寸运算。它只清零可见行区，按居中复制（窗口更小时从源居中裁剪），行距填充既不读也不写；被拒绝的复制写入目标零字节。资源复制、Vulkan 创建、绘制与窗口加锁失败都按实际错误码记录；读回缓冲在所有路径释放，Vulkan 上下文只由停止／低内存销毁。
 
+Surface 像素格式在每次获取 Surface 时协商一次：`host_surface_acquire` 先调用 `ANativeWindow_setBuffersGeometry(window, 0, 0, WINDOW_FORMAT_RGBA_8888)`，成功后才取引用。0 宽高沿用 Surface 基础尺寸，因此视图几何与输入映射不变；该调用返回负值时在取引用之前就失败，不会泄漏引用；锁定缓冲的格式／行距检查保持严格，不把 RGB565 当 RGBA 解释。
+
 随接入新增的测试：
 
 | 测试 | 独立验证内容 |
