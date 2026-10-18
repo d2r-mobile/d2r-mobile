@@ -222,6 +222,40 @@ table never silently drops an old target to admit a new one.
 The provider callback acknowledgement is owned-callback evidence only, not
 game inventory success; no real provider memory or protocol is implemented.
 
+## Native offscreen HUD geometry (#111)
+
+`dm_touch_hud` renders a bounded offscreen RGBA8 image from the same
+`dm_tc_layout_make(width_pt,height_pt)` point transform used by `dm_tc_hit`.
+Target centers/radii and the joystick base are converted once by the snapshot
+density (`pixel = point * density`); the test separately calls `dm_tc_hit` at
+every geometry center and checks the expected target. This is geometry/HUD
+evidence only, not a game presenter or swapchain integration.
+
+The snapshot is immutable: point size, density/pixel size, available, enabled
+and pressed masks. Missing glyphs, atlases, binding/cooldown/mana state and
+private game art stay explicitly unavailable; the renderer draws owned
+geometric disks/rings, never a hardcoded screenshot or generic virtual-button
+replacement. Validation runs before any GPU allocation and rejects zero/
+mismatched density, oversize images and mask bits outside `DM_TC_COUNT`.
+
+The offscreen pass draws a nonuniform synthetic background with varying alpha,
+then alpha-blended normal/pressed/unavailable circles. Tests compare a target
+interior against an independently computed source-over blend, a background-only
+pixel outside every target, pressed vs normal, unavailable vs normal, and the
+overlay bounds/crosses. Resize/density (667x375@2 to 812x375@3) re-derives
+geometry with no stale positions. Local PNGs for normal, pressed, unavailable,
+hit-overlay and resized review are written by the host test; no device, HUD
+acceptance, real provider or full-art claim is made.
+
+Failure paths propagate shader-load and command-begin `VkResult` failures. A
+GPU-free lifecycle test mocks the actual Vulkan/dm_vk calls and counts real
+create/destroy, allocate/free, map/unmap, command and fence pairs, so a missing
+destroy or free fails even when rendering reports success; injected
+post-creation buffer/begin/submit failures must leave output bytes unchanged.
+Preflight rejects non-finite/oversized point dimensions and validates
+`point * density` in double before any float-to-integer conversion, so infinity,
+NaN, FLT_MAX and product-overflow snapshots never reach GPU allocation.
+
 ## What remains unknown
 
 - Whether every source-backed Apple gesture has an exact game-visible equivalent
