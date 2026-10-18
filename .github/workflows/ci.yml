@@ -23,6 +23,35 @@ jobs:
           bash ci/tests/test-ndk-stub.sh
           bash ci/tests/test-ci-failures.sh
           bash ci/tests/test-elf-pages.sh
+          bash ci/tests/test-java-ci-sdk-branch.sh
+
+  java-boundary:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Require JDK and Android API 35 platform jar
+        env:
+          DM_CI_WORK: ${{ runner.temp }}/dm-ci
+        run: |
+          set -euo pipefail
+          command -v javac >/dev/null 2>&1 || { echo "javac missing on the runner" >&2; exit 1; }
+          bash ci/scripts/android-platform.sh
+          sdk="${DM_ANDROID_SDK_ROOT:-${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}}"
+          test -f "$sdk/platforms/android-35/android.jar"
+          echo "ANDROID_SDK_ROOT=$sdk" >> "$GITHUB_ENV"
+      - name: Required Java compile against real android.jar and focus host controls
+        env:
+          DM_CI_WORK: ${{ runner.temp }}/dm-ci
+          DM_JAVA_REQUIRE_ANDROID: "1"
+        run: bash ci/scripts/java-boundary.sh
+      - name: Upload sanitized Java evidence
+        if: always()
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        with:
+          name: ci-java-boundary
+          path: ${{ runner.temp }}/dm-ci/artifacts/java-boundary.log
+          if-no-files-found: warn
 
   host-x86_64:
     runs-on: ubuntu-24.04
