@@ -642,3 +642,14 @@ if(ANDROID)
     target_compile_options(dm_audio_output_cross PRIVATE -Wall -Wextra -Werror)
     target_link_options(dm_audio_output_cross PRIVATE "-Wl,-z,max-page-size=16384")
 endif()
+
+# #170 Android AudioManager 焦点边界：主机 Java 测试（只替换 android.media 边界）。
+# #170 Android AudioManager focus boundary: host Java tests replacing only the android.media boundary.
+if(NOT ANDROID)
+    find_package(Java COMPONENTS Development QUIET)
+    if(Java_FOUND)
+        add_test(NAME platform_audio_focus_java
+            COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/platform_audio_focus_java.sh)
+        set_tests_properties(platform_audio_focus_java PROPERTIES TIMEOUT 120)
+    endif()
+endif()

@@ -32,9 +32,20 @@ printf '<resources><string name="app_name">%s</string></resources>\n' "$chinese"
 cp "$native_build/vulkan/indexed_textured.vert.spv" "$stage/assets/"
 cp "$native_build/vulkan/indexed_textured.frag.spv" "$stage/assets/"
 cp "$native_build/libdm_android_app.so" "$stage/lib/arm64-v8a/"
+# #170 真实 Java 焦点边界：用 android.jar 编译，再 d8 成 classes.dex 一并打包；不再只是 hasCode=false 的原生壳。
+# #170 real Java focus boundary: compile against android.jar, dex with d8 and package classes.dex.
+java_src=$here/java
+javac_bin=${JAVAC:-javac}
+command -v "$javac_bin" >/dev/null || { echo "Missing javac for app/java" >&2; exit 1; }
+mkdir -p "$stage/classes" "$stage/dex"
+"$javac_bin" --release 11 -classpath "$framework" -d "$stage/classes" \
+    $(find "$java_src" -name '*.java' -type f | sort)
+"$tools/d8" --release --min-api 29 --lib "$framework" --output "$stage/dex" \
+    $(find "$stage/classes" -name '*.class' -type f | sort)
+cp "$stage/dex/classes.dex" "$stage/classes.dex"
 "$tools/aapt2" compile --dir "$stage/res" -o "$stage/resources.zip"
 "$tools/aapt2" link -o "$stage/unsigned.apk" --manifest "$here/AndroidManifest.xml" -I "$framework" -A "$stage/assets" "$stage/resources.zip"
-(cd "$stage" && zip -0 -q unsigned.apk lib/arm64-v8a/libdm_android_app.so)
+(cd "$stage" && zip -0 -q unsigned.apk lib/arm64-v8a/libdm_android_app.so classes.dex)
 "$tools/zipalign" -P 16 -f 4 "$stage/unsigned.apk" "$stage/aligned.apk"
 keystore=$DM_ROOT/keys/android-diagnostic-debug.p12
 if [[ ! -f "$keystore" ]]; then
