@@ -70,6 +70,18 @@ int dm_touch_bridge_attach_game(dm_touch_bridge *bridge, const dm_tgp_provider *
 int dm_touch_bridge_resize(dm_touch_bridge *bridge, float width_pt, float height_pt,
                            int64_t time_ns);
 
+// Host-supplied belt snapshot for the adapter's existing belt context (rows
+// 0-4, open 0/1; dm_belt_rows). The adapter validates before mutating. Invalid
+// input returns 0 and changes neither the adapter nor the bridge's active
+// pointer table. Same values return 1 without cancelling or consuming. A real
+// change cancels inner pointers/queued pulses through the adapter's belt
+// context path, then clears the bridge's active table and consumes the neutral
+// snapshot, so stale MOVE/UP are rejected and a reused ID can be pressed
+// again. The snapshot survives bridge cancel/resize like the core fields; an
+// unconsumed belt_request is never read or cleared here (one-shot ownership
+// stays in dm_android_touch_take_action). No game/HUD context is synthesized.
+int dm_touch_bridge_set_belt_context(dm_touch_bridge *bridge, int rows, int open);
+
 // Applies one MotionEvent-shaped event. Returns 1 when the event was consumed
 // (including a safe UP/CANCEL fallback) and 0 for malformed input or bounded
 // backpressure. Does not consume the diagnostic snapshot; call read separately.
