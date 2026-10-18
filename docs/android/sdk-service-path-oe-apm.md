@@ -18,9 +18,9 @@ Base: accepted `main` `source snapshot` (includes #76 and the corrected #73 note
 - For each thunk reached by a `BL`: decode any `adrp Rd` / `ldr Rt,[Rn,#imm]` / `add Rd2,Rn2,#imm12` / `br Rt2` chain,
   require `Rn == Rd`, `Rd2 == Rn2 == Rd`, `Rt2 == Rt`, and take the GOT slot from the `ldr` displacement. `add` may
   differ from the `ldr` displacement (lazy-resolver shape); it is recorded separately.
-- Relocations: `1026` JUMP_SLOT with a defined symbol record gives a local body; `1026` with symbol index 0 is
-  **unresolved under this method** (not assumed ifunc/weak/lazy); `1027` is a relative addend; every other type is
-  `UNSUPPORTED_TYPE_n`. No fallback inference.
+- Relocations: `1026` JUMP_SLOT with a defined symbol record gives a local body; a genuine raw `r_info` symbol index 0
+  is unresolved; a nonzero index with a missing/truncated name must stay `name unavailable`, never be inferred as index
+  0; long names use a bounded 4096-byte window.
 - Per-function scan: CFG over direct `B`, `B.cond`, `CBZ/CBNZ`, `TBZ/TBNZ` within the symbol's extent, capped at 1200
   instructions. `BLR`/`BR` are classified as unresolved indirect calls/tails with their register and stop that path;
   they are never treated as ordinary instructions or as evidence of absence. `CAP_HIT` is reported explicitly.
@@ -47,9 +47,9 @@ Base: accepted `main` `source snapshot` (includes #76 and the corrected #73 note
 |---|---|
 | `nninitInitializeSdkModule` | 9 `BL` + one final `B`; no `RET`; resolves to the nine initializers recorded in the corrected #73 note (oe, aoc, err, fs×3, pctl, os VAM, diag startup) |
 | `nn::oe::Initialize` | direct calls `os::SdkMutexType::Lock`, `apm::Initialize`, `oe::InitializeApplet`; body ends in a tail branch (no `RET`); no `SVC`, no indirect call in the scanned body |
-| `nn::apm::Initialize` (selected candidate) | 58 instructions visited of a 236-byte extent: mutex lock/unlock, one unresolved symbol-index-0 JUMP_SLOT, one `BLR x8`; static address candidate `apm`. No direct `SVC` in the visited set; no service acquisition or return of the indirect call is proven. The earlier “not a service path” conclusion is withdrawn. |
+| `nn::apm::Initialize` (selected candidate) | 58 instructions visited of a 236-byte extent: mutex lock/unlock, one 1026 helper call with a **nonzero raw symbol index and a 281-byte name** (an earlier 128-byte name window misread it as nameless), one `BLR x8`; static address candidate `apm`. No direct `SVC` in the visited set; no service acquisition or return of the indirect call is proven. The earlier “not a service path” conclusion is withdrawn. |
 | `nn::oe::InitializeApplet` | 26 instructions visited of a 464-byte extent: mutex lock/unlock, `am::InitializeApplicationInterfaces`, `am::GetCommonStateGetter`, then one `BLR x8` frontier. The old longer direct-call list came from scanning beyond an unresolved indirect call and is withdrawn. |
-| `nn::am::InitializeApplicationInterfaces` | static address candidate **`appletOE`** via `adrp`+`add`; `am::InitializeCommonInterfaces(proxy)`; diag `AbortImpl`; process-handle helpers; one `BL` through a JUMP_SLOT (1026) with symbol index 0 (**unresolved**); **four `BLR x8` indirect calls**; 137 instructions visited of a 776-byte extent, cap not hit |
+| `nn::am::InitializeApplicationInterfaces` | static address candidate **`appletOE`** via `adrp`+`add`; `am::InitializeCommonInterfaces(proxy)`; diag `AbortImpl`; process-handle helpers; one `BL` through a JUMP_SLOT (1026) that remains unresolved (the earlier method did not retain its raw index; not re-verified here); **four `BLR x8` indirect calls**; 137 instructions visited of a 776-byte extent, cap not hit |
 | `nn::am::InitializeCommonInterfaces(IStackableAppletProxy*)` | 1436-byte symbol extent, **184 instructions visited** (cap not hit): mutex operations and diag `AbortImpl`, plus **seven `BLR x8` indirect calls**; no direct `SVC`, `GetServiceHandle`, `ConnectToNamedPort` or CMIF request/reply call in the visited set |
 
 ## 3. First unsupported indirection — stop point
@@ -58,9 +58,9 @@ The corrected trace identifies `apm` and `appletOE` as static address candidates
 `am::InitializeApplicationInterfaces` (this is not an executed service acquisition and not proof of one). The actual
 service acquisition is not a direct call in the visited bodies. The first frontier is the `BLR x8` virtual dispatch on
 the `IStackableAppletProxy` interface (seven sites in `InitializeCommonInterfaces`, four in
-`InitializeApplicationInterfaces`) together with the unresolved symbol-index-0 JUMP_SLOT. The receiver/vtable provenance
-of `x8` is not established by the visited instructions, and the symbol-0 slot has no name or defined target under this
-method.
+`InitializeApplicationInterfaces`) together with the unresolved JUMP_SLOT (raw index not retained by the earlier method). The receiver/vtable provenance
+of `x8` is not established by the visited instructions. For the apm helper slot, this slice later resolved a nonzero raw
+symbol index with a 281-byte name; the appletOE-path slot is not re-verified here and remains unknown.
 
 No port-to-command mapping, command number, request layout, reply layout or reply consumer is proven. The earlier claims
 that these bodies contain no virtual calls or service strings, that APM is not a service path, and that the longer
@@ -70,7 +70,7 @@ claims. APM and InitializeApplet each also stop at their own unresolved `BLR x8`
 ## 4. Concrete blocker / next bounded step
 
 **Blocker (recorded once):** resolve the `x8` receiver/vtable provenance for the `BLR x8` sites (which object, which
-vtable slot, whether it reaches `sm:` `GetServiceHandle` with `appletOE`) or resolve the symbol-index-0 JUMP_SLOT through
+vtable slot, whether it reaches `sm:` `GetServiceHandle` with `appletOE`) or resolve the unresolved JUMP_SLOT (raw index not retained by the earlier method) through
 loader/relocation metadata. Without that, no port, session or command can be attached.
 
 Static-first unblock: a bounded register/dataflow trace of `x8` from function entry (including the proxy argument passed
@@ -80,7 +80,7 @@ and would need separate authorization; no service or call order is guessed in th
 ## 5. Explicit unknowns
 
 - Port/service name, session acquisition, domain conversion, command IDs, request layout, reply layout, reply consumer.
-- Whether the symbol-index-0 slot is an ifunc/lazy resolver or an undefined/weak import; under this method it remains
+- Whether the unresolved JUMP_SLOT (raw index not retained by the earlier method) is an ifunc/lazy resolver or an undefined/weak import; under that method it remains
   unresolved, and no such identity is assumed.
 - The provenance of the `x8` receiver/vtable used by the `BLR x8` sites (proxy object, vtable slot and backing session).
 - Whether `apm::Initialize`, `oe::InitializeApplet` or the `am` interface calls execute at startup at all.
