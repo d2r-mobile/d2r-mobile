@@ -379,6 +379,62 @@ Host tests drive distinct real bridge invalid cases, aggregate reasons against
 the unchanged total, verify ownership/output and valid retry after cancel/reused
 IDs, and retain the existing HID/action/portal tests.
 
+## Android physical gamepad event conversion (#154)
+
+`app/gamepad_events.c/h` is a narrow conversion module before source
+arbitration and App wiring. The caller admits one device/generation, owns a
+`dm_gamepad_context` per device and passes the prior `dm_npad_state`; the module
+does not select a device, track a generation, override touch ownership, install
+an input listener, or publish guest HID. Only `AINPUT_SOURCE_GAMEPAD` and
+`AINPUT_SOURCE_JOYSTICK` are recognized; touch, keyboard, unknown sources and
+unknown event types are rejected.
+
+The mapping freezes the existing npad button bits and the installed NDK r29
+`android/input.h`/`android/keycodes.h` getter semantics. The Android-specific
+choices below are new policy, not a claim that Android exposes these as
+configurable upstream settings:
+
+- The context keeps separate `digital_buttons` (KeyEvent) and `analog_buttons`
+  (MotionEvent HAT/triggers). Output is their union; releasing a digital key
+  does not clear a still-held analog HAT/trigger and a neutral stick/HAT motion
+  does not clear a held digital D-pad/trigger. Reinitialize the context when the
+  admitted device is replaced/disconnected, so contributions cannot leak.
+- Face/buttons: `BUTTON_A/B/X/Y` -> `DM_BTN_A/B/X/Y`; `L1/R1` -> `L/R`;
+  `L2/R2` -> `ZL/ZR`; `THUMBL/THUMBR` -> `LS/RS`; `START` -> `PLUS`;
+  `SELECT` -> `MINUS`. D-pad keys (including diagonal keycodes) map to the four
+  direction bits. Unknown key codes are rejected.
+- Key actions: DOWN/UP only. A repeated DOWN (`repeatCount > 0`) is idempotent
+  for the already-held digital bit; UP clears only that digital bit.
+  `ACTION_MULTIPLE`, negative repeat counts and unrelated keys are rejected
+  atomically.
+- Motion: left stick `AXIS_X/Y`, right stick `AXIS_Z/RZ` with Android's
+  down-positive Y inverted to npad up-positive; `HAT_X/Y` map to analog D-pad;
+  the analog direction bits are released when the hat returns to center.
+  Sticks use a per-axis `0.10` dead zone and are scaled to `DM_STICK_MAX`
+  (`32767`).
+- Triggers: `AXIS_LTRIGGER/RTRIGGER` are normalized `[0,1]`; values strictly
+  above `0.5` assert analog `ZL/ZR`, and release at or below the threshold. A
+  digital L2/R2 contribution remains independently held if the analog trigger
+  releases, and vice versa.
+- Motion actions: DOWN/MOVE update axes/analog HAT/triggers; UP releases analog
+  axes/HAT/triggers while preserving digital key buttons; CANCEL resets both
+  digital and analog contributions and axes. Unrelated state bits/fields are
+  preserved. Axes are range-checked (`[-1,1]` for sticks/hat, `[0,1]` for
+  triggers) and finite; any invalid axis rejects the whole event without
+  mutating context or state.
+- Every successful conversion uses temporary context/state copies, so a rejected
+  event leaves both supplied values byte-for-byte unchanged. `sampling`,
+  `attributes` and unaffected fields are preserved. The state's sampling
+  counter is caller-owned.
+
+Host tests replace only the seven narrow Android getter functions and link the
+real production translation. They cover held/up, repeated holds, diagonals,
+stick extremes, dead-zone thresholds, trigger release, digital/analog
+interleaving and both release orders, neutral/CANCEL, independent contexts,
+finite/range rejection, unknown source/key/action and atomic rejection. Private
+compiled copies changing face-A mapping or omitting analog trigger release must
+fail. No Android event installation, physical controller, guest HID, native UI
+or full-touch/gameplay acceptance is claimed.
 ## Touch/gamepad source arbitration (#150)
 
 This is a new Android-side policy, not an upstream-configurable setting. The
