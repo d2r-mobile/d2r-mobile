@@ -39,6 +39,12 @@ typedef struct {
     int (*frame)(void *ctx);
 } dm_wsi_ops;
 
+// 真实打开边界的观察者：只在真正调用 ops.open 之前触发一次，参数是本次请求的尺寸。
+// 普通 redraw 走同一窗口快路径、不打开，因此不会触发。
+// Observer at the real open boundary: fired once immediately before ops.open with the requested size. An ordinary
+// redraw takes the same-window fast path and never opens, so it never fires.
+typedef void (*dm_wsi_open_observer)(void *ctx, uint32_t width, uint32_t height);
+
 typedef struct {
     dm_wsi_ops ops;
     int enabled;
@@ -51,9 +57,14 @@ typedef struct {
     uint32_t width, height;
     uint32_t frames, rebuilds, losses;
     dm_wsi_status last;
+    dm_wsi_open_observer on_open;   // 只在真实 ops.open 前触发 | fired only before a real ops.open
+    void *on_open_ctx;
 } dm_wsi;
 
 void dm_wsi_init(dm_wsi *wsi, const dm_wsi_ops *ops, int enabled);
+
+// 注册/清除真实打开边界观察者。| Install or clear the real-open-boundary observer.
+void dm_wsi_set_open_observer(dm_wsi *wsi, dm_wsi_open_observer observer, void *ctx);
 
 // 新窗口或同一窗口的重绘：替换窗口先排空旧设备；打开失败进入 UNSUPPORTED/ERROR，不回落 CPU 路径。
 // New window or redraw of the same one: replacing drains the old device first; open failures become

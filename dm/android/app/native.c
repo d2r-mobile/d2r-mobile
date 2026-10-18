@@ -15,6 +15,7 @@
 #include "wsi_bridge.h"
 #include "wsi_diagnostic.h"
 #include "wsi_frame_result.h"
+#include "wsi_report.h"
 #include <android/asset_manager.h>
 #include <android/configuration.h>
 #include <android/log.h>
@@ -34,7 +35,47 @@
 #include <time.h>
 #include <unistd.h>
 #define LOG(...) __android_log_print(ANDROID_LOG_INFO,"D2R-Diagnostic",__VA_ARGS__)
-typedef struct{dm_vk vk;AInputQueue*input;dm_app_lifecycle*lifecycle;ANativeActivity*activity;ANativeWindow*window;dm_touch_bridge*touch;dm_view_policy view;dm_input_policy gate;ALooper*looper;int timer_fd;int resumed,focused,touch_allowed;float density,touch_width_pt,touch_height_pt;uint64_t last_touch_buttons;int32_t last_touch_lx,last_touch_ly,last_touch_rx,last_touch_ry;int64_t last_touch_log_ns;dm_android_touch_observation hud_obs;dm_touch_hud_frame hud_frame;int hud_obs_valid;dm_wsi wsi;dm_wsi_bridge wsi_bridge;dm_vk wsi_vk;dm_vk_swapchain wsi_chain;int wsi_chain_live;int frame_fd;int wsi_last_logged;char vertex[4096],fragment[4096];}app_state;
+typedef struct{dm_vk vk;AInputQueue*input;dm_app_lifecycle*lifecycle;ANativeActivity*activity;ANativeWindow*window;dm_touch_bridge*touch;dm_view_policy view;dm_input_policy gate;ALooper*looper;int timer_fd;int resumed,focused,touch_allowed;float density,touch_width_pt,touch_height_pt;uint64_t last_touch_buttons;int32_t last_touch_lx,last_touch_ly,last_touch_rx,last_touch_ry;int64_t last_touch_log_ns;dm_android_touch_observation hud_obs;dm_touch_hud_frame hud_frame;int hud_obs_valid;dm_wsi wsi;dm_wsi_bridge wsi_bridge;dm_wsi_report report;dm_vk wsi_vk;dm_vk_swapchain wsi_chain;int wsi_chain_live;int frame_fd;int wsi_last_logged;char vertex[4096],fragment[4096];}app_state;
+static int64_t monotonic_ns(void){
+    struct timespec ts;
+    if(clock_gettime(CLOCK_MONOTONIC,&ts))return -1;
+    return (int64_t)ts.tv_sec*1000000000LL+ts.tv_nsec;
+}
+// #147 有界证据输出：进度行由既有回调路径触发（无新增定时器/唤醒），至多 1 Hz；终态强制一次快照。
+// #147 bounded evidence: progress lines ride on existing callback paths (no new timer or wakeup), at most 1 Hz;
+// terminal states force one snapshot.
+static void wsi_report_now(app_state*s,uint64_t*now){
+    (void)s;
+    int64_t value=monotonic_ns();
+    *now=value<0?0:(uint64_t)value;
+}
+static void wsi_report_progress(app_state*s){
+    if(!s||!s->wsi.enabled)return;
+    uint64_t now;wsi_report_now(s,&now);
+    if(!dm_wsi_report_due(&s->report,now))return;
+    char line[384];dm_wsi_report_progress_line(&s->report,now,line,sizeof line);LOG("%s",line);
+}
+static void wsi_report_snapshot(app_state*s,const char*reason){
+    if(!s||!s->wsi.enabled)return;
+    uint64_t now;wsi_report_now(s,&now);
+    // 每个终态恰好一次：重复 pause/stop/错误不重复输出。| Exactly once per terminal transition; duplicates stay silent.
+    if(!dm_wsi_report_take_snapshot(&s->report,now))return;
+    char line[384];dm_wsi_report_progress_line(&s->report,now,line,sizeof line);
+    LOG("wsi final snapshot (%s): %s",reason,line);
+}
+// 真实失败：保留阶段与原始码（未知为 DM_WSI_CODE_UNKNOWN），同一次失败只记一次。
+// Real failure: stage and raw code (DM_WSI_CODE_UNKNOWN when unknown), recorded once per failure episode.
+static void wsi_report_fail(app_state*s,dm_wsi_stage stage,int code,int unsupported,int open_failure){
+    if(!s||!s->wsi.enabled)return;
+    if(!dm_wsi_report_failure(&s->report,stage,code,unsupported,open_failure))return;   // 本失败已记过 | already recorded
+    char line[320];dm_wsi_report_failure_line(&s->report,line,sizeof line);LOG("%s",line);
+}
+// 真实打开边界：控制器在每次真正 ops.open 前调用，redraw 快路径不会触发。
+// Real open boundary: called by the controller before every real ops.open; the redraw fast path never fires it.
+static void wsi_open_observed(void*ctx,uint32_t width,uint32_t height){
+    app_state*s=ctx;
+    dm_wsi_report_attempt(&s->report,width,height);
+}
 static int copy_asset(ANativeActivity*a,const char*name,char path[4096]){
     int n=snprintf(path,4096,"%s/%s",a->internalDataPath,name);if(n<0||n>=4096)return 1;
     AAsset*asset=AAssetManager_open(a->assetManager,name,AASSET_MODE_STREAMING);if(!asset)return 1;
@@ -69,9 +110,15 @@ static int host_load(void*ctx){
 static int host_stop(void*ctx){
     app_state*s=ctx;
     // #143 WSI 排空失败必须传播：不销毁设备、不谎称停止成功。| A failed WSI drain propagates; the device is kept and stop is not claimed.
-    if(s->wsi.enabled&&dm_wsi_stop(&s->wsi)!=DM_WSI_OK){
-        LOG("wsi stop failed: presentation ownership retained; host stop reports failure");
-        return 1;
+    if(s->wsi.enabled){
+        dm_wsi_report_event(&s->report,DM_WSI_EVENT_STOP);
+        if(dm_wsi_stop(&s->wsi)!=DM_WSI_OK){
+            LOG("wsi stop failed: presentation ownership retained; host stop reports failure");
+            wsi_report_fail(s,DM_WSI_STAGE_DRAIN,DM_WSI_CODE_UNKNOWN,0,0);
+            wsi_report_snapshot(s,"stop failed");
+            return 1;
+        }
+        wsi_report_snapshot(s,"stop");
     }
     if(s->vk.device)dm_vk_destroy(&s->vk);
     return 0;
@@ -105,10 +152,11 @@ static int wsi_open(void*ctx,void*window,uint32_t width,uint32_t height){
     app_state*s=ctx;
     dm_vk_present_options present=DM_VK_PRESENT_OPTIONS_INIT;present.window=window;
     VkResult r=dm_vk_create_present(&present,&s->wsi_vk);
-    if(r==VK_ERROR_FEATURE_NOT_PRESENT){LOG("wsi unsupported: present init lacks a required feature (%d)",(int)r);return DM_WSI_UNSUPPORTED;}
-    if(r!=VK_SUCCESS){LOG("wsi present device failed: %d",(int)r);return DM_WSI_ERROR;}
+    if(r==VK_ERROR_FEATURE_NOT_PRESENT){LOG("wsi unsupported: present init lacks a required feature (%d)",(int)r);wsi_report_fail(s,DM_WSI_STAGE_INIT,(int)r,1,1);return DM_WSI_UNSUPPORTED;}
+    if(r!=VK_SUCCESS){LOG("wsi present device failed: %d",(int)r);wsi_report_fail(s,DM_WSI_STAGE_INIT,(int)r,0,1);return DM_WSI_ERROR;}
     if(!s->wsi_vk.swapchain_maintenance1){
         LOG("wsi unsupported: VK_EXT_swapchain_maintenance1 unavailable; explicit mode does not fall back");
+        wsi_report_fail(s,DM_WSI_STAGE_INIT,DM_WSI_CODE_UNKNOWN,1,1);   // 能力缺失：没有 VkResult 可报，保持 unknown | capability fact, no VkResult
         dm_vk_destroy(&s->wsi_vk);s->wsi_vk=(dm_vk){0};return DM_WSI_UNSUPPORTED;
     }
     dm_vk_swapchain_options options=DM_VK_SWAPCHAIN_OPTIONS_INIT;
@@ -117,30 +165,46 @@ static int wsi_open(void*ctx,void*window,uint32_t width,uint32_t height){
     r=dm_vk_swapchain_create(&s->wsi_vk,&options,&s->wsi_chain);
     if(r!=VK_SUCCESS){
         LOG("wsi swapchain create failed: %d",(int)r);
+        wsi_report_fail(s,DM_WSI_STAGE_SWAPCHAIN,(int)r,0,1);
         dm_vk_destroy(&s->wsi_vk);s->wsi_vk=(dm_vk){0};return DM_WSI_ERROR;
     }
     s->wsi_chain_live=1;
-    LOG("wsi swapchain ready %ux%u format=%d fifo=clear-only; cpu window copy disabled",width,height,(int)s->wsi_chain.format);
+    // 记录实际协商结果（请求尺寸与 extent 分开）；未知保持 unknown，不编造。| Record the real negotiation; unknown stays unknown.
+    dm_wsi_report_negotiated(&s->report,s->wsi_chain.extent.width,s->wsi_chain.extent.height,
+        (int)s->wsi_chain.format,(int)s->wsi_chain.present_mode,s->wsi_chain.image_count,
+        s->wsi_vk.swapchain_maintenance1?1:0);
+    {char line[256];dm_wsi_report_config_line(&s->report,line,sizeof line);LOG("%s",line);}
     return 0;
 }
 static int wsi_close(void*ctx){
     app_state*s=ctx;
     if(s->wsi_chain_live){
         VkResult r=dm_vk_swapchain_destroy(&s->wsi_vk,&s->wsi_chain);
-        if(r!=VK_SUCCESS){LOG("wsi swapchain retirement not proven: %d; objects retained",(int)r);return 1;}
+        if(r!=VK_SUCCESS){LOG("wsi swapchain retirement not proven: %d; objects retained",(int)r);wsi_report_fail(s,DM_WSI_STAGE_DRAIN,(int)r,0,0);return 1;}
         s->wsi_chain_live=0;s->wsi_chain=(dm_vk_swapchain){0};
     }
     if(s->wsi_vk.device){dm_vk_destroy(&s->wsi_vk);s->wsi_vk=(dm_vk){0};}
     return 0;
 }
-static VkResult wsi_acquire(void*ctx,int*suboptimal){app_state*s=ctx;return dm_vk_swapchain_acquire(&s->wsi_vk,&s->wsi_chain,suboptimal);}
-static VkResult wsi_submit(void*ctx){app_state*s=ctx;return dm_vk_swapchain_submit(&s->wsi_vk,&s->wsi_chain);}
-static VkResult wsi_present(void*ctx,int*suboptimal){app_state*s=ctx;return dm_vk_swapchain_present(&s->wsi_vk,&s->wsi_chain,suboptimal);}
+static VkResult wsi_acquire(void*ctx,int*suboptimal){app_state*s=ctx;VkResult r=dm_vk_swapchain_acquire(&s->wsi_vk,&s->wsi_chain,suboptimal);
+    if(r!=VK_SUCCESS&&r!=VK_SUBOPTIMAL_KHR)dm_wsi_report_note_stage(&s->report,DM_WSI_STAGE_ACQUIRE,(int)r);
+    return r;}
+static VkResult wsi_submit(void*ctx){app_state*s=ctx;VkResult r=dm_vk_swapchain_submit(&s->wsi_vk,&s->wsi_chain);
+    if(r!=VK_SUCCESS)dm_wsi_report_note_stage(&s->report,DM_WSI_STAGE_SUBMIT,(int)r);
+    return r;}
+static VkResult wsi_present(void*ctx,int*suboptimal){app_state*s=ctx;VkResult r=dm_vk_swapchain_present(&s->wsi_vk,&s->wsi_chain,suboptimal);
+    if(r!=VK_SUCCESS&&r!=VK_SUBOPTIMAL_KHR&&r!=VK_ERROR_OUT_OF_DATE_KHR)dm_wsi_report_note_stage(&s->report,DM_WSI_STAGE_PRESENT,(int)r);
+    return r;}
 static int wsi_frame(void*ctx){
     app_state*s=ctx;
     dm_wsi_frame_ops ops={.ctx=s,.acquire=wsi_acquire,.submit=wsi_submit,.present=wsi_present};
     dm_wsi_status status=dm_wsi_present_frame(&ops);
-    if(status==DM_WSI_ERROR)LOG("wsi frame failed: acquire/submit/present reported an error");
+    dm_wsi_report_result(&s->report,status);
+    if(status==DM_WSI_ERROR||status==DM_WSI_UNSUPPORTED){
+        // 用真实阶段/原始 VkResult 记录，不从控制器枚举反推。| Real stage and raw VkResult, not inferred from the enum.
+        char line[320];dm_wsi_report_failure_line(&s->report,line,sizeof line);LOG("wsi frame failed: %s",line);
+        wsi_report_snapshot(s,"frame failure");
+    }
     return (int)status;
 }
 static void lifecycle_state(void*ctx,dm_app_state state){
@@ -151,11 +215,6 @@ static void lifecycle_state(void*ctx,dm_app_state state){
 static int bridge_surface_created(void*ctx,void*window){return dm_app_lifecycle_surface_created((dm_app_lifecycle*)ctx,window);}
 static int bridge_surface_destroyed(void*ctx,void*window){return dm_app_lifecycle_surface_destroyed((dm_app_lifecycle*)ctx,window);}
 static void bridge_trace(void*ctx,const char*event){(void)ctx;LOG("wsi bridge: %s",event);}
-static int64_t monotonic_ns(void){
-    struct timespec ts;
-    if(clock_gettime(CLOCK_MONOTONIC,&ts))return -1;
-    return (int64_t)ts.tv_sec*1000000000LL+ts.tv_nsec;
-}
 static float activity_density(ANativeActivity*a){
     AConfiguration*config=AConfiguration_new();
     if(!config)return 1.0f;
@@ -406,12 +465,16 @@ static int frame_timer(int fd,int events,void*data){
     app_state*s=data;
     if(events&(ALOOPER_EVENT_ERROR|ALOOPER_EVENT_HANGUP)){
         LOG("wsi frame timer error/hangup events=%d; frames stop",events);
+        wsi_report_fail(s,DM_WSI_STAGE_TIMER,DM_WSI_CODE_UNKNOWN,0,0);   // 事件位不是 errno：原始码未知 | the event mask is not errno
+        wsi_report_snapshot(s,"frame timer error");
         stop_frame_timer(s);return 0;
     }
     uint64_t expirations;
     ssize_t got=read(fd,&expirations,sizeof(expirations));
     if(got<0&&errno!=EAGAIN&&errno!=EWOULDBLOCK&&errno!=EINTR){
         LOG("wsi frame timer read failed: %d; frames stop",errno);
+        wsi_report_fail(s,DM_WSI_STAGE_TIMER,errno,0,0);
+        wsi_report_snapshot(s,"frame timer read failed");
         stop_frame_timer(s);return 0;
     }
     dm_wsi_timer_action action=DM_WSI_TIMER_STOP;
@@ -421,6 +484,10 @@ static int frame_timer(int fd,int events,void*data){
         // Every tick result is decided in dispatch: terminal/awaiting/ineligible states stop the timer, leaving no wakeups.
         LOG("wsi frames stop: status=%d frames=%u losses=%u",(int)status,s->wsi.frames,s->wsi.losses);
         stop_frame_timer(s);
+        if(status==DM_WSI_ERROR||status==DM_WSI_UNSUPPORTED||status==DM_WSI_SURFACE_LOST)
+            wsi_report_snapshot(s,"frame dispatch terminal");
+    } else {
+        wsi_report_progress(s);
     }
     if((int)status!=s->wsi_last_logged){
         s->wsi_last_logged=(int)status;
@@ -551,12 +618,24 @@ static void window_ready(ANativeActivity*a,ANativeWindow*window){
         // Replacement can acquire the new reference before WSI open fails. Never retain the released old pointer.
         s->window=dm_app_lifecycle_surface(s->lifecycle);
         if(!ready){
-            stop_frame_timer(s);
-            if(s->window)touch_resize_window(s,s->window);
-            update_touch_state(s);
-            LOG("wsi window not ready: state=%s; no cpu fallback",
-                dm_app_lifecycle_state_name(dm_app_lifecycle_state(s->lifecycle)));
-            return;
+            // 同窗口尺寸变化返回 REBUILD：这是合法的重建，不是打开失败，也不停表。
+            // A same-window dimension change returns REBUILD: a legitimate rebuild, not an open failure, and the timer
+            // keeps running.
+            if(s->wsi.last==DM_WSI_REBUILD){
+                wsi_report_progress(s);
+            } else {
+                stop_frame_timer(s);
+                // 失败已由 wsi_open 记录时此处不再重复；生命周期拒绝（从未进入真实打开）不计为打开失败。
+                // A failure already recorded inside wsi_open is not repeated; a lifecycle rejection that never entered
+                // a real open is not an open failure.
+                wsi_report_fail(s,DM_WSI_STAGE_OPEN,DM_WSI_CODE_UNKNOWN,s->wsi.error==(int)DM_WSI_UNSUPPORTED,s->report.attempt_open);
+                wsi_report_snapshot(s,"window not ready");
+                if(s->window)touch_resize_window(s,s->window);
+                update_touch_state(s);
+                LOG("wsi window not ready: state=%s; no cpu fallback",
+                    dm_app_lifecycle_state_name(dm_app_lifecycle_state(s->lifecycle)));
+                return;
+            }
         }
         s->window=window;
         touch_resize_window(s,window);
@@ -566,8 +645,14 @@ static void window_ready(ANativeActivity*a,ANativeWindow*window){
         dm_wsi_timer_action action=DM_WSI_TIMER_STOP;
         dm_wsi_status status=dm_wsi_bridge_dispatch(&s->wsi_bridge,s->resumed,&action);
         if(status==DM_WSI_ERROR||status==DM_WSI_UNSUPPORTED)LOG("wsi not schedulable: status=%d; frames stop",(int)status);
-        if(action==DM_WSI_TIMER_STOP){stop_frame_timer(s);return;}
-        if(s->frame_fd<0&&!start_frame_timer(s)){LOG("wsi frames unavailable: frame timer start failed; continuous frames unavailable");return;}
+        if(action==DM_WSI_TIMER_STOP){
+            stop_frame_timer(s);
+            if(status==DM_WSI_ERROR||status==DM_WSI_UNSUPPORTED||status==DM_WSI_SURFACE_LOST)
+                wsi_report_snapshot(s,"window not schedulable");
+            return;
+        }
+        if(s->frame_fd<0&&!start_frame_timer(s)){LOG("wsi frames unavailable: frame timer start failed; continuous frames unavailable");wsi_report_fail(s,DM_WSI_STAGE_TIMER,DM_WSI_CODE_UNKNOWN,0,0);wsi_report_snapshot(s,"frame timer start failed");return;}
+        wsi_report_progress(s);
         return;
     }
     if(!dm_app_lifecycle_surface_created(s->lifecycle,window)){
@@ -596,10 +681,12 @@ static void window_resized(ANativeActivity*a,ANativeWindow*window){
     if(resized!=DM_WSI_ERROR)status=dm_wsi_bridge_dispatch(&s->wsi_bridge,s->resumed,&action);
     if(resized==DM_WSI_ERROR||status==DM_WSI_ERROR||status==DM_WSI_UNSUPPORTED){
         LOG("wsi resize/rebuild failed: status=%d; frames stop",(int)status);
+        wsi_report_fail(s,DM_WSI_STAGE_UNKNOWN,DM_WSI_CODE_UNKNOWN,status==DM_WSI_UNSUPPORTED,0);
         action=DM_WSI_TIMER_STOP;
     }
-    if(action==DM_WSI_TIMER_STOP){stop_frame_timer(s);return;}
-    if(s->frame_fd<0&&!start_frame_timer(s)){LOG("wsi frames unavailable after resize: timer start failed; continuous frames unavailable");return;}
+    if(action==DM_WSI_TIMER_STOP){stop_frame_timer(s);wsi_report_snapshot(s,"resize terminal");return;}
+    if(s->frame_fd<0&&!start_frame_timer(s)){LOG("wsi frames unavailable after resize: timer start failed; continuous frames unavailable");wsi_report_fail(s,DM_WSI_STAGE_TIMER,DM_WSI_CODE_UNKNOWN,0,0);wsi_report_snapshot(s,"resize timer start failed");return;}
+    wsi_report_progress(s);
 }
 static void window_destroyed(ANativeActivity*a,ANativeWindow*window){
     app_state*s=a->instance;if(!s||!s->lifecycle)return;
@@ -611,8 +698,12 @@ static void window_destroyed(ANativeActivity*a,ANativeWindow*window){
         // The lifecycle releases the real ANativeWindow reference only after a proven drain.
         if(!dm_wsi_bridge_window_destroyed(&s->wsi_bridge,window)){
             LOG("wsi window destroy: drain not proven; ANativeWindow reference retained; no cpu fallback");
+            wsi_report_snapshot(s,"window destroy drain failed");
             return;
         }
+        // 窗口丢失是终态：恰好一次快照。| Window loss is terminal: exactly one snapshot.
+        dm_wsi_report_mark_terminal(&s->report);
+        wsi_report_snapshot(s,"window destroyed");
         s->window=NULL;update_touch_state(s);
         s->hud_obs_valid=0;dm_touch_hud_frame_suppress(&s->hud_frame);
         int64_t now=monotonic_ns();touch_cancel(s,"window_destroyed",now<0?0:now);
@@ -626,9 +717,15 @@ static void window_destroyed(ANativeActivity*a,ANativeWindow*window){
 }
 static void destroy(ANativeActivity*a){app_state*s=a->instance;if(s){
     stop_input_timer(s);stop_frame_timer(s);
-    if(s->wsi.enabled&&dm_wsi_stop(&s->wsi)!=DM_WSI_OK){
-        LOG("wsi teardown failed; app state and presentation ownership stay reachable (no forced device loss)");
-        return;
+    if(s->wsi.enabled){
+        dm_wsi_report_event(&s->report,DM_WSI_EVENT_STOP);
+        if(dm_wsi_stop(&s->wsi)!=DM_WSI_OK){
+            LOG("wsi teardown failed; app state and presentation ownership stay reachable (no forced device loss)");
+            wsi_report_fail(s,DM_WSI_STAGE_DRAIN,DM_WSI_CODE_UNKNOWN,0,0);
+            wsi_report_snapshot(s,"teardown failed");
+            return;
+        }
+        wsi_report_snapshot(s,"destroy");
     }
     if(s->input){AInputQueue_detachLooper(s->input);s->input=NULL;}
     if(s->touch){dm_npad_state neutral;dm_touch_bridge_destroy(s->touch,&neutral);s->touch=NULL;
@@ -647,7 +744,8 @@ static void destroy(ANativeActivity*a){app_state*s=a->instance;if(s){
 static void low_memory(ANativeActivity*a){app_state*s=a->instance;if(s&&s->vk.device){dm_vk_destroy(&s->vk);LOG("low memory: GPU context released; redraw recreates diagnostic");}}
 static void pause_app(ANativeActivity*a){app_state*s=a->instance;if(!s||!s->lifecycle)return;
     s->resumed=0;update_touch_state(s);
-    if(s->wsi.enabled){dm_wsi_pause(&s->wsi);stop_frame_timer(s);}
+    if(s->wsi.enabled){dm_wsi_pause(&s->wsi);stop_frame_timer(s);
+        dm_wsi_report_event(&s->report,DM_WSI_EVENT_PAUSE);wsi_report_snapshot(s,"pause");}
     int64_t now=monotonic_ns();touch_cancel(s,"pause",now<0?0:now);
     if(!dm_app_lifecycle_pause(s->lifecycle))LOG("pause rejected: state=%s",dm_app_lifecycle_state_name(dm_app_lifecycle_state(s->lifecycle)));}
 static void resume_app(ANativeActivity*a){app_state*s=a->instance;if(!s||!s->lifecycle)return;
@@ -655,11 +753,13 @@ static void resume_app(ANativeActivity*a){app_state*s=a->instance;if(!s||!s->lif
     s->resumed=1;update_touch_state(s);
     if(s->wsi.enabled){
         dm_wsi_resume(&s->wsi);
+        dm_wsi_report_event(&s->report,DM_WSI_EVENT_RESUME);
         dm_wsi_timer_action action=DM_WSI_TIMER_STOP;
         dm_wsi_status status=dm_wsi_bridge_dispatch(&s->wsi_bridge,s->resumed,&action);
         if(status==DM_WSI_ERROR||status==DM_WSI_UNSUPPORTED)LOG("wsi resume not schedulable: status=%d",(int)status);
-        if(action==DM_WSI_TIMER_STOP)stop_frame_timer(s);
-        else if(s->frame_fd<0&&!start_frame_timer(s))LOG("wsi frames unavailable after resume: timer start failed; continuous frames unavailable");
+        if(action==DM_WSI_TIMER_STOP){stop_frame_timer(s);wsi_report_snapshot(s,"resume terminal");}
+        else if(s->frame_fd<0&&!start_frame_timer(s)){LOG("wsi frames unavailable after resume: timer start failed; continuous frames unavailable");wsi_report_fail(s,DM_WSI_STAGE_TIMER,DM_WSI_CODE_UNKNOWN,0,0);wsi_report_snapshot(s,"resume timer start failed");}
+        else wsi_report_progress(s);
     }}
 static void focus_changed(ANativeActivity*a,int focused){app_state*s=a->instance;if(!s)return;
     s->focused=focused?1:0;update_touch_state(s);
@@ -690,6 +790,10 @@ __attribute__((visibility("default"))) void ANativeActivity_onCreate(ANativeActi
            access(marker,F_OK)==0)wsi_mode=1;
         dm_wsi_ops wsi_ops={.ctx=s,.open=wsi_open,.close=wsi_close,.frame=wsi_frame};
         dm_wsi_init(&s->wsi,&wsi_ops,wsi_mode);
+        {int64_t now=monotonic_ns();dm_wsi_report_init(&s->report,wsi_mode,now<0?0:(uint64_t)now);}
+        // 打开尝试只由控制器的真实打开边界上报；redraw 快路径不计数。
+        // Open attempts are reported by the controller's real open boundary only; the redraw fast path never counts.
+        dm_wsi_set_open_observer(&s->wsi,wsi_open_observed,s);
         LOG("renderer=%s",wsi_mode?"wsi-clear-swapchain(explicit)":"cpu-copy-indexed(default)");
     }
     a->callbacks->onDestroy=destroy;a->callbacks->onLowMemory=low_memory;
