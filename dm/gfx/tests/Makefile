@@ -52,6 +52,12 @@ t_rt_range: t_rt_range.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_rt_range.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_rt_depth_ro: t_rt_depth_ro.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_rt_depth_ro.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
+# B0 验收场景（#11）：自有数据的上传→提交→读回→呈现链；反射界面用自写 json。不改被测源，只走生产入口。
+# B0 acceptance scenes (#11): self-owned data through upload -> submit -> readback -> present; the reflection interface uses a json written by the test. No change to the sources under test, only production entries.
+t_accept_scene: t_accept_scene.m ../nvn/hle_nvn.c ../nvn/nvn_mtl.m ../../host/crash.c $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_accept_scene.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m,$(GFX)) $(FW)
+t_accept_shader: t_accept_shader.m ../nvn/nvn_refl.m ../nvn/nvn_refl.h
+	clang $(CFLAGS) -fobjc-arc -o $@ t_accept_shader.m ../nvn/nvn_refl.m -framework Foundation
 t_pso_skey: t_pso_skey.m ../nvn/nvn_pso_skey.h ../nvn/nvn_obj.h
 	clang $(CFLAGS) -fobjc-arc -o $@ t_pso_skey.m -framework Foundation
 t_pfv: t_pfv.m ../../host/crash.c $(GFX) $(GFX_H)
@@ -59,6 +65,8 @@ t_pfv: t_pfv.m ../../host/crash.c $(GFX) $(GFX_H)
 # 依赖一行一个、按字母序（免得加一个测试就整行冲突）；下面各条命令的先后不变
 # Dependencies one per line in alphabetical order (so that adding one test does not conflict on the whole line); the order of the commands below is unchanged
 run: \
+	t_accept_scene \
+	t_accept_shader \
 	t_copy_pitch \
 	t_builtin \
 	t_cover \
@@ -115,6 +123,8 @@ run: \
 	MTL_DEBUG_LAYER=1 ./t_pfv
 	MTL_DEBUG_LAYER=1 ./t_rt_srgb_view
 	python3 test_tbdr_budget.py
+	MTL_DEBUG_LAYER=1 ./t_accept_scene
+	./t_accept_shader
 .PHONY: run
 # 老接口版那一遍（图形后端编译期开关 DM_NVN_M3=1，目标 macOS 15.0）：在旁边的 tests_m3 目录里用同一份测试源码另编另跑，不动这里的缺省产物。
 # 闸门（verify/accept.sh）两遍都跑，免得以后只测一边
