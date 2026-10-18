@@ -560,7 +560,7 @@ if(ANDROID)
     if(DM_ANDROID_VULKAN)
         add_library(dm_android_app SHARED app/native.c)
         target_compile_options(dm_android_app PRIVATE -Wall -Wextra -Werror)
-        target_link_libraries(dm_android_app PRIVATE dm_android_app_lifecycle dm_android_app_scene dm_android_app_wsi dm_android_wsi_frame dm_android_touch_bridge dm_android_view_policy dm_android_input_policy dm_android_touch dm_android_runtime dm_android_artifact dm_android_vk dm_android_touch_hud android log)
+        target_link_libraries(dm_android_app PRIVATE dm_android_app_lifecycle dm_android_app_scene dm_android_app_wsi dm_android_wsi_frame dm_android_touch_bridge dm_android_input_source dm_android_view_policy dm_android_input_policy dm_android_touch dm_android_runtime dm_android_artifact dm_android_vk dm_android_touch_hud android log)
         target_link_options(dm_android_app PRIVATE "-Wl,-z,max-page-size=16384")
         add_custom_command(TARGET dm_android_app POST_BUILD
             COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/tests/bridge_shared.sh"

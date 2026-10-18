@@ -19,8 +19,11 @@ from pathlib import Path
 
 FUNCTIONS = ["wsi_report_now", "wsi_report_progress", "wsi_report_snapshot", "wsi_report_fail",
              "host_stop",
+             "touch_refresh_hud", "touch_consume", "touch_cancel", "touch_resize_window",
              "window_ready", "window_resized", "window_destroyed",
-             "pause_app", "resume_app", "draw_diagnostic", "frame_timer", "input_timer",
+             "pause_app", "resume_app", "focus_changed", "configuration_changed",
+             "input_created", "input_destroyed",
+             "draw_diagnostic", "frame_timer", "input_timer",
              "motion_action", "handle_motion", "input_ready"]
 
 
@@ -78,7 +81,7 @@ PRELUDE = r'''
 #include "present_policy.h"
 #include "diagnostic_scene.h"
 #include "input_policy.h"
-#include "touch_bridge.h"
+#include "input_source.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <stdint.h>
@@ -125,7 +128,8 @@ typedef struct AInputQueue {
     int finish_calls, last_handled, pre_calls;
 } AInputQueue;
 typedef struct { int width, height, refs; } ANativeWindow;
-typedef struct { void *instance; } ANativeActivity;
+typedef struct { void *instance; float density; } ANativeActivity;
+typedef struct { int unused; } ALooper;
 typedef struct { void *bits; int width, height, stride, format; } ANativeWindow_Buffer;
 typedef struct { int device; } dm_vk;
 static void dm_vk_destroy(dm_vk *vk) { if (vk) vk->device = 0; }
@@ -149,15 +153,22 @@ typedef struct {
     dm_wsi_report report;
     ANativeWindow *window;
     int resumed;
+    int focused;
     int frame_fd;
     int wsi_last_logged;
     int touch_allowed;
-    dm_touch_bridge *touch;
+    dm_input_arbiter *arbiter;
     AInputQueue *input;
+    ALooper *looper;
     float density;
+    float touch_width_pt, touch_height_pt, touch_density;
     dm_input_policy gate;
     dm_touch_hud_frame hud_frame;
+    dm_android_touch_observation hud_obs;
     int hud_obs_valid;
+    uint64_t last_touch_buttons;
+    int32_t last_touch_lx, last_touch_ly, last_touch_rx, last_touch_ry;
+    int64_t last_touch_log_ns;
     dm_view_policy view;
     dm_vk vk;
     char vertex[8], fragment[8];
@@ -172,19 +183,14 @@ static dm_diag_scene scene = {.vertices = scene_vertices,
     .vertex_count = DM_DIAG_SCENE_VERTEX_COUNT};
 static dm_diag_scene_mismatch mismatch;
 
-static void touch_resize_window(app_state *s, ANativeWindow *w) {
-    (void)s; touch_resize_calls++; last_touch = w;
-    if (!w || w->refs <= 0) bad_touch_reads++;
-}
 static void update_touch_state(app_state *s) { (void)s; update_calls++; }
+static int input_ready(int fd, int events, void *data);
 static void stop_frame_timer(app_state *s) { if (s && s->frame_fd >= 0) { s->frame_fd = -1; stop_calls++; } }
 static int start_frame_timer(app_state *s) {
     start_calls++;
     if (fail_start) return 0;
     s->frame_fd = 1; return 1;
 }
-static void touch_cancel(app_state *s, const char *why, int64_t now) { (void)s; (void)why; (void)now; }
-static void touch_refresh_hud(app_state *s) { (void)s; }
 static void dm_touch_hud_frame_dirty(dm_touch_hud_frame *f) { (void)f; }
 static void dm_touch_hud_frame_suppress(dm_touch_hud_frame *f) { (void)f; }
 static int dm_touch_hud_frame_begin(dm_touch_hud_frame *f, int a, int b, int c, int d) {
@@ -193,17 +199,19 @@ static int dm_touch_hud_frame_begin(dm_touch_hud_frame *f, int a, int b, int c, 
 static int dm_touch_hud_frame_timer_ready(const dm_touch_hud_frame *f, int ready) {
     (void)f; return ready;
 }
-int dm_touch_bridge_tick(dm_touch_bridge *touch, int64_t now) { (void)touch; (void)now; return 0; }
 static int touch_consume_calls, input_bridge_calls, activity_finish_calls;
 static int input_bridge_last_action, input_bridge_last_count;
-static void touch_consume(app_state *s, const char *why) { (void)s; (void)why; touch_consume_calls++; }
-int dm_touch_bridge_event(dm_touch_bridge *touch, const dm_touch_event *event) {
-    (void)touch;
-    input_bridge_calls++;
-    input_bridge_last_action = event->action;
-    input_bridge_last_count = (int)event->pointer_count;
-    return 1;
+static float activity_density(ANativeActivity *activity) {
+    return activity && activity->density > 0.0f ? activity->density : 1.0f;
 }
+static ALooper looper_stub;
+static ALooper *ALooper_forThread(void) { return &looper_stub; }
+static ALooper *ALooper_prepare(int opts) { (void)opts; return &looper_stub; }
+static void AInputQueue_attachLooper(AInputQueue *queue, ALooper *looper, int ident,
+                                     void *callback, void *data) {
+    (void)queue; (void)looper; (void)ident; (void)callback; (void)data;
+}
+static void AInputQueue_detachLooper(AInputQueue *queue) { (void)queue; }
 static void ANativeActivity_finish(ANativeActivity *activity) { (void)activity; activity_finish_calls++; }
 static int32_t AInputEvent_getType(const AInputEvent *event) { return event->type; }
 static int32_t AInputEvent_getSource(const AInputEvent *event) { return event->source; }
@@ -243,7 +251,7 @@ static void dm_touch_hud_frame_composed(dm_touch_hud_frame *f, int ok) { (void)f
 static int dm_touch_hud_frame_complete(dm_touch_hud_frame *f, int ok) { (void)f; (void)ok; return 1; }
 static int draw_hud_overlay(app_state *s, ANativeWindow_Buffer *b) { (void)s; (void)b; return 0; }
 #define LOG(...) ((void)0)
-static int64_t monotonic_ns(void) { return 0; }
+static int64_t monotonic_ns(void) { return 1000000000LL; }
 static void draw_diagnostic(ANativeActivity *a, ANativeWindow *w, int external);
 int dm_diag_scene_ready(const dm_app_lifecycle *l, const void *w) {
     (void)l; (void)w; return scene_ready;
@@ -257,12 +265,6 @@ static VkResult dm_vk_draw_indexed_textured_offscreen(dm_vk *vk,
 uint32_t dm_diag_scene_check_pixels(const dm_diag_scene *s, const uint8_t *p,
         uint32_t w, uint32_t h, size_t c, dm_diag_scene_mismatch *m) {
     (void)s; (void)p; (void)w; (void)h; (void)c; (void)m; return 1;
-}
-int dm_view_policy_set_view(dm_view_policy *p, uint32_t w, uint32_t h, float d) {
-    p->view_width_px = w; p->view_height_px = h; p->density = d; return 1;
-}
-int dm_view_policy_set_buffer(dm_view_policy *p, uint32_t w, uint32_t h) {
-    (void)p; (void)w; (void)h; return 1;
 }
 static int ANativeWindow_getWidth(ANativeWindow *w) { return w->width; }
 static int ANativeWindow_getHeight(ANativeWindow *w) { return w->height; }
@@ -300,108 +302,235 @@ MAIN = r'''
 static int input_cases(void) {
     app_state s;
     memset(&s, 0, sizeof s);
-    s.touch = (dm_touch_bridge *)(uintptr_t)1;
+    s.density = 1.0f;
     s.touch_allowed = 1;
-    ANativeActivity activity = {&s};
+    s.arbiter = dm_input_arbiter_create(667, 375, 1.0f);
+    CHECK(s.arbiter != NULL);
+    ANativeActivity activity = {&s, 1.0f};
     s.activity = &activity;
-    AInputQueue queue;
-    memset(&queue, 0, sizeof queue);
-    s.input = &queue;
-    touch_consume_calls = input_bridge_calls = activity_finish_calls = 0;
+    dm_app_host_ops host = {.ctx = &s, .load = load, .stop = stop,
+        .surface_acquire = acquire, .surface_release = release};
+    s.lifecycle = dm_app_lifecycle_create(&host, NULL, NULL);
+    CHECK(s.lifecycle != NULL);
+    CHECK(dm_app_lifecycle_start(s.lifecycle));
+    AInputQueue q;
+    memset(&q, 0, sizeof q);
+    s.input = &q;
+    dm_touch_diag d0, d1;
+    CHECK(dm_input_arbiter_diag(s.arbiter, &d0));
+    uint64_t accepted0 = d0.accepted_events;
 
-    queue.has_event = 1;
-    queue.event.type = AINPUT_EVENT_TYPE_MOTION;
-    queue.event.source = AINPUT_SOURCE_TOUCHSCREEN | AINPUT_SOURCE_MOUSE;
-    queue.event.action = AMOTION_EVENT_ACTION_DOWN;
-    queue.event.time_ns = 1;
-    queue.event.pointer_count = 1;
-    queue.event.ids[0] = 7;
-    queue.event.xs[0] = 100;
-    queue.event.ys[0] = 120;
+    /* The real native entry, real arbiter, real bridge and real adapter: a
+       touch DOWN must be accepted, and the first neutral boundary must be
+       consumed by touch_consume so the actual output is not lost. */
+    q.has_event = 1;
+    q.event.type = AINPUT_EVENT_TYPE_MOTION;
+    q.event.source = AINPUT_SOURCE_TOUCHSCREEN;
+    q.event.action = AMOTION_EVENT_ACTION_DOWN;
+    q.event.time_ns = 1;
+    q.event.pointer_count = 1;
+    q.event.ids[0] = 7;
+    q.event.xs[0] = 100;
+    q.event.ys[0] = 120;
     CHECK(input_ready(0, 0, &activity) == 1);
-    CHECK(queue.finish_calls == 1 && queue.last_handled == 1);
-    CHECK(input_bridge_calls == 1 && touch_consume_calls == 1);
-    CHECK(input_bridge_last_action == DM_TOUCH_ACTION_DOWN && input_bridge_last_count == 1);
+    CHECK(q.finish_calls == 1 && q.last_handled == 1);
+    CHECK(dm_input_arbiter_source(s.arbiter) == DM_INPUT_SOURCE_TOUCH);
+    CHECK(dm_input_arbiter_diag(s.arbiter, &d1) && d1.accepted_events == accepted0 + 1);
+    dm_npad_state state;
+    CHECK(dm_input_arbiter_read(s.arbiter, &state) && state.attributes == 1);
 
-    queue.finish_calls = queue.last_handled = 0;
-    queue.has_event = 1;
-    queue.event.action = AMOTION_EVENT_ACTION_MOVE;
+    /* Read-only HUD observe must not consume the held/actual output. */
+    dm_touch_diag before_observe;
+    CHECK(dm_input_arbiter_diag(s.arbiter, &before_observe));
+    dm_android_touch_observation observation;
+    for (int i = 0; i < 3; i++) {
+        CHECK(dm_input_arbiter_observe(s.arbiter, &observation));
+        CHECK(dm_input_arbiter_diag(s.arbiter, &d1));
+    }
+    CHECK(d1.accepted_events == before_observe.accepted_events);
+    CHECK(d1.diagnostic_reads == before_observe.diagnostic_reads);
+    CHECK(d1.state.buttons == before_observe.state.buttons);
+    CHECK(dm_input_arbiter_read(s.arbiter, &state) && state.attributes == 1);
+
+    q.finish_calls = q.last_handled = 0;
+    q.has_event = 1;
+    q.event.action = AMOTION_EVENT_ACTION_MOVE;
+    q.event.xs[0] = 110;
     CHECK(input_ready(0, 0, &activity) == 1);
-    CHECK(queue.finish_calls == 1 && queue.last_handled == 1);
-    CHECK(input_bridge_calls == 2 && touch_consume_calls == 2);
-    CHECK(input_bridge_last_action == DM_TOUCH_ACTION_MOVE);
+    CHECK(q.finish_calls == 1 && q.last_handled == 1);
+    CHECK(dm_input_arbiter_diag(s.arbiter, &d1) && d1.accepted_events == accepted0 + 2);
+    CHECK(dm_input_arbiter_read(s.arbiter, &state) && state.attributes == 1);
 
-    queue.finish_calls = queue.last_handled = 0;
-    queue.has_event = 1;
-    queue.event.action = AMOTION_EVENT_ACTION_UP;
+    q.finish_calls = q.last_handled = 0;
+    q.has_event = 1;
+    q.event.action = AMOTION_EVENT_ACTION_UP;
     CHECK(input_ready(0, 0, &activity) == 1);
-    CHECK(queue.finish_calls == 1 && queue.last_handled == 1);
-    CHECK(input_bridge_calls == 3 && touch_consume_calls == 3);
-    CHECK(input_bridge_last_action == DM_TOUCH_ACTION_UP);
+    CHECK(q.finish_calls == 1 && q.last_handled == 1);
+    CHECK(dm_input_arbiter_diag(s.arbiter, &d1) && d1.accepted_events == accepted0 + 3);
 
-    /* Non-touch MotionEvents are not translated, do not call the bridge and
-       are finished as unhandled. */
+    /* Non-touch sources are filtered by the real callback before the arbiter. */
     const int rejected_sources[] = {AINPUT_SOURCE_JOYSTICK, AINPUT_SOURCE_MOUSE,
                                     AINPUT_SOURCE_UNKNOWN};
     for (size_t i = 0; i < sizeof rejected_sources / sizeof rejected_sources[0]; i++) {
-        int bridge_before = input_bridge_calls, consume_before = touch_consume_calls;
-        dm_touch_bridge *touch_before = s.touch;
-        queue.finish_calls = queue.last_handled = 0;
-        queue.has_event = 1;
-        queue.event.action = AMOTION_EVENT_ACTION_DOWN;
-        queue.event.source = rejected_sources[i];
+        uint64_t before = d1.accepted_events;
+        q.finish_calls = q.last_handled = 0;
+        q.has_event = 1;
+        q.event.action = AMOTION_EVENT_ACTION_DOWN;
+        q.event.source = rejected_sources[i];
         CHECK(input_ready(0, 0, &activity) == 1);
-        CHECK(queue.finish_calls == 1 && queue.last_handled == 0);
-        CHECK(input_bridge_calls == bridge_before);
-        CHECK(touch_consume_calls == consume_before);
-        CHECK(s.touch == touch_before);
+        CHECK(q.finish_calls == 1 && q.last_handled == 0);
+        CHECK(dm_input_arbiter_diag(s.arbiter, &d1) && d1.accepted_events == before);
     }
 
-    /* preDispatch consumes the event without finishEvent. */
-    queue.finish_calls = queue.pre_calls = queue.last_handled = 0;
-    queue.has_event = 1;
-    queue.predispatch = 1;
-    queue.event.source = AINPUT_SOURCE_TOUCHSCREEN;
+    /* preDispatch still bypasses finishEvent and the arbiter. */
+    uint64_t before_pre = d1.accepted_events;
+    q.finish_calls = q.pre_calls = q.last_handled = 0;
+    q.has_event = 1;
+    q.predispatch = 1;
+    q.event.source = AINPUT_SOURCE_TOUCHSCREEN;
+    q.event.action = AMOTION_EVENT_ACTION_DOWN;
     CHECK(input_ready(0, 0, &activity) == 1);
-    CHECK(queue.pre_calls == 1 && queue.finish_calls == 0);
+    CHECK(q.pre_calls == 1 && q.finish_calls == 0);
+    CHECK(dm_input_arbiter_diag(s.arbiter, &d1) && d1.accepted_events == before_pre);
+    q.predispatch = 0;
 
-    queue.predispatch = 0;
-    queue.finish_calls = queue.last_handled = 0;
-    queue.has_event = 1;
-    queue.event.type = AINPUT_EVENT_TYPE_KEY;
-    queue.event.action = AKEY_EVENT_ACTION_UP;
-    queue.event.keycode = AKEYCODE_BACK;
-    queue.event.source = 0;
+    /* BACK finishes exactly once and is never sent to touch. */
+    q.finish_calls = q.last_handled = 0;
+    q.has_event = 1;
+    q.event.type = AINPUT_EVENT_TYPE_KEY;
+    q.event.action = AKEY_EVENT_ACTION_UP;
+    q.event.keycode = AKEYCODE_BACK;
+    q.event.source = 0;
     int finish_before = activity_finish_calls;
     CHECK(input_ready(0, 0, &activity) == 1);
-    CHECK(queue.finish_calls == 1 && queue.last_handled == 1);
+    CHECK(q.finish_calls == 1 && q.last_handled == 1);
     CHECK(activity_finish_calls == finish_before + 1);
 
-    queue.finish_calls = queue.last_handled = 0;
-    queue.has_event = 1;
-    queue.event.action = AKEY_EVENT_ACTION_DOWN;
+    q.finish_calls = q.last_handled = 0;
+    q.has_event = 1;
+    q.event.action = AKEY_EVENT_ACTION_DOWN;
     finish_before = activity_finish_calls;
     CHECK(input_ready(0, 0, &activity) == 1);
-    CHECK(queue.finish_calls == 1 && queue.last_handled == 1);
+    CHECK(q.finish_calls == 1 && q.last_handled == 1);
     CHECK(activity_finish_calls == finish_before);
 
-    queue.finish_calls = queue.last_handled = 0;
-    queue.has_event = 1;
-    queue.event.keycode = 999;
+    q.finish_calls = q.last_handled = 0;
+    q.has_event = 1;
+    q.event.keycode = 999;
     CHECK(input_ready(0, 0, &activity) == 1);
-    CHECK(queue.finish_calls == 1 && queue.last_handled == 0);
+    CHECK(q.finish_calls == 1 && q.last_handled == 0);
 
-    /* Lifecycle gate suppresses bridge mutation but preserves touch handling. */
+    /* Lifecycle gate still consumes the queue event but cannot mutate input. */
     s.touch_allowed = 0;
-    queue.finish_calls = queue.last_handled = 0;
-    queue.has_event = 1;
-    queue.event.type = AINPUT_EVENT_TYPE_MOTION;
-    queue.event.source = AINPUT_SOURCE_TOUCHSCREEN;
-    queue.event.action = AMOTION_EVENT_ACTION_DOWN;
-    int bridge_before = input_bridge_calls, consume_before = touch_consume_calls;
+    q.finish_calls = q.last_handled = 0;
+    q.has_event = 1;
+    q.event.type = AINPUT_EVENT_TYPE_MOTION;
+    q.event.source = AINPUT_SOURCE_TOUCHSCREEN;
+    q.event.action = AMOTION_EVENT_ACTION_DOWN;
+    before_pre = d1.accepted_events;
     CHECK(input_ready(0, 0, &activity) == 1);
-    CHECK(queue.finish_calls == 1 && queue.last_handled == 1);
-    CHECK(input_bridge_calls == bridge_before && touch_consume_calls == consume_before);
+    CHECK(q.finish_calls == 1 && q.last_handled == 1);
+    CHECK(dm_input_arbiter_diag(s.arbiter, &d1) && d1.accepted_events == before_pre);
+    s.touch_allowed = 1;
+
+    /* A new queue invalidates the old source without destroying/re-creating a
+       second bridge. Late MOVE/UP cannot resurrect; a fresh DOWN succeeds. */
+    AInputQueue q2;
+    memset(&q2, 0, sizeof q2);
+    input_created(&activity, &q2);
+    CHECK(s.arbiter != NULL);
+    CHECK(s.input == &q2);
+    CHECK(dm_input_arbiter_source(s.arbiter) == DM_INPUT_SOURCE_NONE);
+    CHECK(dm_input_arbiter_requires_fresh(s.arbiter));
+    q2.finish_calls = q2.last_handled = 0;
+    q2.has_event = 1;
+    q2.event.type = AINPUT_EVENT_TYPE_MOTION;
+    q2.event.source = AINPUT_SOURCE_TOUCHSCREEN;
+    q2.event.action = AMOTION_EVENT_ACTION_MOVE;
+    q2.event.time_ns = 2;
+    q2.event.pointer_count = 1;
+    q2.event.ids[0] = 7;
+    q2.event.xs[0] = 120;
+    q2.event.ys[0] = 130;
+    CHECK(input_ready(0, 0, &activity) == 1);
+    CHECK(dm_input_arbiter_source(s.arbiter) == DM_INPUT_SOURCE_NONE);
+    q2.finish_calls = q2.last_handled = 0;
+    q2.has_event = 1;
+    q2.event.action = AMOTION_EVENT_ACTION_DOWN;
+    CHECK(input_ready(0, 0, &activity) == 1);
+    CHECK(dm_input_arbiter_source(s.arbiter) == DM_INPUT_SOURCE_TOUCH);
+
+    /* Pause invalidates held touch; late MOVE/UP and a paused DOWN are rejected;
+       resume requires a new DOWN. */
+    q2.finish_calls = q2.last_handled = 0;
+    q2.has_event = 1;
+    q2.event.action = AMOTION_EVENT_ACTION_UP;
+    CHECK(input_ready(0, 0, &activity) == 1);
+    pause_app(&activity);
+    CHECK(dm_input_arbiter_source(s.arbiter) == DM_INPUT_SOURCE_NONE);
+    CHECK(dm_input_arbiter_requires_fresh(s.arbiter));
+    q2.finish_calls = q2.last_handled = 0;
+    q2.has_event = 1;
+    q2.event.action = AMOTION_EVENT_ACTION_MOVE;
+    CHECK(input_ready(0, 0, &activity) == 1);
+    CHECK(dm_input_arbiter_source(s.arbiter) == DM_INPUT_SOURCE_NONE);
+    q2.finish_calls = q2.last_handled = 0;
+    q2.has_event = 1;
+    q2.event.action = AMOTION_EVENT_ACTION_DOWN;
+    CHECK(input_ready(0, 0, &activity) == 1);
+    CHECK(dm_input_arbiter_source(s.arbiter) == DM_INPUT_SOURCE_NONE);
+    resume_app(&activity);
+    q2.finish_calls = q2.last_handled = 0;
+    q2.has_event = 1;
+    CHECK(input_ready(0, 0, &activity) == 1);
+    CHECK(dm_input_arbiter_source(s.arbiter) == DM_INPUT_SOURCE_TOUCH);
+
+    /* Geometry change uses the atomic arbiter path and requires fresh DOWN. */
+    ANativeWindow B = {800, 600, 0};
+    s.window = &B;
+    touch_resize_window(&s, &B);
+    CHECK(dm_input_arbiter_source(s.arbiter) == DM_INPUT_SOURCE_NONE);
+    CHECK(dm_input_arbiter_requires_fresh(s.arbiter));
+    CHECK(dm_input_arbiter_observe(s.arbiter, &observation));
+    CHECK(observation.width_pt > 799.0f && observation.width_pt < 801.0f);
+    q2.finish_calls = q2.last_handled = 0;
+    q2.has_event = 1;
+    q2.event.action = AMOTION_EVENT_ACTION_MOVE;
+    CHECK(input_ready(0, 0, &activity) == 1);
+    CHECK(dm_input_arbiter_source(s.arbiter) == DM_INPUT_SOURCE_NONE);
+    q2.finish_calls = q2.last_handled = 0;
+    q2.has_event = 1;
+    q2.event.action = AMOTION_EVENT_ACTION_DOWN;
+    CHECK(input_ready(0, 0, &activity) == 1);
+    CHECK(dm_input_arbiter_source(s.arbiter) == DM_INPUT_SOURCE_TOUCH);
+
+    /* Configuration density change is also an atomic geometry change; the
+       observation and fresh requirement use the same arbiter state. */
+    activity.density = 2.0f;
+    configuration_changed(&activity);
+    CHECK(dm_input_arbiter_source(s.arbiter) == DM_INPUT_SOURCE_NONE);
+    CHECK(dm_input_arbiter_requires_fresh(s.arbiter));
+    CHECK(dm_input_arbiter_observe(s.arbiter, &observation));
+    CHECK(observation.density == 2.0f);
+    CHECK(observation.width_pt > 399.0f && observation.width_pt < 401.0f);
+
+    /* Queue loss keeps the owned arbiter alive and invalidates it; recreating
+       the queue reuses that same arbiter. */
+    dm_input_arbiter *same = s.arbiter;
+    input_destroyed(&activity, &q2);
+    CHECK(s.arbiter == same);
+    CHECK(s.input == NULL);
+    CHECK(dm_input_arbiter_source(s.arbiter) == DM_INPUT_SOURCE_NONE);
+    input_created(&activity, &q2);
+    CHECK(s.arbiter == same);
+    CHECK(dm_input_arbiter_source(s.arbiter) == DM_INPUT_SOURCE_NONE);
+    CHECK(dm_input_arbiter_requires_fresh(s.arbiter));
+
+    dm_npad_state neutral;
+    dm_input_arbiter_destroy(s.arbiter, &neutral);
+    s.arbiter = NULL;
+    dm_app_lifecycle_stop(s.lifecycle);
+    dm_app_lifecycle_destroy(s.lifecycle);
     return 0;
 }
 
@@ -424,20 +553,24 @@ int main(void) {
                                  .surface_destroyed = destroyed, .trace = NULL};
     dm_wsi_bridge_init(&s.wsi_bridge, &s.wsi, &lops);
     s.resumed = 1;
+    s.density = 1.0f;
+    s.arbiter = dm_input_arbiter_create(667, 375, s.density);
+    CHECK(s.arbiter != NULL);
+    dm_android_touch_observation obs;
     ANativeWindow A = {640, 480, 0}, B = {800, 600, 0}, D = {700, 500, 0};
 
     window_ready(&activity, &A);
     CHECK(A.refs == 1);
     CHECK(s.window == dm_app_lifecycle_surface(s.lifecycle));
     CHECK(s.frame_fd == 1);
+    CHECK(dm_input_arbiter_observe(s.arbiter, &obs));
+    CHECK(obs.width_pt == 640.0f && obs.height_pt == 480.0f);
 
     fail_open = 1;
     window_ready(&activity, &B);
     CHECK(B.refs == 1);
     CHECK(s.window == dm_app_lifecycle_surface(s.lifecycle));
     CHECK(s.window != &A);
-    CHECK(bad_touch_reads == 0);
-    CHECK(last_touch == &B);
     fail_open = 0;
 
     /* Report evidence on the real callback path: one attempt for this window, one honest failure,
@@ -476,14 +609,15 @@ int main(void) {
     s.wsi.error = 0;
     s.frame_fd = 1;
 
-    int stops = stop_calls, touches = touch_resize_calls;
+    int stops = stop_calls;
     uint32_t b_width = s.wsi.width;
     int frame_fd_before = s.frame_fd;
     window_destroyed(&activity, &A);
     window_resized(&activity, &A);
     CHECK(s.frame_fd == frame_fd_before);
     CHECK(stop_calls == stops);
-    CHECK(touch_resize_calls == touches);
+    CHECK(dm_input_arbiter_observe(s.arbiter, &obs));
+    CHECK(obs.width_pt == 800.0f && obs.height_pt == 600.0f);
     CHECK(s.wsi.width == b_width);
     CHECK(s.frame_fd == 1);
     CHECK(s.window == &B);
@@ -641,8 +775,9 @@ int main(void) {
     dm_wsi_stop(&s.wsi);
     dm_app_lifecycle_stop(s.lifecycle);
     dm_app_lifecycle_destroy(s.lifecycle);
-    printf("native callbacks: OK (touches=%d frames=%d lock=%d)\n",
-           touch_resize_calls, frame_calls, lock_calls);
+    dm_npad_state neutral;
+    dm_input_arbiter_destroy(s.arbiter, &neutral);
+    printf("native callbacks: OK (frames=%d lock=%d)\n", frame_calls, lock_calls);
     return 0;
 }
 '''
@@ -659,11 +794,17 @@ def compile_and_run(cc: str, app: Path, source: str, work: Path, label: str,
     exe = work / label
     c_file.write_text(source, encoding="utf-8")
     compile_command = [cc, "-std=gnu11", "-g", "-fsanitize=address,undefined",
-                       f"-I{app}", f"-I{app.parent / 'runtime'}",
-                       f"-I{app.parent / 'ios' / 'Sources'}", f"-I{app.parent / 'host'}",
+                       f"-I{app}",                       f"-I{app.parent / 'runtime'}",
+                       f"-I{app.parent.parent / 'ios' / 'Sources'}", f"-I{app.parent / 'host'}",
                        str(c_file),
                        str(app / "wsi_bridge.c"), str(app / "wsi_diagnostic.c"),
                        str(app / "wsi_report.c"),
+                       str(app / "input_source.c"), str(app / "touch_bridge.c"),
+                       str(app / "view_policy.c"),
+                       str(app.parent / "runtime" / "touch_game_bridge.c"),
+                       str(app.parent / "runtime" / "touch_adapter.c"),
+                       str(app.parent / "runtime" / "input.c"),
+                       str(app.parent.parent / "ios" / "Sources" / "dm_touch_controls.c"),
                        str(app / "lifecycle.c"), "-o", str(exe)]
     built = subprocess.run(compile_command, text=True, capture_output=True)
     if built.returncode != 0:
@@ -722,7 +863,11 @@ def main() -> int:
         ("omit-source-guard",
          "&&\n                 (AInputEvent_getSource(event)&AINPUT_SOURCE_TOUCHSCREEN)==AINPUT_SOURCE_TOUCHSCREEN",
          "",
-         "queue.last_handled == 0"),
+         "q.finish_calls == 1 && q.last_handled == 0"),
+        ("omit-queue-invalidation",
+         "if(s->arbiter&&!dm_input_arbiter_queue_changed(s->arbiter))\n            LOG(\"arbiter queue-change invalidation rejected\");",
+         "/* mutant: queue change does not retire arbiter sources */",
+         "dm_input_arbiter_source(s.arbiter) == DM_INPUT_SOURCE_NONE"),
     ]
     with tempfile.TemporaryDirectory() as td:
         work = Path(td)
