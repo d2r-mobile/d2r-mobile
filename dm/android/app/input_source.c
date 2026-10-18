@@ -50,7 +50,7 @@ static dm_npad_state neutral_state(dm_input_arbiter *arbiter) {
 static void clear_touch(dm_input_arbiter *arbiter) {
     if (!arbiter->touch) return;
     int64_t time = arbiter->last_time_ns > 0 ? arbiter->last_time_ns : 0;
-    (void)dm_touch_bridge_cancel_all(arbiter->touch, time);
+    (void)dm_touch_bridge_retire_requests(arbiter->touch, time);
     /* Consume the neutral snapshot so a queued edge cannot appear as the next
        source's fresh state. */
     (void)dm_touch_bridge_read(arbiter->touch);
@@ -289,3 +289,9 @@ int dm_input_arbiter_tick(dm_input_arbiter *arbiter, int64_t time_ns) {
         return dm_touch_bridge_tick(arbiter->touch, time_ns);
     return 1;
 }
+
+#ifdef DM_INPUT_TEST
+dm_touch_bridge *dm_input_arbiter_test_touch(dm_input_arbiter *arbiter) {
+    return arbiter ? arbiter->touch : NULL;
+}
+#endif

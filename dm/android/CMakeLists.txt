@@ -194,6 +194,16 @@ target_link_libraries(dm_input_source_test PRIVATE dm_android_input_source)
 target_compile_options(dm_input_source_test PRIVATE -Wall -Wextra -Werror)
 add_test(NAME input_source COMMAND dm_input_source_test)
 set_tests_properties(input_source PROPERTIES TIMEOUT 30)
+if(NOT ANDROID)
+    # #159 actual arbiter invalidation -> real bridge request retirement.
+    add_executable(dm_input_source_requests_test tests/input_source_requests.c app/input_source.c)
+    target_include_directories(dm_input_source_requests_test PRIVATE app runtime)
+    target_compile_definitions(dm_input_source_requests_test PRIVATE DM_INPUT_TEST)
+    target_link_libraries(dm_input_source_requests_test PRIVATE dm_android_touch_bridge dm_android_runtime m)
+    target_compile_options(dm_input_source_requests_test PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME input_source_requests COMMAND dm_input_source_requests_test)
+    set_tests_properties(input_source_requests PROPERTIES TIMEOUT 30)
+endif()
 # #117 自有诊断场景与窗口呈现策略：纯 C，无 Vulkan/Android 头文件，故在 CI 的 Vulkan=OFF 配置下也构建并运行。
 # #117 owned diagnostic scene and window presentation policy: plain C without Vulkan/Android headers, so it builds
 # and runs in the Vulkan=OFF CI configurations too.

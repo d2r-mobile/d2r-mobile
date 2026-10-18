@@ -91,6 +91,12 @@ int dm_input_arbiter_read(dm_input_arbiter *arbiter, dm_npad_state *out);
 // time or rejected tick.
 int dm_input_arbiter_tick(dm_input_arbiter *arbiter, int64_t time_ns);
 
+#ifdef DM_INPUT_TEST
+// Test build only: expose the actual bridge so an arbiter invalidation test can
+// stage a real pending belt/portal request and verify it was retired.
+dm_touch_bridge *dm_input_arbiter_test_touch(dm_input_arbiter *arbiter);
+#endif
+
 #ifdef __cplusplus
 }
 #endif
