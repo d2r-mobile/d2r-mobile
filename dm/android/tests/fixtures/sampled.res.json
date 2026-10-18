@@ -1,0 +1,6 @@
+{
+  "stage": "cs",
+  "sbufs": [{"binding": 0, "count": 1}],
+  "textures": [{"binding": 1, "count": 1}],
+  "push_constants": [{"offset": 0, "size": 8}]
+}

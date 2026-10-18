@@ -45,7 +45,7 @@
 #define MAX_JSON_BYTES 65536u
 #define MAX_MODULE_BYTES (256u * 1024u)
 
-typedef struct { uint32_t id; uint32_t kind; uint32_t a, b, c, d, e; uint32_t members; uint32_t member_type[MAX_MEMBERS]; uint32_t offset[MAX_MEMBERS]; } type_t;
+typedef struct { uint32_t id; uint32_t kind; uint32_t a, b, c, d, e; uint32_t sampled_type, depth; uint32_t members; uint32_t member_type[MAX_MEMBERS]; uint32_t offset[MAX_MEMBERS]; } type_t;
 typedef struct { uint32_t id; uint32_t storage; uint32_t pointee; } pointer_t;
 typedef struct { uint32_t id; uint32_t type; uint32_t storage; } var_t;
 typedef struct { uint32_t id; uint32_t dec; uint32_t a, b; } decor_t;
@@ -295,6 +295,7 @@ static int scan_module(const uint8_t *data, size_t size, module_t *m, char *why,
             memset(t, 0, sizeof *t);
             t->id = o[0]; t->kind = OP_TYPE_IMAGE;
             t->a = o[2]; t->b = o[4]; t->c = o[5]; t->d = o[6]; t->e = o[7];   // dim, arrayed, ms, sampled, format
+            t->sampled_type = o[1]; t->depth = o[3];
             break;
         }
         case OP_TYPE_SAMPLED_IMAGE:
@@ -379,7 +380,26 @@ static int build_plan(module_t *m, dm_vk_shader_plan *plan, char *why, size_t ca
         if (var->storage == SC_UNIFORM) { set_why(why, cap, "不支持 Uniform 常量块（cbuf）；本子集只做 storage buffer/image + push constant"); return 0; }
         if (var->storage == SC_UNIFORM_CONSTANT) {
             type_t *t = find_type(m, ptr->pointee);
-            if (t && t->kind == OP_TYPE_SAMPLED_IMAGE) { set_why(why, cap, "采样图像/纹理（OpTypeSampledImage）不在本切片", var->id); return 0; }
+            if (t && t->kind == OP_TYPE_SAMPLED_IMAGE) {
+                type_t *img = find_type(m, t->a);
+                if (!img || img->kind != OP_TYPE_IMAGE) { set_why(why, cap, "采样图像 %%%u 的图像类型 %%%u 未定义", var->id, t->a); return 0; }
+                if (img->d != 1) { set_why(why, cap, "采样图像 %%%u 的 Sampled=%u，本子集只接受采样(1)", var->id, img->d); return 0; }
+                if (img->a != DIM_2D) { set_why(why, cap, "采样图像 %%%u 的 Dim=%u，本子集只接受 2D(1)", var->id, img->a); return 0; }
+                if (img->b || img->c) { set_why(why, cap, "采样图像 %%%u 为数组或多重采样，本子集不支持", var->id); return 0; }
+                if (img->e) { set_why(why, cap, "采样图像 %%%u 的 Image Format=%u，本子集只接受 Unknown(0)", var->id, img->e); return 0; }
+                type_t *scalar = find_type(m, img->sampled_type);
+                if (!scalar || scalar->kind != OP_TYPE_FLOAT || scalar->a != 32) {
+                    set_why(why, cap, "采样图像 %%%u 的 Sampled Type %%%u 不是 float32（本子集只接受 UNORM float 采样）", var->id, img->sampled_type);
+                    return 0;
+                }
+                if (img->depth != 0) { set_why(why, cap, "采样图像 %%%u 的 Depth=%u，本子集不支持深度/阴影采样", var->id, img->depth); return 0; }
+                decor_t *set = find_decor(m, var->id, DEC_DESCRIPTOR_SET);
+                decor_t *bnd = find_decor(m, var->id, DEC_BINDING);
+                if (!set || !bnd) { set_why(why, cap, "采样图像变量 %%%u 缺少 DescriptorSet 或 Binding 装饰", var->id); return 0; }
+                if (set->a != 0) { set_why(why, cap, "采样图像在 set %u，本子集只接受 set 0", set->a); return 0; }
+                if (!add_binding(plan, DM_VK_REFLECT_SAMPLED_IMAGE, bnd->a, why, cap)) return 0;
+                continue;
+            }
             if (!t || t->kind != OP_TYPE_IMAGE) { set_why(why, cap, "UniformConstant 变量 %%%u 不是图像类型", var->id); return 0; }
             // 操作数区分：dim=2, arrayed=4, ms=5, sampled=6, format=7。先判定 Sampled，再看格式，避免把 Format 当 Sampled。
             // Operand layout: dim=2, arrayed=4, ms=5, sampled=6, format=7. Check Sampled first, never Format.
@@ -447,14 +467,14 @@ static int cross_check(const jnode *root, const dm_vk_shader_plan *plan, const c
     if (strcmp(stage->str, "cs")) { set_why(why, cap, "反射 stage=%s，本消费方只接受 cs", stage->str); return 0; }
     // 任何不支持的种类出现即拒绝：不能因为消费方忽略就悄悄放行。
     // Any unsupported category is rejected: silent tolerance would let unsupported shaders through.
-    const char *unsupported[2] = {"cbufs", "textures"};
+    const char *unsupported[2] = {"cbufs", "images"};
     for (int i = 0; i < 2; i++) {
         jnode *a = jget(root, unsupported[i]);
-        if (a && jarray_len(a)) { set_why(why, cap, "反射声明了 %s，本子集不支持（只做 storage buffer/image + push constant）", unsupported[i]); return 0; }
+        if (a && jarray_len(a)) { set_why(why, cap, "反射声明了 %s，本子集不支持（只做 storage buffer/texture + push constant）", unsupported[i]); return 0; }
     }
     uint32_t want[DM_VK_REFLECT_MAX_BINDINGS], kinds[DM_VK_REFLECT_MAX_BINDINGS], n_want = 0;
-    const char *cats[2] = {"sbufs", "images"};
-    uint32_t kind_of[2] = {DM_VK_REFLECT_SBUF, DM_VK_REFLECT_IMAGE};
+    const char *cats[2] = {"sbufs", "textures"};
+    uint32_t kind_of[2] = {DM_VK_REFLECT_SBUF, DM_VK_REFLECT_SAMPLED_IMAGE};
     for (int c = 0; c < 2; c++) {
         jnode *arr = jget(root, cats[c]);
         if (!arr) continue;
@@ -612,7 +632,135 @@ int dm_vk_reflect_check(const dm_vk_shader_plan *plan, const dm_vk_reflect_limit
     return 1;
 }
 
-// ---- 执行 | execution -----------------------------------------------------------------------------------
+VkResult dm_vk_reflect_compute_sampled(dm_vk *vk, const dm_vk_shader_plan *plan, dm_vk_pixels *canvas,
+                                       const void *push, uint32_t push_bytes,
+                                       const dm_vk_texture *texture, const dm_vk_sampler *sampler) {
+    if (!vk || !vk->device || !plan || !canvas || !canvas->bytes || !texture || !sampler || !sampler->handle)
+        return VK_ERROR_INITIALIZATION_FAILED;
+    if (!texture->image || !texture->view || texture->format != VK_FORMAT_R8G8B8A8_UNORM ||
+        texture->view_type != VK_IMAGE_VIEW_TYPE_2D || texture->layers != 1 || texture->levels != 1)
+        return VK_ERROR_FORMAT_NOT_SUPPORTED;
+    if (!canvas->width || !canvas->height || canvas->width > 16384 || canvas->height > 16384)
+        return VK_ERROR_INITIALIZATION_FAILED;
+    uint64_t words64 = (uint64_t)canvas->width * canvas->height;
+    if (words64 > UINT32_MAX) return VK_ERROR_INITIALIZATION_FAILED;
+    dm_vk_reflect_limits limits;
+    memset(&limits, 0, sizeof limits);
+    limits.max_workgroup_size[0] = vk->properties.limits.maxComputeWorkGroupSize[0];
+    limits.max_workgroup_size[1] = vk->properties.limits.maxComputeWorkGroupSize[1];
+    limits.max_workgroup_size[2] = vk->properties.limits.maxComputeWorkGroupSize[2];
+    limits.max_invocations = vk->properties.limits.maxComputeWorkGroupInvocations;
+    limits.max_workgroup_count[0] = vk->properties.limits.maxComputeWorkGroupCount[0];
+    limits.max_workgroup_count[1] = vk->properties.limits.maxComputeWorkGroupCount[1];
+    limits.max_workgroup_count[2] = vk->properties.limits.maxComputeWorkGroupCount[2];
+    limits.max_push_constants = vk->properties.limits.maxPushConstantsSize;
+    limits.max_storage_range = vk->properties.limits.maxStorageBufferRange;
+    char check_why[DM_VK_REFLECT_WHY] = {0};
+    if (!dm_vk_reflect_check(plan, &limits, (uint32_t)words64, check_why, sizeof check_why))
+        return VK_ERROR_INITIALIZATION_FAILED;
+    if (plan->binding_count != 2) return VK_ERROR_FEATURE_NOT_PRESENT;
+    const dm_vk_reflect_binding *sbuf = NULL, *simg = NULL;
+    for (uint32_t i = 0; i < 2; i++) {
+        if (plan->bindings[i].set != 0 || plan->bindings[i].count != 1) return VK_ERROR_FEATURE_NOT_PRESENT;
+        if (plan->bindings[i].kind == DM_VK_REFLECT_SBUF) sbuf = &plan->bindings[i];
+        else if (plan->bindings[i].kind == DM_VK_REFLECT_SAMPLED_IMAGE) simg = &plan->bindings[i];
+        else return VK_ERROR_FEATURE_NOT_PRESENT;
+    }
+    if (!sbuf || !simg || sbuf->binding == simg->binding) return VK_ERROR_FEATURE_NOT_PRESENT;
+    if (push_bytes != plan->push_size || (push_bytes && !push)) return VK_ERROR_INITIALIZATION_FAILED;
+    uint64_t bytes = words64 * 4;
+    if (bytes > canvas->capacity) return VK_ERROR_INITIALIZATION_FAILED;
+
+    dm_vk_buffer buffer = {0};
+    VkShaderModule shader = VK_NULL_HANDLE;
+    VkDescriptorSetLayout dsl = VK_NULL_HANDLE;
+    VkPipelineLayout layout = VK_NULL_HANDLE;
+    VkPipeline pipeline = VK_NULL_HANDLE;
+    VkDescriptorPool pool = VK_NULL_HANDLE;
+    VkDescriptorSet set = VK_NULL_HANDLE;
+    VkCommandBuffer command = VK_NULL_HANDLE;
+    VkResult result;
+
+    dm_vk_buffer_info info = {.size = bytes, .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT};
+    result = dm_vk_buffer_create(vk, &info, &buffer);
+    if (result != VK_SUCCESS) goto done;
+    memset(buffer.mapped, 0, (size_t)bytes);
+    VkShaderModuleCreateInfo smci = {.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+        .codeSize = plan->code_bytes, .pCode = (const uint32_t *)(const void *)plan->code};
+    result = vkCreateShaderModule(vk->device, &smci, NULL, &shader);
+    if (result != VK_SUCCESS) goto done;
+    VkDescriptorSetLayoutBinding lb[2] = {
+        {.binding = sbuf->binding, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+         .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT},
+        {.binding = simg->binding, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+         .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT}};
+    VkDescriptorSetLayoutCreateInfo dci = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .bindingCount = 2, .pBindings = lb};
+    result = vkCreateDescriptorSetLayout(vk->device, &dci, NULL, &dsl);
+    if (result != VK_SUCCESS) goto done;
+    VkPushConstantRange range = {.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+        .offset = plan->push_offset, .size = plan->push_size};
+    VkPipelineLayoutCreateInfo lci = {.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .setLayoutCount = 1, .pSetLayouts = &dsl,
+        .pushConstantRangeCount = plan->push_size ? 1u : 0u, .pPushConstantRanges = plan->push_size ? &range : NULL};
+    result = vkCreatePipelineLayout(vk->device, &lci, NULL, &layout);
+    if (result != VK_SUCCESS) goto done;
+    VkComputePipelineCreateInfo cpi = {.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+        .layout = layout, .stage = {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .stage = VK_SHADER_STAGE_COMPUTE_BIT, .module = shader, .pName = "main"}};
+    result = vkCreateComputePipelines(vk->device, VK_NULL_HANDLE, 1, &cpi, NULL, &pipeline);
+    if (result != VK_SUCCESS) goto done;
+    VkDescriptorPoolSize psz[2] = {{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1},
+        {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1}};
+    VkDescriptorPoolCreateInfo pci = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .maxSets = 1, .poolSizeCount = 2, .pPoolSizes = psz};
+    result = vkCreateDescriptorPool(vk->device, &pci, NULL, &pool);
+    if (result != VK_SUCCESS) goto done;
+    VkDescriptorSetAllocateInfo ai = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+        .descriptorPool = pool, .descriptorSetCount = 1, .pSetLayouts = &dsl};
+    result = vkAllocateDescriptorSets(vk->device, &ai, &set);
+    if (result != VK_SUCCESS) goto done;
+    VkDescriptorBufferInfo dbi = {.buffer = buffer.handle, .offset = 0, .range = VK_WHOLE_SIZE};
+    VkDescriptorImageInfo dii = {.sampler = sampler->handle, .imageView = texture->view,
+        .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    VkWriteDescriptorSet wds[2] = {
+        {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = set, .dstBinding = sbuf->binding,
+         .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .pBufferInfo = &dbi},
+        {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = set, .dstBinding = simg->binding,
+         .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .pImageInfo = &dii}};
+    vkUpdateDescriptorSets(vk->device, 2, wds, 0, NULL);
+    result = dm_vk_begin(vk, &command);
+    if (result != VK_SUCCESS) goto done;
+    vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
+    vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_COMPUTE, layout, 0, 1, &set, 0, NULL);
+    if (plan->push_size) vkCmdPushConstants(command, layout, VK_SHADER_STAGE_COMPUTE_BIT, plan->push_offset, plan->push_size, push);
+    uint64_t words = words64;
+    uint64_t group = (uint64_t)plan->local[0] * plan->local[1] * plan->local[2];
+    if (!group) { result = VK_ERROR_INITIALIZATION_FAILED; goto done; }
+    uint32_t groups = (uint32_t)((words + group - 1) / group);
+    vkCmdDispatch(command, groups, 1, 1);
+    VkBufferMemoryBarrier barrier = {.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+        .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT, .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED, .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .buffer = buffer.handle, .offset = 0, .size = VK_WHOLE_SIZE};
+    vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
+        0, 0, NULL, 1, &barrier, 0, NULL);
+    result = dm_vk_submit(vk, command);
+    command = VK_NULL_HANDLE;
+    if (result != VK_SUCCESS) goto done;
+    result = dm_vk_buffer_sync(vk, &buffer, 0);
+    if (result != VK_SUCCESS) goto done;
+    memcpy(canvas->bytes, buffer.mapped, (size_t)bytes);
+done:
+    if (command) vkFreeCommandBuffers(vk->device, vk->pool, 1, &command);
+    if (pipeline) vkDestroyPipeline(vk->device, pipeline, NULL);
+    if (pool) vkDestroyDescriptorPool(vk->device, pool, NULL);
+    if (layout) vkDestroyPipelineLayout(vk->device, layout, NULL);
+    if (dsl) vkDestroyDescriptorSetLayout(vk->device, dsl, NULL);
+    if (shader) vkDestroyShaderModule(vk->device, shader, NULL);
+    dm_vk_buffer_destroy(vk, &buffer);
+    return result;
+}
 VkResult dm_vk_reflect_compute(dm_vk *vk, const dm_vk_shader_plan *plan, dm_vk_pixels *canvas,
                                const void *push, uint32_t push_bytes) {
     if (!vk || !vk->device || !plan || !canvas || !canvas->bytes) return VK_ERROR_INITIALIZATION_FAILED;
