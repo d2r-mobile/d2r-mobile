@@ -373,6 +373,91 @@ static void belt_context_survives_cancel_and_resize(void) {
     dm_touch_bridge_destroy(b, NULL);
 }
 
+static void belt_upper_point(const dm_tc_layout *l, int col, int row, float *x, float *y) {
+    const dm_tc_target *t = &l->target[DM_TC_BELT1 + col];
+    float u = l->height / 1320.0f;
+    *x = t->x;
+    *y = t->y - (165.0f + 162.0f * (row - 1)) * u;
+}
+
+static void belt_action_expanded_cell_one_shot(void) {
+    dm_touch_bridge *b = dm_touch_bridge_create(667, 375, 2.0f);
+    dm_tc_layout layout;
+    dm_android_touch_action a;
+    dm_npad_state s;
+    float x, y;
+    CHECK(b != NULL);
+    dm_tc_layout_make(&layout, 667, 375);
+    CHECK(dm_touch_bridge_set_belt_context(b, 4, 1));
+    /* Expanded row 1, column 1: the core request is 0x100 | row<<4 | col =
+       0x111 (player drink via dm_belt_use). The merc-only host code for the
+       same cell would be 0x106; the existing action enum has one BELT kind, so
+       no merc action is fabricated here. */
+    belt_upper_point(&layout, 1, 1, &x, &y);
+    tap(b, 31, x, y, 8300000000);
+    CHECK(dm_touch_bridge_take_action(b, &a));
+    CHECK(a.kind == DM_ANDROID_ACTION_BELT);
+    CHECK((int)a.x == (0x100 | 1 << 4 | 1));
+    CHECK(!dm_touch_bridge_take_action(b, &a));   /* exactly once */
+    belt_upper_point(&layout, 3, 2, &x, &y);      /* row 2, column 3 */
+    tap(b, 32, x, y, 8310000000);
+    CHECK(dm_touch_bridge_take_action(b, &a));
+    CHECK(a.kind == DM_ANDROID_ACTION_BELT && (int)a.x == (0x100 | 2 << 4 | 3));
+    CHECK(!dm_touch_bridge_take_action(b, &a));
+    /* Bottom-row tap is still a pad key pulse, not an action. */
+    tap(b, 33, layout.target[DM_TC_BELT2].x, layout.target[DM_TC_BELT2].y, 8320000000);
+    s = read_state(b); CHECK(s.buttons == DM_BTN_UP);
+    s = read_state(b); CHECK(s.buttons == 0);
+    CHECK(!dm_touch_bridge_take_action(b, &a));
+    dm_touch_bridge_destroy(b, NULL);
+}
+
+static void belt_action_null_and_context_retention(void) {
+    dm_touch_bridge *b = dm_touch_bridge_create(667, 375, 2.0f);
+    dm_tc_layout layout;
+    dm_android_touch_action a;
+    float x, y;
+    CHECK(b != NULL);
+    dm_tc_layout_make(&layout, 667, 375);
+    CHECK(dm_touch_bridge_set_belt_context(b, 4, 1));
+    belt_upper_point(&layout, 1, 1, &x, &y);
+    tap(b, 41, x, y, 8400000000);
+    (void)read_state(b);                           /* pad reads do not consume actions */
+    CHECK(!dm_touch_bridge_take_action(b, NULL));  /* null output never consumes */
+    CHECK(dm_touch_bridge_take_action(b, &a));
+    CHECK(a.kind == DM_ANDROID_ACTION_BELT && (int)a.x == (0x100 | 1 << 4 | 1));
+    CHECK(!dm_touch_bridge_take_action(b, &a));
+    /* Same-value context update preserves a pending request. */
+    tap(b, 42, x, y, 8410000000);
+    CHECK(dm_touch_bridge_set_belt_context(b, 4, 1));
+    CHECK(dm_touch_bridge_take_action(b, &a));
+    CHECK((int)a.x == (0x100 | 1 << 4 | 1));
+    /* Invalid updates change neither context nor request. */
+    tap(b, 43, x, y, 8420000000);
+    CHECK(!dm_touch_bridge_set_belt_context(b, 5, 0));
+    CHECK(!dm_touch_bridge_set_belt_context(b, 4, 2));
+    CHECK(dm_touch_bridge_take_action(b, &a));
+    CHECK((int)a.x == (0x100 | 1 << 4 | 1));
+    /* A real context change cancels gestures but the adapter's cancel-all
+       retains belt_request: the already-requested cell stays one-shot. */
+    tap(b, 44, x, y, 8430000000);
+    CHECK(dm_touch_bridge_set_belt_context(b, 4, 0));
+    CHECK(dm_touch_bridge_take_action(b, &a));
+    CHECK((int)a.x == (0x100 | 1 << 4 | 1));
+    /* Reopen, then cancel-all and resize both retain the pending request. */
+    CHECK(dm_touch_bridge_set_belt_context(b, 4, 1));
+    tap(b, 45, x, y, 8440000000);
+    CHECK(dm_touch_bridge_cancel_all(b, 8441000000));
+    CHECK(dm_touch_bridge_take_action(b, &a));
+    CHECK((int)a.x == (0x100 | 1 << 4 | 1));
+    tap(b, 46, x, y, 8450000000);
+    CHECK(dm_touch_bridge_resize(b, 812, 375, 8451000000));
+    CHECK(dm_touch_bridge_take_action(b, &a));
+    CHECK((int)a.x == (0x100 | 1 << 4 | 1));
+    CHECK(!dm_touch_bridge_take_action(b, &a));
+    dm_touch_bridge_destroy(b, NULL);
+}
+
 int main(void) {
     CASE(density_and_noncontiguous_ids);
     CASE(action_index_multifinger);
@@ -388,6 +473,8 @@ int main(void) {
     CASE(belt_context_change_cancels_outer_and_reuses_id);
     CASE(belt_context_invalid_and_same_preserve_ownership);
     CASE(belt_context_survives_cancel_and_resize);
+    CASE(belt_action_expanded_cell_one_shot);
+    CASE(belt_action_null_and_context_retention);
     printf("PASS touch bridge: %d checks\n", checks);
     return 0;
 }
