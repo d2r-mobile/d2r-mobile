@@ -123,6 +123,7 @@ run: \
 	MTL_DEBUG_LAYER=1 ./t_pfv
 	MTL_DEBUG_LAYER=1 ./t_rt_srgb_view
 	python3 test_tbdr_budget.py
+	python3 test_spirv_contract.py
 	MTL_DEBUG_LAYER=1 ./t_accept_scene
 	./t_accept_shader
 .PHONY: run
