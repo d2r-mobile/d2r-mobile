@@ -87,6 +87,20 @@ dm_host *dm_host_create_arena(size_t heap,size_t stack,size_t alias,size_t arena
     return create_host(heap,stack,alias,arena);
 }
 
+int dm_host_configure_virtual_cores(dm_host *host, uint64_t mask, uint32_t preferred_core) {
+    if (!host || !mask || preferred_core >= 64 || !(mask & (UINT64_C(1) << preferred_core))) return EINVAL;
+    pthread_mutex_lock(&host->mutex);
+    int busy = host->attached || dm_host_sync_busy(host);
+    for (unsigned i = 0; !busy && i < 64; i++) if (host->thread_stacks[i].in_use) busy = 1;
+    if (!busy) {
+        host->virtual_core_mask = mask;
+        host->virtual_core_preferred = preferred_core;
+        host->virtual_cores_configured = 1;
+    }
+    pthread_mutex_unlock(&host->mutex);
+    return busy ? EBUSY : 0;
+}
+
 int dm_host_destroy(dm_host *host) {
     if (!host) return EINVAL;
     pthread_mutex_lock(&host->mutex);
