@@ -36,6 +36,20 @@ DM_CI_ALLOW_ARM_CROSS=1 bash ci/scripts/ci.sh android
 
 未验证：未在手机上安装或启动，未验证真机 `ANativeWindow_lock` 的格式／行距行为，也未做 Adreno 或 Android Vulkan 驱动验证；无 swapchain、帧调度或游戏呈现器。下面的 2026-10-17 检查点属于更早的片段坐标图案，当前 APK 未重新安装，也未在任何设备上观察过。
 
+## 显式 WSI 诊断模式（#143）
+
+默认渲染器不变：自有索引纹理离屏场景经 `ANativeWindow_lock` 复制到窗口。设置 `DM_DIAGNOSTIC_WSI=1` 或在该 App 内部数据目录放置 `wsi-mode` 标记文件，会启用显式标注的 swapchain 模式：`app/wsi_diagnostic.c` 用独立的 16 ms looper 定时器驱动 `dm_vk_create_present` 与 `dm_vk_swapchain_*`（FIFO、clear-only），因此连续帧不依赖输入队列。该模式下没有任何路径调用 `ANativeWindow_lock`，也不合成触控 HUD 覆盖层。
+
+只有已恢复且窗口有效非零时才出帧；暂停与窗口丢失都会停止定时器，无窗口时不做任何设备工作。尺寸变化与 `VK_ERROR_OUT_OF_DATE_KHR` 标记重建，在下一 tick 排空、销毁并重建链；`VK_SUBOPTIMAL_KHR` 会呈现本帧并排程同样的重建；`VK_ERROR_SURFACE_LOST_KHR` 会在借用窗口被释放前排空并关闭链/设备，然后等待替换。缺少 `VK_EXT_swapchain_maintenance1` 时明确报告 unsupported，不回落 CPU 路径、不声称渲染成功；拆卸失败会保留可达的设备/窗口所有权并以错误返回，宿主 stop 因此报告失败而不是假装成功。
+
+随接入新增的测试：
+
+| 测试 | 独立验证内容 |
+|---|---|
+| `app_wsi_diagnostic` | 生产控制器：无输入队列也能连续出帧、暂停/恢复、尺寸重建、OUT_OF_DATE 重建、SUBOPTIMAL 先呈现再重建、SURFACE_LOST 排空与替换、陈旧窗口丢失回调与替换顺序、open/unsupported 失败不回落，以及拆卸失败保留所有权且可重试。默认模式作为反向对照：注入边界一次都不被调用。 |
+
+不声称 Android 验收：宿主测试与 ARM64 编译都不等于 Adreno 行为、真机像素、帧率或完整触控验收。
+
 ## 生命周期所有权
 
 `app/lifecycle.c` 是 NativeActivity 使用的生产生命周期控制器。状态为
