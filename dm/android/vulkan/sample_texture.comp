@@ -1,0 +1,21 @@
+// 逐级逐层从实际采样图像读取，独立 SSBO 回读用于纹理上传测试。
+// Fetch every mip/layer from the actual sampled image into an independent readback SSBO.
+#version 450
+layout(local_size_x=8,local_size_y=8) in;
+#ifdef DM_TEXTURE_2D
+layout(set=0,binding=0) uniform sampler2D source_texture;
+#else
+layout(set=0,binding=0) uniform sampler2DArray source_texture;
+#endif
+layout(std430,set=0,binding=1) writeonly buffer Pixels { uint values[]; } output_pixels;
+layout(push_constant) uniform Shape { uint width; uint height; uint level; uint layer; } shape;
+void main() {
+    uvec2 p=gl_GlobalInvocationID.xy;
+    if(p.x>=shape.width||p.y>=shape.height)return;
+#ifdef DM_TEXTURE_2D
+    vec4 pixel=texelFetch(source_texture,ivec2(p),int(shape.level));
+#else
+    vec4 pixel=texelFetch(source_texture,ivec3(p,shape.layer),int(shape.level));
+#endif
+    output_pixels.values[p.y*shape.width+p.x]=packUnorm4x8(pixel);
+}

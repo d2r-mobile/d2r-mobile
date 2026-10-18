@@ -1,0 +1,11 @@
+// 合成 GPU 图案：用于验证描述符、push constants、非整工作组边界和读回，不含游戏着色器。
+// Synthetic GPU pattern: verify descriptors, push constants, partial workgroups and readback; contains no game shader.
+#version 450
+layout(local_size_x=8, local_size_y=8) in;
+layout(set=0, binding=0, std430) buffer Pixels { uint rgba[]; } pixels;
+layout(push_constant) uniform Dimensions { uint width; uint height; } dimensions;
+void main() {
+    uvec2 p = gl_GlobalInvocationID.xy;
+    if (p.x >= dimensions.width || p.y >= dimensions.height) return;
+    pixels.rgba[p.y * dimensions.width + p.x] = 0xff000000u | ((p.x * 17u) & 255u) | (((p.y * 17u) & 255u) << 8);
+}

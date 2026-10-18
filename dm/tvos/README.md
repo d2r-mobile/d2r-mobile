@@ -63,9 +63,9 @@ DM_ASTC_PACK="<existing-pack-directory>" python3 dm/tvos/gen_romfs_overlay.py "<
 
 ## 实测补充（2026-10-15）/ Device-test update (2026-10-15)
 
-我在 Apple TV 4K 第三代（A15）上复测确认，部署修复后分割线显示正常；此前按 A 返回系统桌面的问题也已确认修复。两套配置、自定义页几何与 iOS 原行为检查通过，普通/ASTC 覆盖层及注释变体生成成功。尚未逐页、逐语言和逐字体档做完整视觉回归，暂无修复后截图。真机记录基于此前的本地移植版本（ea86e79），并不表示已对当前上游整合版完成构建和真机回归。
+我在 Apple TV 4K 第三代（A15）上复测确认，部署修复后分割线显示正常；此前按 A 返回系统桌面的问题也已确认修复。两套配置、自定义页几何与 iOS 原行为检查通过，普通/ASTC 覆盖层及注释变体生成成功。尚未逐页、逐语言和逐字体档做完整视觉回归，暂无修复后截图。真机记录基于此前的本地移植版本（source snapshot），并不表示已对当前上游整合版完成构建和真机回归。
 
-I confirmed on Apple TV 4K (3rd generation, A15) that the dividers display correctly after deploying the fix; the earlier issue where A returned to the system home screen was also confirmed fixed. Both profile configurations, custom-page geometry and preservation of original iOS behavior passed checks; standard/ASTC overlays and annotation variants generated successfully. Full visual regression across pages, languages and font profiles is pending, and no post-fix screenshot is available. Device results are from the earlier local port based on ea86e79, not a full build/device regression of the current upstream integration.
+I confirmed on Apple TV 4K (3rd generation, A15) that the dividers display correctly after deploying the fix; the earlier issue where A returned to the system home screen was also confirmed fixed. Both profile configurations, custom-page geometry and preservation of original iOS behavior passed checks; standard/ASTC overlays and annotation variants generated successfully. Full visual regression across pages, languages and font profiles is pending, and no post-fix screenshot is available. Device results are from the earlier local port based on source snapshot, not a full build/device regression of the current upstream integration.
 
 我还测试了固定 1600×900 的 3D 渲染（初始缩放 1.0，关闭动态缩放）；能启动，但随后退出，日志记录 signal 9。未取得能确认原因的系统报告，不能认定是内存或温度问题。现已恢复初始缩放 0.75 并开启动态缩放；不将固定 900p 作为稳定默认值。
 
