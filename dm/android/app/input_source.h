@@ -14,7 +14,6 @@
 extern "C" {
 #endif
 
-#define DM_INPUT_MAX_DEVICE_ID 15u
 #define DM_INPUT_GAMEPAD_DEADZONE 8000
 
 typedef enum dm_input_source {
@@ -50,9 +49,10 @@ dm_input_layout dm_input_arbiter_layout(const dm_input_arbiter *arbiter);
 int dm_input_arbiter_requires_fresh(const dm_input_arbiter *arbiter);
 
 // A device connection alone never changes the active source or cancels touch.
-// id > DM_INPUT_MAX_DEVICE_ID and generation == 0 are rejected. Reconnecting a
-// different id/generation invalidates an old gamepad source, but leaves a
-// touch source alone; old samples are rejected by id/generation.
+// Device ids are non-negative Android scalars up to INT32_MAX; generation == 0
+// is rejected. No 0..15 remapping registry exists. Reconnecting a different
+// id/generation invalidates an old gamepad source, but leaves a touch source
+// alone; old samples are rejected by id/generation.
 int dm_input_arbiter_connect(dm_input_arbiter *arbiter, uint32_t device_id,
                              uint32_t generation);
 // Disconnect requires the exact current id/generation. A late sample after

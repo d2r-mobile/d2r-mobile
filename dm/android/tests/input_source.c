@@ -220,8 +220,12 @@ int main(void) {
     CHECK(dm_input_arbiter_touch(arbiter, &down_again));
     CHECK(dm_input_arbiter_source(arbiter) == DM_INPUT_SOURCE_TOUCH);
 
-    /* Bounds and repeated lifecycle events do not invent a device. */
-    CHECK(!dm_input_arbiter_connect(arbiter, DM_INPUT_MAX_DEVICE_ID + 1, 12));
+    /* Device ids are scalar non-negative Android ids; only generation 0 is
+       rejected. id 0 is valid, and large real ids must not be remapped. */
+    CHECK(dm_input_arbiter_connect(arbiter, 0x7fffffffu, 12));
+    CHECK(dm_input_arbiter_disconnect(arbiter, 0x7fffffffu, 12));
+    CHECK(!dm_input_arbiter_connect(arbiter, 0x80000000u, 12));
+    CHECK(dm_input_arbiter_connect(arbiter, 2, 11));
     CHECK(!dm_input_arbiter_connect(arbiter, 2, 0));
     CHECK(!dm_input_arbiter_disconnect(arbiter, 2, 12));
     CHECK(dm_input_arbiter_queue_changed(arbiter));
