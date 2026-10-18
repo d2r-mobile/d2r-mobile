@@ -131,6 +131,17 @@ target_link_libraries(dm_app_lifecycle_test PRIVATE dm_android_app_lifecycle)
 target_compile_options(dm_app_lifecycle_test PRIVATE -Wall -Wextra -Werror)
 add_test(NAME app_lifecycle COMMAND dm_app_lifecycle_test)
 set_tests_properties(app_lifecycle PROPERTIES TIMEOUT 30)
+# #157 Android「自定義」偏好事務模組：凍結上游鍵/缺省值/Apply-Discard-Defaults，有界解析 + 注入持久化回調。
+# #157 Android Custom-preferences transaction module: frozen upstream keys/defaults/Apply-Discard-Defaults, bounded
+# parser and an injected persistence callback.
+add_library(dm_android_app_custom_preferences STATIC app/custom_preferences.c)
+target_include_directories(dm_android_app_custom_preferences PUBLIC app)
+target_compile_options(dm_android_app_custom_preferences PRIVATE -Wall -Wextra -Werror)
+add_executable(dm_custom_preferences_test tests/custom_preferences.c)
+target_link_libraries(dm_custom_preferences_test PRIVATE dm_android_app_custom_preferences)
+target_compile_options(dm_custom_preferences_test PRIVATE -Wall -Wextra -Werror)
+add_test(NAME custom_preferences COMMAND dm_custom_preferences_test)
+set_tests_properties(custom_preferences PROPERTIES TIMEOUT 30)
 add_library(dm_android_touch_bridge STATIC app/touch_bridge.c)
 target_include_directories(dm_android_touch_bridge PUBLIC app runtime)
 target_link_libraries(dm_android_touch_bridge PUBLIC dm_android_touch dm_android_touch_game)
@@ -455,6 +466,14 @@ endif()
 if(NOT ANDROID)
     find_package(Python3 COMPONENTS Interpreter QUIET)
     if(Python3_Interpreter_FOUND)
+        # #157 私有變異：忽略保存結果或忽略語言顯式狀態，必須讓真實測試失敗。
+        # #157 private mutations: ignoring the store result, or the language explicit state, must fail the real tests.
+        add_test(NAME custom_preferences_mutation
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/custom_preferences_mutation.py
+                --app ${CMAKE_CURRENT_SOURCE_DIR}/app
+                --tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/custom_preferences.c
+                --cc ${CMAKE_C_COMPILER})
+        set_tests_properties(custom_preferences_mutation PROPERTIES TIMEOUT 120)
         add_test(NAME diagnostic_provenance
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_provenance.py)
         set_tests_properties(diagnostic_provenance PROPERTIES TIMEOUT 60)
