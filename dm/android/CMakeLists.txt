@@ -158,6 +158,17 @@ target_link_libraries(dm_input_policy_test PRIVATE dm_android_input_policy dm_an
 target_compile_options(dm_input_policy_test PRIVATE -Wall -Wextra -Werror)
 add_test(NAME input_policy COMMAND dm_input_policy_test)
 set_tests_properties(input_policy PROPERTIES TIMEOUT 30)
+# #150 Touch/gamepad source arbitration. The module links the accepted real
+# bridge/adapter and uses dm_npad_state; no Android event extraction or UI.
+add_library(dm_android_input_source STATIC app/input_source.c)
+target_include_directories(dm_android_input_source PUBLIC app runtime)
+target_link_libraries(dm_android_input_source PUBLIC dm_android_touch_bridge dm_android_touch dm_android_runtime m)
+target_compile_options(dm_android_input_source PRIVATE -Wall -Wextra -Werror)
+add_executable(dm_input_source_test tests/input_source.c)
+target_link_libraries(dm_input_source_test PRIVATE dm_android_input_source)
+target_compile_options(dm_input_source_test PRIVATE -Wall -Wextra -Werror)
+add_test(NAME input_source COMMAND dm_input_source_test)
+set_tests_properties(input_source PROPERTIES TIMEOUT 30)
 # #117 自有诊断场景与窗口呈现策略：纯 C，无 Vulkan/Android 头文件，故在 CI 的 Vulkan=OFF 配置下也构建并运行。
 # #117 owned diagnostic scene and window presentation policy: plain C without Vulkan/Android headers, so it builds
 # and runs in the Vulkan=OFF CI configurations too.
@@ -428,6 +439,10 @@ if(NOT ANDROID)
                 --app ${CMAKE_CURRENT_SOURCE_DIR}/app
                 --cc ${CMAKE_C_COMPILER})
         set_tests_properties(native_callbacks PROPERTIES TIMEOUT 120)
+        add_test(NAME input_source_mutants
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/input_source_mutants.py
+                --cc ${CMAKE_C_COMPILER})
+        set_tests_properties(input_source_mutants PROPERTIES TIMEOUT 120)
     endif()
 endif()
 
