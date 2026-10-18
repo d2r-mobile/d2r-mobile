@@ -2,8 +2,8 @@
 
 Issue:  (A5.1), phase 1.
 Status: **phase-1 evidence plus bounded opt-in owned models for GetInfo 0 and
-the narrow SVC `0x0f` state subset. No target inference, no physical-affinity
-mapping and no production SDK/game admission.**
+the narrow SVC `0x0f` state subset. No target inference, no host-native
+affinity mapping and no production SDK/game admission.**
 
 Repository anchors use accepted main `source snapshot` for the SDK/static observations;
 the runtime base for this slice is the owned-policy merge `source snapshot`. Private SDK observations are
@@ -112,9 +112,13 @@ The public special values at the pinned reference are:
 | `-3` | `IdealCoreNoUpdate` | accepted only in the non-valid-core branch with a valid non-zero subset mask |
 
 Source: [Atmosphère `svc_types_common.hpp:379-381`](https://github.com/Atmosphere-NX/Atmosphere/blob/6b0c077b4c608a3a2ee712b8dc35fee87ceb62e8/libraries/libvapours/include/vapours/svc/svc_types_common.hpp#L379-L381).
-The exact kernel-side selection behavior of `DontCare` and `NoUpdate` after
-acceptance remains **U** for this contract; only the validation and state
-ownership rules are claimed.
+For the pinned reference, `DontCare` post-validation is now documented: it
+writes virtual ideal core `-1`, replaces the virtual affinity mask, converts
+the physical mask, and may select the highest physical core when the active
+core is removed; the late termination result has no rollback. `NoUpdate`
+preserves the prior ideal instead. The actual target kernel remains **U**;
+see [`virtual-core-dontcare-reference.md`](virtual-core-dontcare-reference.md).
+Other special-value behavior is not claimed by this note.
 
 The libnx C wrapper exposes `u32`, while the raw 64 ABI and the SDK C++
 wrapper use a 64-bit mask. Do not discard bits 32..63 silently. A raw mask
@@ -139,7 +143,7 @@ Therefore the coherent model is:
 - `CreateThread` chooses one ideal core that must be in that mask;
 - `SetThreadCoreMask` may later set a per-thread subset mask and preferred
   core, subject to the same process mask;
-- none of these imply host/physical CPU affinity. Mapping a guest virtual
+- none of these imply host-native CPU affinity. Mapping a guest virtual
   mask to host scheduling is a separate, unapproved contract.
 
 ## 2. Static SDK evidence
@@ -171,7 +175,7 @@ The existing SDK metadata reports no execution of a real initializer or game.
 | Item | Current state | Consequence |
 |---|---|---|
 | GetInfo ID 0 | `dm/android/runtime/memory.c` now returns `0x4201` when unconfigured; a configured host returns its stored 64-bit mask (section 7) | Success remains conditional on explicit host configuration |
-| SVC `0x0f` | `dm/android/runtime/sync.c` implements only the owned-state subset in section 8; unconfigured/special/pseudo forms return `0x4201` | No physical affinity or broad public behavior |
+| SVC `0x0f` | `dm/android/runtime/sync.c` implements only the owned-state subset in section 8; unconfigured/special/pseudo forms return `0x4201` | No host-native affinity or broad public behavior |
 | CreateThread | `dm/android/runtime/sync.c` validates configured cores/masks and initializes per-thread virtual state (section 7/8) | Unconfigured path preserves the pre-existing synthetic behavior |
 | Legacy host | `dm/host/hle_svc.c:225-228` hardcodes GetInfo 0 to `7`; `dm/host/hle_thread.c:481-486` returns success for `0x0f` with loose updates | Legacy macOS host behavior only; not Android production evidence and must not be reused as the contract |
 
@@ -198,14 +202,20 @@ until resolved or explicitly chosen by the owner:
    value. The exact numeric mask and handle, and whether the path executes,
    remain **U**; see
    [`virtual-core-callsite-arguments.md`](virtual-core-callsite-arguments.md).
-4. **`DontCare`/`NoUpdate` post-validation behavior.** Acceptance rules are
-   public; exact selection/update behavior in the target kernel is not proven.
+4. **`DontCare` post-validation behavior.** The pinned reference now proves
+   that `-1` replaces virtual ideal with `-1`, replaces the mask, converts
+   physical state and can return a late termination result without rollback.
+   The actual target kernel remains **U**; `NoUpdate` and the other special
+   values are separate. See
+   [`virtual-core-dontcare-reference.md`](virtual-core-dontcare-reference.md).
 5. **Result mapping.** Public names are known (`ResultInvalidHandle`,
    `ResultInvalidCoreId`, `ResultInvalidCombination`); the current runtime
    uses local numeric results. Do not equate the current default `0x4201`
    with the final Horizon result until the mapping is reviewed.
-6. **Host affinity.** No permission to call host affinity APIs or claim a
-   physical-core mapping is implied by this contract.
+6. **Host affinity.** No permission to call host-native affinity APIs or claim
+   that guest physical-core state is host pinning is implied by this contract.
+   Guest physical/active state can be modeled in software if separately
+   specified.
 
 This is the single phase-1 blocker list; it is not evidence of implementation
 or a request to broaden the audit.
@@ -236,7 +246,7 @@ virtual mask `M` selected by the reviewed policy:
    subset mask; `-2` selects the process default; no unsupported special value
    silently succeeds.
 7. **CreateThread relation:** core outside `M` fails; a valid core in `M`
-   succeeds; `-2` uses the process default; no physical affinity is observed.
+   succeeds; `-2` uses the process default; no host-native affinity is observed.
    A failed wrapper call must not be asserted to leave the caller's handle
    storage unchanged; only the Result and owned state are contractual.
 8. **Failure atomicity:** every negative case leaves the previous virtual
@@ -305,7 +315,7 @@ The implemented slice is deliberately narrower than the generic contract:
 - Unconfigured CreateThread preserves the pre-existing synthetic behavior;
   that behavior is not a game mask contract.
 - SVC `0x0f` is implemented only as the narrower owned-state subset in
-  section 8; all other forms remain explicitly unsupported. No physical
+  section 8; all other forms remain explicitly unsupported. No host-native
   affinity or native scheduling change is made.
 - Configuration fields are host-local; a rejected call does not mutate another
   host. The owned test exercises the real rewritten gates for configured
@@ -335,12 +345,19 @@ The SVC `0x0f` slice is intentionally narrower than the public reference:
   behavior is added. The recorded `nnMain` call uses `-1`, so this
   subset does not cover that callsite; see
   [`virtual-core-callsite-arguments.md`](virtual-core-callsite-arguments.md).
+  The pinned reference `-1` transition is documented in
+  [`virtual-core-dontcare-reference.md`](virtual-core-dontcare-reference.md);
+  it changes virtual and guest physical/scheduler state. The current
+  per-thread fields do not expose those observables; a fuller software
+  guest-core model would require a reviewed contract. No runtime extension is
+  approved.
 - A successful call stores per-thread virtual core/mask state under the host
   mutex. CreateThread initializes that state from its validated core and the
   host mask. State is freed with the existing guest-thread object lifecycle;
   closing a handle removes it, and a recreated thread starts from CreateThread
   state, not stale values.
-- No host scheduling, affinity syscall or physical-core mapping is performed.
+- No host scheduling or host-native affinity syscall is performed; no guest
+  physical-core model is added.
 - The owned test seam `dm_host_thread_virtual_core_state` reads the actual
   stored fields for verification; it is not an SVC readback or public contract.
 
