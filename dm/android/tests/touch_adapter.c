@@ -687,6 +687,210 @@ static void belt_context_requests_validation_and_reset(fixture *f) {
     CHECK(dm_android_touch_up(f->touch, 76, 17435000000));
 }
 
+/* Port of upstream t_touch_controls.c / t_portal_sequence.c through the Android
+   adapter: a host-verified portal mask arms modifier-pending on the portal
+   press (buttons = ZL), one request is observable, wrong epoch/identity/scene
+   acks are rejected, the correct ack publishes the full mask, a second portal
+   finger does not re-arm, and the last portal lift cancels the arm. */
+static void portal_sequence_request_ack(fixture *f) {
+    dm_npad_state s;
+    dm_android_portal_request r;
+    uint64_t mask = DM_BTN_ZL | DM_BTN_B;
+    float px = f->layout.target[DM_TC_PORTAL].x;
+    float py = f->layout.target[DM_TC_PORTAL].y;
+    CHECK(dm_android_touch_set_portal_context(f->touch, 1, mask, 77, 3));
+    CHECK(dm_android_touch_down(f->touch, 50, px, py, 18000000000));
+    s = read_pad(f); CHECK(s.buttons == DM_BTN_ZL);   /* modifier pending, not the key yet */
+    CHECK(dm_android_touch_take_portal_request(f->touch, &r));
+    CHECK(r.gesture_epoch != 0 && r.binding_identity == 77 && r.scene_epoch == 3 &&
+          r.mask == mask && r.phase == 1);
+    uint64_t epoch = r.gesture_epoch;
+    CHECK(!dm_android_touch_take_portal_request(f->touch, &r));   /* exactly once */
+    CHECK(!dm_android_touch_take_portal_request(f->touch, NULL)); /* null never consumes */
+    /* Portal arm does not disturb other gestures. */
+    CHECK(dm_android_touch_down(f->touch, 51, f->layout.target[DM_TC_MAIN].x,
+                                f->layout.target[DM_TC_MAIN].y, 18001000000));
+    CHECK(dm_android_touch_down(f->touch, 52, 90, 275, 18002000000));
+    CHECK(dm_android_touch_move(f->touch, 52, 150, 275, 18003000000));
+    s = read_pad(f); CHECK(s.buttons == (DM_BTN_ZL | DM_BTN_A)); CHECK(s.lx == DM_STICK_MAX);
+    CHECK(!dm_android_touch_portal_ack(f->touch, epoch + 1, 77, 3));
+    CHECK(!dm_android_touch_portal_ack(f->touch, epoch, 78, 3));
+    CHECK(!dm_android_touch_portal_ack(f->touch, epoch, 77, 4));
+    s = read_pad(f); CHECK(s.buttons == (DM_BTN_ZL | DM_BTN_A) && s.lx == DM_STICK_MAX);
+    CHECK(dm_android_touch_portal_ack(f->touch, epoch, 77, 3));
+    s = read_pad(f); CHECK(s.buttons == (mask | DM_BTN_A) && s.lx == DM_STICK_MAX);
+    CHECK(!dm_android_touch_portal_ack(f->touch, epoch, 77, 3));   /* already acked */
+    /* Second portal finger while armed: same epoch, no second request. */
+    CHECK(dm_android_touch_down(f->touch, 53, px, py, 18004000000));
+    CHECK(!dm_android_touch_take_portal_request(f->touch, &r));
+    s = read_pad(f); CHECK(s.buttons == (mask | DM_BTN_A));
+    CHECK(dm_android_touch_up(f->touch, 50, 18005000000));   /* another portal finger remains */
+    s = read_pad(f); CHECK(s.buttons == (mask | DM_BTN_A));
+    CHECK(dm_android_touch_up(f->touch, 53, 18006000000));   /* last one cancels the arm */
+    s = read_pad(f); CHECK(s.buttons == DM_BTN_A && s.lx == DM_STICK_MAX);
+    CHECK(!dm_android_touch_take_portal_request(f->touch, &r));
+    CHECK(!dm_android_touch_portal_ack(f->touch, epoch, 77, 3));   /* stale after lift */
+    CHECK(dm_android_touch_up(f->touch, 51, 18007000000));
+    CHECK(dm_android_touch_up(f->touch, 52, 18008000000));
+    s = read_pad(f); CHECK(s.buttons == 0 && s.lx == 0);
+    /* Belt/joystick parity is unaffected by the portal context. */
+    tap(f, 54, f->layout.target[DM_TC_BELT2].x, f->layout.target[DM_TC_BELT2].y, 18010000000);
+    s = read_pad(f); CHECK(s.buttons == DM_BTN_UP);
+    s = read_pad(f); CHECK(s.buttons == 0);
+    /* Single-key mask (no modifier) is armed directly: a request is visible but
+       the core has nothing pending to ack, matching the frozen sequence test. */
+    CHECK(dm_android_touch_set_portal_context(f->touch, 1, 512, 77, 3));
+    CHECK(dm_android_touch_down(f->touch, 55, px, py, 18020000000));
+    s = read_pad(f); CHECK(s.buttons == 512);
+    CHECK(dm_android_touch_take_portal_request(f->touch, &r));
+    CHECK(r.mask == 512 && r.phase == 2);
+    CHECK(!dm_android_touch_portal_ack(f->touch, r.gesture_epoch, 77, 3));
+    CHECK(dm_android_touch_up(f->touch, 55, 18021000000));
+    s = read_pad(f); CHECK(s.buttons == 0);
+    CHECK(!dm_android_touch_take_portal_request(f->touch, &r));
+}
+
+/* Context invalidation follows the frozen core: default/unavailable stays
+   unarmed; invalid updates change nothing; identity/scene/mask changes, resize
+   and full cancel release the arm and invalidate the epoch, so neither an
+   untaken request nor a stale ack survives. */
+static void portal_context_changes_cancel_stale_request(fixture *f) {
+    dm_npad_state s;
+    dm_android_portal_request r;
+    dm_tc_layout wide;
+    uint64_t mask = DM_BTN_ZL | DM_BTN_B;
+    float px = f->layout.target[DM_TC_PORTAL].x;
+    float py = f->layout.target[DM_TC_PORTAL].y;
+    /* Default context is unavailable: a portal press has no request/key. */
+    CHECK(dm_android_touch_down(f->touch, 59, px, py, 18100000000));
+    s = read_pad(f); CHECK(s.buttons == 0);
+    CHECK(!dm_android_touch_take_portal_request(f->touch, &r));
+    CHECK(!dm_android_touch_portal_ack(f->touch, 0, 0, 0));
+    CHECK(dm_android_touch_up(f->touch, 59, 18101000000));
+    CHECK(dm_android_touch_set_portal_context(f->touch, 1, mask, 77, 3));
+    /* Invalid updates leave the pending request untouched. */
+    CHECK(dm_android_touch_down(f->touch, 60, px, py, 18110000000));
+    CHECK(!dm_android_touch_set_portal_context(NULL, 1, mask, 77, 3));
+    CHECK(!dm_android_touch_set_portal_context(f->touch, 2, mask, 77, 3));
+    CHECK(!dm_android_touch_set_portal_context(f->touch, 1, 0, 77, 3));   /* unproven mask */
+    CHECK(dm_android_touch_take_portal_request(f->touch, &r));
+    uint64_t epoch = r.gesture_epoch;
+    /* Identity change cancels the arm and the stale request/ack. */
+    CHECK(dm_android_touch_set_portal_context(f->touch, 1, mask, 78, 3));
+    s = read_pad(f); CHECK(s.buttons == 0);   /* cancelled arm leaves no stale ZL edge */
+    CHECK(!dm_android_touch_take_portal_request(f->touch, &r));
+    CHECK(!dm_android_touch_portal_ack(f->touch, epoch, 77, 3));
+    CHECK(dm_android_touch_down(f->touch, 61, px, py, 18120000000));
+    CHECK(dm_android_touch_take_portal_request(f->touch, &r));
+    CHECK(r.binding_identity == 78 && r.scene_epoch == 3);
+    epoch = r.gesture_epoch;
+    /* Scene change cancels it too. */
+    CHECK(dm_android_touch_set_portal_context(f->touch, 1, mask, 78, 4));
+    s = read_pad(f); CHECK(s.buttons == 0);
+    CHECK(!dm_android_touch_take_portal_request(f->touch, &r));
+    CHECK(!dm_android_touch_portal_ack(f->touch, epoch, 78, 3));
+    /* Mask change is a binding change: it cancels the arm as well. */
+    CHECK(dm_android_touch_set_portal_context(f->touch, 1, mask, 78, 4));
+    CHECK(dm_android_touch_down(f->touch, 62, px, py, 18125000000));
+    CHECK(dm_android_touch_take_portal_request(f->touch, &r));
+    epoch = r.gesture_epoch;
+    CHECK(dm_android_touch_set_portal_context(f->touch, 1, 512, 78, 4));
+    s = read_pad(f); CHECK(s.buttons == 0);
+    CHECK(!dm_android_touch_take_portal_request(f->touch, &r));
+    CHECK(!dm_android_touch_portal_ack(f->touch, epoch, 78, 4));
+    /* Disabled context: no arm, no request, no ack. */
+    CHECK(dm_android_touch_set_portal_context(f->touch, 0, 0, 78, 4));
+    CHECK(dm_android_touch_down(f->touch, 66, px, py, 18130000000));
+    s = read_pad(f); CHECK(s.buttons == 0);
+    CHECK(!dm_android_touch_take_portal_request(f->touch, &r));
+    CHECK(!dm_android_touch_portal_ack(f->touch, 0, 78, 4));
+    CHECK(dm_android_touch_up(f->touch, 66, 18131000000));
+    /* Same values are a no-op and keep a request; resize cancels it. */
+    CHECK(dm_android_touch_set_portal_context(f->touch, 1, mask, 78, 4));
+    CHECK(dm_android_touch_down(f->touch, 63, px, py, 18140000000));
+    CHECK(dm_android_touch_set_portal_context(f->touch, 1, mask, 78, 4));
+    CHECK(dm_android_touch_take_portal_request(f->touch, &r));
+    epoch = r.gesture_epoch;
+    CHECK(dm_android_touch_resize(f->touch, 812, 375, 18141000000));
+    s = read_pad(f); CHECK(s.buttons == 0);
+    CHECK(!dm_android_touch_take_portal_request(f->touch, &r));
+    CHECK(!dm_android_touch_portal_ack(f->touch, epoch, 78, 4));
+    /* Cancel-all also drops the arm. */
+    CHECK(dm_android_touch_set_portal_context(f->touch, 1, mask, 79, 5));
+    dm_tc_layout_make(&wide, 812, 375);
+    CHECK(dm_android_touch_down(f->touch, 64, wide.target[DM_TC_PORTAL].x,
+                                wide.target[DM_TC_PORTAL].y, 18150000000));
+    CHECK(dm_android_touch_take_portal_request(f->touch, &r));
+    epoch = r.gesture_epoch;
+    CHECK(dm_android_touch_cancel_all(f->touch, 18151000000));
+    s = read_pad(f); CHECK(s.buttons == 0);
+    CHECK(!dm_android_touch_take_portal_request(f->touch, &r));
+    CHECK(!dm_android_touch_portal_ack(f->touch, epoch, 79, 5));
+}
+
+/* Root probe case: a portal binding change cancels the core portal finger; the
+   adapter must release that ID while keeping unrelated joystick/skill owners.
+   A stale MOVE/UP is then rejected and the same ID can press again. */
+static void portal_context_change_releases_pointer_ownership(fixture *f) {
+    dm_npad_state s;
+    dm_android_portal_request r;
+    uint64_t mask = DM_BTN_ZL | DM_BTN_B;
+    float px = f->layout.target[DM_TC_PORTAL].x;
+    float py = f->layout.target[DM_TC_PORTAL].y;
+    CHECK(dm_android_touch_set_portal_context(f->touch, 1, mask, 77, 3));
+    CHECK(dm_android_touch_down(f->touch, 80, 90, 275, 18200000000));
+    CHECK(dm_android_touch_move(f->touch, 80, 150, 275, 18201000000));
+    CHECK(dm_android_touch_down(f->touch, 81, f->layout.target[DM_TC_SKILL2].x,
+                                f->layout.target[DM_TC_SKILL2].y, 18202000000));
+    CHECK(dm_android_touch_tick(f->touch, 18302000000));   /* skill settle */
+    s = read_pad(f); CHECK(s.buttons == DM_BTN_X && s.lx == DM_STICK_MAX);
+    CHECK(dm_android_touch_down(f->touch, 82, px, py, 18310000000));
+    s = read_pad(f); CHECK(s.buttons == (DM_BTN_ZL | DM_BTN_X) && s.lx == DM_STICK_MAX);
+    CHECK(dm_android_touch_take_portal_request(f->touch, &r));
+    uint64_t epoch = r.gesture_epoch;
+    /* Identity change cancels only the portal finger. */
+    CHECK(dm_android_touch_set_portal_context(f->touch, 1, mask, 78, 3));
+    s = read_pad(f); CHECK(s.buttons == DM_BTN_X && s.lx == DM_STICK_MAX);
+    CHECK(!dm_android_touch_move(f->touch, 82, px, py, 18311000000));   /* stale rejected */
+    CHECK(!dm_android_touch_up(f->touch, 82, 18312000000));
+    CHECK(!dm_android_touch_portal_ack(f->touch, epoch, 77, 3));
+    /* Same ID is free again and arms against the new identity. */
+    CHECK(dm_android_touch_down(f->touch, 82, px, py, 18320000000));
+    s = read_pad(f); CHECK(s.buttons == (DM_BTN_ZL | DM_BTN_X) && s.lx == DM_STICK_MAX);
+    CHECK(dm_android_touch_take_portal_request(f->touch, &r));
+    CHECK(r.binding_identity == 78 && r.scene_epoch == 3);
+    CHECK(dm_android_touch_portal_ack(f->touch, r.gesture_epoch, 78, 3));
+    s = read_pad(f); CHECK(s.buttons == (mask | DM_BTN_X) && s.lx == DM_STICK_MAX);
+    CHECK(dm_android_touch_up(f->touch, 82, 18330000000));
+    s = read_pad(f); CHECK(s.buttons == DM_BTN_X && s.lx == DM_STICK_MAX);
+    CHECK(dm_android_touch_up(f->touch, 81, 18340000000));
+    CHECK(dm_android_touch_up(f->touch, 80, 18350000000));
+    s = read_pad(f); CHECK(s.buttons == 0 && s.lx == 0 && s.ly == 0);
+}
+
+/* Repeated binding changes beyond the 16-slot pointer table must not leak
+   adapter ownership; each canceled portal ID is reusable. */
+static void portal_context_repeated_changes_no_slot_leak(fixture *f) {
+    dm_android_portal_request r;
+    uint64_t mask = DM_BTN_ZL | DM_BTN_B;
+    float px = f->layout.target[DM_TC_PORTAL].x;
+    float py = f->layout.target[DM_TC_PORTAL].y;
+    for (int i = 0; i < 20; ++i) {
+        CHECK(dm_android_touch_set_portal_context(f->touch, 1, mask, 1000 + (uint64_t)i, 3));
+        CHECK(dm_android_touch_down(f->touch, 200 + i, px, py,
+                                    19000000000 + (int64_t)i * 20000000));
+        CHECK(dm_android_touch_take_portal_request(f->touch, &r));
+        CHECK(r.binding_identity == 1000 + (uint64_t)i);
+    }
+    CHECK(dm_android_touch_set_portal_context(f->touch, 1, mask, 2000, 3));
+    CHECK(!dm_android_touch_move(f->touch, 219, px, py, 19500000000));   /* canceled portal */
+    CHECK(dm_android_touch_down(f->touch, 300, px, py, 19510000000));
+    CHECK(dm_android_touch_take_portal_request(f->touch, &r));
+    CHECK(r.binding_identity == 2000);
+    CHECK(dm_android_touch_up(f->touch, 300, 19520000000));
+    CHECK(!dm_android_touch_take_portal_request(f->touch, &r));
+}
+
 int main(void) {
     CASE(two_ids_live);
     CASE(ids_are_not_slots);
@@ -718,6 +922,10 @@ int main(void) {
     CASE(held_second_set_skill_vs_belt);
     CASE(belt_context_expanded_rows);
     CASE(belt_context_requests_validation_and_reset);
+    CASE(portal_sequence_request_ack);
+    CASE(portal_context_changes_cancel_stale_request);
+    CASE(portal_context_change_releases_pointer_ownership);
+    CASE(portal_context_repeated_changes_no_slot_leak);
     printf("PASS %d/%d cases; %d/%d checks\n", cases, cases, checks, checks);
     return 0;
 }

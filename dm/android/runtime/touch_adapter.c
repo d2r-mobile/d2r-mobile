@@ -35,6 +35,13 @@ struct dm_android_touch {
     uint64_t seen_tab_tap;
     uint64_t seen_shop_drop;
     uint64_t seen_mouse_click;
+    int portal_available;
+    uint64_t portal_mask;
+    uint64_t portal_identity;
+    uint64_t portal_scene;
+    uint64_t portal_seen_epoch;
+    int portal_request_pending;
+    dm_android_portal_request portal_request;
 };
 
 static int accept_time(dm_android_touch *touch, int64_t time_ns, double *now_s) {
@@ -90,7 +97,41 @@ static int pending_full(const dm_android_touch *touch) {
     return touch->pulse_count >= DM_ANDROID_TOUCH_PULSE_CAPACITY;
 }
 
+static void portal_sync(dm_android_touch *touch) {
+    dm_tc_state *s = &touch->state;
+    if (s->portal_phase == 0 || !touch->portal_available || !touch->portal_mask) {
+        touch->portal_request_pending = 0;
+        return;
+    }
+    /* One request per armed gesture epoch: a second portal finger while the
+       portal is already pending/armed does not re-arm in the core. */
+    if (!touch->portal_request_pending && s->gesture_epoch != touch->portal_seen_epoch) {
+        touch->portal_request.gesture_epoch = s->gesture_epoch;
+        touch->portal_request.binding_identity = touch->portal_identity;
+        touch->portal_request.scene_epoch = touch->portal_scene;
+        touch->portal_request.mask = touch->portal_mask;
+        touch->portal_request.phase = s->portal_phase;
+        touch->portal_seen_epoch = s->gesture_epoch;
+        touch->portal_request_pending = 1;
+    }
+}
+
+static void sync_pointer_slots(dm_android_touch *touch) {
+    /* Core-owned cancellation (e.g. dm_tc_set_portal_binding clearing portal
+       fingers) must release the matching adapter IDs exactly once. Unrelated
+       active fingers keep their slots; a stale MOVE/UP then finds no owner and
+       a reused ID can press again instead of being a duplicate. */
+    for (int i = 0; i < DM_TC_MAX_TOUCH; ++i) {
+        if (touch->used[i] && !touch->state.finger[i].active) {
+            touch->used[i] = 0;
+            touch->pointer_id[i] = -1;
+        }
+    }
+}
+
 static void publish(dm_android_touch *touch) {
+    sync_pointer_slots(touch);
+    portal_sync(touch);
     dm_tc_state *s = &touch->state;
     if (s->pulse_button) {
         if (pending_full(touch)) return;   /* defensive; callers backpressure first */
@@ -320,6 +361,49 @@ int dm_android_touch_set_belt_context(dm_android_touch *touch, int rows, int ope
     release_all(touch);
     touch->state.belt_rows = rows;
     touch->state.belt_open = open;
+    publish(touch);
+    return 1;
+}
+
+int dm_android_touch_set_portal_context(dm_android_touch *touch, int available,
+                                        uint64_t mask, uint64_t binding_identity,
+                                        uint64_t scene_epoch) {
+    if (!touch || (available != 0 && available != 1)) return 0;
+    available = available != 0;
+    if (available && mask == 0) return 0;   /* unproven binding stays unavailable */
+    uint64_t effective = available ? mask : 0;
+    if (touch->portal_available == available && touch->portal_mask == effective &&
+        touch->portal_identity == binding_identity && touch->portal_scene == scene_epoch)
+        return 1;
+    uint64_t old_mask = touch->portal_mask;
+    touch->portal_available = available;
+    touch->portal_mask = effective;
+    touch->portal_identity = binding_identity;
+    touch->portal_scene = scene_epoch;
+    /* A real mask/identity/scene change makes the core cancel the portal arm
+       and invalidate the gesture epoch, so a stale request cannot be acked.
+       Drop any unread pad edge of the cancelled portal mask too, mirroring the
+       per-pointer cancel path: the arm is gone before the next read. */
+    dm_tc_set_portal_binding(&touch->state, effective, binding_identity, scene_epoch);
+    if (old_mask) dm_android_pad_clear_edges_mask(touch->pad, old_mask);
+    publish(touch);
+    return 1;
+}
+
+int dm_android_touch_take_portal_request(dm_android_touch *touch,
+                                         dm_android_portal_request *out) {
+    if (!touch || !out || !touch->portal_request_pending) return 0;
+    *out = touch->portal_request;
+    touch->portal_request_pending = 0;
+    return 1;
+}
+
+int dm_android_touch_portal_ack(dm_android_touch *touch, uint64_t gesture_epoch,
+                                uint64_t binding_identity, uint64_t scene_epoch) {
+    if (!touch) return 0;
+    if (!dm_tc_portal_ack(&touch->state, gesture_epoch, binding_identity, scene_epoch))
+        return 0;
+    touch->portal_request_pending = 0;
     publish(touch);
     return 1;
 }
