@@ -6,6 +6,7 @@
 
 #include <stdint.h>
 #include "touch_adapter.h"
+#include "touch_game_provider.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -62,6 +63,10 @@ void dm_touch_bridge_destroy(dm_touch_bridge *bridge, dm_npad_state *neutral_out
 
 int dm_touch_bridge_set_density(dm_touch_bridge *bridge, float density);
 float dm_touch_bridge_density(const dm_touch_bridge *bridge);
+// Optional #33 game provider boundary. Attaching replaces any previous provider
+// and starts unavailable until a validated snapshot arrives. Without attachment
+// the accepted #32 bridge remains a generic diagnostic path.
+int dm_touch_bridge_attach_game(dm_touch_bridge *bridge, const dm_tgp_provider *provider);
 int dm_touch_bridge_resize(dm_touch_bridge *bridge, float width_pt, float height_pt,
                            int64_t time_ns);
 
