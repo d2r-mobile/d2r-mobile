@@ -488,6 +488,59 @@ int dm_android_touch_token_active(const dm_android_touch *touch, uint64_t token)
     return 0;
 }
 
+int dm_android_touch_observe(const dm_android_touch *touch, float density,
+                             dm_android_touch_observation *out) {
+    if (!touch || !out || !isfinite(density) || density <= 0) return 0;
+    const dm_tc_state *s = &touch->state;
+    if (!isfinite(s->layout.width) || !isfinite(s->layout.height) ||
+        s->layout.width <= 0 || s->layout.height <= 0) return 0;
+    if (s->enabled_targets & ~((1u << DM_TC_COUNT) - 1u)) return 0;
+    if (!isfinite(s->layout.joy_radius) || s->layout.joy_radius <= 0 ||
+        !isfinite(s->layout.joy_x) || !isfinite(s->layout.joy_y)) return 0;
+    for (int i = 0; i < DM_TC_COUNT; ++i) {
+        const dm_tc_target *t = &s->layout.target[i];
+        if (!isfinite(t->x) || !isfinite(t->y) || !isfinite(t->r) || t->r <= 0) return 0;
+    }
+    dm_android_touch_observation o = {
+        .width_pt = s->layout.width,
+        .height_pt = s->layout.height,
+        .density = density,
+        .enabled_mask = s->enabled_targets,
+        .pressed_mask = 0,
+        .available_mask = 0,
+        .joystick_active = 0,
+        .suspended = touch->suspended,
+        .game_available = touch->game_available,
+    };
+    /* Only availability already proven by a host context is published. Main,
+       skill, belt, menu and map bindings, glyphs/art, cooldown and mana remain
+       unknown here even though the core has layout buttons. */
+    if (touch->portal_available && touch->portal_mask)
+        o.available_mask |= 1u << DM_TC_PORTAL;
+    for (int i = 0; i < DM_TC_MAX_TOUCH; ++i) {
+        const dm_tc_finger *f = &s->finger[i];
+        if (!f->active || f->target < 0 || f->target >= DM_TC_COUNT) continue;
+        if (s->enabled_targets & (1u << f->target)) o.pressed_mask |= 1u << f->target;
+    }
+    if (s->joy_slot >= 0 && s->joy_slot < DM_TC_MAX_TOUCH &&
+        s->finger[s->joy_slot].active) {
+        const dm_tc_finger *f = &s->finger[s->joy_slot];
+        if (!isfinite(s->joy_origin_x) || !isfinite(s->joy_origin_y) ||
+            !isfinite(s->joy_touch_x) || !isfinite(s->joy_touch_y) ||
+            !isfinite(f->x) || !isfinite(f->y)) return 0;
+        o.joystick_active = 1;
+        o.joy_origin_x = s->joy_origin_x;
+        o.joy_origin_y = s->joy_origin_y;
+        o.joy_touch_x = s->joy_touch_x;
+        o.joy_touch_y = s->joy_touch_y;
+        o.joy_current_x = f->x;
+        o.joy_current_y = f->y;
+    }
+    o.joy_radius = s->layout.joy_radius;
+    *out = o;
+    return 1;
+}
+
 int dm_android_touch_pointer_hit(dm_android_touch *touch, int32_t pointer_id, int kind) {
     if (!touch || pointer_id < 0 || kind < 0 || kind > 11) return 0;
     int slot = find_pointer(touch, pointer_id);

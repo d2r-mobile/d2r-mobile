@@ -154,6 +154,44 @@ int dm_android_touch_pointer_token(const dm_android_touch *touch, int32_t pointe
 int dm_android_touch_pending_use_token(const dm_android_touch *touch,
                                        uint64_t *out_token);
 int dm_android_touch_token_active(const dm_android_touch *touch, uint64_t token);
+
+// Read-only visual observation of the actual adapter/core gesture state.
+//
+// Same-thread, non-consuming and immutable from the caller's perspective: this
+// does not read the pad, advance timers, drain actions/pulses/portal requests,
+// mutate pointer ownership or retain borrowed pointers. The output is a value
+// copy and remains caller-owned.
+//
+// width_pt/height_pt are the frozen layout's logical dimensions. density is a
+// caller-supplied view metric (pixels per point), not adapter gesture state; it
+// is validated and copied so a HUD can do its own pixel conversion. available_mask
+// is deliberately conservative: only a host-proven town-portal binding is
+// reported here. Main/skill/belt/menu/map bindings, glyphs/art, cooldown and mana
+// are not proven by this seam and stay unavailable/unknown (0 bits), never
+// guessed from emitted gamepad buttons. enabled_mask is the core's enabled
+// target mask; pressed_mask contains only active fingers whose target is enabled.
+typedef struct dm_android_touch_observation {
+    float width_pt, height_pt;
+    float density;
+    uint32_t enabled_mask;
+    uint32_t pressed_mask;
+    uint32_t available_mask;
+    int joystick_active;
+    float joy_origin_x, joy_origin_y;
+    float joy_touch_x, joy_touch_y;
+    float joy_current_x, joy_current_y;
+    float joy_radius;
+    int suspended;
+    int game_available;
+} dm_android_touch_observation;
+
+// Returns 1 and writes *out on success. Rejects NULL, non-finite/non-positive
+// density or layout geometry, and invalid target/joystick geometry before any
+// output byte is changed (returns 0, *out untouched). Cancel/pause/resize and
+// context changes are visible immediately on the next observation; no stale
+// pressed value is cached.
+int dm_android_touch_observe(const dm_android_touch *touch, float density,
+                             dm_android_touch_observation *out);
 int dm_android_touch_pointer_hit(dm_android_touch *touch, int32_t pointer_id, int kind);
 int dm_android_touch_pointer_release(dm_android_touch *touch, int32_t pointer_id,
                                      int drop_kind);
