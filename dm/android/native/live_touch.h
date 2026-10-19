@@ -3,6 +3,7 @@
 // output; it does not own game scene/UI state and does not synthesize actions.
 #pragma once
 #include <stdint.h>
+#include "../../ios/Sources/dm_touch_game_state.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -67,6 +68,22 @@ int dm_live_touch_consume_portal_request(dm_live_touch *touch,
                                          uint64_t scene_epoch, uint64_t world_epoch,
                                          uint64_t ui_identity,
                                          const dm_live_touch_portal_actions *actions);
+// Empty-skill-slot tap binding. The front end supplies the real bridge snapshot
+// and its scene/world. Only an exact UINT32_MAX raw slot with supported, ready,
+// native identity and fresh data is empty; unknown/stale/non-native is never
+// treated as empty. A tap outside the core gesture layer becomes one host
+// dm_ui_bind_begin(key) request.
+typedef struct {
+    void *context;
+    void (*begin_bind)(void *context, uint64_t key_mask);
+} dm_live_touch_skill_bind_actions;
+void dm_live_touch_set_skill_snapshot(dm_live_touch *touch,
+                                      const dm_tg_snapshot *snapshot,
+                                      uint64_t scene_epoch, uint64_t world_epoch);
+void dm_live_touch_set_skill_bind_active(dm_live_touch *touch, int active);
+int dm_live_touch_consume_skill_bind_request(dm_live_touch *touch,
+                                             uint64_t scene_epoch, uint64_t world_epoch,
+                                             const dm_live_touch_skill_bind_actions *actions);
 // Apply one validated provider context. Any scene/world/UI identity change
 // cancels the old core ownership before the new mode is installed, so an old
 // pointer or release is never delivered into the new scene/character.
