@@ -463,7 +463,17 @@ public final class D2RActivity extends NativeActivity {
         try { return getLiveTouchOverlaySnapshot(values, state); }
         catch (UnsatisfiedLinkError error) { return 0; }
     }
+    int readLiveTouchGlyphSnapshot(int[] glyphs) {
+        try { return getLiveTouchGlyphSnapshot(glyphs); }
+        catch (UnsatisfiedLinkError error) { return 0; }
+    }
+    int readLiveTouchAtlasInfo(int[] info) {
+        try { return getLiveTouchAtlasInfo(info); }
+        catch (UnsatisfiedLinkError error) { return 0; }
+    }
     private native int getLiveTouchOverlaySnapshot(float[] values, long[] state);
+    private native int getLiveTouchGlyphSnapshot(int[] glyphs);
+    private native int getLiveTouchAtlasInfo(int[] info);
 
     // NativeActivity 的真实 AInputQueue 已接上原 D2R 手势核心时，旧的 Switch 按钮层让位；未接上则保留明确 fallback。
     // When NativeActivity's real AInputQueue is connected to the original D2R gesture core, the legacy Switch-button

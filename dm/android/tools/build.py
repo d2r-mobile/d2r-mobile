@@ -3,6 +3,8 @@
 Build a standalone ARM64 NativeActivity APK and runtime tests without Gradle.
 """
 import argparse
+import hashlib
+import json
 import os
 from pathlib import Path
 import re
@@ -99,6 +101,31 @@ def version_code(version):
     return numbers[0] * 10000 + numbers[1] * 100 + numbers[2]
 
 
+def validate_touch_art(source):
+    """Validate the root-provided generated atlases against the frozen source
+    manifest. The art itself is never committed; this only checks bytes and PNG
+    dimensions, then returns the files to package."""
+    manifest_path = REPO / "dm/ios/Sources/TouchArt/native_art_manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    assets = {a["asset"]: a for a in manifest["assets"]}
+    files = []
+    for i in range(9):
+        name = "dm_native_skill_%d.png" % i
+        path = source / name
+        if not path.is_file():
+            raise SystemExit("touch art: missing " + str(path))
+        data = path.read_bytes()
+        if hashlib.sha256(data).hexdigest() != assets[name]["decoded_png_sha256"]:
+            raise SystemExit("touch art: fingerprint mismatch " + str(path))
+        if data[:8] != b"\x89PNG\r\n\x1a\n" or data[12:16] != b"IHDR":
+            raise SystemExit("touch art: not a PNG " + str(path))
+        width, height = struct.unpack(">II", data[16:24])
+        if [width, height] != assets[name]["atlas_px"]:
+            raise SystemExit("touch art: dimensions differ from manifest " + str(path))
+        files.append(path)
+    return files
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--install", action="store_true")
@@ -111,6 +138,8 @@ def main():
                         help="随 APK 分发的 Turnip 驱动；默认用仓库里的 dm/android/prebuilt/turnip/")
     parser.add_argument("--no-turnip", action="store_true",
                         help="不出内置驱动（只出通用包，启动界面里那一项会自己隐藏）")
+    parser.add_argument("--touch-art", type=Path,
+                        help="root-provided generated TouchArt directory (dm_native_skill_0..8.png); validated against the frozen manifest")
     args = parser.parse_args()
     if args.game_source and not args.game_run: parser.error("--game-source only makes sense with --game-run")
     if args.game_run and not args.game_source:
@@ -185,6 +214,17 @@ def main():
     assets.mkdir(exist_ok=True)
     licenses = assets / "licenses"
     licenses.mkdir(exist_ok=True)
+    if args.touch_art:
+        generated = REPO / "dm/ios/Sources/dm_touch_native_art.c"
+        if not generated.is_file():
+            raise SystemExit("touch art: missing generated " + str(generated) + "; run generate.py first")
+        touch_files = validate_touch_art(args.touch_art)
+        (assets / "touch_art").mkdir(exist_ok=True)
+        for path in touch_files:
+            shutil.copyfile(path, assets / "touch_art" / path.name)
+        print("Touch art: packaged %d validated atlases from %s" % (len(touch_files), args.touch_art), flush=True)
+    else:
+        print("Touch art: not supplied; glyph overlay remains explicitly unknown", flush=True)
     for license_file in (build / "gpu-driver/licenses").glob("*.txt"):
         shutil.copyfile(license_file, licenses / license_file.name)
     # 启动画面背景图随源码发布（dm/android/artwork/），新电脑 clone 后能重建出同样的 APK。
