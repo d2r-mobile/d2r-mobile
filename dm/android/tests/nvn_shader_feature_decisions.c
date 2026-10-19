@@ -43,6 +43,23 @@ int main(void) {
     CHECK(dm_nvn_shader_feature_decision(unrelated, sizeof unrelated, 0, 0, 0, 0) ==
           DM_NVN_SHADER_FEATURE_OK);
 
+    // Production optional/required refusal boundary: optional skips, required
+    // must continue into the fatal switch; a supported or unrelated shader
+    // is never skipped.
+    const dm_nvn_shader_feature_status rejected[] = {
+        DM_NVN_SHADER_FEATURE_NEED_DRAW_PARAMETERS,
+        DM_NVN_SHADER_FEATURE_TESS_UNSUPPORTED,
+        DM_NVN_SHADER_FEATURE_TESS_PIPELINE_PENDING,
+        DM_NVN_SHADER_FEATURE_STORAGE_WRITE_UNSUPPORTED,
+        DM_NVN_SHADER_FEATURE_MULTIVIEW_UNSUPPORTED,
+    };
+    for (unsigned i = 0; i < sizeof rejected / sizeof *rejected; i++) {
+        CHECK(dm_nvn_shader_feature_can_skip(rejected[i], 0) == 1);
+        CHECK(dm_nvn_shader_feature_can_skip(rejected[i], 1) == 0);
+    }
+    CHECK(dm_nvn_shader_feature_can_skip(DM_NVN_SHADER_FEATURE_OK, 0) == 0);
+    CHECK(dm_nvn_shader_feature_can_skip(DM_NVN_SHADER_FEATURE_OK, 1) == 0);
+
     // Guard sanity: an input with no capability is not accepted as storage/tess.
     CHECK(dm_nvn_spirv_has_capability(unrelated, sizeof unrelated, 56u) == 0);
 
