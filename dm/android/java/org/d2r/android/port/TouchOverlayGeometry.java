@@ -24,6 +24,10 @@ final class TouchOverlayGeometry {
         return v[23] != 0;
     }
 
+    static boolean frontend(float[] v) {
+        return v[89] != 0;
+    }
+
     static boolean joyActive(float[] v) {
         return v[86] != 0;
     }

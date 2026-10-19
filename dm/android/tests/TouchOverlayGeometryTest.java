@@ -37,6 +37,10 @@ public final class TouchOverlayGeometryTest {
             "positive ly moves up, matching iOS negative-y");
         v[23] = 1;
         check(TouchOverlayGeometry.navigation(v), "navigation mode is read");
+        v[89] = 1;
+        check(TouchOverlayGeometry.frontend(v), "front-end scene flag is read");
+        v[89] = 0;
+        check(!TouchOverlayGeometry.frontend(v), "camp scene is not front end");
         v[2] = 800; v[3] = 360;
         check(Math.abs(TouchOverlayGeometry.x(v, 120) - (100 + 120 * 800f / 667f)) < .001f,
             "resize uses new picture width");

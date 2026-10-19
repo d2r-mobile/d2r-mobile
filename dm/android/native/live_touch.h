@@ -142,6 +142,7 @@ typedef struct {
     uint32_t enabled_targets;
     uint64_t buttons;
     int skill_set, diff_open, navigation_mode;
+    int frontend;
     int32_t lx, ly;
 } dm_live_touch_visual;
 int dm_live_touch_visual_snapshot(const dm_live_touch *touch, dm_live_touch_visual *out);
