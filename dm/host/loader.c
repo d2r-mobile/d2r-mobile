@@ -329,7 +329,22 @@ void loader_hash_log(void) {
     }
 }
 
-#if TARGET_OS_IPHONE
+#if defined(__ANDROID__)
+// Imported modules are executable ELF libraries, not the desktop raw-image format.
+// Keep DM_ANDROID_LIBDIR for the graphics driver; guest imports use DM_GUEST_LIBDIR.
+static void map_image(module_t *m, const char *dir) {
+    char library[1024], layout[1024], error[512];
+    const char *library_dir = getenv("DM_GUEST_LIBDIR");
+    if (!library_dir || !*library_dir) library_dir = getenv("DM_ANDROID_LIBDIR");
+    if (!library_dir || !*library_dir) library_dir = dir;
+    snprintf(library, sizeof library, "%s/libdmguest_%s.so", library_dir, m->name);
+    snprintf(layout, sizeof layout, "%s/%s.fixups.tsv", dir, m->name);
+    dm_android_module image;
+    if (dm_android_load(&image, library, layout, error, sizeof error)) die("%s", error);
+    m->base = image.image; m->size = image.size;
+    // Retain the dlopen reference for the lifetime of the guest, as in the reference host.
+}
+#elif TARGET_OS_IPHONE
 // iOS 不许运行时装入的代码执行，且苹果只许可执行文件有一个带执行权限的段（ITMS-90999）：映像由 dm/ios/tools/gen_embed.py 编进本可执行文件——
 // 代码两块（原 text、补丁区）是 __TEXT 里的节，W（ro 余部 + data + bss）是单独的 RW 段。三块在文件里不相邻；这里保留一块连续地址，
 // 按原相对位置 vm_remap 回去：代码页 copy=FALSE（与 __TEXT 共享同一批已签名页，r-x），W copy=TRUE（写时复制，用到才分页）。
