@@ -119,6 +119,7 @@ static VkResult dm_swapchain_create_impl(dm_vk *vk, const dm_vk_swapchain_option
     result = vkCreateSwapchainKHR(vk->device, &create, NULL, &out->handle);
     if (result != VK_SUCCESS) return result;
     out->format = chosen.format; out->color_space = chosen.colorSpace; out->extent = extent;
+    out->clear = options->clear;
     out->present_mode = VK_PRESENT_MODE_FIFO_KHR;
     result = vkGetSwapchainImagesKHR(vk->device, out->handle, &out->image_count, NULL);
     if (result != VK_SUCCESS || !out->image_count) goto fail;
