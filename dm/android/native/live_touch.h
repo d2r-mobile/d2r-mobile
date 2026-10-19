@@ -56,6 +56,17 @@ int dm_live_touch_consume_difficulty_request(dm_live_touch *touch,
                                              uint64_t scene_epoch, uint64_t world_epoch,
                                              uint64_t ui_identity,
                                              const dm_live_touch_difficulty_actions *actions);
+// One-shot town-portal request from a fresh valid DM_TC_PORTAL touch down.
+// The core's existing modifier/binding gesture is untouched. Context must
+// still match; cancel/focus/navigation and context changes discard the request.
+typedef struct {
+    void *context;
+    void (*request_portal)(void *context);
+} dm_live_touch_portal_actions;
+int dm_live_touch_consume_portal_request(dm_live_touch *touch,
+                                         uint64_t scene_epoch, uint64_t world_epoch,
+                                         uint64_t ui_identity,
+                                         const dm_live_touch_portal_actions *actions);
 // Apply one validated provider context. Any scene/world/UI identity change
 // cancels the old core ownership before the new mode is installed, so an old
 // pointer or release is never delivered into the new scene/character.
