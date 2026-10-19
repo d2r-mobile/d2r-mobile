@@ -6,7 +6,7 @@
 #include <string.h>
 
 static int host_ingame(void *context) { (void)context; return dm_uiscreen_ingame(); }
-static int host_panel_open(void *context) { (void)context; return dm_uiscreen_panel(); }
+static int host_panel_open(void *context) { (void)context; return dm_ui_panel_stack_count() > 0; }
 static int host_panel_bits(void *context) { (void)context; return dm_ui_panel_state(); }
 static uint32_t host_ui_gen(void *context) { (void)context; return dm_ui_gen(); }
 static void host_hud(void *context, dm_hud_info *out) { (void)context; dm_hud_get(out); }
