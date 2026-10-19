@@ -288,13 +288,13 @@ static void *boot(void *argument) {
     setenv("DM_TACT_PREFETCH","0",1);setenv("DM_BOOTPROF","1",1);setenv("DM_DBG","1",1);
     setenv("DM_UIMSG","1",1);setenv("DM_MOVIE","1",1);
     __android_log_print(ANDROID_LOG_INFO,"D2RAndroid","Starting real game host; log: %s",log);atomic_store(&s->started,1);
-    // 三张派生表（编年史仓库 / 经验 / 亮度）在运行时从 derived.tsv 填：路径是上面才定下来的，晚于库加载时的
-    // 构造器，所以这里显式填一次。缺文件时表为空并打红字（不伪造数据）。
-    // The three derived tables (vault / XP / brightness) are filled from derived.tsv at run time: the path is only
-    // known above, later than the load-time constructors, so fill explicitly here. When the file is missing the
-    // tables stay empty and a red line says so (nothing is invented).
-    { void dm_hud_exp_load(void); void dm_vault_load(void); void dm_bright_load(void);
-      dm_hud_exp_load(); dm_vault_load(); dm_bright_load(); }
+    // 当前 Android 兼容 host 已在编译期用 dm_hud_exp.h / dm_vault_tab.h /
+    // dm_bright_levels.inc 初始化三张表；后者的 dm_bright.c 也直接持有静态 k_lv。
+    // 旧 shell 的 dm_*_load 调用在这里没有真实实现，不能为链接造空函数，故删除。
+    // The current Android-compatible host initializes all three tables at compile
+    // time; dm_bright.c also owns its static k_lv directly. The legacy shell
+    // dm_*_load calls have no implementation here, so they are removed rather than
+    // linked to fake empty functions.
     char *args[]={"dmhost-android",metadata,"main","sdk","subsdk0",NULL};int dm_main(int,char**);dm_main(5,args);ANativeActivity_finish(s->activity);return NULL;
 }
 void front_run(void (*guest)(void)) {void mtl_init(void);mtl_init();game_app *s=application;if(!pthread_create(&s->debug_thread,NULL,progress_watch,s))s->debug_started=1;guest();}
