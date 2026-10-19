@@ -9,6 +9,7 @@
 #include "../../host/dm_hud.h"
 #include "../../host/dm_uiscreen.h"
 #include "../../host/dm_cursor.h"
+#include "../../host/dm_actions.h"
 #include "debug_stats.h"
 #include "game_output.h"
 #include "touch_pointer_map.h"
@@ -58,6 +59,7 @@ typedef struct {
     dm_live_touch_provider live_provider;
     int live_provider_ready;
     int live_provider_available;
+    dm_live_touch_scene_observation live_observation;
     int touch_timer_fd;
     dm_touch_pointer_map touch_map;
     pthread_t debug_thread;int debug_started;_Atomic int debug_stop;
@@ -415,6 +417,7 @@ static void live_touch_sync(game_app *s) {
     dm_live_touch_scene_observation snapshot;
     if(!dm_live_touch_provider_observe(&s->live_provider,&snapshot)){
         s->live_provider_available=0;
+        memset(&s->live_observation,0,sizeof s->live_observation);
         // Unknown identity is a real caller boundary: cancel the original UI
         // phase-3 press, the live core and the legacy raw pointer ownership.
         dm_live_touch_cancel_sources(s->live_touch,(int64_t)now_ns(),ui_touch_cancel);
@@ -424,12 +427,31 @@ static void live_touch_sync(game_app *s) {
         return;
     }
     s->live_provider_available=1;
+    s->live_observation=snapshot;
     int navigation=snapshot.scene!=DM_LIVE_TOUCH_SCENE_GAME||snapshot.panel_bits||atomic_load(&menu_open);
     uint32_t mask=navigation?(dm_tc_nav_mask(1)|(1u<<DM_TC_MENU)):
         (((1u<<DM_TC_COUNT)-1)&~(1u<<DM_TC_MAP));
     dm_live_touch_set_context(s->live_touch,navigation,mask,
                               snapshot.scene_epoch,snapshot.world_epoch,
                               snapshot.ui_identity,0);
+    if(!navigation){
+        int expanded=0, rows=dm_belt_rows(&expanded);
+        if(!dm_live_touch_set_belt(s->live_touch,rows,expanded))
+            LOG("[android-touch] belt host state invalid (%d rows, %d expanded); belt gestures unavailable",rows,expanded);
+    } else {
+        (void)dm_live_touch_set_belt(s->live_touch,0,0);
+    }
+}
+static void belt_expand_host(void *context, int on) { (void)context; dm_belt_expand(on); }
+static void belt_use_host(void *context, int col, int row) { (void)context; dm_belt_use(col, row); }
+static void live_touch_consume_belt(game_app *s) {
+    if(!s->live_touch||!live_touch_mode_enabled()||!s->live_provider_available)return;
+    live_touch_sync(s);
+    if(!s->live_provider_available)return;
+    dm_live_touch_belt_actions actions={s,belt_expand_host,belt_use_host};
+    (void)dm_live_touch_consume_belt_request(s->live_touch,
+        s->live_observation.scene_epoch,s->live_observation.world_epoch,
+        s->live_observation.ui_identity,&actions);
 }
 static void pad_publish(game_app *s) {
     live_touch_sync(s);
@@ -462,6 +484,7 @@ static int touch_timer_tick(int fd,int events,void *data) {
     live_touch_sync(s);
     int needs=dm_live_touch_scheduler_step(s->live_touch,(int64_t)now_ns());
     pad_publish(s);
+    live_touch_consume_belt(s);
     if(!needs)touch_timer_stop(s);
     return 1;
 }
@@ -590,6 +613,7 @@ static int input_ready(int fd,int events,void *data) {
                     }else if(dm_live_touch_event(s->live_touch,action,action==AMOTION_EVENT_ACTION_MOVE?-1:(int)lifted,(int)count,ids,xs,ys,w,h,left,top,gw,gh,(int64_t)now_ns())){
                         pad_publish(s);
                         if(dm_live_touch_end_released_pulse(s->live_touch))pad_publish(s);
+                        live_touch_consume_belt(s);
                         handled=1;
                     }else handled=1;
                 }else LOG("[android-touch] pointer count %u exceeds 16; refusing the event",count);

@@ -123,6 +123,14 @@ target_link_libraries(dm_touch_adapter_test PRIVATE dm_android_touch dm_android_
 target_compile_options(dm_touch_adapter_test PRIVATE -Wall -Wextra -Werror)
 add_test(NAME touch_adapter COMMAND dm_touch_adapter_test)
 set_tests_properties(touch_adapter PROPERTIES TIMEOUT 30)
+# #33 live touch owns the original core directly; this fixture exercises the
+# belt request consumer and held-gesture quarantine through the production seam.
+add_executable(dm_live_touch_belt_test tests/live_touch_belt_test.c native/live_touch.c)
+target_link_libraries(dm_live_touch_belt_test PRIVATE dm_android_touch_core m)
+target_include_directories(dm_live_touch_belt_test PRIVATE native ../ios/Sources ../host)
+target_compile_options(dm_live_touch_belt_test PRIVATE -Wall -Wextra -Werror)
+add_test(NAME live_touch_belt COMMAND dm_live_touch_belt_test)
+set_tests_properties(live_touch_belt PROPERTIES TIMEOUT 30)
 add_library(dm_android_app_lifecycle STATIC app/lifecycle.c)
 target_include_directories(dm_android_app_lifecycle PUBLIC app)
 target_compile_options(dm_android_app_lifecycle PRIVATE -Wall -Wextra -Werror)
@@ -724,7 +732,7 @@ if(ANDROID)
                 "${CMAKE_READELF}" "${CMAKE_OBJDUMP}" "$<TARGET_FILE:dm_android_app>"
             VERBATIM)
     endif()
-    foreach(target dm_android_probe dm_texture_test dm_nso_inspect dm_nso_test dm_image_test dm_runtime_test dm_system_patch_test dm_input_test dm_touch_adapter_test dm_touch_bridge_test dm_touch_game_bridge_test dm_view_policy_test dm_input_policy_test dm_app_lifecycle_test dm_app_diagnostic_scene_test dm_app_present_policy_test dm_app_wsi_test dm_wsi_bridge_test dm_wsi_report_test dm_module_inspect dm_module_test dm_x18_patch_test dm_x18_control_test dm_x18_regions_test dm_image_code_test dm_artifact_inspect dm_artifact_test dm_romfs_test dm_sync_test dm_arbiter_test dm_thread_test dm_bootstrap_test dm_memory_test dm_mutex_test dm_exclusive_return_test)
+    foreach(target dm_android_probe dm_texture_test dm_nso_inspect dm_nso_test dm_image_test dm_runtime_test dm_system_patch_test dm_input_test dm_touch_adapter_test dm_live_touch_belt_test dm_touch_bridge_test dm_touch_game_bridge_test dm_view_policy_test dm_input_policy_test dm_app_lifecycle_test dm_app_diagnostic_scene_test dm_app_present_policy_test dm_app_wsi_test dm_wsi_bridge_test dm_wsi_report_test dm_module_inspect dm_module_test dm_x18_patch_test dm_x18_control_test dm_x18_regions_test dm_image_code_test dm_artifact_inspect dm_artifact_test dm_romfs_test dm_sync_test dm_arbiter_test dm_thread_test dm_bootstrap_test dm_memory_test dm_mutex_test dm_exclusive_return_test)
         target_link_options(${target} PRIVATE "-Wl,-z,max-page-size=16384")
     endforeach()
     foreach(target dm_gate_test dm_gate_vectors)
