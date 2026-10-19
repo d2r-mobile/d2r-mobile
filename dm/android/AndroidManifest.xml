@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="org.d2rmobile.android.port" android:versionCode="1" android:versionName="0.1-runtime-probe">
+    <uses-sdk android:minSdkVersion="29" android:targetSdkVersion="35" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-feature android:name="android.hardware.vulkan.version" android:version="0x00401000" android:required="true" />
+    <!-- 图标是仓库里的纯矢量自适应图标（dm/android/res/，项目自画，不含游戏美术）；应用名来自 dmAndroidTitle。 -->
+    <!-- The icon is the repository's pure-vector adaptive icon (dm/android/res/, project art, no game assets);
+         the app name comes from dmAndroidTitle. -->
+    <application android:label="@string/dmAndroidTitle" android:icon="@mipmap/ic_launcher" android:hasCode="false" android:debuggable="true" android:extractNativeLibs="true" android:allowBackup="false">
+        <!-- 画面是 16:9 横屏（与 iOS 一致：只支援两个横向）。这里声明 sensorLandscape 而不是 landscape —— 后者把活动
+             钉在**一个**横向朝向上，把设备转到另一个横向时画面倒过来且永不纠正（用户报告的「旋转没处理」）。
+             sensorLandscape 让画面随设备在两个横向之间切换、始终正向；两道横向的窗口宽高相同，
+             屏幕朝向由合成器处理，出图不用重排。configChanges 已含 orientation|screenSize，所以旋转**不会**重建活动，
+             进程与这一局都保留（交换链按窗口尺寸重建的那条路在 native 前端）。
+             The picture is 16:9 landscape (matching iOS, which allows only the two landscapes). It is declared
+             sensorLandscape rather than landscape: the latter pins the activity to *one* landscape orientation, so
+             turning the device the other way leaves an upside-down picture that never corrects itself (the reported
+             "rotation not handled"). sensorLandscape follows the device between the two landscape orientations and
+             stays upright; both landscapes have the same window size and the compositor applies the
+             display orientation, so nothing has to be re-laid-out. configChanges already lists
+             orientation|screenSize, so a rotation does **not** recreate the activity: the process and the run
+             survive (the swapchain-rebuild path lives in the native front end). -->
+        <activity android:name="android.app.NativeActivity" android:exported="true" android:screenOrientation="sensorLandscape" android:configChanges="orientation|screenSize|keyboardHidden" android:theme="@android:style/Theme.Material.NoActionBar">
+            <meta-data android:name="android.app.lib_name" android:value="dmandroid" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

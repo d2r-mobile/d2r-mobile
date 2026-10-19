@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 同一枚图标的 Android 13+ 版本：多一层单色层，供系统"主题图标"用人家的配色重绘。
+     The same icon for Android 13+: an extra monochrome layer so the system's themed icons can recolour it. -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_launcher_background" />
+    <foreground android:drawable="@drawable/ic_launcher_foreground" />
+    <monochrome android:drawable="@drawable/ic_launcher_monochrome" />
+</adaptive-icon>

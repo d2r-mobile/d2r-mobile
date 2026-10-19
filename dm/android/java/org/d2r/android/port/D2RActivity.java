@@ -81,9 +81,9 @@ public final class D2RActivity extends NativeActivity {
     private TextView menuOverlayRow, menuControlsRow, menuQualityRow;
     private boolean overlayEnabled = true;
     private boolean controlsEnabled = true;
-    private int qualityPreset;                                  // 0 自动 / 1 高质量 / 2 平衡 / 3 性能 | 0 auto / 1 high / 2 balanced / 3 performance
-    private static final int[] QUALITY_LEVELS = {-1, 0, 1, 2};   // 与 native 约定：-1 自动、0 高、1 平衡、2 性能 | the native contract
-    private static final String[] QUALITY_KEYS = {"dmAndroidMenuQualityAuto", "dmAndroidMenuQualityHigh", "dmAndroidMenuQualityBalanced", "dmAndroidMenuQualityPerformance"};
+    private int qualityPreset;                                  // 0 自动 / 1 高质量（当前 host 只支持这两档） | 0 auto / 1 high (the current host supports only these two)
+    private static final int[] QUALITY_LEVELS = {-1, 0};   // native 约定：-1 自动、0 高；平衡/性能的比例控制器尚未接入 | native contract: -1 auto, 0 high; the fixed balanced/performance controller is not wired yet
+    private static final String[] QUALITY_KEYS = {"dmAndroidMenuQualityAuto", "dmAndroidMenuQualityHigh"};
     // 与启动界面同一套配色（那边是 GOLD/PARCHMENT），菜单里照用，视觉上是一家人。
     // The same palette as the launcher (GOLD/PARCHMENT there), so the menu looks like part of the same app.
     private static final int GOLD = 0xffe8c078;
