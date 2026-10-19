@@ -81,6 +81,26 @@ int main(void) {
     CHECK(dm_live_touch_visual_signature(&sig_a, &sig_g) !=
           dm_live_touch_visual_signature(&sig_b, &sig_g));
 
+    // Scene/panel transitions must change the visual snapshot/signature with no
+    // touch event at all; an unchanged repeat must not invalidate.
+    dm_live_touch *at = dm_live_touch_create(667, 375);
+    CHECK(at != NULL);
+    dm_live_touch_set_context(at, 1, dm_tc_nav_mask(1), 10, 20, 30, 0);
+    dm_live_touch_visual front = {0}, camp = {0}, panel = {0};
+    CHECK(dm_live_touch_visual_snapshot(at, &front) == 1 && front.navigation_mode == 1);
+    dm_live_touch_geometry ag = {0};
+    uint64_t front_sig = dm_live_touch_visual_signature(&front, &ag);
+    CHECK(dm_live_touch_visual_snapshot(at, &camp) == 1);
+    CHECK(front_sig == dm_live_touch_visual_signature(&camp, &ag)); // unchanged repeat
+    dm_live_touch_set_context(at, 0, ((1u << DM_TC_COUNT) - 1) & ~(1u << DM_TC_MAP), 10, 20, 30, 0);
+    CHECK(dm_live_touch_visual_snapshot(at, &camp) == 1 && camp.navigation_mode == 0);
+    CHECK(front_sig != dm_live_touch_visual_signature(&camp, &ag));
+    dm_live_touch_set_context(at, 1, dm_tc_nav_mask(1), 10, 20, 30, 0);
+    CHECK(dm_live_touch_visual_snapshot(at, &panel) == 1 && panel.navigation_mode == 1);
+    CHECK(dm_live_touch_visual_signature(&panel, &ag) !=
+          dm_live_touch_visual_signature(&camp, &ag));
+    dm_live_touch_destroy(at);
+
     // Destroyed owner cannot expose a snapshot (caller must drop the pointer).
     dm_live_touch_destroy(t);
     CHECK(dm_live_touch_visual_snapshot(NULL, &v) == 0);
