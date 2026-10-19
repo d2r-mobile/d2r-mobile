@@ -30,7 +30,7 @@ Have your game files ready, then tell Claude Code or Codex:
 Use the d2r-mobile skill from https://github.com/d2r-mobile/d2r-mobile to build D2R Mobile for my iPhone. My game files are in <path>.
 ```
 
-The agent checks your machine, prepares the workspace, signs and installs the app, and copies the game resources to your phone. It stops to ask you for your Apple signing details and before any install that needs `sudo`. The skill lives at [skills/d2r-mobile/SKILL.md](skills/d2r-mobile/SKILL.md), and both agents find it on their own through `.claude/skills/` and `.agents/skills/`. The manual steps are under [Getting started](#getting-started).
+The agent checks your machine, prepares the workspace, signs and installs the app, and copies the game resources to your phone. It stops to ask you for your Apple signing details and before any install that needs `sudo`. The skill lives at [skills/d2r-mobile/SKILL.md](skills/d2r-mobile/SKILL.md), and both agents find it on their own through `.claude/skills/` and `.agents/skills/`. For manual builds and installation, see [Getting started](#getting-started).
 
 ## Why it plays like a native game
 
