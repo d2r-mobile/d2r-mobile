@@ -30,6 +30,8 @@ typedef struct dm_vk_driver {
     VkShaderStageFlags required_subgroup_stages;
     int subgroup_policy_required, subgroup_policy_supported, subgroup_policy_prepared, subgroup_policy_enabled;
     VkPhysicalDeviceSubgroupSizeControlFeatures subgroup_features;
+    VkPhysicalDeviceShaderDrawParametersFeatures shader_draw_parameters_features;
+    int shader_draw_parameters_supported, shader_draw_parameters_prepared;
     const char **policy_device_extensions;
 } dm_vk_driver;
 
@@ -42,6 +44,9 @@ int dm_vk_driver_validate(dm_vk_driver *driver, VkPhysicalDevice physical, const
 // 保留调用者device扩展/feature链；明确政策无法满足时失败，默认路径不修改。
 // Preserve caller device extensions/feature chains; fail on unsupported explicit policy and preserve defaults.
 int dm_vk_driver_prepare_device(dm_vk_driver *driver, VkDeviceCreateInfo *create);
+// 1=成功（包括当前 shader 不需要该能力）；0=不支持/未启用，调用者必须拒绝该 shader。
+// 1=success (including the not-needed case); 0=unsupported/not enabled, reject that shader.
+int dm_vk_driver_require_shader_draw_parameters(dm_vk_driver *driver, int needed);
 // required由调用者持有至pipeline创建完成；不启FULL，允许32线程客体组。
 // Keep caller-owned required storage alive until pipeline creation; never enable FULL, allowing guest groups of32.
 int dm_vk_driver_prepare_shader_stage(dm_vk_driver *driver, VkPipelineShaderStageCreateInfo *stage, VkPipelineShaderStageRequiredSubgroupSizeCreateInfo *required);

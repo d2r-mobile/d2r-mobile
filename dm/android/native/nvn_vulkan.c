@@ -18,6 +18,7 @@
 static dm_vk_driver vk_api;
 #endif
 #include "nvn_vulkan_host.inc"
+#include "nvn_vulkan_caps.h"
 static dm_nvn_host_state g_host_state = {.frz_req = -1, .frz_applied = -1};
 #include <vulkan/vulkan.h>
 #include <stdatomic.h>
@@ -389,7 +390,7 @@ driver_retry:;
     reference_gate_device_setup(&di);
 #endif
 #ifdef __ANDROID__
-    if(!dm_vk_driver_prepare_device(&vk_api,&di))die("Vulkan subgroup device policy: %s",dm_vk_driver_error(&vk_api));
+    if(!dm_vk_driver_prepare_device(&vk_api,&di))die("Vulkan device policy: %s",dm_vk_driver_error(&vk_api));
 #endif
     create_result=vkCreateDevice(physical,&di,NULL,&device);
 #ifdef __ANDROID__

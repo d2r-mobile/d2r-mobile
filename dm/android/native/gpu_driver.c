@@ -55,6 +55,13 @@ static void reset_subgroup_policy(dm_vk_driver *d) {
     d->effective_shader_subgroup_size=0;d->required_subgroup_stages=0;
     d->subgroup_policy_supported=0;d->subgroup_policy_prepared=0;d->subgroup_policy_enabled=0;
     memset(&d->subgroup_features,0,sizeof d->subgroup_features);
+    // 同一 reset 边界也清除所选设备的 draw 功能状态；下一次 validate
+    // 必须从新 physical 重新查询，不能继承旧设备的支持/已启用标记。
+    // Clear selected-device draw-feature state at the same reset boundary;
+    // the next validate must re-query the new physical device.
+    memset(&d->shader_draw_parameters_features,0,sizeof d->shader_draw_parameters_features);
+    d->shader_draw_parameters_supported=0;
+    d->shader_draw_parameters_prepared=0;
 }
 static int configure(dm_vk_driver *d) {
     // 严格环境标志先解析，配置语法错误也不能悄悄退回系统。
@@ -237,25 +244,54 @@ static int validate_subgroup_policy(dm_vk_driver *d,VkPhysicalDevice physical) {
     d->effective_shader_subgroup_size=d->requested_subgroup_size;return 1;
 }
 int dm_vk_driver_prepare_device(dm_vk_driver *d,VkDeviceCreateInfo *create) {
-    if(!d->requested_subgroup_size)return 1;
-    if(!d->subgroup_policy_supported)return driver_error(d,"explicit subgroup policy was not validated");
-    if(d->subgroup_policy_prepared)return driver_error(d,"explicit subgroup device policy applied more than once");
+    if(d->subgroup_policy_prepared||d->shader_draw_parameters_prepared)
+        return driver_error(d,"explicit device policy applied more than once");
+    if(d->requested_subgroup_size&&!d->subgroup_policy_supported)
+        return driver_error(d,"explicit subgroup policy was not validated");
     if(create->enabledExtensionCount>4096||(create->enabledExtensionCount&&!create->ppEnabledExtensionNames))
         return driver_error(d,"invalid existing device extension list");
-    for(const VkBaseInStructure *item=create->pNext;item;item=item->pNext)
-        if(item->sType==VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_FEATURES)
+    const VkPhysicalDeviceShaderDrawParametersFeatures *existing_draw=NULL;
+    for(const VkBaseInStructure *item=create->pNext;item;item=item->pNext){
+        if(item->sType==VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_FEATURES&&d->requested_subgroup_size)
             return driver_error(d,"existing device chain already contains subgroup-size control");
-    uint32_t count=create->enabledExtensionCount;int present=0;
-    for(uint32_t i=0;i<count;i++)if(!strcmp(create->ppEnabledExtensionNames[i],VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME))present=1;
-    d->policy_device_extensions=calloc((size_t)count+1,sizeof *d->policy_device_extensions);
-    if(!d->policy_device_extensions)return driver_error(d,"subgroup device extension allocation failed");
-    if(count)memcpy(d->policy_device_extensions,create->ppEnabledExtensionNames,count*sizeof *d->policy_device_extensions);
-    if(!present)d->policy_device_extensions[count++]=VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME;
-    d->subgroup_features=(VkPhysicalDeviceSubgroupSizeControlFeatures){.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_FEATURES,
-        .pNext=(void*)create->pNext,.subgroupSizeControl=VK_TRUE,.computeFullSubgroups=VK_FALSE};
-    create->enabledExtensionCount=count;create->ppEnabledExtensionNames=d->policy_device_extensions;create->pNext=&d->subgroup_features;
-    d->subgroup_policy_prepared=1;
-    driver_log("device policy adds EXT subgroup control; requested=%u computeFullSubgroups=0 existing chains preserved",d->requested_subgroup_size);
+        if(item->sType==VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES)
+            existing_draw=(const VkPhysicalDeviceShaderDrawParametersFeatures *)item;
+    }
+    // 已有调用者链保持；支持时把真实 feature 节点接到链首，不支持时不伪造节点。
+    // Preserve the caller's existing chain; prepend the real feature node when
+    // supported, and never fabricate a node when the physical feature is absent.
+    if(existing_draw){
+        d->shader_draw_parameters_prepared=existing_draw->shaderDrawParameters!=VK_FALSE;
+    }else if(d->shader_draw_parameters_supported){
+        d->shader_draw_parameters_features=(VkPhysicalDeviceShaderDrawParametersFeatures){
+            .sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES,
+            .pNext=(void*)create->pNext,.shaderDrawParameters=VK_TRUE};
+        create->pNext=&d->shader_draw_parameters_features;
+        d->shader_draw_parameters_prepared=1;
+    }
+    if(d->requested_subgroup_size){
+        uint32_t count=create->enabledExtensionCount;int present=0;
+        for(uint32_t i=0;i<count;i++)if(!strcmp(create->ppEnabledExtensionNames[i],VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME))present=1;
+        d->policy_device_extensions=calloc((size_t)count+1,sizeof *d->policy_device_extensions);
+        if(!d->policy_device_extensions)return driver_error(d,"subgroup device extension allocation failed");
+        if(count)memcpy(d->policy_device_extensions,create->ppEnabledExtensionNames,count*sizeof *d->policy_device_extensions);
+        if(!present)d->policy_device_extensions[count++]=VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME;
+        d->subgroup_features=(VkPhysicalDeviceSubgroupSizeControlFeatures){.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_SIZE_CONTROL_FEATURES,
+            .pNext=(void*)create->pNext,.subgroupSizeControl=VK_TRUE,.computeFullSubgroups=VK_FALSE};
+        create->enabledExtensionCount=count;create->ppEnabledExtensionNames=d->policy_device_extensions;create->pNext=&d->subgroup_features;
+        d->subgroup_policy_prepared=1;
+        driver_log("device policy adds EXT subgroup control; requested=%u computeFullSubgroups=0 existing chains preserved",d->requested_subgroup_size);
+    }
+    driver_log("device policy shaderDrawParameters=%s prepared=%d chain=%s",d->shader_draw_parameters_supported?"supported":"unsupported",
+        d->shader_draw_parameters_prepared,d->subgroup_policy_prepared?"subgroup->existing":"existing");
+    return 1;
+}
+int dm_vk_driver_require_shader_draw_parameters(dm_vk_driver *d,int needed) {
+    if(!needed)return 1;
+    if(!d->shader_draw_parameters_supported)
+        return driver_error(d,"shaderDrawParameters is not supported by the selected physical device");
+    if(!d->shader_draw_parameters_prepared)
+        return driver_error(d,"shaderDrawParameters is supported but was not enabled in the device chain");
     return 1;
 }
 int dm_vk_driver_prepare_shader_stage(dm_vk_driver *d,VkPipelineShaderStageCreateInfo *stage,VkPipelineShaderStageRequiredSubgroupSizeCreateInfo *required) {
@@ -291,6 +327,13 @@ static int profile_matches(dm_vk_driver *d,const char *directory) {
 }
 int dm_vk_driver_validate(dm_vk_driver *d,VkPhysicalDevice physical,const char *shader_directory) {
     VkPhysicalDeviceProperties base;d->vkGetPhysicalDeviceProperties(physical,&base);
+    // 先查询真实物理能力；Vulkan1.1/扩展字符串存在不等于功能已启用。
+    // Query the real physical feature first; Vulkan1.1/extension presence is not automatic enablement.
+    VkPhysicalDeviceShaderDrawParametersFeatures draw_parameters={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES};
+    VkPhysicalDeviceFeatures2 feature_query={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,.pNext=&draw_parameters};
+    d->vkGetPhysicalDeviceFeatures2(physical,&feature_query);
+    d->shader_draw_parameters_supported=draw_parameters.shaderDrawParameters;
+    driver_log("shaderDrawParameters physical=%u (queried; not inferred from API/extension)",d->shader_draw_parameters_supported);
     int supported=has_driver_properties(d,physical,base.apiVersion);
     VkPhysicalDeviceDriverProperties identity={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
     VkPhysicalDeviceSubgroupProperties subgroup={.sType=VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SUBGROUP_PROPERTIES,.pNext=supported?&identity:NULL};
