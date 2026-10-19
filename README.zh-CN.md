@@ -4,7 +4,7 @@
 
 拖动瞄准，一键镶好符文之语。打通地狱，再挑战 100 层大秘境和 12 关首领连战。Mac 上还能用键盘和鼠标操作。
 
-**[构建与安装](#开始使用)** · [支持哪些设备](#支持哪些设备) · [发布页](https://github.com/d2r-mobile/d2r-mobile/releases) · [English](README.md)
+**[构建与安装](#开始使用)** · [支持哪些设备](#支持哪些设备) · [发布页](https://github.com/d2r-mobile/d2r-mobile/releases) · [English](README.md) · [Español](README.es.md)
 
 MIT · 中文 / English · iOS 26+ / macOS 26+；老接口版支持 iOS 18+ / macOS 15+。Apple TV 4K 有[社区开发者预览版](dm/tvos/README.md)，目前只验证到职业选择画面。
 

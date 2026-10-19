@@ -4,7 +4,7 @@
 
 Drag to aim. Make Runewords in one tap. Clear Hell, then take on 100 levels of Greater Rift and a 12-stage Boss Rush. Play with touch or a controller; the native Mac app also supports keyboard and mouse.
 
-**[Build & install](#getting-started)** · [Supported devices](#which-devices-are-supported) · [Releases](https://github.com/d2r-mobile/d2r-mobile/releases) · [中文](README.zh-CN.md)
+**[Build & install](#getting-started)** · [Supported devices](#which-devices-are-supported) · [Releases](https://github.com/d2r-mobile/d2r-mobile/releases) · [中文](README.zh-CN.md) · [Español](README.es.md)
 
 MIT · English / 中文 · iOS 26+ / macOS 26+; older-API builds support iOS 18+ / macOS 15+. Apple TV 4K has a [community developer preview](dm/tvos/README.md), verified through character selection only.
 
