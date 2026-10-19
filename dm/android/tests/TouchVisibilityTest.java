@@ -32,6 +32,13 @@ public final class TouchVisibilityTest {
         // A repeated true notification is idempotent at this boundary.
         check(!TouchVisibility.visible(true, true, true, false, false, true, false),
             "repeated live true remains hidden");
+        // Draw-only live layer follows the same gates, but appears only when the core is ready.
+        check(!TouchVisibility.liveOverlay(true, true, true, false, false, false, false),
+            "live layer hidden while fallback is shown");
+        check(TouchVisibility.liveOverlay(true, true, true, false, false, true, false),
+            "live layer appears on readiness without lifecycle");
+        check(!TouchVisibility.liveOverlay(true, true, true, false, false, true, true),
+            "destroyed activity has no live layer");
         if (failures != 0) throw new AssertionError(failures + " visibility checks failed");
         System.out.println("PASS: touch visibility false/true/fallback and existing gates");
     }

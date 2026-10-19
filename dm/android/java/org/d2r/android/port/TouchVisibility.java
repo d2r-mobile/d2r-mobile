@@ -8,4 +8,12 @@ final class TouchVisibility {
         return controlsEnabled && activityResumed && focused && !textDialog &&
                !physicalController && !liveReady && !destroyed;
     }
+
+    // Draw-only live layer: same lifecycle gates, but it appears only while the
+    // actual native live provider is ready and never replaces the fallback.
+    static boolean liveOverlay(boolean controlsEnabled, boolean activityResumed, boolean focused,
+                               boolean textDialog, boolean physicalController, boolean liveReady, boolean destroyed) {
+        return controlsEnabled && activityResumed && focused && !textDialog &&
+               !physicalController && liveReady && !destroyed;
+    }
 }

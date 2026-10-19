@@ -559,6 +559,48 @@ int32_t dm_live_touch_lx(const dm_live_touch *touch) { return touch ? touch->sta
 int32_t dm_live_touch_ly(const dm_live_touch *touch) { return touch ? touch->state.ly : 0; }
 int32_t dm_live_touch_rx(const dm_live_touch *touch) { return touch ? touch->state.rx : 0; }
 int32_t dm_live_touch_ry(const dm_live_touch *touch) { return touch ? touch->state.ry : 0; }
+int dm_live_touch_visual_snapshot(const dm_live_touch *touch, dm_live_touch_visual *out) {
+    if (!touch || !out) return 0;
+    memset(out, 0, sizeof *out);
+    const dm_tc_layout *l = &touch->state.layout;
+    if (!(l->width > 0 && l->height > 0)) return 0;
+    out->valid = 1;
+    out->width = l->width; out->height = l->height;
+    out->joy_radius = l->joy_radius;
+    out->joy_rest_x = l->joy_x; out->joy_rest_y = l->joy_y;
+    out->joy_active = touch->state.joy_slot >= 0;
+    out->joy_origin_x = out->joy_active ? touch->state.joy_origin_x : 0;
+    out->joy_origin_y = out->joy_active ? touch->state.joy_origin_y : 0;
+    out->joy_x = out->joy_active ? out->joy_origin_x : out->joy_rest_x;
+    out->joy_y = out->joy_active ? out->joy_origin_y : out->joy_rest_y;
+    out->swap_x = l->swap.x; out->swap_y = l->swap.y; out->swap_radius = l->swap.r;
+    out->diff_x = l->diff.x; out->diff_y = l->diff.y; out->diff_radius = l->diff.r;
+    for (int i = 0; i < 8; ++i) {
+        out->pick_x[i] = l->pick[i].x; out->pick_y[i] = l->pick[i].y; out->pick_r[i] = l->pick[i].r;
+    }
+    for (int i = 0; i < DM_TC_COUNT; ++i) {
+        out->target_x[i] = l->target[i].x; out->target_y[i] = l->target[i].y; out->target_r[i] = l->target[i].r;
+    }
+    out->enabled_targets = touch->state.enabled_targets;
+    out->buttons = touch->state.buttons;
+    out->skill_set = touch->state.skill_set;
+    out->diff_open = touch->state.diff_open;
+    out->navigation_mode = touch->state.navigation_mode;
+    out->lx = touch->state.lx; out->ly = touch->state.ly;
+    return 1;
+}
+uint64_t dm_live_touch_visual_signature(const dm_live_touch_visual *v,
+                                        const dm_live_touch_geometry *g) {
+    uint64_t h = 1469598103934665603ull;
+    const uint64_t parts[] = {(uint64_t)v->buttons, (uint64_t)(uint32_t)v->lx,
+        (uint64_t)(uint32_t)v->ly, (uint64_t)v->skill_set, (uint64_t)v->diff_open,
+        (uint64_t)v->navigation_mode, (uint64_t)v->joy_active, (uint64_t)(uint32_t)v->joy_origin_x,
+        (uint64_t)(uint32_t)v->joy_origin_y, (uint64_t)v->enabled_targets,
+        (uint64_t)(uint32_t)g->left, (uint64_t)(uint32_t)g->top,
+        (uint64_t)(uint32_t)g->width, (uint64_t)(uint32_t)g->height};
+    for (unsigned i = 0; i < sizeof parts / sizeof *parts; i++) h = (h ^ parts[i]) * 1099511628211ull;
+    return h;
+}
 
 int dm_live_touch_has_pointer(const dm_live_touch *touch, int32_t id) {
     return touch && id >= 0 && dm_touch_pointer_slot(&touch->pointers, id) >= 0;

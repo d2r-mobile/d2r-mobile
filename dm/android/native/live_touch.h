@@ -4,6 +4,8 @@
 #pragma once
 #include <stdint.h>
 #include <stddef.h>
+#include "live_touch_geometry.h"
+#include "../../ios/Sources/dm_touch_controls.h"
 #include "../../ios/Sources/dm_touch_game_state.h"
 
 #ifdef __cplusplus
@@ -115,6 +117,27 @@ int32_t dm_live_touch_lx(const dm_live_touch *touch);
 int32_t dm_live_touch_ly(const dm_live_touch *touch);
 int32_t dm_live_touch_rx(const dm_live_touch *touch);
 int32_t dm_live_touch_ry(const dm_live_touch *touch);
+// Read-only snapshot of the actual core layout/state for the Android visual
+// overlay. It never mutates gesture state and does not imply a game binding.
+typedef struct {
+    int valid;
+    float width, height;
+    float joy_x, joy_y, joy_radius;
+    float joy_rest_x, joy_rest_y;
+    float joy_origin_x, joy_origin_y;
+    int joy_active;
+    float swap_x, swap_y, swap_radius;
+    float diff_x, diff_y, diff_radius;
+    float pick_x[8], pick_y[8], pick_r[8];
+    float target_x[DM_TC_COUNT], target_y[DM_TC_COUNT], target_r[DM_TC_COUNT];
+    uint32_t enabled_targets;
+    uint64_t buttons;
+    int skill_set, diff_open, navigation_mode;
+    int32_t lx, ly;
+} dm_live_touch_visual;
+int dm_live_touch_visual_snapshot(const dm_live_touch *touch, dm_live_touch_visual *out);
+// Invalidation key is defined in live_touch.c; the frontend declares it locally
+// so the standalone root extraction fixture remains source-compatible.
 int dm_live_touch_has_pointer(const dm_live_touch *touch, int32_t id);
 int dm_live_touch_active(const dm_live_touch *touch);
 int dm_live_touch_pointer_long(const dm_live_touch *touch);
