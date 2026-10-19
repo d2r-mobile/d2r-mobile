@@ -1,5 +1,6 @@
 // 仅 GPU 消费的快照谱系；已编码消费者按同队列屏障原位更新，待编码消费者保留旧版本。
 // GPU-consumer snapshot lineage; same-queue barriers permit patches after encoded consumers, while pending consumers retain old versions.
+#include "nvn_vulkan_snapshot_policy.h"
 typedef struct gpu_snapshot_counters {
     uint64_t calls,hits,full_calls,full_guest_bytes,delta_calls,patch_guest_bytes,clone_bytes,patch_runs;
     uint64_t inplace_calls,cow_calls,inplace_patch_bytes,cow_patch_bytes;
@@ -7,6 +8,7 @@ typedef struct gpu_snapshot_counters {
 } gpu_snapshot_counters;
 static gpu_snapshot_counters gpu_snapshot_stats;
 static uint64_t gpu_snapshot_encoded;
+static int gpu_snapshot_mode_logged;
 // 只在外层真实 draw/dispatch 编码后推进；内部辅助 dispatch 不能清除待编码绑定。
 // Advance only after an outer real draw/dispatch is recorded; internal helper dispatches cannot clear pending bindings.
 static void gpu_snapshot_consumer_encoded(void) {if(++gpu_snapshot_encoded==UINT64_MAX)die("Vulkan GPU consumer serial overflow");}
@@ -45,7 +47,10 @@ static vk_buffer gpu_snapshot_buffer(uintptr_t address,uint64_t size) {
     vk_buffer output={0},staging[NVN_DIRTY_SNAPSHOT_MAX_RUNS]={{0}};unsigned staged=0;
     nvn_dirty_snapshot_plan plan={0};int host_held=0,transaction=0,full_read=0,inplace=0;
     uint64_t patch_bytes=0;owned_snapshot_counters before=owned_snapshot_stats;
+    int reuse=gpu_snapshot_reuse_enabled();
+    if(!gpu_snapshot_mode_logged){gpu_snapshot_mode_logged=1;LOG("[vulkan-gpu-snapshot] effective reuse=%s source=%s restart_required=1 env=DM_VK_GPU_SNAPSHOT_REUSE property=debug.d2r.gpu_snapshot_reuse",reuse?"on":"off",gpu_snapshot_reuse_source_name());}
     if(size<=65536||size>(64u<<20)||size>UINTPTR_MAX-address){gpu_snapshot_stats.budget++;reason=SNAP_DIAG_LIMIT;goto raw;}
+    if(!reuse){reason=SNAP_DIAG_NO_ENTRY;goto raw;}
     if(!mtl_addr(address,size,NULL,NULL)){gpu_snapshot_stats.plan++;reason=SNAP_DIAG_POOL;goto raw;}
     if(!gpu_snapshot_api()){gpu_snapshot_stats.api++;goto raw;}
     // 连当前命令的未编码输出也保守拒绝；不得让 clone 覆盖原有 FIFO overlay。
@@ -80,7 +85,7 @@ static vk_buffer gpu_snapshot_buffer(uintptr_t address,uint64_t size) {
         if(!old||(size&3)){gpu_snapshot_stats.align++;goto raw;}
         for(unsigned i=0;i<plan.run_count;i++)if((plan.runs[i].offset|plan.runs[i].size)&3){gpu_snapshot_stats.align++;goto raw;}
     }
-    inplace=!full_read&&old->last_acquired<=gpu_snapshot_encoded;
+    inplace=!full_read&&gpu_snapshot_inplace_allowed(old->last_acquired,gpu_snapshot_encoded);
     if(!inplace)output=buffer_create(size);
     if(full_read){
         if(snapshot_read_owned(address,&output,size))die("Vulkan trusted full snapshot read");gpu_snapshot_stats.full_guest_bytes+=size;
