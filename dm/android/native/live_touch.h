@@ -44,6 +44,18 @@ int dm_live_touch_consume_belt_request(dm_live_touch *touch,
                                        uint64_t scene_epoch, uint64_t world_epoch,
                                        uint64_t ui_identity,
                                        const dm_live_touch_belt_actions *actions);
+// One-shot difficulty selector consumer. The core produces diff_request only
+// for a selected 1..8 level. Context must still match; unknown/invalid levels
+// are cleared without calling the host. The callback is the real
+// dm_hud_request_players boundary, never a synthetic acknowledgement.
+typedef struct {
+    void *context;
+    void (*request_players)(void *context, int players);
+} dm_live_touch_difficulty_actions;
+int dm_live_touch_consume_difficulty_request(dm_live_touch *touch,
+                                             uint64_t scene_epoch, uint64_t world_epoch,
+                                             uint64_t ui_identity,
+                                             const dm_live_touch_difficulty_actions *actions);
 // Apply one validated provider context. Any scene/world/UI identity change
 // cancels the old core ownership before the new mode is installed, so an old
 // pointer or release is never delivered into the new scene/character.

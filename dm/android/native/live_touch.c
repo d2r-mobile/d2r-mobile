@@ -106,6 +106,7 @@ void dm_live_touch_resize(dm_live_touch *touch, float width_pt, float height_pt)
     if (touch->width == width_pt && touch->height == height_pt) return;
     dm_tc_resize(&touch->state, width_pt, height_pt);
     touch->state.belt_request = 0;
+    touch->state.diff_request = 0;
     touch->belt_fingers = 0;
     touch->pulse_started_ns = 0;
     touch->width = width_pt;
@@ -171,6 +172,33 @@ int dm_live_touch_consume_belt_request(dm_live_touch *touch,
     return 0;
 }
 
+int dm_live_touch_consume_difficulty_request(dm_live_touch *touch,
+                                             uint64_t scene_epoch, uint64_t world_epoch,
+                                             uint64_t ui_identity,
+                                             const dm_live_touch_difficulty_actions *actions) {
+    if (!touch) return 0;
+    if (!actions || !actions->request_players) {
+        touch->state.diff_request = 0;
+        return 0;
+    }
+    int matches = touch->have_context && touch->scene_epoch == scene_epoch &&
+                  touch->world_epoch == world_epoch && touch->ui_identity == ui_identity;
+    if (!matches) {
+        touch->state.diff_request = 0;
+        return 0;
+    }
+    int request = touch->state.diff_request;
+    if (!request) return 0;
+    touch->state.diff_request = 0;
+    // Recheck immediately before handing the selected level to the real host.
+    matches = touch->have_context && touch->scene_epoch == scene_epoch &&
+              touch->world_epoch == world_epoch && touch->ui_identity == ui_identity;
+    if (!matches) return 0;
+    if (request < 1 || request > 8) return 0;
+    actions->request_players(actions->context, request);
+    return 1;
+}
+
 void dm_live_touch_set_mode(dm_live_touch *touch, int navigation, uint32_t mask) {
     if (!touch) return;
     navigation = !!navigation;
@@ -178,7 +206,10 @@ void dm_live_touch_set_mode(dm_live_touch *touch, int navigation, uint32_t mask)
     int changed = navigation != touch->state.navigation_mode || mask != touch->state.enabled_targets;
     if (navigation != touch->state.navigation_mode) dm_tc_set_navigation_mode(&touch->state, navigation);
     if (mask != touch->state.enabled_targets) dm_tc_enable_targets(&touch->state, mask);
-    if (changed) touch->belt_fingers = 0;
+    if (changed) {
+        touch->state.diff_request = 0;
+        touch->belt_fingers = 0;
+    }
     sync_pointers(touch);
 }
 
@@ -281,6 +312,7 @@ int dm_live_touch_cancel_all(dm_live_touch *touch, int64_t time_ns) {
     dm_tc_cancel_all(&touch->state);
     dm_touch_pointer_clear(&touch->pointers);
     touch->state.belt_request = 0;
+    touch->state.diff_request = 0;
     touch->belt_fingers = 0;
     touch->pulse_started_ns = 0;
     touch->have_context = 0;
