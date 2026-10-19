@@ -679,6 +679,10 @@ endif()
 if(NOT ANDROID)
     find_package(Python3 COMPONENTS Interpreter QUIET)
     if(Python3_Interpreter_FOUND)
+        add_test(NAME nvn_fence_domain_host
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/nvn_fence_domain_host.py
+                --cc ${CMAKE_C_COMPILER})
+        set_tests_properties(nvn_fence_domain_host PROPERTIES TIMEOUT 30)
         # #157 私有變異：忽略保存結果或忽略語言顯式狀態，必須讓真實測試失敗。
         # #157 private mutations: ignoring the store result, or the language explicit state, must fail the real tests.
         add_test(NAME custom_preferences_mutation
