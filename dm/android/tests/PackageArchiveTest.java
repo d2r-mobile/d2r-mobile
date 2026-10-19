@@ -19,6 +19,10 @@ public final class PackageArchiveTest {
     }
 
     private static byte[] archive(boolean includeMainTarget, String mainTarget) throws IOException {
+        return archive(includeMainTarget, mainTarget, false);
+    }
+
+    private static byte[] archive(boolean includeMainTarget, String mainTarget, boolean overlay) throws IOException {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
         try (ZipOutputStream zip = new ZipOutputStream(bytes)) {
             entry(zip, "manifest.json", "{}".getBytes(StandardCharsets.UTF_8));
@@ -31,6 +35,30 @@ public final class PackageArchiveTest {
             }
             entry(zip, "romfs/a", new byte[]{1});
             entry(zip, "shaders/a", new byte[]{1});
+            if (overlay) {
+                entry(zip, "overlay/ctrl_touch", "marker\n".getBytes(StandardCharsets.UTF_8));
+                entry(zip, "overlay/touch_strings.tsv", "A\tABCDEF12\tB\n".getBytes(StandardCharsets.UTF_8));
+                entry(zip, "overlay/data/.build.config", "config\n".getBytes(StandardCharsets.UTF_8));
+                entry(zip, "overlay/data/00-00000007.data", new byte[]{1});
+            }
+        }
+        return bytes.toByteArray();
+    }
+
+    private static byte[] markerOnlyOverlay() throws IOException {
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        try (ZipOutputStream zip = new ZipOutputStream(bytes)) {
+            entry(zip, "manifest.json", "{}".getBytes(StandardCharsets.UTF_8));
+            for (String module : PackageArchive.MODULE_NAMES) {
+                entry(zip, "game/libdmguest_" + module + ".so", new byte[]{1});
+                entry(zip, "game/" + module + ".fixups.tsv", new byte[]{'#'});
+                entry(zip, "game/" + module + ".gates.tsv", new byte[0]);
+                entry(zip, "game/" + module + ".target",
+                    "android-context-v1\n".getBytes(StandardCharsets.US_ASCII));
+            }
+            entry(zip, "romfs/a", new byte[]{1});
+            entry(zip, "shaders/a", new byte[]{1});
+            entry(zip, "overlay/ctrl_touch", "marker\n".getBytes(StandardCharsets.UTF_8));
         }
         return bytes.toByteArray();
     }
@@ -102,6 +130,39 @@ public final class PackageArchiveTest {
         for (String module : PackageArchive.MODULE_NAMES)
             check(new File(validRoot, "game/" + module + ".target").isFile(), "valid target installed: " + module);
         check(new File(validRoot, "assets/manifest.json").isFile(), "valid manifest committed");
+
+        File overlayRoot = Files.createTempDirectory("package-archive-overlay").toFile();
+        PackageArchive.Counts overlayCounts = unpack(archive(true, "android-context-v1\n", true), overlayRoot, false);
+        check(overlayCounts.overlay == 4, "valid overlay count");
+        check(new File(overlayRoot, "assets/overlay/ctrl_touch").isFile(), "overlay marker installed");
+        check(new File(overlayRoot, "assets/overlay/data/00-00000007.data").isFile(), "overlay CASC installed");
+        check(new File(overlayRoot, "assets/overlay.import").exists() == false, "overlay staging cleaned");
+        File save = new File(overlayRoot, "assets/save");
+        check(save.mkdirs(), "save fixture");
+        check(new File(save, "slot.sav").createNewFile(), "save sentinel");
+        unpack(archive(true, "android-context-v1\n"), overlayRoot, false);
+        check(!new File(overlayRoot, "assets/overlay").exists(), "valid no-overlay import retires old overlay");
+        check(new File(save, "slot.sav").isFile(), "valid no-overlay import preserves saves");
+        check(new File(overlayRoot, "assets/manifest.json").isFile(), "valid no-overlay manifest committed");
+
+        File oldOverlay = Files.createTempDirectory("package-archive-old-overlay").toFile();
+        File oldOverlayDir = new File(oldOverlay, "assets/overlay");
+        check(oldOverlayDir.mkdirs(), "old overlay fixture");
+        check(new File(oldOverlayDir, "old.sentinel").createNewFile(), "old overlay sentinel");
+        try {
+            unpack(markerOnlyOverlay(), oldOverlay, true);
+            check(false, "marker-only overlay must fail");
+        } catch (PackageArchive.Failure failure) {
+            check("dmAndroidLaunchImportOverlay".equals(failure.key), "overlay failure key: " + failure.key);
+            check(new File(oldOverlayDir, "old.sentinel").isFile(), "failed overlay import preserves old overlay");
+            check(!new File(oldOverlay, "assets/overlay.import").exists(), "failed overlay import leaves no staging");
+        }
+        try {
+            unpack(archive(false, "android-context-v1\n"), oldOverlay, true);
+            check(false, "invalid package must fail after old overlay install");
+        } catch (PackageArchive.Failure failure) {
+            check(new File(oldOverlayDir, "old.sentinel").isFile(), "invalid package preserves old overlay");
+        }
 
         expectFailure(archive(false, "android-context-v1\n"), "dmAndroidLaunchImportIncomplete");
         expectFailure(archive(true, "apple-context-v1\n"), "dmAndroidLaunchImportBadEntry");

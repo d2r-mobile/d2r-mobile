@@ -12,12 +12,16 @@
 package org.d2r.android.port;
 
 import java.io.ByteArrayOutputStream;
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -30,7 +34,12 @@ final class PackageArchive {
     static final int FORMAT = 1;
     static final String MANIFEST = "manifest.json";
     static final String DERIVED = "derived.tsv";
-    static final String[] PREFIXES = {"game/", "romfs/", "shaders/"};
+    static final String OVERLAY = "overlay";
+    static final String OVERLAY_MARKER = "ctrl_touch";
+    static final String OVERLAY_STRINGS = "touch_strings.tsv";
+    static final String OVERLAY_DATA = "data";
+    static final String OVERLAY_BUILD_CONFIG = ".build.config";
+    static final String[] PREFIXES = {"game/", "romfs/", "shaders/", "overlay/"};
 
     // 启动时游戏按名字打开这些文件，缺一个就在启动时崩（实测：FATAL open .../game/sdk.fixups.tsv）。
     // 这与 build_package.py 的 GAME_MODULES / GAME_LAYOUTS 是同一份契约，改动必须两边一起。
@@ -70,11 +79,17 @@ final class PackageArchive {
         final int romfs;
         final int shaders;
         final int game;
+        final int overlay;
 
         Counts(int romfs, int shaders, int game) {
+            this(romfs, shaders, game, 0);
+        }
+
+        Counts(int romfs, int shaders, int game, int overlay) {
             this.romfs = romfs;
             this.shaders = shaders;
             this.game = game;
+            this.overlay = overlay;
         }
     }
 
@@ -140,7 +155,84 @@ final class PackageArchive {
             throw new Failure("dmAndroidLaunchImportBadEntry", name);
     }
 
-    // 已安装包的只读就绪检查：manifest 在，十二个必需文件在，三个模块各自的 target 内容正确。
+    // 可选触摸布局覆盖层的完整契约：标记、字符串旁路表、data/.build.config 与恰好一个新 CASC 档。
+    // 只带 ctrl_touch 的空目录会让宿主改写布局前缀却拿不到布局，必须在这里拒绝。
+    // Complete optional touch-overlay contract: marker, string sidecar, data/.build.config and exactly one new CASC
+    // archive. A marker-only directory would make the host rewrite layout prefixes without any layouts, so refuse it.
+    static final String[] OVERLAY_ROOT_FILES = {
+        OVERLAY_MARKER, OVERLAY_STRINGS, "kbd_glyphs", "features.txt", "pack.json",
+        "pack_index.tsv", "dm_textbox_plain.tsv"
+    };
+
+    private static boolean checksum8(String text) {
+        if (text.length() != 8) return false;
+        for (int i = 0; i < 8; i++) {
+            char c = text.charAt(i);
+            if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) return false;
+        }
+        return true;
+    }
+
+    private static void validateStrings(File file) throws IOException {
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(
+                new FileInputStream(file), StandardCharsets.UTF_8))) {
+            String line;
+            int lines = 0;
+            while ((line = reader.readLine()) != null) {
+                lines++;
+                if (line.isEmpty()) continue;
+                String[] fields = line.split("\t", -1);
+                if (fields.length != 3 || fields[0].isEmpty() || !checksum8(fields[1]) || fields[2].isEmpty())
+                    throw new Failure("dmAndroidLaunchImportOverlay", "touch_strings.tsv line " + lines);
+            }
+            if (lines == 0) throw new Failure("dmAndroidLaunchImportOverlay", "touch_strings.tsv empty");
+        }
+    }
+
+    static void validateOverlay(File overlay) throws IOException {
+        if (overlay == null || !overlay.isDirectory())
+            throw new Failure("dmAndroidLaunchImportOverlay", "overlay directory missing");
+        File[] root = overlay.listFiles();
+        if (root == null) throw new Failure("dmAndroidLaunchImportOverlay", "cannot list overlay");
+        boolean marker = false, strings = false;
+        for (File child : root) {
+            if (child.getName().equals(OVERLAY_DATA) && child.isDirectory() && !Files.isSymbolicLink(child.toPath())) continue;
+            if (Files.isSymbolicLink(child.toPath()) || !child.isFile())
+                throw new Failure("dmAndroidLaunchImportOverlay", "non-regular " + child.getName());
+            boolean known = false;
+            for (String allowed : OVERLAY_ROOT_FILES) if (allowed.equals(child.getName())) known = true;
+            if (!known) throw new Failure("dmAndroidLaunchImportOverlay", "unsupported " + child.getName());
+            if (child.getName().equals(OVERLAY_MARKER)) {
+                marker = child.length() > 0;
+            } else if (child.getName().equals(OVERLAY_STRINGS)) {
+                strings = child.length() > 0;
+                if (strings) validateStrings(child);
+            }
+        }
+        if (!marker) throw new Failure("dmAndroidLaunchImportOverlay", "ctrl_touch missing or empty");
+        if (!strings) throw new Failure("dmAndroidLaunchImportOverlay", "touch_strings.tsv missing or empty");
+        File data = new File(overlay, OVERLAY_DATA);
+        if (!data.isDirectory() || Files.isSymbolicLink(data.toPath()))
+            throw new Failure("dmAndroidLaunchImportOverlay", "data directory missing");
+        File build = new File(data, OVERLAY_BUILD_CONFIG);
+        if (!build.isFile() || Files.isSymbolicLink(build.toPath()) || build.length() == 0)
+            throw new Failure("dmAndroidLaunchImportOverlay", "data/.build.config missing or empty");
+        int archives = 0;
+        File[] children = data.listFiles();
+        if (children == null) throw new Failure("dmAndroidLaunchImportOverlay", "cannot list overlay data");
+        for (File child : children) {
+            if (Files.isSymbolicLink(child.toPath()) || !child.isFile())
+                throw new Failure("dmAndroidLaunchImportOverlay", "non-regular data/" + child.getName());
+            if (child.getName().equals(OVERLAY_BUILD_CONFIG)) continue;
+            if (!child.getName().endsWith(".data") || child.length() == 0)
+                throw new Failure("dmAndroidLaunchImportOverlay", "unsupported data/" + child.getName());
+            archives++;
+        }
+        if (archives != 1)
+            throw new Failure("dmAndroidLaunchImportOverlay", "expected one .data archive, found " + archives);
+    }
+
+
     // 只读这 12 个文件（其中 marker 很小），不遍历资源、不删除任何东西。
     // Read-only readiness check for an installed package: manifest present, the twelve required files
     // present and each module's own target valid. Reads only these twelve files (markers are small),
@@ -210,12 +302,14 @@ final class PackageArchive {
     static Counts unpack(InputStream raw, File assets, File modules, long totalBytes, Sink sink,
                          ManifestReader reader) throws IOException {
         File staging = new File(modules.getParentFile(), modules.getName() + ".import");
+        File overlayStaging = new File(assets, OVERLAY + ".import");
         File manifest = new File(assets, MANIFEST);
         deleteTree(staging);
+        deleteTree(overlayStaging);
         if (manifest.isFile() && !manifest.delete()) throw new IOException("cannot clear " + manifest);
 
         byte[] manifestBytes = null;
-        int romfs = 0, shaders = 0, game = 0, entries = 0;
+        int romfs = 0, shaders = 0, game = 0, overlay = 0, entries = 0;
         long written = 0, lastReported = 0;
         byte[] buffer = new byte[1 << 20];
         try {
@@ -236,9 +330,14 @@ final class PackageArchive {
                     String category = category(name);
                     // game/ 剥掉前缀后落到暂存目录，其余原样落到外部目录。
                     // game/ drops its prefix and lands in the staging directory; everything else goes external.
-                    File destination = "game".equals(category)
-                        ? under(staging, name.substring("game/".length()))
-                        : under(assets, name);
+                    File destination;
+                    if ("game".equals(category)) {
+                        destination = under(staging, name.substring("game/".length()));
+                    } else if (OVERLAY.equals(category)) {
+                        destination = under(overlayStaging, name.substring("overlay/".length()));
+                    } else {
+                        destination = under(assets, name);
+                    }
                     File parent = destination.getParentFile();
                     if (parent != null && !parent.isDirectory() && !parent.mkdirs()) {
                         throw new IOException("cannot create " + parent);
@@ -251,6 +350,7 @@ final class PackageArchive {
                     if ("romfs".equals(category)) romfs++;
                     else if ("shaders".equals(category)) shaders++;
                     else if ("game".equals(category)) game++;
+                    else if (OVERLAY.equals(category)) overlay++;
                     if (totalBytes > 0 && written - lastReported > totalBytes / 100) {
                         lastReported = written;
                         sink.progress((int) Math.min(100, written * 100 / totalBytes));
@@ -304,11 +404,23 @@ final class PackageArchive {
             requireCount("romfs", declaration.romfs, romfs);
             requireCount("shaders", declaration.shaders, shaders);
 
+            if (overlay > 0) validateOverlay(overlayStaging);
             swap(staging, modules);
+            if (overlay > 0) {
+                swap(overlayStaging, new File(assets, OVERLAY));
+            } else {
+                deleteTree(overlayStaging);
+                // A successful valid package without the optional overlay
+                // retires any obsolete installed overlay only now, after the
+                // new package passed every required check. A failed import
+                // never reaches this branch and keeps the old overlay/modules.
+                retireOverlay(assets);
+            }
             writeManifest(manifest, manifestBytes);
-            return new Counts(romfs, shaders, game);
+            return new Counts(romfs, shaders, game, overlay);
         } catch (IOException error) {
             deleteTree(staging);          // 失败不留半个暂存目录 | no half-staging tree survives a failure
+            deleteTree(overlayStaging);
             throw error;
         }
     }
@@ -349,6 +461,13 @@ final class PackageArchive {
         }
         if (manifest.exists() && !manifest.delete()) throw new IOException("cannot replace " + manifest);
         if (!temporary.renameTo(manifest)) throw new IOException("cannot move " + temporary + " into place");
+    }
+
+    private static void retireOverlay(File assets) throws IOException {
+        File overlay = new File(assets, OVERLAY);
+        if (!overlay.exists()) return;
+        deleteTree(overlay);
+        if (overlay.exists()) throw new IOException("cannot retire obsolete overlay " + overlay);
     }
 
     private static void requireCount(String key, int declared, int extracted) throws IOException {

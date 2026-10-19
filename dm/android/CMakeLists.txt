@@ -1030,6 +1030,12 @@ if(NOT ANDROID)
     add_test(NAME fe_selection COMMAND dm_fe_selection_test)
     set_tests_properties(fe_selection PROPERTIES TIMEOUT 10)
 
+    add_executable(dm_touch_overlay_contract_test tests/touch_overlay_contract_test.c native/touch_overlay_contract.c)
+    target_include_directories(dm_touch_overlay_contract_test PRIVATE native)
+    target_compile_options(dm_touch_overlay_contract_test PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME touch_overlay_contract COMMAND dm_touch_overlay_contract_test)
+    set_tests_properties(touch_overlay_contract PROPERTIES TIMEOUT 10)
+
     add_executable(dm_texture_deswizzle_formats_test tests/texture_deswizzle_formats_test.c ../gfx/nvn/nvn_tex.c ../gfx/tex/nvn_deswizzle.c)
     target_include_directories(dm_texture_deswizzle_formats_test PRIVATE native ../gfx/nvn ../gfx/tex)
     target_compile_options(dm_texture_deswizzle_formats_test PRIVATE -Wall -Wextra -Werror)
