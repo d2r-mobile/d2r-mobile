@@ -118,9 +118,28 @@ static shader_entry *shader_load_by_key(const char *key,int stats,int fatal) {
     // 无关 feature 失败，不支持时在加载该模块处准确拒绝。
     // Only modules that actually use this capability require it to be enabled;
     // unrelated shaders do not fail, and unsupported modules are rejected here.
-    if(dm_nvn_spirv_uses_shader_draw_parameters(code,bytes)&&
-       !dm_vk_driver_require_shader_draw_parameters(&vk_api,1))
-        die("Vulkan shader %s requires shaderDrawParameters: %s",key,dm_vk_driver_error(&vk_api));
+    dm_nvn_shader_feature_status required = dm_nvn_shader_feature_decision(
+        code, bytes, gpu_features.tessellationShader, gpu_features.multiViewport,
+        gpu_features.shaderStorageImageWriteWithoutFormat,
+        vk_api.shader_draw_parameters_supported && vk_api.shader_draw_parameters_prepared);
+    switch (required) {
+    case DM_NVN_SHADER_FEATURE_OK:
+        break;
+    case DM_NVN_SHADER_FEATURE_NEED_DRAW_PARAMETERS:
+        if (!dm_vk_driver_require_shader_draw_parameters(&vk_api, 1))
+            die("Vulkan shader %s requires shaderDrawParameters: %s", key, dm_vk_driver_error(&vk_api));
+        break;
+    case DM_NVN_SHADER_FEATURE_TESS_UNSUPPORTED:
+        die("Vulkan shader %s requires tessellationShader but it is unsupported", key);
+    case DM_NVN_SHADER_FEATURE_TESS_PIPELINE_PENDING:
+        // 功能可启用不等于本后端已有 tessellation 阶段/pipeline；明确拒绝并保留后续依赖。
+        // Feature enablement is not a tessellation pipeline; reject explicitly and leave that dependency open.
+        die("Vulkan shader %s declares Tessellation capability, but tessellation pipeline stages are not implemented", key);
+    case DM_NVN_SHADER_FEATURE_STORAGE_WRITE_UNSUPPORTED:
+        die("Vulkan shader %s requires StorageImageWriteWithoutFormat but it is unsupported", key);
+    case DM_NVN_SHADER_FEATURE_MULTIVIEW_UNSUPPORTED:
+        die("Vulkan shader %s requires multiViewport but it is unsupported", key);
+    }
 #endif
     shader_entry *s=calloc(1,sizeof *s);if(!s)die("Vulkan shader allocation");strcpy(s->key,key);s->stage=meta[2];s->set=meta[3];s->count=meta[4];s->c1_size=meta[5];s->bindings=(void*)(meta+7);s->c1=(uint8_t*)s->bindings+s->count*40;memcpy(s->attributes,s->c1+s->c1_size,128);
     VkShaderModuleCreateInfo mi={.sType=VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,.codeSize=bytes,.pCode=code};VK_CHECK(vkCreateShaderModule(device,&mi,NULL,&s->module));free(code);

@@ -23,10 +23,17 @@ static int is_subgroup(const VkBaseInStructure *node) {
 int main(void) {
     uint32_t required[7] = {0x07230203u, 0x00010000u, 0, 0, 0, (2u << 16) | 17u, 4427u};
     uint32_t unrelated[7] = {0x07230203u, 0x00010000u, 0, 0, 0, (2u << 16) | 17u, 1u};
+    uint32_t tess[7] = {0x07230203u, 0x00010000u, 0, 0, 0, (2u << 16) | 17u, 3u};
+    uint32_t storage_write[7] = {0x07230203u, 0x00010000u, 0, 0, 0, (2u << 16) | 17u, 56u};
+    uint32_t multiview[7] = {0x07230203u, 0x00010000u, 0, 0, 0, (2u << 16) | 17u, 57u};
     CHECK(dm_nvn_spirv_uses_shader_draw_parameters(required, sizeof required));
     CHECK(!dm_nvn_spirv_uses_shader_draw_parameters(unrelated, sizeof unrelated));
     CHECK(!dm_nvn_spirv_uses_shader_draw_parameters(required, 16));
     CHECK(!dm_nvn_spirv_uses_shader_draw_parameters(NULL, 0));
+    CHECK(dm_nvn_spirv_has_capability(tess, sizeof tess, 3u));
+    CHECK(dm_nvn_spirv_has_capability(storage_write, sizeof storage_write, 56u));
+    CHECK(dm_nvn_spirv_has_capability(multiview, sizeof multiview, 57u));
+    CHECK(!dm_nvn_spirv_has_capability(tess, sizeof tess, 57u));
 
     // Supported: the queried feature must be an actual node in the device chain.
     dm_vk_driver supported = {0};
