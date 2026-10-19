@@ -28,6 +28,7 @@ SRC=\
 	loader.c \
 	main.c \
 	memstat.m \
+	module_identity.c \
 	romfs_validate.c \
 	dm_actions.c \
 	dm_autobuff.c \

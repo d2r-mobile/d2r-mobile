@@ -425,6 +425,10 @@ static void map_image(module_t *m, const char *dir) {
 #endif
 
 void load_modules(const char *dir, const char **names, int n) {
+    // A new load invalidates the previous immutable snapshot before g_mod is
+    // touched. The caller thread may query during this window and must see
+    // unavailable, never a half-updated module table.
+    dm_module_identity_invalidate();
     // 先全部映射并解析符号表，再统一重定位（跨模块符号要先都在位）
     // DM_BOOTPROF：① 宿主装载细分（毫秒），定 ③ 预重定位 / mmap 的上限
     // Map everything and parse the symbol tables first, then relocate all at once (cross-module symbols must all be in place first)
@@ -449,6 +453,11 @@ void load_modules(const char *dir, const char **names, int n) {
     t = now_ns(); for (int i = 0; i < g_nmod; i++) relocate(&g_mod[i]); tr = now_ns() - t;
     force_check();
     { void hlecount_seal(void); hlecount_seal(); }   // DM_HLECOUNT：重定位完成，计数桩页封成只读可执行 | DM_HLECOUNT: relocation done, seal the counting stub pages as read-only executable
+    // Successful-load boundary: code/ro/data are parsed and relocated; base and
+    // size are immutable from here. Publish a copied snapshot only now. DT_INIT
+    // runs later and does not change this code identity.
+    if (!dm_module_identity_publish(g_mod, n))
+        LOG("module identity unavailable: loader metadata publication failed");
     if (getenv("DM_SYMCHECK")) LOG("DM_SYMCHECK：装载期共核 %lu 次符号查询，哈希与线性不一致 %lu", g_symchk_n, g_symchk_bad);
     if (g_flag.bootprof) LOG("① 细分：映射（读 + 拷 + 封页）%.1f ms、解析动态段 %.1f ms、门注册 %.1f ms、重定位 + 强制接管 %.1f ms，合计 %.1f ms",
                              tm / 1e6, tp / 1e6, tg / 1e6, tr / 1e6, (now_ns() - t0) / 1e6);
