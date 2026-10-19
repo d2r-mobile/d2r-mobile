@@ -2,7 +2,7 @@
 
 **在 iPhone、iPad 和 Apple 芯片 Mac 上离线玩《暗黑破坏神 II：狱火重生》。** 原版程序原生执行，图形走 Metal，支持触屏，包含「术士君临」资料片。需要你自己的 Nintendo Switch 版游戏文件。
 
-**[构建与安装](../README.zh-CN.md#开始使用)** · [支持哪些设备](../README.zh-CN.md#支持哪些设备) · [发布页](https://github.com/d2r-mobile/d2r-mobile/releases) · [English](README.md)
+**[构建与安装](../README.zh-CN.md#开始使用)** · [支持哪些设备](../README.zh-CN.md#支持哪些设备) · [发布页](https://github.com/d2r-mobile/d2r-mobile/releases) · [English](README.md) · [Español](../README.es.md)
 
 <p align="center">
   <img src="https://github.com/d2r-mobile/d2r-mobile/releases/download/assets/hero_zh.jpg" width="100%" alt="iPhone 上原生运行的《暗黑破坏神 II：狱火重生》：哈洛加斯与通往秘境的红门">
@@ -21,7 +21,7 @@
 - **大秘境：** 100 层限时挑战、秘境守卫与奖励；技能上限从 20 提高到 40。
 - **首领连战：** 12 关，最后两关是 Diablo Clone 和超级三首领。
 - **收藏与储藏：** 可搜索的暗金、套装编年史，更宽的储藏箱，符文、宝石与合成放在同一页。
-- **中文与英文：** 在游戏设置里切换界面和语音。
+- **中文、英文与西班牙语：** 在游戏设置里切换界面语言。西语界面使用英文语音。
 
 <p align="center">
   <img src="https://github.com/d2r-mobile/d2r-mobile/releases/download/assets/touch.jpg" width="49%" alt="iPhone 上《暗黑破坏神 II：狱火重生》的触屏战斗，首领血条置顶">

@@ -4,7 +4,7 @@
 
 Esto no es una demo técnica que «más o menos funciona». Es una versión móvil pulida para jugar a diario, desde tu primer personaje hasta el contenido de fin de juego.
 
-Plataformas: iPhone / iPad (iOS 26 o posterior; iOS 18 – 25 con la compilación para API antiguas) · Mac (Apple silicon, macOS 26 o posterior; macOS 15 – 25 con la compilación para API antiguas) · Apple TV 4K (3.ª generación, A15; port de la comunidad, versión preliminar para desarrolladores) · Versión del juego: edición de Switch con Reign of the Warlock, 1.0.34.0 (corresponde a la versión de PC 3.3.94012) · English / 中文 · Licencia: MIT · **Aporta tus propios archivos del juego**
+Plataformas: iPhone / iPad (iOS 26 o posterior; iOS 18 – 25 con la compilación para API antiguas) · Mac (Apple silicon, macOS 26 o posterior; macOS 15 – 25 con la compilación para API antiguas) · Apple TV 4K (3.ª generación, A15; port de la comunidad, versión preliminar para desarrolladores) · Versión del juego: edición de Switch con Reign of the Warlock, 1.0.34.0 (corresponde a la versión de PC 3.3.94012) · Español / English / 中文 · Licencia: MIT · **Aporta tus propios archivos del juego**
 
 English: [README.md](README.md) · 中文: [README.zh-CN.md](README.zh-CN.md)
 
@@ -120,8 +120,8 @@ Se entra por el portal rojo de Harrogath tras completar Infierno. Hay 100 nivele
 - **Kill Board** (tablero de muertes): para cada jefe, el número de muertes, la hora de la primera muerte, cuántos objetos únicos y de conjunto ha soltado, y tus tiempos de muerte mejor y promedio.
 
 <p align="center">
-  <img src="https://github.com/d2r-mobile/d2r-mobile/releases/download/assets/en_killboard.jpg" width="49%" alt="El Kill Board">
-  <img src="https://github.com/d2r-mobile/d2r-mobile/releases/download/assets/en_mode_select.jpg" width="49%" alt="Elección del modo Elysium al crear el personaje">
+  <img src="https://github.com/d2r-mobile/d2r-mobile/releases/download/assets/es_killboard.jpg" width="49%" alt="El Kill Board">
+  <img src="https://github.com/d2r-mobile/d2r-mobile/releases/download/assets/es_mode_select.jpg" width="49%" alt="Elección del modo Elysium al crear el personaje">
 </p>
 
 ### Almacenamiento: el paraíso del coleccionista
@@ -133,7 +133,7 @@ Se entra por el portal rojo de Harrogath tras completar Infierno. Hay 100 nivele
 
 <p align="center">
   <img src="https://github.com/d2r-mobile/d2r-mobile/releases/download/assets/en_trove.jpg" width="49%" alt="El Trove: gemas, runas, materiales y la cuadrícula de creación en una sola página">
-  <img src="https://github.com/d2r-mobile/d2r-mobile/releases/download/assets/en_chronicle.jpg" width="49%" alt="El alijo Chronicle">
+  <img src="https://github.com/d2r-mobile/d2r-mobile/releases/download/assets/es_chronicle.jpg" width="49%" alt="El alijo Chronicle">
 </p>
 
 ### Farmeo sin esfuerzo
@@ -153,17 +153,17 @@ Se entra por el portal rojo de Harrogath tras completar Infierno. Hay 100 nivele
 La mayoría de las funciones se pueden activar o desactivar una por una en el juego, en Options → Custom.
 
 <p align="center">
-  <img src="https://github.com/d2r-mobile/d2r-mobile/releases/download/assets/en_runeword.jpg" width="32%" alt="El asistente de palabras rúnicas">
-  <img src="https://github.com/d2r-mobile/d2r-mobile/releases/download/assets/en_map_goal.jpg" width="33%" alt="El objetivo de misión indicado bajo el nombre de la zona, junto al minimapa">
+  <img src="https://github.com/d2r-mobile/d2r-mobile/releases/download/assets/es_runeword.jpg" width="32%" alt="El asistente de palabras rúnicas">
+  <img src="https://github.com/d2r-mobile/d2r-mobile/releases/download/assets/es_map_goal.jpg" width="33%" alt="El objetivo de misión indicado bajo el nombre de la zona, junto al minimapa">
   <img src="https://github.com/d2r-mobile/d2r-mobile/releases/download/assets/en_map.jpg" width="33%" alt="El mapa a pantalla completa">
 </p>
 
-### Inglés y chino
+### Español, inglés y chino
 
-Todo el juego cambia entre inglés y chino en Options → Custom; tras reiniciar, tanto la interfaz como las voces están en el idioma que elegiste. En inglés, los objetos, las habilidades y los monstruos usan la terminología original de Diablo II, y todo lo que añadimos —Greater Rift, Chronicle, la página de ajustes, las indicaciones del mando— también está en inglés.
+Todo el juego cambia entre español, inglés y chino en Opciones → Extras; tras reiniciar, la interfaz queda en el idioma que elegiste. La primera vez que lo abres sigue el idioma de tu dispositivo (el español de España usa los textos esES del juego y el de otras regiones, los textos latinoamericanos esMX). En español, los objetos, las habilidades y los monstruos usan la terminología oficial del juego, y todo lo que añadimos —Grieta superior, Crónica, la página de ajustes, las indicaciones del mando y las notas de objetos— también está en español. Las voces quedan en inglés: el paquete solo incluye voces en chino e inglés.
 
 <p align="center">
-  <img src="https://github.com/d2r-mobile/d2r-mobile/releases/download/assets/en_game.jpg" width="58%" alt="Partida con la interfaz en inglés">
+  <img src="https://github.com/d2r-mobile/d2r-mobile/releases/download/assets/es_game.jpg" width="58%" alt="Partida con la interfaz en español">
   <img src="https://github.com/d2r-mobile/d2r-mobile/releases/download/assets/rift_panel_zh.jpg" width="40%" alt="El mismo panel de la Greater Rift en chino">
 </p>
 
