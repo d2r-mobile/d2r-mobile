@@ -462,6 +462,10 @@ if(DM_ANDROID_VULKAN)
     target_include_directories(dm_android_touch_hud_swapchain PUBLIC runtime vulkan)
     target_link_libraries(dm_android_touch_hud_swapchain PUBLIC dm_android_touch_hud dm_android_vk)
     target_compile_options(dm_android_touch_hud_swapchain PRIVATE -Wall -Wextra -Werror)
+    add_library(dm_android_diag_scene_swapchain STATIC app/diagnostic_scene_swapchain.c)
+    target_include_directories(dm_android_diag_scene_swapchain PUBLIC app runtime vulkan)
+    target_link_libraries(dm_android_diag_scene_swapchain PUBLIC dm_android_app_scene dm_android_touch_hud_swapchain dm_android_vk)
+    target_compile_options(dm_android_diag_scene_swapchain PRIVATE -Wall -Wextra -Werror)
     add_executable(dm_touch_hud_swapchain_test tests/touch_hud_swapchain.c vulkan/vk_swapchain.c runtime/touch_hud_swapchain.c runtime/touch_hud.c)
     target_include_directories(dm_touch_hud_swapchain_test PRIVATE runtime ../ios/Sources vulkan)
     target_compile_options(dm_touch_hud_swapchain_test PRIVATE -Wall -Wextra -Werror)
@@ -542,6 +546,64 @@ if(DM_ANDROID_VULKAN)
     else()
         add_test(NAME touch_hud_swapchain COMMAND dm_touch_hud_swapchain_test)
         set_tests_properties(touch_hud_swapchain PROPERTIES TIMEOUT 60)
+        if(NOT ANDROID)
+            add_executable(dm_scene_hud_swapchain_test
+                tests/scene_hud_swapchain.c vulkan/vk_swapchain.c
+                runtime/touch_hud_swapchain.c runtime/touch_hud.c
+                app/diagnostic_scene_swapchain.c)
+            target_include_directories(dm_scene_hud_swapchain_test PRIVATE
+                app runtime ../ios/Sources vulkan)
+            target_compile_options(dm_scene_hud_swapchain_test PRIVATE -Wall -Wextra -Werror)
+            target_compile_definitions(dm_scene_hud_swapchain_test PRIVATE
+                DM_TOUCH_HUD_GEOMETRY_ONLY DM_TOUCH_HUD_TEST_CALLOC=hud_test_calloc)
+            target_link_libraries(dm_scene_hud_swapchain_test PRIVATE
+                dm_android_app_scene dm_android_touch_core m)
+            foreach(symbol vkGetPhysicalDeviceSurfaceCapabilitiesKHR vkGetPhysicalDeviceSurfaceFormatsKHR
+                vkGetPhysicalDeviceSurfacePresentModesKHR vkGetPhysicalDeviceFormatProperties vkCreateSwapchainKHR
+                vkGetSwapchainImagesKHR vkDestroySwapchainKHR vkCreateRenderPass vkDestroyRenderPass vkCreateImageView
+                vkDestroyImageView vkCreateFramebuffer vkDestroyFramebuffer vkAllocateCommandBuffers vkFreeCommandBuffers
+                vkBeginCommandBuffer vkCmdEndRenderPass vkEndCommandBuffer vkCreateSemaphore
+                vkDestroySemaphore vkCreateFence vkDestroyFence vkWaitForFences vkResetFences vkQueueWaitIdle
+                vkDeviceWaitIdle vkAcquireNextImageKHR vkQueueSubmit vkQueuePresentKHR
+                vkCreatePipelineLayout vkDestroyPipelineLayout vkCreateGraphicsPipelines vkDestroyPipeline
+                vkDestroyShaderModule vkCmdBindPipeline vkCmdBindVertexBuffers vkCmdSetViewport vkCmdSetScissor
+                vkCmdPushConstants vkCreateDescriptorSetLayout vkDestroyDescriptorSetLayout
+                vkCreateDescriptorPool vkDestroyDescriptorPool vkAllocateDescriptorSets vkUpdateDescriptorSets
+                vkCmdBindDescriptorSets vkCmdBindIndexBuffer)
+                target_compile_definitions(dm_scene_hud_swapchain_test PRIVATE ${symbol}=test_${symbol})
+            endforeach()
+            target_include_directories(dm_scene_hud_swapchain_test PRIVATE ${Vulkan_INCLUDE_DIRS})
+            add_test(NAME scene_hud_swapchain COMMAND dm_scene_hud_swapchain_test)
+            set_tests_properties(scene_hud_swapchain PROPERTIES TIMEOUT 60)
+            foreach(mutant_def DM_SCENE_MUTANT_NO_DRAW DM_SCENE_MUTANT_NO_CLEAR)
+                string(TOLOWER "${mutant_def}" mutant_suffix)
+                add_executable(dm_scene_hud_swapchain_${mutant_suffix}_test
+                    tests/scene_hud_swapchain.c vulkan/vk_swapchain.c
+                    runtime/touch_hud_swapchain.c runtime/touch_hud.c
+                    app/diagnostic_scene_swapchain.c)
+                target_include_directories(dm_scene_hud_swapchain_${mutant_suffix}_test PRIVATE
+                    app runtime ../ios/Sources vulkan ${Vulkan_INCLUDE_DIRS})
+                target_compile_options(dm_scene_hud_swapchain_${mutant_suffix}_test PRIVATE -Wall -Wextra -Werror)
+                target_compile_definitions(dm_scene_hud_swapchain_${mutant_suffix}_test PRIVATE
+                    DM_TOUCH_HUD_GEOMETRY_ONLY DM_TOUCH_HUD_TEST_CALLOC=hud_test_calloc ${mutant_def})
+                target_link_libraries(dm_scene_hud_swapchain_${mutant_suffix}_test PRIVATE
+                    dm_android_app_scene dm_android_touch_core m)
+                foreach(symbol vkGetPhysicalDeviceSurfaceCapabilitiesKHR vkGetPhysicalDeviceSurfaceFormatsKHR
+                    vkGetPhysicalDeviceSurfacePresentModesKHR vkGetPhysicalDeviceFormatProperties vkCreateSwapchainKHR
+                    vkGetSwapchainImagesKHR vkDestroySwapchainKHR vkCreateRenderPass vkDestroyRenderPass vkCreateImageView
+                    vkDestroyImageView vkCreateFramebuffer vkDestroyFramebuffer vkAllocateCommandBuffers vkFreeCommandBuffers
+                    vkBeginCommandBuffer vkCmdEndRenderPass vkEndCommandBuffer vkCreateSemaphore
+                    vkDestroySemaphore vkCreateFence vkDestroyFence vkWaitForFences vkResetFences vkQueueWaitIdle
+                    vkDeviceWaitIdle vkAcquireNextImageKHR vkQueueSubmit vkQueuePresentKHR
+                    vkCreatePipelineLayout vkDestroyPipelineLayout vkCreateGraphicsPipelines vkDestroyPipeline
+                    vkDestroyShaderModule vkCmdBindPipeline vkCmdBindVertexBuffers vkCmdSetViewport vkCmdSetScissor
+                    vkCmdPushConstants vkCreateDescriptorSetLayout vkDestroyDescriptorSetLayout
+                    vkCreateDescriptorPool vkDestroyDescriptorPool vkAllocateDescriptorSets vkUpdateDescriptorSets
+                    vkCmdBindDescriptorSets vkCmdBindIndexBuffer)
+                    target_compile_definitions(dm_scene_hud_swapchain_${mutant_suffix}_test PRIVATE ${symbol}=test_${symbol})
+                endforeach()
+            endforeach()
+        endif()
         add_test(NAME touch_hud_offscreen COMMAND dm_touch_hud_test
             ${dm_hud_vert} ${dm_hud_frag} ${CMAKE_CURRENT_BINARY_DIR}/touch-hud-artifacts)
         set_tests_properties(touch_hud_offscreen PROPERTIES TIMEOUT 90 SKIP_RETURN_CODE 77)
@@ -645,9 +707,9 @@ if(ANDROID)
     if(DM_ANDROID_VULKAN)
         add_library(dm_android_app SHARED app/native.c app/native_audio.c)
         target_compile_options(dm_android_app PRIVATE -Wall -Wextra -Werror)
-        target_link_libraries(dm_android_app PRIVATE dm_android_app_lifecycle dm_android_app_scene dm_android_app_wsi dm_android_wsi_frame dm_android_touch_bridge dm_android_input_source dm_android_gamepad_events dm_android_view_policy dm_android_input_policy dm_android_touch dm_android_runtime dm_android_artifact dm_android_vk dm_android_touch_hud dm_android_touch_hud_swapchain dm_android_app_audio_session android log)
+        target_link_libraries(dm_android_app PRIVATE dm_android_app_lifecycle dm_android_app_scene dm_android_app_wsi dm_android_wsi_frame dm_android_touch_bridge dm_android_input_source dm_android_gamepad_events dm_android_view_policy dm_android_input_policy dm_android_touch dm_android_runtime dm_android_artifact dm_android_vk dm_android_touch_hud dm_android_touch_hud_swapchain dm_android_diag_scene_swapchain dm_android_app_audio_session android log)
         target_link_options(dm_android_app PRIVATE "-Wl,-z,max-page-size=16384")
-        add_dependencies(dm_android_app dm_touch_hud_shaders)
+        add_dependencies(dm_android_app dm_touch_hud_shaders dm_vk_indexed_shaders)
         add_custom_command(TARGET dm_android_app POST_BUILD
             COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/tests/bridge_shared.sh"
                 "${CMAKE_READELF}" "${CMAKE_OBJDUMP}" "$<TARGET_FILE:dm_android_app>"

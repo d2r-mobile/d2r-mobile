@@ -167,6 +167,9 @@ static int hud_failure_case(int shader_fail, int pipeline_fail, int array_fail, 
     return 0;
 }
 
+#if defined(DM_SCENE_TEST_INCLUDE)
+#define main dm_hud_existing_main
+#endif
 int main(void) {
     reset();
     hud_reset();

@@ -152,9 +152,9 @@ VkResult dm_touch_hud_swapchain_reconfigure(dm_vk *vk, const dm_vk_swapchain *ch
     return dm_touch_hud_swapchain_create(vk, chain, vertex_spv, fragment_spv, presenter);
 }
 
-VkResult dm_touch_hud_swapchain_record(dm_vk *vk, const dm_vk_swapchain *chain,
-                                       dm_touch_hud_swapchain *presenter,
-                                       const dm_touch_hud_snapshot *snapshot, int overlay)
+static VkResult hud_record_draw(dm_vk *vk, const dm_vk_swapchain *chain,
+                                dm_touch_hud_swapchain *presenter,
+                                const dm_touch_hud_snapshot *snapshot, int overlay)
 {
     if (!vk || !vk->device || !chain || !presenter || !snapshot || !presenter->ready ||
         !chain->acquired || chain->submitted || !chain->commands || !chain->framebuffers ||
@@ -184,15 +184,6 @@ VkResult dm_touch_hud_swapchain_record(dm_vk *vk, const dm_vk_swapchain *chain,
     if (result != VK_SUCCESS) return result;
 
     VkCommandBuffer command = chain->commands[image];
-    VkCommandBufferBeginInfo begin = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
-    result = vkBeginCommandBuffer(command, &begin);
-    if (result != VK_SUCCESS) return result;
-    VkClearValue clear = {.color = chain->clear};
-    VkRenderPassBeginInfo pass = {.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
-        .renderPass = chain->render_pass, .framebuffer = chain->framebuffers[image],
-        .renderArea = {{0, 0}, chain->extent}, .clearValueCount = 1, .pClearValues = &clear};
-    vkCmdBeginRenderPass(command, &pass, VK_SUBPASS_CONTENTS_INLINE);
     vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_GRAPHICS, presenter->pipeline);
     VkDeviceSize offset = 0;
     vkCmdBindVertexBuffers(command, 0, 1, &buffer->handle, &offset);
@@ -205,8 +196,38 @@ VkResult dm_touch_hud_swapchain_record(dm_vk *vk, const dm_vk_swapchain *chain,
     vkCmdPushConstants(command, presenter->pipeline_layout, VK_SHADER_STAGE_FRAGMENT_BIT,
                        0, sizeof dims, dims);
     vkCmdDraw(command, count, 1, 0, 0);
+    return VK_SUCCESS;
+}
+
+VkResult dm_touch_hud_swapchain_record_in_pass(dm_vk *vk, const dm_vk_swapchain *chain,
+                                               dm_touch_hud_swapchain *presenter,
+                                               const dm_touch_hud_snapshot *snapshot, int overlay)
+{
+    return hud_record_draw(vk, chain, presenter, snapshot, overlay);
+}
+
+VkResult dm_touch_hud_swapchain_record(dm_vk *vk, const dm_vk_swapchain *chain,
+                                       dm_touch_hud_swapchain *presenter,
+                                       const dm_touch_hud_snapshot *snapshot, int overlay)
+{
+    if (!vk || !vk->device || !chain || !presenter || !chain->acquired || chain->submitted ||
+        !chain->commands || !chain->framebuffers || chain->image_index >= chain->image_count)
+        return VK_ERROR_INITIALIZATION_FAILED;
+    uint32_t image = chain->image_index;
+    VkCommandBuffer command = chain->commands[image];
+    VkCommandBufferBeginInfo begin = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
+    VkResult result = vkBeginCommandBuffer(command, &begin);
+    if (result != VK_SUCCESS) return result;
+    VkClearValue clear = {.color = chain->clear};
+    VkRenderPassBeginInfo pass = {.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+        .renderPass = chain->render_pass, .framebuffer = chain->framebuffers[image],
+        .renderArea = {{0, 0}, chain->extent}, .clearValueCount = 1, .pClearValues = &clear};
+    vkCmdBeginRenderPass(command, &pass, VK_SUBPASS_CONTENTS_INLINE);
+    result = hud_record_draw(vk, chain, presenter, snapshot, overlay);
     vkCmdEndRenderPass(command);
-    return vkEndCommandBuffer(command);
+    VkResult end = vkEndCommandBuffer(command);
+    return result == VK_SUCCESS ? end : result;
 }
 
 void dm_touch_hud_swapchain_destroy(dm_vk *vk, dm_touch_hud_swapchain *presenter)

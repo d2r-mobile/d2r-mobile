@@ -22,6 +22,7 @@ FUNCTIONS = ["wsi_open", "wsi_record_hud", "wsi_acquire", "wsi_submit", "wsi_pre
 PRELUDE = r'''
 #include "touch_hud.h"
 #include "touch_hud_swapchain.h"
+#include "diagnostic_scene_swapchain.h"
 #include "wsi_report.h"
 #include "wsi_frame_result.h"
 #include "view_policy.h"
@@ -36,18 +37,19 @@ typedef struct {
     dm_vk wsi_vk;
     dm_vk_swapchain wsi_chain;
     dm_touch_hud_swapchain wsi_hud;
+    dm_diag_scene_swapchain wsi_scene;
     dm_wsi_report report;
     dm_android_touch_observation hud_obs;
     dm_view_policy view;
     float density;
-    char hud_vertex[4096], hud_fragment[4096];
+    char hud_vertex[4096], hud_fragment[4096], scene_vertex[4096], scene_fragment[4096];
     void *activity;
-    int hud_obs_valid, wsi_chain_live, wsi_hud_live, wsi_hud_failed;
+    int hud_obs_valid, wsi_chain_live, wsi_hud_live, wsi_scene_live, wsi_hud_failed;
 } app_state;
 
 static int acquire_calls, record_calls, submit_calls, present_calls, presenter_record_result = 1;
-static int copy_fail, presenter_create_fail, presenter_create_calls, swapchain_create_calls;
-static int record_fail, chain_destroy_fail, chain_destroys, presenter_destroys, device_destroys;
+static int copy_fail, presenter_create_fail, presenter_create_calls, scene_create_fail, scene_create_calls, swapchain_create_calls;
+static int chain_destroy_fail, chain_destroys, scene_destroys, presenter_destroys, device_destroys;
 static int destroy_order;
 
 static void touch_refresh_hud(app_state *s) { (void)s; }
@@ -67,6 +69,24 @@ VkResult dm_touch_hud_swapchain_create(dm_vk *vk, const dm_vk_swapchain *chain,
     const char *vertex, const char *fragment, dm_touch_hud_swapchain *out) {
     (void)vk; (void)chain; (void)vertex; (void)fragment; memset(out, 0, sizeof *out);
     presenter_create_calls++; return presenter_create_fail ? VK_ERROR_INITIALIZATION_FAILED : VK_SUCCESS;
+}
+VkResult dm_diag_scene_swapchain_create(dm_vk *vk, const dm_vk_swapchain *chain,
+    const char *vertex, const char *fragment, dm_diag_scene_swapchain *out) {
+    (void)vk; (void)chain; (void)vertex; (void)fragment; memset(out, 0, sizeof *out);
+    scene_create_calls++; return scene_create_fail ? VK_ERROR_INITIALIZATION_FAILED : VK_SUCCESS;
+}
+VkResult dm_diag_scene_swapchain_record(dm_vk *vk, const dm_vk_swapchain *chain,
+    dm_diag_scene_swapchain *scene, const dm_touch_hud_snapshot *snapshot,
+    dm_touch_hud_swapchain *hud, int overlay) {
+    (void)vk; (void)chain; (void)scene; (void)overlay;
+    if (!snapshot || !hud || snapshot->pixel_width != chain->extent.width ||
+        snapshot->pixel_height != chain->extent.height)
+        return VK_ERROR_INITIALIZATION_FAILED;
+    record_calls++; return presenter_record_result ? VK_SUCCESS : VK_ERROR_INITIALIZATION_FAILED;
+}
+void dm_diag_scene_swapchain_destroy(dm_vk *vk, dm_diag_scene_swapchain *scene) {
+    (void)vk; if (scene) memset(scene, 0, sizeof *scene);
+    scene_destroys++; destroy_order = destroy_order * 10 + 2;
 }
 void dm_wsi_report_negotiated(dm_wsi_report *r, uint32_t w, uint32_t h, int f, int pm, uint32_t n, int m) {
     (void)r; (void)w; (void)h; (void)f; (void)pm; (void)n; (void)m;
@@ -99,9 +119,9 @@ VkResult dm_vk_swapchain_destroy(dm_vk *vk, dm_vk_swapchain *chain) {
     return chain_destroy_fail ? VK_ERROR_DEVICE_LOST : VK_SUCCESS;
 }
 void dm_touch_hud_swapchain_destroy(dm_vk *vk, dm_touch_hud_swapchain *p) {
-    (void)vk; (void)p; presenter_destroys++; destroy_order = destroy_order * 10 + 2;
+    (void)vk; (void)p; presenter_destroys++; destroy_order = destroy_order * 10 + 3;
 }
-void dm_vk_destroy(dm_vk *vk) { (void)vk; device_destroys++; destroy_order = destroy_order * 10 + 3; }
+void dm_vk_destroy(dm_vk *vk) { (void)vk; device_destroys++; destroy_order = destroy_order * 10 + 4; }
 void dm_wsi_report_note_stage(dm_wsi_report *r, dm_wsi_stage stage, int code) {
     (void)r; (void)stage; (void)code;
 }
@@ -122,10 +142,10 @@ static void reset_state(app_state *s) {
     s->wsi_chain.extent.width = 640; s->wsi_chain.extent.height = 480;
     s->wsi_chain.image_count = 3;
     s->wsi_vk.device = (VkDevice)(uintptr_t)1;
-    s->wsi_chain_live = 1; s->wsi_hud_live = 1;
-    acquire_calls = record_calls = submit_calls = present_calls = chain_destroys = presenter_destroys = device_destroys = 0;
-    copy_fail = presenter_create_fail = 0; presenter_create_calls = swapchain_create_calls = 0;
-    chain_destroy_fail = 0; presenter_record_result = 1; record_fail = 0;
+    s->wsi_chain_live = 1; s->wsi_hud_live = 1; s->wsi_scene_live = 1;
+    acquire_calls = record_calls = submit_calls = present_calls = chain_destroys = scene_destroys = presenter_destroys = device_destroys = 0;
+    copy_fail = presenter_create_fail = scene_create_fail = 0; presenter_create_calls = scene_create_calls = swapchain_create_calls = 0;
+    chain_destroy_fail = 0; presenter_record_result = 1;
     destroy_order = 0;
 }
 '''
@@ -136,21 +156,29 @@ int main(void) {
     reset_state(&s);
     s.wsi_chain_live = s.wsi_hud_live = 0;
     CHECK(wsi_open(&s, NULL, 640, 480) == 0);
-    CHECK(s.wsi_chain_live && s.wsi_hud_live && presenter_create_calls == 1);
+    CHECK(s.wsi_chain_live && s.wsi_hud_live && s.wsi_scene_live &&
+          presenter_create_calls == 1 && scene_create_calls == 1);
 
     reset_state(&s);
-    s.wsi_chain_live = s.wsi_hud_live = 0;
+    s.wsi_chain_live = s.wsi_hud_live = s.wsi_scene_live = 0;
     copy_fail = 1;
     CHECK(wsi_open(&s, NULL, 640, 480) == DM_WSI_ERROR);
     CHECK(chain_destroys == 1 && device_destroys == 1 && presenter_create_calls == 0);
     CHECK(!s.wsi_chain_live && !s.wsi_hud_live);
 
     reset_state(&s);
-    s.wsi_chain_live = s.wsi_hud_live = 0;
+    s.wsi_chain_live = s.wsi_hud_live = s.wsi_scene_live = 0;
     presenter_create_fail = 1;
     CHECK(wsi_open(&s, NULL, 640, 480) == DM_WSI_ERROR);
     CHECK(chain_destroys == 1 && device_destroys == 1 && presenter_create_calls == 1);
     CHECK(!s.wsi_chain_live && !s.wsi_hud_live);
+
+    reset_state(&s);
+    s.wsi_chain_live = s.wsi_hud_live = s.wsi_scene_live = 0;
+    scene_create_fail = 1;
+    CHECK(wsi_open(&s, NULL, 640, 480) == DM_WSI_ERROR);
+    CHECK(chain_destroys == 1 && presenter_destroys == 1 && device_destroys == 1);
+    CHECK(!s.wsi_chain_live && !s.wsi_hud_live && !s.wsi_scene_live);
 
     reset_state(&s);
     CHECK(wsi_frame(&s) == DM_WSI_OK);
@@ -173,14 +201,14 @@ int main(void) {
     reset_state(&s);
     chain_destroy_fail = 1;
     CHECK(wsi_close(&s) != 0);
-    CHECK(chain_destroys == 1 && presenter_destroys == 0 && device_destroys == 0);
-    CHECK(s.wsi_chain_live && s.wsi_hud_live);
+    CHECK(chain_destroys == 1 && scene_destroys == 0 && presenter_destroys == 0 && device_destroys == 0);
+    CHECK(s.wsi_chain_live && s.wsi_hud_live && s.wsi_scene_live);
     chain_destroy_fail = 0;
     destroy_order = 0;
     CHECK(wsi_close(&s) == 0);
-    CHECK(chain_destroys == 2 && presenter_destroys == 1 && device_destroys == 1);
-    CHECK(destroy_order == 123);
-    CHECK(!s.wsi_chain_live && !s.wsi_hud_live);
+    CHECK(chain_destroys == 2 && scene_destroys == 1 && presenter_destroys == 1 && device_destroys == 1);
+    CHECK(destroy_order == 1234);
+    CHECK(!s.wsi_chain_live && !s.wsi_hud_live && !s.wsi_scene_live);
     puts("PASS wsi hud caller");
     return 0;
 }

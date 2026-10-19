@@ -29,6 +29,13 @@ VkResult dm_touch_hud_swapchain_reconfigure(dm_vk *vk, const dm_vk_swapchain *ch
                                             const char *vertex_spv, const char *fragment_spv,
                                             dm_touch_hud_swapchain *presenter);
 
+// Records only the HUD draw commands into an already-active chain render pass.
+// Used after the diagnostic scene in the same acquired frame; never clears or
+// begins/ends the render pass.
+VkResult dm_touch_hud_swapchain_record_in_pass(dm_vk *vk, const dm_vk_swapchain *chain,
+                                               dm_touch_hud_swapchain *presenter,
+                                               const dm_touch_hud_snapshot *snapshot, int overlay);
+
 // Records the actual HUD draw into chain->commands[chain->image_index], using
 // the matching acquired framebuffer and a per-image vertex buffer. The caller
 // then uses the existing dm_vk_swapchain_submit/present path.
