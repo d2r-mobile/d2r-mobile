@@ -156,6 +156,7 @@ dm_live_touch *dm_live_touch_create(float width_pt, float height_pt) {
     touch->width = width_pt;
     touch->height = height_pt;
     dm_tc_init(&touch->state, width_pt, height_pt);
+    touch->state.mouse_click_mode = 1;
     dm_touch_pointer_clear(&touch->pointers);
     return touch;
 }
@@ -575,6 +576,93 @@ int dm_live_touch_pointer_long(const dm_live_touch *touch) {
     int slot = touch->state.pointer_slot;
     return slot >= 0 && slot < DM_TC_MAX_TOUCH && touch->state.finger[slot].active &&
            touch->state.finger[slot].pointer_long;
+}
+
+int dm_live_touch_navigation(const dm_live_touch *touch) {
+    return touch ? touch->state.navigation_mode : 0;
+}
+
+int dm_live_touch_pointer_slot_for_id(const dm_live_touch *touch, int32_t id) {
+    if (!touch || id < 0) return -1;
+    return dm_touch_pointer_slot(&touch->pointers, id);
+}
+
+int dm_live_touch_pointer_slot(const dm_live_touch *touch) {
+    return touch ? touch->state.pointer_slot : -1;
+}
+
+int dm_live_touch_pointer_dragged_for_id(const dm_live_touch *touch, int32_t id) {
+    int slot = dm_live_touch_pointer_slot_for_id(touch, id);
+    return slot >= 0 && slot < DM_TC_MAX_TOUCH && touch->state.finger[slot].active &&
+           touch->state.finger[slot].pointer_dragged;
+}
+
+float dm_live_touch_pointer_lift_norm(const dm_live_touch *touch) {
+    if (!touch || touch->height <= 0) return 0;
+    return DM_TC_POINTER_LIFT_PT * dm_tc_scale_for_size(touch->width, touch->height) / touch->height;
+}
+
+int dm_live_touch_pointer_position(const dm_live_touch *touch,
+                                   float *x, float *y, float *w, float *h) {
+    if (!touch || !touch->state.pointer_valid) return 0;
+    if (x) *x = touch->state.pointer_x;
+    if (y) *y = touch->state.pointer_y;
+    if (w) *w = touch->width;
+    if (h) *h = touch->height;
+    return 1;
+}
+
+void dm_live_touch_apply_item_hit(dm_live_touch *touch, int slot, int kind) {
+    if (!touch || slot < 0 || slot >= DM_TC_MAX_TOUCH) return;
+    if (!touch->state.finger[slot].active || touch->state.pointer_slot != slot) return;
+    dm_tc_pointer_item(&touch->state, kind);
+}
+
+void dm_live_touch_apply_drop(dm_live_touch *touch, int kind, float nx, float ny) {
+    if (!touch) return;
+    if (kind == 5 && isfinite(nx) && isfinite(ny)) {
+        float x = nx * touch->width;
+        float y = ny * touch->height;
+        dm_tc_pointer_release_at(&touch->state, x, y);
+    } else {
+        // 7/11/unsupported are deliberately mapped to "put back" by the core,
+        // never to a sell/advanced-page action from this seam.
+        dm_tc_pointer_release(&touch->state, kind);
+    }
+}
+
+int dm_live_touch_finish_pointer(dm_live_touch *touch, int32_t id, int64_t time_ns) {
+    if (!touch || id < 0 || time_ns < 0) return 0;
+    int slot = dm_live_touch_pointer_slot_for_id(touch, id);
+    if (slot < 0) return 0;
+    double t = now_s(touch, time_ns);
+    dm_tc_end_at(&touch->state, slot, t);
+    dm_touch_pointer_release(&touch->pointers, id);
+    dm_tc_tick(&touch->state, t);
+    sync_pointers(touch);
+    return 1;
+}
+
+void dm_live_touch_item_snapshot_get(const dm_live_touch *touch,
+                                     dm_live_touch_item_snapshot *out) {
+    if (!out) return;
+    memset(out, 0, sizeof(*out));
+    if (!touch) return;
+    const dm_tc_state *s = &touch->state;
+    out->use_seq = s->use_seq;
+    out->ident_seq = s->ident_seq;
+    out->item_tap_seq = s->item_tap_seq;
+    out->long_press_seq = s->long_press_seq;
+    out->stack_take_seq = s->stack_take_seq;
+    out->tab_tap_seq = s->tab_tap_seq;
+    out->mouse_click_seq = s->mouse_click_seq;
+    out->shop_drop_seq = s->shop_drop_seq;
+    out->mouse_click_x = touch->width > 0 ? s->mouse_click_x / touch->width : 0;
+    out->mouse_click_y = touch->height > 0 ? s->mouse_click_y / touch->height : 0;
+    out->pointer_dragged = s->pointer_slot >= 0 && s->pointer_slot < DM_TC_MAX_TOUCH ?
+        s->finger[s->pointer_slot].pointer_dragged : 0;
+    out->pointer_shop = s->pointer_shop;
+    out->pointer_stack = s->pointer_stack;
 }
 
 int dm_live_touch_end_released_pulse(dm_live_touch *touch) {
