@@ -127,6 +127,39 @@ else
     fail "accepted IME mutation controls failed"
 fi
 
+# #192 必需的 View/session 与 Activity host 回归：实际类 + 真实 android.jar +
+# 独立窄 stub；与上面的 connection 检查一起保留。失败必须传播。
+# #192 required View/session and Activity-host regressions: actual classes + real
+# android.jar + independent narrow stubs, alongside the connection checks above.
+ime_view_dir=$root/dm/android/tests/ime-view-stubs
+ime_activity_dir=$root/dm/android/tests/ime-activity-host-stubs
+ime_host_source=${IME_HOST_SOURCE:-$app_java/org/d2rmobile/android/diagnostic/DmTextEditorHost.java}
+[[ -f "$ime_host_source" ]] || fail "required IME Activity host source is missing: $ime_host_source"
+
+if ANDROID_JAR="$jar" JAVAC="$javac" JAVA="$java_bin" \
+    bash "$ime_view_dir/run.sh" >"$logs/ime-view.log" 2>&1; then
+    log_line "PASS IME actual View/session controls: $(grep -o 'PASS ime view: [0-9]* checks' "$logs/ime-view.log" | tail -1)"
+else
+    cat "$logs/ime-view.log" >> "$log" 2>/dev/null
+    fail "accepted IME actual View/session controls failed"
+fi
+
+if python3 "$ime_view_dir/mutation.py" --root "$root" --jar "$jar" \
+    --javac "$javac" --java "$java_bin" >"$logs/ime-view-mutation.log" 2>&1; then
+    log_line "PASS IME actual View mutations: $(grep -c 'rejected as intended' "$logs/ime-view-mutation.log") mutations rejected"
+else
+    cat "$logs/ime-view-mutation.log" >> "$log" 2>/dev/null
+    fail "accepted IME actual View mutations failed"
+fi
+
+if ANDROID_JAR="$jar" JAVAC="$javac" JAVA="$java_bin" IME_HOST_SOURCE="$ime_host_source" \
+    bash "$ime_activity_dir/run.sh" >"$logs/ime-activity-host.log" 2>&1; then
+    log_line "PASS IME actual Activity host controls: $(grep -o 'PASS ime activity host: [0-9]* checks' "$logs/ime-activity-host.log" | tail -1)"
+else
+    cat "$logs/ime-activity-host.log" >> "$log" 2>/dev/null
+    fail "accepted IME actual Activity host controls failed"
+fi
+
 # #189 必需的热插拔回归：真实 Android jar + Java listener、实际 JNI start/stop、
 # 实际 NativeActivity callback。它们都在当前 checkout 上执行；失败会直接使本任务失败。
 # #189 required hotplug regressions: real jar + actual Java listener, actual JNI
@@ -292,4 +325,4 @@ python3 "$root/ci/scripts/sanitize_log.py" "$log" "$root" "$work" >/dev/null 2>&
 }
 
 [[ "$negative_failed" == 0 ]] || fail "one or more negative controls did not fail as intended"
-log_line "PASS required Java compile, focus, IME and hotplug controls"
+log_line "PASS required Java compile, focus, connection, View/Activity host and hotplug controls"
