@@ -34,6 +34,7 @@ public final class DmTextEditorHost {
     private final InputMethodManager inputMethodManager;
     private final Looper mainLooper;
     private final DmTextEditorView editor;
+    private final DmImeInsetsObserver imeInsetsObserver;
     private boolean attached;
     private boolean released;
     private boolean detaching;
@@ -52,6 +53,7 @@ public final class DmTextEditorHost {
         this.mainLooper = Looper.getMainLooper();
         if (mainLooper == null) throw new IllegalStateException("no main looper");
         this.editor = new DmTextEditorView(activity, inputMethodManager);
+        this.imeInsetsObserver = new DmImeInsetsObserver(mainLooper);
         this.editor.setOnFocusChangeListener((view, hasFocus) -> {
             if (!hasFocus) hide();
         });
@@ -84,12 +86,14 @@ public final class DmTextEditorHost {
             hide();
             return false;
         }
+        imeInsetsObserver.attach(editor, editor.sessionGeneration());
         return true;
     }
 
     /** Hides the active session and detaches only the owned editor. */
     public boolean hide() {
         requireMainLooper();
+        imeInsetsObserver.detach();
         boolean wasActive = editor.isSessionActive();
         boolean wasAttached = attached || editor.getParent() != null;
         try {
@@ -103,6 +107,7 @@ public final class DmTextEditorHost {
     /** Terminal idempotent cleanup; later show calls are rejected. */
     public boolean release() {
         requireMainLooper();
+        imeInsetsObserver.detach();
         if (released) {
             if (attached || editor.getParent() != null) {
                 detachEditor();
@@ -135,6 +140,11 @@ public final class DmTextEditorHost {
         return editor.sessionGeneration();
     }
 
+    /** Additive immutable IME inset observation for the current session. */
+    public DmImeInsetsObservation imeInsetsObservation() {
+        return imeInsetsObserver.observation();
+    }
+
     private boolean attachEditor() {
         if (attached && editor.getParent() != null) return true;
         View root = activity.findViewById(android.R.id.content);
@@ -154,6 +164,7 @@ public final class DmTextEditorHost {
         if (detaching) return;
         detaching = true;
         try {
+            imeInsetsObserver.detach();
             if (editor.isFocused()) editor.clearFocus();
             ViewParent parent = editor.getParent();
             if (parent instanceof ViewGroup) {
