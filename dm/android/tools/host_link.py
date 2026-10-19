@@ -62,7 +62,16 @@ if __name__ == "__main__":
     # never stub the desktop interfaces.
     sources = [(p, []) for p in sorted((ROOT / "host").glob("*.c")) if p.name != "touch_mac.c"]
     sources += [(ROOT / "android/native" / name, []) for name in ["runtime.c", "host_posix.c", "host_tls.c", "host_sections.c", "legacy_digest.c", "pending_ranges.c", "performance_hint.c", "launch_settings.c", "frontend_activity.c" if args.activity else "frontend_headless.c", "host_bridge.c", "live_touch.c", "live_touch_provider.c", "nvn_vulkan.c", "gpu_driver.c"]]
-    sources += [(ROOT / "ios/Sources/dm_touch_controls.c", []), (entry, [])]
+    sources += [(ROOT / "ios/Sources/dm_touch_controls.c", []),
+                (ROOT / "ios/Sources/dm_touch_game_state.c", []),
+                (ROOT / "ios/Sources/dm_touch_game_identity.c", []),
+                (ROOT / "ios/Sources/dm_touch_game_bridge.c", []), (entry, [])]
+    # Skill-art indices are generated from the user's own game data and are
+    # gitignored; use the existing generated source when the shell build made
+    # one. A clean dependency build has no art source and does not invent it.
+    native_art = ROOT / "ios/Sources/dm_touch_native_art.c"
+    if native_art.exists():
+        sources.append((native_art, []))
     sources += [(ROOT / "gfx" / name, []) for name in ["hle_nv.c", "hle_vi.c"]]
     sources += [(ROOT / "gfx/nvn" / name, []) for name in ["hle_nvn.c", "nvn_tex.c", "nvn_dirty.c"]]
     sources += [(ROOT / "gfx/tex/nvn_deswizzle.c", [])]

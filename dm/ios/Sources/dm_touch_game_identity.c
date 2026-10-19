@@ -1,15 +1,29 @@
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 #include "dm_touch_game_identity.h"
 #include <string.h>
 #ifdef __APPLE__
 #include <mach/mach.h>
 #include <mach/vm_map.h>
+#elif defined(__ANDROID__)
+#include "../../android/native/host_posix.h"
+#elif defined(__linux__)
+#include <sys/uio.h>
+#include <unistd.h>
 #endif
 int dm_tg_vm_read(uint64_t address,void *out,size_t bytes) {
-    if(!out || !bytes || !address || address>UINT64_MAX-bytes)return 0;
+    if(!out || !bytes || !address || address>(uint64_t)UINTPTR_MAX-bytes)return 0;
 #ifdef __APPLE__
     vm_size_t copied=0;
     kern_return_t rc=vm_read_overwrite(mach_task_self(),(vm_address_t)address,(vm_size_t)bytes,(vm_address_t)out,&copied);
     return rc==KERN_SUCCESS && copied==bytes;
+#elif defined(__ANDROID__)
+    return dm_android_read_memory((uintptr_t)address,out,bytes)==0;
+#elif defined(__linux__)
+    struct iovec local={out,bytes},remote={(void *)(uintptr_t)address,bytes};
+    ssize_t n=process_vm_readv(getpid(),&local,1,&remote,1,0);
+    return n>=0 && (size_t)n==bytes;
 #else
     (void)address;return 0;
 #endif
