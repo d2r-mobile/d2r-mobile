@@ -908,6 +908,21 @@ if(NOT ANDROID)
     add_test(NAME nvn_shader_feature_decisions COMMAND dm_nvn_shader_feature_decisions_test)
     set_tests_properties(nvn_shader_feature_decisions PROPERTIES TIMEOUT 30)
 
+    # #253 protected heap snapshot lease; compiles the production hle_svc header.
+    add_executable(dm_hle_heap_snapshot_test tests/hle_heap_snapshot.c)
+    target_include_directories(dm_hle_heap_snapshot_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../host)
+    target_compile_options(dm_hle_heap_snapshot_test PRIVATE -Wall -Wextra -Werror)
+    target_link_libraries(dm_hle_heap_snapshot_test PRIVATE Threads::Threads)
+    add_test(NAME hle_heap_snapshot COMMAND dm_hle_heap_snapshot_test)
+    set_tests_properties(hle_heap_snapshot PROPERTIES TIMEOUT 30)
+
+    if(APPLE)
+        add_test(NAME hle_heap_apple_symbol
+            COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/hle_heap_apple_symbol.sh
+                ${CMAKE_C_COMPILER} ${CMAKE_CURRENT_SOURCE_DIR}/../.. ${CMAKE_CURRENT_BINARY_DIR}/hle_heap_apple_symbol.o)
+        set_tests_properties(hle_heap_apple_symbol PROPERTIES TIMEOUT 60)
+    endif()
+
     # #246 module-create failure boundary; no Vulkan loader/device is opened.
     find_package(Threads REQUIRED)
     add_executable(dm_nvn_optional_module_create_test tests/nvn_optional_module_create.c)
