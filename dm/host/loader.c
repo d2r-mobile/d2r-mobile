@@ -13,6 +13,7 @@
 #include "../android/native/host_sections.h"
 #include "../android/native/runtime.h"
 #include "../android/native/host_tls.h"
+#include "../android/native/target_guard.h"
 #else
 #include <mach-o/getsect.h>
 #include <mach-o/ldsyms.h>
@@ -173,6 +174,9 @@ static void force_check(void) {
 // Read the rewriter table header (segment boundaries, slot numbers); any row beyond the header means an old-format build output (code modified at load time), which is rejected
 static void read_layout(module_t *m, const char *dir) {
     char path[1024]; snprintf(path, sizeof path, "%s/%s.fixups.tsv", dir, m->name);
+#ifdef __ANDROID__
+    { char target_error[160]; if (dm_android_target_validate(path, target_error, sizeof target_error)) die("%s: %s", m->name, target_error); }
+#endif
     FILE *f = fopen(path, "r");
     if (!f) die("open %s", path);
     static const char *kn[8] = {"K18", "KTLS", "KTLR", "KGATE", "KRES0", "KRES1", "KASPECT", "KASPECTUI"};
