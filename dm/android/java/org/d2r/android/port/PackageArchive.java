@@ -13,6 +13,7 @@ package org.d2r.android.port;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -38,6 +39,8 @@ final class PackageArchive {
     // change both sides together.
     static final String[] MODULE_NAMES = {"main", "sdk", "subsdk0"};
     static final String[] LAYOUT_KINDS = {"fixups", "gates"};
+    static final String TARGET_SUFFIX = ".target";
+    static final String TARGET_VALUE = "android-context-v1";
 
     // 上限只用来挡恶意或损坏的包：真实包约 9 GB、约 4.2 万个条目、清单 310 字节，离这些值很远。
     // The caps only stop a hostile or corrupt archive: a real package is about 9 GB, about 42k entries and a
@@ -107,15 +110,56 @@ final class PackageArchive {
         Declaration read(byte[] manifest) throws IOException;
     }
 
-    // 九个必需文件：三个模块，每个配一份 fixups 与一份 gates。
-    // The nine required files: three modules, each with a fixups and a gates layout.
+    // 十二个必需文件：三个模块，每个配一份 fixups、一份 gates 和一份 Android target 标记。
+    // Twelve required files: three modules, each with fixups, gates and an Android target marker.
     static List<String> requiredModules() {
         List<String> names = new ArrayList<>();
         for (String module : MODULE_NAMES) {
             names.add("libdmguest_" + module + ".so");
             for (String kind : LAYOUT_KINDS) names.add(module + "." + kind + ".tsv");
+            names.add(module + TARGET_SUFFIX);
         }
         return names;
+    }
+
+    // 标记是每个模块自己的 <module>.target，不是共享的 target；内容必须精确（允许一个结尾换行）。
+    // The marker is the module's own <module>.target, never a shared target; its bytes must be exact
+    // (one trailing newline is allowed).
+    private static void validateTarget(File file, String name) throws IOException {
+        byte[] data = new byte[20];
+        int length = 0;
+        try (InputStream in = new FileInputStream(file)) {
+            int read;
+            while (length < data.length && (read = in.read(data, length, data.length - length)) > 0) length += read;
+            if (in.read() != -1) throw new Failure("dmAndroidLaunchImportBadEntry", name);
+        }
+        if (length == TARGET_VALUE.length() + 1 && data[length - 1] == '\n') length--;
+        if (length != TARGET_VALUE.length()) throw new Failure("dmAndroidLaunchImportBadEntry", name);
+        byte[] expected = TARGET_VALUE.getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+        for (int i = 0; i < expected.length; i++) if (data[i] != expected[i])
+            throw new Failure("dmAndroidLaunchImportBadEntry", name);
+    }
+
+    // 已安装包的只读就绪检查：manifest 在，十二个必需文件在，三个模块各自的 target 内容正确。
+    // 只读这 12 个文件（其中 marker 很小），不遍历资源、不删除任何东西。
+    // Read-only readiness check for an installed package: manifest present, the twelve required files
+    // present and each module's own target valid. Reads only these twelve files (markers are small),
+    // never walks resources and never deletes anything.
+    static boolean isReady(File assets, File modules) {
+        if (!new File(assets, MANIFEST).isFile()) return false;
+        for (String name : requiredModules()) {
+            File file = new File(modules, name);
+            if (!file.isFile()) return false;
+            if (name.endsWith(".so") && file.length() == 0) return false;
+            if (name.endsWith(TARGET_SUFFIX)) {
+                try {
+                    validateTarget(file, name);
+                } catch (IOException error) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     // 条目名必须"干净"：不许有空段、"." 或 ".."，也不许绝对路径或反斜杠。
@@ -232,6 +276,10 @@ final class PackageArchive {
             }
             if (!missing.isEmpty()) {
                 throw new Failure("dmAndroidLaunchImportIncomplete", join(missing));
+            }
+            for (String module : MODULE_NAMES) {
+                String targetName = module + TARGET_SUFFIX;
+                validateTarget(new File(staging, targetName), targetName);
             }
 
             Declaration declaration = reader.read(manifestBytes);
