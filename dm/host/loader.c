@@ -19,6 +19,7 @@
 #include <mach-o/ldsyms.h>
 #endif
 #include "hle.h"
+#include "layout_keys.h"
 
 module_t g_mod[MAX_MOD];
 int g_nmod;
@@ -182,6 +183,15 @@ static void read_layout(module_t *m, const char *dir) {
     static const char *kn[8] = {"K18", "KTLS", "KTLR", "KGATE", "KRES0", "KRES1", "KASPECT", "KASPECTUI"};
     char line[256], key[32]; unsigned long v; unsigned seen = 0;
     while (fgets(line, sizeof line, f)) {
+        unsigned slot, index;
+        int key_line = dm_layout_parse_key_line(line, &slot, &index);
+        if (key_line == DM_LAYOUT_KEY_MALFORMED) die("%s: malformed KEY index line (tab/number required)", path);
+        if (key_line == DM_LAYOUT_KEY_OK) {
+            if (seen & (1u << slot)) die("%s: duplicate KEY_%s_IDX", path, kn[slot]);
+            m->key_idx[slot] = index;
+            seen |= 1u << slot;
+            continue;
+        }
         if (sscanf(line, "# %31s %lx", key, &v) != 2) die("%s: 产物是旧改写器出的，换成当前代号（dm/PRODUCT）的产物", path);
         if (!strcmp(key, "PATCH_OFF")) m->patch_off = v;
         else if (!strcmp(key, "KEY_PAGE_OFF")) m->key_page_off = v;
@@ -189,20 +199,35 @@ static void read_layout(module_t *m, const char *dir) {
         else if (!strcmp(key, "TEXT_END")) m->text_end = v;
         else if (!strcmp(key, "RO_OFF")) m->ro_off = v;
         else if (!strcmp(key, "DATA_OFF")) m->data_off = v;
-        else for (int k = 0; k < 8; k++) {
-            size_t n = strlen(kn[k]);
-            if (!strncmp(key, "KEY_", 4) && !strncmp(key + 4, kn[k], n) && !strcmp(key + 4 + n, "_IDX")) {
-                m->key_idx[k] = (unsigned)strtoul(strrchr(line, '\t') + 1, 0, 10); seen |= 1u << k;
-            }
-        }
     }
     fclose(f);
     if (!m->patch_off || m->key_page_off % 0x4000 || m->key_page_size != 0x4000 || seen != 0xff)
         die("%s: 产物是旧改写器出的，换成当前代号（dm/PRODUCT）的产物", path);
+    {   // 所有槽在写入键页之前统一校验；Android 的 page[8] 归 context entry。
+        char error[128];
+#ifdef __ANDROID__
+        const int reserved = 8;
+#else
+        const int reserved = -1;
+#endif
+        if (dm_layout_slots_valid(m->key_idx, 8, (unsigned)(m->key_page_size / sizeof(uint64_t)), reserved,
+                                  error, sizeof error))
+            die("%s: %s", path, error);
+    }
 }
 
 static void install_key_page(module_t *m) {
-    if (m->key_page_off + m->key_page_size > m->size) die("%s: 键页越界", m->name);
+    if (m->key_page_off > m->size || m->key_page_size > m->size - m->key_page_off) die("%s: 键页越界", m->name);
+    if (m->key_page_size % sizeof(uint64_t)) die("%s: 键页大小不是 8 字节对齐", m->name);
+    char error[128];
+#ifdef __ANDROID__
+    const int reserved = 8;
+#else
+    const int reserved = -1;
+#endif
+    if (dm_layout_slots_valid(m->key_idx, 8, (unsigned)(m->key_page_size / sizeof(uint64_t)), reserved,
+                              error, sizeof error))
+        die("%s: %s", m->name, error);
     uint64_t *page = (uint64_t *)(m->base + m->key_page_off);
     memset(page, 0, m->key_page_size);
 #ifdef __ANDROID__
