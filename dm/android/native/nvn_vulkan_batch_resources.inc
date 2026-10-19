@@ -50,14 +50,3 @@ static void batch_resources_select(unsigned slot) {
     // descriptor_reset 同时重置 CPU driver、UBO version 与 payload 索引；GPU 不读取这些 CPU 工作区。
     // descriptor_reset also clears CPU driver, UBO-version and payload indexes; the GPU never reads these CPU workspaces.
 }
-static uint64_t batch_resources_uniform_bytes(unsigned slot) {
-    if(slot>=DM_VK_BATCH_SLOTS)die("Vulkan batch resource slot %u",slot);batch_resources_save();uint64_t bytes=0;
-    for(uniform_chunk *c=batch_resource_slots[slot].uniforms;c;c=c->next)bytes+=c->buffer.capacity;return bytes;
-}
-static void batch_resources_release(unsigned slot) {
-    if(slot>=DM_VK_BATCH_SLOTS)die("Vulkan batch resource slot %u",slot);batch_resources_save();texel_views_reset(slot);batch_resources *r=&batch_resource_slots[slot];
-    while(r->descriptors){descriptor_chunk *c=r->descriptors;r->descriptors=c->next;vkDestroyDescriptorPool(device,c->pool,NULL);free(c);}
-    while(r->uniforms){uniform_chunk *c=r->uniforms;r->uniforms=c->next;batch_uniform_release(c);}
-    r->descriptor_current=NULL;r->uniform_current=NULL;
-    if(batch_resource_selected==slot){descriptor_chunks=NULL;descriptor_current=NULL;uniform_chunks=NULL;uniform_current=NULL;uniform_reset();binding_cache_reset();}
-}

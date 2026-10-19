@@ -54,9 +54,6 @@ static VkDescriptorBufferInfo uniform_allocate_mode(uint32_t dirty,uint8_t **dat
 }
 // 原接口保持全零内容；明确完整覆盖的调用方才可省去前缀清零。
 // Preserve the original zero-filled allocation contract; only explicit full-overwrite callers skip prefix clearing.
-static VkDescriptorBufferInfo uniform_allocate(uint32_t dirty,uint8_t **data) {
-    return uniform_allocate_mode(dirty,data,0);
-}
 static VkDescriptorBufferInfo uniform_allocate_overwrite(uint32_t dirty,uint8_t **data) {
     return uniform_allocate_mode(dirty,data,1);
 }
