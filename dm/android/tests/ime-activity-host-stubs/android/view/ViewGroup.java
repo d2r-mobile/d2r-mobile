@@ -7,7 +7,10 @@ import java.util.List;
 
 /** Narrow host-test ViewGroup boundary with real child ownership. */
 public class ViewGroup extends View implements ViewParent {
+    public static final int WRAP_CONTENT = -2;
+
     public static class LayoutParams {
+        public static final int WRAP_CONTENT = -2;
         public final int width;
         public final int height;
 

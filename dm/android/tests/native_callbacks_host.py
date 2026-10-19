@@ -230,8 +230,11 @@ static dm_diag_scene_mismatch mismatch;
 static void update_touch_state(app_state *s) { (void)s; update_calls++; }
 static int input_ready(int fd, int events, void *data);
 static int text_begin_calls, text_end_calls;
+static int ime_entry_install_calls, ime_entry_uninstall_calls;
 static int text_begin(app_state *s) { text_begin_calls++; if (s) s->text_active = 1; return 1; }
 static void text_end(app_state *s, const char *reason) { (void)reason; text_end_calls++; if (s) s->text_active = 0; }
+static int ime_entry_install(app_state *s) { (void)s; ime_entry_install_calls++; return 1; }
+static void ime_entry_uninstall(app_state *s) { (void)s; ime_entry_uninstall_calls++; }
 static void stop_frame_timer(app_state *s) { if (s && s->frame_fd >= 0) { s->frame_fd = -1; stop_calls++; } }
 static int start_frame_timer(app_state *s) {
     start_calls++;
@@ -1310,9 +1313,9 @@ def main() -> int:
         ("cached-window", "s->window=dm_app_lifecycle_surface(s->lifecycle);",
          "/* mutant: omit cached-window synchronization */", "s.window"),
         ("stale-timer",
-         'if(!dm_wsi_bridge_owns_window(&s->wsi_bridge,window)){LOG("wsi stale window destroy ignored");return;}\n        (void)native_audio_pause(s->audio);   // 仅当前 WSI 窗口丢失才暂停音频；陈旧回调零副作用\n        stop_frame_timer(s);',
-         ' (void)native_audio_pause(s->audio);\n        stop_frame_timer(s);\n        if(!dm_wsi_bridge_owns_window(&s->wsi_bridge,window)){LOG("wsi stale window destroy ignored");return;}',
-         "audio_pause_calls == 0"),
+         'if(!dm_wsi_bridge_owns_window(&s->wsi_bridge,window)){LOG("wsi stale window destroy ignored");return;}\n        ime_entry_uninstall(s);\n        (void)native_audio_pause(s->audio);   // 仅当前 WSI 窗口丢失才暂停音频；陈旧回调零副作用\n        stop_frame_timer(s);',
+         'stop_frame_timer(s);\n        if(!dm_wsi_bridge_owns_window(&s->wsi_bridge,window)){LOG("wsi stale window destroy ignored");return;}\n        ime_entry_uninstall(s);\n        (void)native_audio_pause(s->audio);',
+         "s.frame_fd"),
         ("omit-source-guard",
          "&&\n                 (source&AINPUT_SOURCE_TOUCHSCREEN)==AINPUT_SOURCE_TOUCHSCREEN",
          "",
