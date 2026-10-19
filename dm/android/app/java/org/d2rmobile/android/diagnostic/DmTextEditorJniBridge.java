@@ -9,9 +9,10 @@ import android.view.inputmethod.InputMethodManager;
  * Narrow JNI bridge for the accepted Activity text host.
  *
  * <p>The native caller owns one bridge per text session and invalidates the
- * session before releasing the host. Java forwards only bounded event counts
- * (commit/delete/submit/cancel and UTF-16 code-unit length) to native; it never
- * logs user text and never forwards a raw C pointer.</p>
+ * session before releasing the host. Java forwards the actual bounded event
+ * payload (commit/delete/submit or an empty cancel) and its UTF-16 code-unit
+ * length to native; it never logs user text and never forwards a raw C
+ * pointer.</p>
  */
 public final class DmTextEditorJniBridge implements DmInputConnection.Sink {
     public static final int EVENT_COMMIT = 0;
@@ -21,7 +22,7 @@ public final class DmTextEditorJniBridge implements DmInputConnection.Sink {
 
     /** Test seam only; production passes null and calls the registered native method. */
     interface EventSink {
-        void onTextEvent(long session, int event, int codeUnits);
+        void onTextEvent(long session, int event, String payload, int codeUnits);
     }
 
     private final DmTextEditorHost host;
@@ -78,29 +79,38 @@ public final class DmTextEditorJniBridge implements DmInputConnection.Sink {
 
     @Override
     public void onCommit(CharSequence text) {
-        emit(EVENT_COMMIT, length(text));
+        emit(EVENT_COMMIT, text);
     }
 
     @Override
     public void onDelete(CharSequence deletedText) {
-        emit(EVENT_DELETE, length(deletedText));
+        emit(EVENT_DELETE, deletedText);
     }
 
     @Override
     public void onSubmit(CharSequence text) {
-        emit(EVENT_SUBMIT, length(text));
+        emit(EVENT_SUBMIT, text);
     }
 
     @Override
     public void onCancel() {
-        emit(EVENT_CANCEL, 0);
+        emitCancel();
     }
 
-    private void emit(int event, int codeUnits) {
+    private void emit(int event, CharSequence text) {
         if (released || session == 0) return;
+        int codeUnits = length(text);
         if (codeUnits < 0 || codeUnits > DmInputConnection.MAX_TEXT_UTF16_UNITS) return;
-        if (eventSink != null) eventSink.onTextEvent(session, event, codeUnits);
-        else nativeTextEvent(session, event, codeUnits);
+        String payload = text == null ? null : text.toString();
+        if (payload != null && payload.length() != codeUnits) return;
+        if (eventSink != null) eventSink.onTextEvent(session, event, payload, codeUnits);
+        else nativeTextEvent(session, event, payload, codeUnits);
+    }
+
+    private void emitCancel() {
+        if (released || session == 0) return;
+        if (eventSink != null) eventSink.onTextEvent(session, EVENT_CANCEL, null, 0);
+        else nativeTextEvent(session, EVENT_CANCEL, null, 0);
     }
 
     private static int length(CharSequence text) {
@@ -113,5 +123,5 @@ public final class DmTextEditorJniBridge implements DmInputConnection.Sink {
         }
     }
 
-    private static native void nativeTextEvent(long session, int event, int codeUnits);
+    private static native void nativeTextEvent(long session, int event, String text, int codeUnits);
 }
