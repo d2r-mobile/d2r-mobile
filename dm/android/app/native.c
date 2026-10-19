@@ -36,7 +36,10 @@
 #include <time.h>
 #include <unistd.h>
 #define LOG(...) __android_log_print(ANDROID_LOG_INFO,"D2R-Diagnostic",__VA_ARGS__)
-typedef struct{dm_vk vk;AInputQueue*input;dm_app_lifecycle*lifecycle;ANativeActivity*activity;ANativeWindow*window;dm_input_arbiter*arbiter;dm_view_policy view;dm_input_policy gate;ALooper*looper;int timer_fd;int resumed,focused,touch_allowed;float density,touch_width_pt,touch_height_pt,touch_density;uint64_t last_touch_buttons;int32_t last_touch_lx,last_touch_ly,last_touch_rx,last_touch_ry;int64_t last_touch_log_ns;dm_android_touch_observation hud_obs;dm_touch_hud_frame hud_frame;int hud_obs_valid;dm_gamepad_context gamepad_context;dm_npad_state gamepad_state;uint32_t gamepad_id,gamepad_generation;int gamepad_admitted;int64_t gamepad_after_ns;dm_wsi wsi;dm_wsi_bridge wsi_bridge;dm_wsi_report report;dm_vk wsi_vk;dm_vk_swapchain wsi_chain;int wsi_chain_live;int frame_fd;int wsi_last_logged;char vertex[4096],fragment[4096];}app_state;
+typedef struct{dm_vk vk;AInputQueue*input;dm_app_lifecycle*lifecycle;ANativeActivity*activity;ANativeWindow*window;dm_input_arbiter*arbiter;dm_view_policy view;dm_input_policy gate;ALooper*looper;int timer_fd;int resumed,focused,touch_allowed;float density,touch_width_pt,touch_height_pt,touch_density;uint64_t last_touch_buttons;int32_t last_touch_lx,last_touch_ly,last_touch_rx,last_touch_ry;int64_t last_touch_log_ns;dm_android_touch_observation hud_obs;dm_touch_hud_frame hud_frame;int hud_obs_valid;dm_gamepad_context gamepad_context;dm_npad_state gamepad_state;uint32_t gamepad_id,gamepad_generation;int gamepad_admitted;int64_t gamepad_after_ns;uint64_t controller_session;jobject controller_boundary;jclass controller_class;jmethodID controller_release;dm_wsi wsi;dm_wsi_bridge wsi_bridge;dm_wsi_report report;dm_vk wsi_vk;dm_vk_swapchain wsi_chain;int wsi_chain_live;int frame_fd;int wsi_last_logged;char vertex[4096],fragment[4096];}app_state;
+static app_state *g_controller_app;
+static uint64_t g_controller_next_session;
+enum{dm_controller_added=0,dm_controller_removed=1,dm_controller_changed=2};
 static int64_t monotonic_ns(void){
     struct timespec ts;
     if(clock_gettime(CLOCK_MONOTONIC,&ts))return -1;
@@ -306,6 +309,22 @@ static void gamepad_rearm(app_state*s){
     memset(&s->gamepad_state,0,sizeof(s->gamepad_state));
     int64_t now=monotonic_ns();
     s->gamepad_after_ns=now>0?now:0;
+}
+static int controller_hotplug_acquire_owner(app_state*s){
+    if(!s||s->controller_session)return 0;
+    if(g_controller_app&&g_controller_app!=s)return 0;
+    g_controller_app=s;
+    return 1;
+}
+static void controller_hotplug_release_owner(app_state*s){
+    if(s&&g_controller_app==s)g_controller_app=NULL;
+}
+static void controller_hotplug_dispatch(app_state*s,uint64_t session,int event,int device_id){
+    if(!s||!s->controller_session||session!=s->controller_session)return;
+    if(event!=dm_controller_removed&&event!=dm_controller_changed)return;
+    if(!s->gamepad_admitted||device_id<0||(uint32_t)device_id!=s->gamepad_id)return;
+    gamepad_rearm(s);
+    touch_consume(s,event==dm_controller_removed?"controller_removed":"controller_changed");
 }
 static void touch_cancel(app_state*s,const char*reason,int64_t now){
     if(!s||!s->arbiter)return;
@@ -810,6 +829,7 @@ static void window_destroyed(ANativeActivity*a,ANativeWindow*window){
     if(!dm_app_lifecycle_surface_destroyed(s->lifecycle,window))
         LOG("stale surface destroy ignored");
 }
+static void controller_hotplug_stop(app_state*s);
 static void destroy(ANativeActivity*a){app_state*s=a->instance;if(s){
     stop_input_timer(s);stop_frame_timer(s);
     if(s->wsi.enabled){
@@ -823,6 +843,7 @@ static void destroy(ANativeActivity*a){app_state*s=a->instance;if(s){
         wsi_report_snapshot(s,"destroy");
     }
     if(s->input){AInputQueue_detachLooper(s->input);s->input=NULL;}
+    controller_hotplug_stop(s);
     gamepad_rearm(s);
     if(s->arbiter){dm_npad_state neutral;dm_input_arbiter_destroy(s->arbiter,&neutral);s->arbiter=NULL;
         LOG("input arbiter destroyed buttons=%llu",(unsigned long long)neutral.buttons);}
@@ -884,6 +905,113 @@ static void configuration_changed(ANativeActivity*a){app_state*s=a->instance;if(
     }
     update_touch_state(s);
 }
+static int jni_stage_failed(JNIEnv*env,const char*stage){
+    if(!(*env)->ExceptionCheck(env))return 0;
+    (*env)->ExceptionDescribe(env);
+    (*env)->ExceptionClear(env);
+    LOG("controller hotplug JNI failure at %s",stage);
+    return 1;
+}
+static void native_controller_event(JNIEnv*env,jclass cls,jlong session,jint event,jint device_id){
+    (void)env;(void)cls;
+    controller_hotplug_dispatch(g_controller_app,(uint64_t)session,(int)event,(int)device_id);
+}
+/* Load the packaged helper through the Activity class loader, register the
+   static callback, and register the platform listener. Every JNI failure is
+   reported and leaves no claimed registration. */
+static int controller_hotplug_start(app_state*s){
+    if(!s||!s->activity||!s->activity->env||!s->activity->clazz)return 0;
+    if(!controller_hotplug_acquire_owner(s)){
+        LOG("controller hotplug owner busy; registration rejected");
+        return 0;
+    }
+    JNIEnv*env=s->activity->env;
+    jobject activity_class=NULL,loader=NULL,loader_class=NULL;
+    jstring class_name=NULL;
+    jclass boundary_class=NULL;
+    jobject boundary=NULL;
+    jmethodID get_loader=NULL,load_class=NULL,constructor=NULL,register_method=NULL,release_method=NULL;
+    uint64_t session=++g_controller_next_session;
+    if(!session)session=++g_controller_next_session;
+    int result=0;
+    int registered=0;
+    if(!(activity_class=(*env)->GetObjectClass(env,s->activity->clazz)))goto fail;
+    if(!(get_loader=(*env)->GetMethodID(env,activity_class,"getClassLoader","()Ljava/lang/ClassLoader;"))||jni_stage_failed(env,"activity getClassLoader signature"))goto fail;
+    if(!(loader=(*env)->CallObjectMethod(env,s->activity->clazz,get_loader))||jni_stage_failed(env,"activity class loader"))goto fail;
+    if(!(loader_class=(*env)->GetObjectClass(env,loader)))goto fail;
+    if(!(load_class=(*env)->GetMethodID(env,loader_class,"loadClass","(Ljava/lang/String;)Ljava/lang/Class;"))||jni_stage_failed(env,"loadClass signature"))goto fail;
+    if(!(class_name=(*env)->NewStringUTF(env,"org.d2rmobile.android.diagnostic.ControllerHotplugBoundary")))goto fail;
+    if(!(boundary_class=(jclass)(*env)->CallObjectMethod(env,loader,load_class,class_name))||jni_stage_failed(env,"activity class loader load"))goto fail;
+    {
+        JNINativeMethod method={"nativeControllerEvent","(JII)V",(void*)native_controller_event};
+        if((*env)->RegisterNatives(env,boundary_class,&method,1)!=0||jni_stage_failed(env,"RegisterNatives"))goto fail;
+    }
+    if(!(constructor=(*env)->GetMethodID(env,boundary_class,"<init>","(Landroid/app/Activity;J)V"))||jni_stage_failed(env,"constructor signature"))goto fail;
+    if(!(register_method=(*env)->GetMethodID(env,boundary_class,"register","()Z"))||jni_stage_failed(env,"register signature"))goto fail;
+    if(!(release_method=(*env)->GetMethodID(env,boundary_class,"release","()Z"))||jni_stage_failed(env,"release signature"))goto fail;
+    if(!(boundary=(*env)->NewObject(env,boundary_class,constructor,s->activity->clazz,(jlong)session))||jni_stage_failed(env,"constructor"))goto fail;
+    s->controller_session=session;
+    g_controller_app=s;
+    if(!(*env)->CallBooleanMethod(env,boundary,register_method)||jni_stage_failed(env,"register")){
+        LOG("controller hotplug registration failed");
+        goto fail;
+    }
+    registered=1;
+    s->controller_boundary=(*env)->NewGlobalRef(env,boundary);
+    if(!s->controller_boundary){
+        jni_stage_failed(env,"boundary global ref");
+        goto fail;
+    }
+    s->controller_class=(jclass)(*env)->NewGlobalRef(env,boundary_class);
+    if(!s->controller_class){
+        jni_stage_failed(env,"class global ref");
+        goto fail;
+    }
+    s->controller_release=release_method;
+    LOG("controller hotplug registered session=%llu",(unsigned long long)session);
+    result=1;
+    goto done;
+fail:
+    if((*env)->ExceptionCheck(env))(*env)->ExceptionClear(env);
+    if(boundary&&registered&&release_method){
+        (void)(*env)->CallBooleanMethod(env,boundary,release_method);
+        if((*env)->ExceptionCheck(env))(*env)->ExceptionClear(env);
+    }
+    controller_hotplug_release_owner(s);
+    s->controller_session=0;
+    if(s->controller_boundary){(*env)->DeleteGlobalRef(env,s->controller_boundary);s->controller_boundary=NULL;}
+    if(s->controller_class){(*env)->DeleteGlobalRef(env,s->controller_class);s->controller_class=NULL;}
+    s->controller_release=NULL;
+    LOG("controller hotplug unavailable; lifecycle retirement remains active");
+done:
+    if(boundary)(*env)->DeleteLocalRef(env,boundary);
+    if(boundary_class)(*env)->DeleteLocalRef(env,boundary_class);
+    if(class_name)(*env)->DeleteLocalRef(env,class_name);
+    if(loader_class)(*env)->DeleteLocalRef(env,loader_class);
+    if(loader)(*env)->DeleteLocalRef(env,loader);
+    if(activity_class)(*env)->DeleteLocalRef(env,activity_class);
+    return result;
+}
+static void controller_hotplug_stop(app_state*s){
+    if(!s)return;
+    controller_hotplug_release_owner(s);
+    s->controller_session=0;
+    JNIEnv*env=(s->activity&&s->activity->env)?s->activity->env:NULL;
+    if(s->controller_boundary&&env){
+        if(s->controller_release){
+            jboolean released=(*env)->CallBooleanMethod(env,s->controller_boundary,s->controller_release);
+            if(jni_stage_failed(env,"release"))LOG("controller hotplug release JNI failed");
+            else if(!released)LOG("controller hotplug unregister reported failure");
+        }
+        (*env)->DeleteGlobalRef(env,s->controller_boundary);
+        s->controller_boundary=NULL;
+    }
+    if(s->controller_class&&env){
+        (*env)->DeleteGlobalRef(env,s->controller_class);
+        s->controller_class=NULL;
+    }
+    s->controller_release=NULL;
+}
 __attribute__((visibility("default"))) void ANativeActivity_onCreate(ANativeActivity*a,void*saved,size_t saved_size){
     (void)saved;(void)saved_size;app_state*s=calloc(1,sizeof(*s));if(!s){ANativeActivity_finish(a);return;}a->instance=s;dm_touch_hud_frame_init(&s->hud_frame);
     s->activity=a;s->timer_fd=-1;s->frame_fd=-1;s->wsi_last_logged=-1;s->resumed=0;s->focused=0;
@@ -930,6 +1058,7 @@ __attribute__((visibility("default"))) void ANativeActivity_onCreate(ANativeActi
     s->arbiter=dm_input_arbiter_create(667,375,s->density);
     if(!s->arbiter){LOG("input arbiter create failed");ANativeActivity_finish(a);return;}
     s->touch_width_pt=667;s->touch_height_pt=375;s->touch_density=s->density;
+    if(!controller_hotplug_start(s))LOG("controller hotplug listener not registered; no hotplug claim");
     LOG("app backend=%s state=%s touch=density %.2f",dm_app_lifecycle_backend_name(),
         dm_app_lifecycle_state_name(dm_app_lifecycle_state(s->lifecycle)),s->density);
 }
