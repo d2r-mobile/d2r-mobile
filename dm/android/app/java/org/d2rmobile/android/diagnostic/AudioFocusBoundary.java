@@ -112,25 +112,27 @@ public final class AudioFocusBoundary {
 
     /**
      * 放弃当前请求（幂等）。只放弃自己实际持有的那个 AudioFocusRequest 实例；无活跃请求时不调用平台。
-     * 返回是否真的放弃了平台请求。| Abandons exactly the retained request; no platform call when idle.
+     * 平台调用抛出异常时句柄仍保留以便重试，但 callback token 立即失效；返回是否真的放弃了平台请求。
+     * Abandons exactly the retained request. If the platform call throws, the request stays retained for a retry
+     * while callback tokens are invalidated immediately; returns whether a platform abandon really happened.
      */
     public boolean abandon() {
         requireMainLooper();
         final AudioFocusRequest request = activeRequest;
         if (request == null) return false;
-        activeToken = 0;            // 先失效 token：队列中旧请求的回调随后会被丢弃
-        activeRequest = null;
-        activeGeneration = 0;
+        activeToken = 0;        // 先失效 token：旧 callback 立即惰性，无论平台调用是否成功
         audioManager.abandonAudioFocusRequest(request);
+        activeRequest = null;   // 只有平台调用成功后才丢失可重试的身份
+        activeGeneration = 0;
         return true;
     }
 
-    /** 释放边界（幂等）：放弃活跃请求并永久拒绝后续 request；旧回调在投递时被丢弃。 */
+    /** 释放边界（幂等）：放弃活跃请求并永久拒绝后续 request；失败时保留请求供同一主线程重试。 */
     public void release() {
         requireMainLooper();
-        if (released) return;
-        released = true;
-        abandon();
+        if (released && activeRequest == null) return;   // 已完全释放：重复 release 无操作
+        released = true;                                 // 逻辑上终止；request() 从此拒绝
+        abandon();                                       // 平台失败时请求保留，下一次 release 重试
     }
 
     public boolean isActive() { return activeRequest != null; }
