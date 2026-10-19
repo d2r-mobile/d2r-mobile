@@ -3,6 +3,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 struct native_audio {
     JavaVM *vm;
@@ -12,10 +13,31 @@ struct native_audio {
     int active, resumed, focused;
     int closed;
     int last_error;
-    uint64_t pcm_phase;
+    uint64_t pcm_phase;      // 实际写入 session 的帧数（PCM 相位只按已写帧推进）
+    uint32_t pending_len;    // 已生成但尚未被 session 接受的帧
+    uint64_t owed_frames;    // 按单调时钟累计应供帧
+    uint64_t units_rem;      // 精确的亚帧余量：单位 ns*rate，模 1e9；跨 tick 保留
+    int64_t last_ns;
+    int clock_valid;
+    int16_t pending[NATIVE_AUDIO_MAX_PENDING_FRAMES * DM_AUDIO_CHANNELS];
+    native_audio_clock clock;
+    void *clock_user;
 };
 
-static uint64_t g_pcm_phase_seed;
+static int64_t monotonic_now(void *user) {
+    (void)user;
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0;
+    return (int64_t)ts.tv_sec * 1000000000LL + ts.tv_nsec;
+}
+
+static void reset_pacing(native_audio *audio) {
+    audio->pending_len = 0;   // 暂停/停止后不保留旧音频，恢复不突发
+    audio->owed_frames = 0;
+    audio->units_rem = 0;     // 基线重置时同步清余量，旧时间分数不跨暂停累计
+    audio->last_ns = 0;
+    audio->clock_valid = 0;
+}
 
 static int set_error(native_audio *audio, int error) {
     if (audio) audio->last_error = error;
@@ -54,8 +76,11 @@ int native_audio_create(JNIEnv *env, jobject activity, const dm_audio_session_op
         return -1;
     }
     if (options) audio->options = *options;
-    else audio->options = (dm_audio_session_options)DM_AUDIO_SESSION_OPTIONS_INIT;
-    audio->pcm_phase = __atomic_add_fetch(&g_pcm_phase_seed, 1, __ATOMIC_RELAXED);
+    else {
+        audio->options = (dm_audio_session_options)DM_AUDIO_SESSION_OPTIONS_INIT;
+        audio->options.queue_frames = NATIVE_AUDIO_QUEUE_FRAMES;   // 本诊断明确容量，不改全局默认
+    }
+    audio->pcm_phase = 0;
     *out = audio;
     return 0;
 }
@@ -83,6 +108,7 @@ int native_audio_key(native_audio *audio, JNIEnv *env, int32_t keycode, int32_t 
     if (keycode == 47) {
         if (audio->session) {
             const int rc = dm_audio_session_stop(audio->session);
+            reset_pacing(audio);
             if (rc != DM_AS_OK) set_error(audio, rc);
         }
         return 1;
@@ -101,7 +127,7 @@ void native_audio_set_focus(native_audio *audio, int focused) {
     audio->focused = focused ? 1 : 0;
     // 失去窗口焦点是明确的诊断暂停：停输出并放弃本次意图，恢复焦点不自动播放。
     // Window-focus loss is an explicit diagnostic pause: stop output and drop the intent; regaining focus never plays.
-    if (!audio->focused && audio->session) (void)dm_audio_session_stop(audio->session);
+    if (!audio->focused && audio->session) { (void)dm_audio_session_stop(audio->session); reset_pacing(audio); }
 }
 
 int native_audio_resume(native_audio *audio) {
@@ -117,6 +143,7 @@ int native_audio_pause(native_audio *audio) {
     audio->resumed = 0;
     // 暂停必须停生产者并放弃播放意图；resume 不会重放旧请求，只有新的显式 P 才恢复。
     // Pause stops the producer and drops play intent; resume never replays the old request, only a new explicit P.
+    reset_pacing(audio);
     return audio->session ? dm_audio_session_stop(audio->session) : DM_AS_OK;
 }
 
@@ -126,12 +153,67 @@ int native_audio_tick(native_audio *audio, JNIEnv *env) {
     const int drained = dm_audio_session_drain(audio->session);
     if (drained == DM_AS_E_OVERFLOW) return set_error(audio, drained);
     if (drained != DM_AS_OK) return set_error(audio, drained);
-    if (dm_audio_session_output_state(audio->session) != DM_AF_OUT_PLAYING) return 0;
-    int16_t pcm[NATIVE_AUDIO_BLOCK_FRAMES * DM_AUDIO_CHANNELS];
-    native_audio_reference_pcm(audio->pcm_phase, pcm, NATIVE_AUDIO_BLOCK_FRAMES);
-    const uint32_t written = dm_audio_session_write(audio->session, pcm, NATIVE_AUDIO_BLOCK_FRAMES);
-    if (written > 0) audio->pcm_phase += NATIVE_AUDIO_BLOCK_FRAMES;
+    if (dm_audio_session_output_state(audio->session) != DM_AF_OUT_PLAYING) {
+        reset_pacing(audio);   // 停止/暂停期间绝不积累，恢复后不突发旧音频
+        return 0;
+    }
+
+    const int64_t now = audio->clock ? audio->clock(audio->clock_user) : monotonic_now(NULL);
+    if (!audio->clock_valid) {
+        audio->last_ns = now;   // 首个 tick 只建立时间基线
+        audio->clock_valid = 1;
+    } else if (now > audio->last_ns) {
+        uint64_t elapsed = (uint64_t)(now - audio->last_ns);
+        audio->last_ns = now;
+        // 有界 catchup：先钳制最长 elapsed，保证 ns*48000 不溢出，再以 ns*rate 余量精确累计分数帧。
+        // Bounded catchup: clamp the longest elapsed first so ns*48000 cannot overflow, then accumulate exact
+        // fractional frames in ns*rate units carried across ticks.
+        if (elapsed > NATIVE_AUDIO_MAX_CATCHUP_NS) elapsed = NATIVE_AUDIO_MAX_CATCHUP_NS;
+        const uint64_t units = elapsed * (uint64_t)NATIVE_AUDIO_RATE + audio->units_rem;
+        const uint64_t add = units / 1000000000u;
+        audio->units_rem = units % 1000000000u;
+        audio->owed_frames += add;
+        if (audio->owed_frames > NATIVE_AUDIO_MAX_PENDING_FRAMES)
+            audio->owed_frames = NATIVE_AUDIO_MAX_PENDING_FRAMES;   // 有界 catchup，丢弃超额而不是无限积压
+    }
+
+    // 先生成到有界 pending，再用实际接受帧数推进 PCM 相位；partial write 保留未写样本。
+    while (audio->owed_frames > 0 && audio->pending_len < NATIVE_AUDIO_MAX_PENDING_FRAMES) {
+        uint32_t room = NATIVE_AUDIO_MAX_PENDING_FRAMES - audio->pending_len;
+        uint32_t n = audio->owed_frames < room ? (uint32_t)audio->owed_frames : room;
+        native_audio_reference_pcm(audio->pcm_phase + audio->pending_len,
+                                   audio->pending + audio->pending_len * DM_AUDIO_CHANNELS, (int)n);
+        audio->pending_len += n;
+        audio->owed_frames -= n;
+    }
+    if (audio->pending_len == 0) return 0;
+
+    const uint32_t written = dm_audio_session_write(audio->session, audio->pending, audio->pending_len);
+    if (written == 0) return 0;
+    if (written > audio->pending_len) return set_error(audio, DM_AS_E_OUTPUT);
+    audio->pcm_phase += written;
+    audio->pending_len -= written;
+    if (audio->pending_len)
+        memmove(audio->pending, audio->pending + written * DM_AUDIO_CHANNELS,
+                (size_t)audio->pending_len * DM_AUDIO_CHANNELS * sizeof(int16_t));
     return (int)written;
+}
+
+void native_audio_set_clock(native_audio *audio, native_audio_clock clock, void *user) {
+    if (!audio) return;
+    audio->clock = clock;
+    audio->clock_user = user;
+    audio->last_ns = 0;
+    audio->clock_valid = 0;
+    audio->units_rem = 0;
+}
+
+uint64_t native_audio_written_frames(const native_audio *audio) {
+    return audio ? audio->pcm_phase : 0;
+}
+
+uint32_t native_audio_pending_frames(const native_audio *audio) {
+    return audio ? audio->pending_len : 0;
 }
 
 int native_audio_destroy(native_audio **audio_ref, JNIEnv *env) {
