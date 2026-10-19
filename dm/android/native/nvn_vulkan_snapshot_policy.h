@@ -81,18 +81,18 @@ static const char *gpu_snapshot_read_property(const char *name) {
 }
 
 // Read once per process. Changing env/property requires an app restart.
-// Precedence: explicit env > app debug property > default enabled.
+// Precedence: explicit env > app debug property > caller-provided default.
 static int gpu_snapshot_mode_enabled(const char *env_name, const char *property_name,
-        int *cached, gpu_snapshot_policy_source *source) {
+        int default_mode, int *cached, gpu_snapshot_policy_source *source) {
     if (*cached < 0) {
-        int mode = 1;
+        int mode = default_mode;
         const char *env = getenv(env_name);
         if (gpu_snapshot_parse_mode(env, &mode)) {
             *source = GPU_SNAPSHOT_SOURCE_ENV;
         } else if (gpu_snapshot_parse_mode(gpu_snapshot_read_property(property_name), &mode)) {
             *source = GPU_SNAPSHOT_SOURCE_PROPERTY;
         } else {
-            mode = 1;
+            mode = default_mode;
             *source = GPU_SNAPSHOT_SOURCE_DEFAULT;
         }
         *cached = mode;
@@ -102,13 +102,16 @@ static int gpu_snapshot_mode_enabled(const char *env_name, const char *property_
 
 static int gpu_snapshot_reuse_enabled(void) {
     return gpu_snapshot_mode_enabled("DM_VK_GPU_SNAPSHOT_REUSE",
-        "debug.d2r.gpu_snapshot_reuse", &gpu_snapshot_reuse_cached,
+        "debug.d2r.gpu_snapshot_reuse", 1, &gpu_snapshot_reuse_cached,
         &gpu_snapshot_reuse_source_cached);
 }
 
+// Conservative production default: keep the snapshot cache, but use GPU COW
+// clone+patch instead of patching a potentially live buffer in place.
+// Explicit debug.d2r.gpu_snapshot_inplace=1 keeps the diagnostic in-place arm.
 static int gpu_snapshot_inplace_enabled(void) {
     return gpu_snapshot_mode_enabled("DM_VK_GPU_SNAPSHOT_INPLACE",
-        "debug.d2r.gpu_snapshot_inplace", &gpu_snapshot_inplace_cached,
+        "debug.d2r.gpu_snapshot_inplace", 0, &gpu_snapshot_inplace_cached,
         &gpu_snapshot_inplace_source_cached);
 }
 
