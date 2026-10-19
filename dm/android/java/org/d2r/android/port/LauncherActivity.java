@@ -71,12 +71,12 @@ public final class LauncherActivity extends Activity {
     private String packageSummary = "";
     private boolean importing;
     private volatile boolean cancelImport;
-    // 出图分辨率只提供几档预设：它是"主机档"尺寸，掌机档由 native 按 0.8 同比例缩放（与 Mac/iOS 同一语义）。
-    // 空字符串表示跟随档位（不写这个键，用原版 16:9 常数）。
-    // The output resolution offers a few presets only: it is the docked-profile size and the handheld profile is
-    // scaled by 0.8 inside native code, the same semantics as Mac and iOS. An empty string means "follow the
-    // profile", which writes no key and keeps the original 16:9 constants.
-    private static final String[] RESOLUTION_PRESETS = {"", "1920x1080", "2560x1440"};
+    // 出图分辨率只提供几档预设：空字符串 = 按当前手机窗口比例自动选择（720 级高度）；
+    // 1600x900 是 16:9 兼容档（掌机档仍为 1280x720）；其余两档是显式高分辨率，仍在原有档位语义内。
+    // The output resolution offers a few presets only: empty = derive from the current phone surface
+    // aspect at 720-level height; 1600x900 is the 16:9 compatibility preset (handheld still 1280x720);
+    // the other two keep the existing explicit high-resolution semantics.
+    private static final String[] RESOLUTION_PRESETS = {"", "1600x900", "1920x1080", "2560x1440"};
     // 图形驱动两档：系统自带的 Adreno 驱动，和随 APK 一起发的 Turnip（选它由 native 的 gpu-driver.conf 生效）。
     // Measured difference: the Adreno driver shows blocky lighting around the player, Turnip does not — see the
     // driver notes under docs/.
@@ -610,8 +610,9 @@ public final class LauncherActivity extends Activity {
         content.append("# 由启动界面写入 | written by the launcher\n");
         content.append("debug_overlay=").append(overlaySwitch.isChecked() ? "1" : "0").append('\n');
         content.append("operation_mode=").append(handheld ? "handheld" : "console").append('\n');
-        // 跟随档位时不写这个键：native 语义里"省略"就是不改动，保持原版 16:9 常数。
-        // "Follow profile" writes no key: omitting it means "leave it alone" to native, keeping the original 16:9 constants.
+        // 跟随档位时不写这个键：native 语义里"省略"= 按手机窗口比例自动选择；1600x900 是 16:9 兼容档。
+        // Auto writes no key: omission means "derive from the phone surface aspect" in native; 1600x900 is the
+        // 16:9 compatibility preset.
         if (!RESOLUTION_PRESETS[resolutionIndex].isEmpty()) content.append("resolution=").append(RESOLUTION_PRESETS[resolutionIndex]).append('\n');
         content.append(LaunchSettings.foreign(configFile(), OWNED_KEYS));
         write(configFile(), content.toString());

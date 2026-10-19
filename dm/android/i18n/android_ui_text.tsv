@@ -58,7 +58,7 @@ dmAndroidLaunchDriverSystem	系统驱动	System driver	Android 启动界面
 dmAndroidLaunchDriverTurnip	内置 Turnip	Built-in Turnip	Android 启动界面
 dmAndroidLaunchDriverPreparing	正在准备内置驱动…	Preparing built-in driver…	Android 启动界面
 dmAndroidLaunchDriverFailed	内置驱动不可用：%s	Built-in driver unavailable: %s	Android 启动界面
-dmAndroidLaunchFollowProfile	跟随档位	Follow profile	Android 启动界面
+dmAndroidLaunchFollowProfile	手机比例	Phone aspect	Android 启动界面
 dmAndroidLaunchNeedsImport	还没有数据包，请先导入再启动游戏	No package yet; import one before starting the game	Android 启动界面
 dmAndroidLaunchPending	数据包由电脑端生成（见 docs/ANDROID_PACKAGE.zh-CN.md），导入后即可启动	The package is produced on a PC (see docs/ANDROID_PACKAGE.zh-CN.md); import it to start	Android 启动界面
 dmAndroidMenuTitle	游戏菜单	Game menu	Android 游戏内菜单
