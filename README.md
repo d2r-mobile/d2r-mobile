@@ -6,7 +6,7 @@ Drag to aim. Make Runewords in one tap. Clear Hell, then take on 100 levels of G
 
 **[Build & install](#getting-started)** · [Supported devices](#which-devices-are-supported) · [Releases](https://github.com/d2r-mobile/d2r-mobile/releases) · [中文](README.zh-CN.md) · [Español](README.es.md)
 
-MIT · English / 中文 · iOS 26+ / macOS 26+; older-API builds support iOS 18+ / macOS 15+. Apple TV 4K has a [community developer preview](dm/tvos/README.md), verified through character selection only.
+MIT · English / 中文 / Español · iOS 26+ / macOS 26+; older-API builds support iOS 18+ / macOS 15+. Apple TV 4K has a [community developer preview](dm/tvos/README.md), verified through character selection only.
 
 <p align="center">
   <img src="https://github.com/d2r-mobile/d2r-mobile/releases/download/assets/hero_en.jpg" width="100%" alt="Diablo II: Resurrected running natively on iPhone, with Harrogath and the red portal to the Greater Rift">
@@ -166,9 +166,9 @@ You can toggle most features one by one in game under Options → Custom.
   <img src="https://github.com/d2r-mobile/d2r-mobile/releases/download/assets/en_map.jpg" width="33%" alt="The full-screen map">
 </p>
 
-### English and Chinese
+### English, Chinese and Spanish
 
-Switch the whole game between English and Chinese under Options → Custom; after a restart, the interface and the voice acting use the language you chose. In English, items, skills and monsters keep the original Diablo II wording, and everything we added (Greater Rift, Chronicle, the settings page, controller prompts) has English text too.
+The whole game switches between English, Chinese and Spanish under Options → Custom; after a restart, the interface is in the language you chose. On first launch it follows your device language (Spanish from Spain uses the game's esES text, other Spanish regions use the Latin American esMX text). In English and Spanish, items, skills and monsters use the original Diablo II wording, and everything we added — Greater Rift, Chronicle, the settings page, controller prompts, item notes in Spanish — is translated too. Voice acting is Chinese for Chinese and English otherwise: the package only carries those two voice languages.
 
 <p align="center">
   <img src="https://github.com/d2r-mobile/d2r-mobile/releases/download/assets/en_game.jpg" width="58%" alt="Gameplay with the English interface">
