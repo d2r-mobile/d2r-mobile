@@ -3,8 +3,12 @@
 #include "dm.h"
 #include "front.h"
 #include <stdatomic.h>
-#include <sys/sysctl.h>
 #include <sys/time.h>
+#ifdef __ANDROID__
+#include <time.h>
+#else
+#include <sys/sysctl.h>
+#endif
 #include <unistd.h>
 void probe_install(void); void ticks_install(void); void hid_keys_init(void); void tact_prefetch_start(const char *outdir); void tact_chk_init(void); void stubs_report(void); void crash_install(void); void guest_thread_init(void); uint32_t svc_thread_main_init(void);
 typedef void (*fn0)(void); typedef void (*fn2)(uint64_t, uint64_t); typedef void (*fnp)(void *);
@@ -90,11 +94,30 @@ static void flags_init(void) {
 // 启动时间线零点 = 进程创建时刻（sysctl KERN_PROC_PID 的 p_starttime，墙钟）换算到 now_ns 单调时基；Mac / iOS 同口径
 // Zero point of the boot timeline = process creation time (p_starttime from sysctl KERN_PROC_PID, wall clock) converted to the now_ns monotonic time base; same definition on Mac / iOS
 static uint64_t proc_start_mono_ns(void) {
+    uint64_t mono = now_ns();
+#ifdef __ANDROID__
+    // /proc/self/stat field 22 is process start in clock ticks since boot; convert via CLOCK_BOOTTIME.
+    FILE *f = fopen("/proc/self/stat", "r");
+    if (!f) return mono;
+    char line[4096]; char *got = fgets(line, sizeof line, f); fclose(f);
+    char *end = got ? strrchr(line, ')') : NULL;
+    if (!end) return mono;
+    char *save = NULL, *tok = strtok_r(end + 1, " ", &save);
+    for (unsigned field = 3; tok && field < 22; ++field) tok = strtok_r(NULL, " ", &save);
+    long rate = sysconf(_SC_CLK_TCK);
+    if (!tok || rate <= 0) return mono;
+    uint64_t start = strtoull(tok, NULL, 10) * 1000000000ull / (uint64_t)rate;
+    struct timespec boot_ts; if (clock_gettime(CLOCK_BOOTTIME, &boot_ts)) return mono;
+    uint64_t boot = (uint64_t)boot_ts.tv_sec * 1000000000ull + (uint64_t)boot_ts.tv_nsec;
+    uint64_t age = boot >= start ? boot - start : 0;
+    return age < mono ? mono - age : 0;
+#else
     struct kinfo_proc kp; size_t n = sizeof kp; int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()};
-    uint64_t mono = now_ns(); struct timeval tv; gettimeofday(&tv, NULL);
+    struct timeval tv; gettimeofday(&tv, NULL);
     if (sysctl(mib, 4, &kp, &n, NULL, 0) || !n) return mono;
     int64_t age = (int64_t)(tv.tv_sec - kp.kp_proc.p_starttime.tv_sec) * 1000000000ll + (tv.tv_usec - kp.kp_proc.p_starttime.tv_usec) * 1000ll;
     return age > 0 ? mono - (uint64_t)age : mono;
+#endif
 }
 
 // 宿主装载（与 UIKit / Metal 无关）：读 NSO、重定位、强制接管、探针 / 拍门 / 按键、预取起跑。缺省在 main 里同步跑；

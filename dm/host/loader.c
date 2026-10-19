@@ -8,8 +8,15 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#ifdef __ANDROID__
+#include <dlfcn.h>
+#include "../android/native/host_sections.h"
+#include "../android/native/runtime.h"
+#include "../android/native/host_tls.h"
+#else
 #include <mach-o/getsect.h>
 #include <mach-o/ldsyms.h>
+#endif
 #include "hle.h"
 
 module_t g_mod[MAX_MOD];
@@ -37,16 +44,26 @@ static void create_keys(void) {
         pthread_key_create(&g_keyaspect, NULL) || pthread_key_create(&g_keyaspectui, NULL)) die("创建参数位键失败");
     LOG("键号 K18=%lu KTLS=%lu KTLR=%lu KGATE=%lu KRES0=%lu KRES1=%lu KASPECT=%lu KASPECTUI=%lu",
         g_key18, g_keytls, g_keytlr, g_keygate, g_keyres[0], g_keyres[1], g_keyaspect, g_keyaspectui);
+#ifdef __ANDROID__
+    pthread_key_t keys[] = {g_key18, g_keytls, g_keytlr, g_keygate, g_keyres[0], g_keyres[1], g_keyaspect, g_keyaspectui};
+    dm_android_bind_keys(keys);
+#endif
 }
 
 // K 槽校验：pthread TSD 布局固定，槽 = tpidrro_el0 + 8*key
 // K slot check: the pthread TSD layout is fixed, slot = tpidrro_el0 + 8*key
 static void tsd_check(void) {
+#ifdef __ANDROID__
+    dm_android_host_setspecific(g_key18, (void *)0x1234);
+    if (dm_android_context_get()->slots[DM_K18] != 0x1234) die("Android context layout mismatch");
+    dm_android_host_setspecific(g_key18, NULL);
+#else
     pthread_setspecific(g_key18, (void *)0x1234);
     uint64_t base; __asm__ volatile("mrs %0, tpidrro_el0" : "=r"(base));
     uint64_t off = *(uint64_t *)(g_mod[0].base + g_mod[0].key_page_off + g_mod[0].key_idx[KEY_K18] * 8);
     if (((uint64_t *)(base & ~7ull))[off / 8] != 0x1234) die("TSD 布局不符");
     pthread_setspecific(g_key18, 0);
+#endif
 }
 
 static void build_symhash(module_t *m);
@@ -124,7 +141,12 @@ static uint64_t resolve_sym(module_t *m, const char *name, int weak) {
 // Forced take-over table (hle.h HLE_FORCE, the __DATA,swforce section): a hit overrides the definition inside the module
 static const hle_force_ent *g_force; static unsigned g_nforce; static unsigned *g_force_hits;
 static void force_init(void) {
-    unsigned long sz; g_force = (const hle_force_ent *)getsectiondata(&_mh_execute_header, "__DATA", "swforce", &sz);
+    unsigned long sz;
+#ifdef __ANDROID__
+    g_force = dm_android_host_section(1, &sz);
+#else
+    g_force = (const hle_force_ent *)getsectiondata(&_mh_execute_header, "__DATA", "swforce", &sz);
+#endif
     g_nforce = g_force ? (unsigned)(sz / sizeof *g_force) : 0;
     g_force_hits = calloc(g_nforce + 1, sizeof *g_force_hits);
     for (unsigned i = 0; i < g_nforce; i++)
@@ -179,10 +201,16 @@ static void install_key_page(module_t *m) {
     if (m->key_page_off + m->key_page_size > m->size) die("%s: 键页越界", m->name);
     uint64_t *page = (uint64_t *)(m->base + m->key_page_off);
     memset(page, 0, m->key_page_size);
+#ifdef __ANDROID__
+    for (unsigned i = 0; i < 8; ++i) page[m->key_idx[i]] = dm_android_slot_offset(i);
+    extern void dm_android_context_entry(void);
+    page[8] = (uintptr_t)dm_android_context_entry;
+#else
     for (unsigned i = 0; i < 4; i++) page[m->key_idx[i]] = (uint64_t)key_value(i) * 8;
     page[m->key_idx[KEY_KRES0]] = (uint64_t)g_keyres[0] * 8; page[m->key_idx[KEY_KRES1]] = (uint64_t)g_keyres[1] * 8;
     page[m->key_idx[KEY_KASPECT]] = (uint64_t)g_keyaspect * 8; page[m->key_idx[KEY_KASPECTUI]] = (uint64_t)g_keyaspectui * 8;
     for (int k = 0; k < 8; k++) if (!page[m->key_idx[k]]) die("%s: 键页第 %d 项为 0（宿主键没建）——游戏会读到 TSD 0 号槽", m->name, k);
+#endif
     if (mprotect(m->base + m->key_page_off, m->key_page_size, PROT_READ)) die("%s 键页 mprotect", m->name);
 }
 
