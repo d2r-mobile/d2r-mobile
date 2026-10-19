@@ -916,6 +916,13 @@ if(NOT ANDROID)
     add_test(NAME hle_heap_snapshot COMMAND dm_hle_heap_snapshot_test)
     set_tests_properties(hle_heap_snapshot PROPERTIES TIMEOUT 30)
 
+    add_executable(dm_guest_snapshot_guard_test tests/guest_snapshot_guard.c)
+    target_include_directories(dm_guest_snapshot_guard_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../host)
+    target_compile_options(dm_guest_snapshot_guard_test PRIVATE -Wall -Wextra -Werror)
+    target_link_libraries(dm_guest_snapshot_guard_test PRIVATE Threads::Threads)
+    add_test(NAME guest_snapshot_guard COMMAND dm_guest_snapshot_guard_test)
+    set_tests_properties(guest_snapshot_guard PROPERTIES TIMEOUT 30)
+
     if(APPLE)
         add_test(NAME hle_heap_apple_symbol
             COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/hle_heap_apple_symbol.sh

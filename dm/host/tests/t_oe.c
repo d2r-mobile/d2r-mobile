@@ -13,6 +13,7 @@ uint64_t now_ns(void) { return 0; }
 // External dependencies of the 3D render scale (scale3d_tick): the unit test has no module table or graphics layer, so they are stubbed as "no main module" -> the function returns immediately
 module_t g_mod[MAX_MOD]; int g_nmod;
 void dm_guest_write_prepare(void *a, size_t n) { (void)a; (void)n; }
+#include "../guest_snapshot_guard.inc"
 uint64_t dm_nvn_frame_count(void) { return 0; }
 int dm_nvn_ruler_truth(void) { return 0; }
 int dm_ingame_now(void) { return 1; }

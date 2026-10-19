@@ -18,6 +18,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <stdio.h>
+#include "guarded_guest_read.inc"
 #include <stdatomic.h>
 #include <sys/clonefile.h>
 #include <sys/xattr.h>
@@ -584,13 +585,7 @@ HLE_FORCE("_ZN2nn2fs8OpenFileEPNS0_10FileHandleEPKci", "fsp-srv → open(2)", Re
 HLE_FORCE("_ZN2nn2fs8ReadFileEPmNS0_10FileHandleElPvm", "fsp-srv → pread(2)", Result, h_fs_ReadFile, size_t *out, uint64_t h, int64_t off, void *buf, size_t sz) {
     if (!h) { *out = 0; return RES_FAIL; }   // 文件句柄就是 fd，0 是标准输入、不会是游戏打开的文件：打开失败后照用的空句柄 | A file handle is an fd; 0 is standard input and never a file the game opened: it is the null handle the game keeps using after a failed open
     size_t got = 0; uint64_t t0 = g_flag.bootprof ? now_ns() : 0;
-    dm_guest_write_prepare(buf, sz);   // 目标可能是图形层写保护的贴图池页：内核写只读页返回 EFAULT 而不缺页，先解保护并标脏 | The destination may be a texture pool page write-protected by the graphics layer: a kernel write to a read-only page returns EFAULT instead of page-faulting, so unprotect and mark dirty first
-    while (got < sz) {
-        ssize_t r = dm_data_pread((int)h, (uint8_t *)buf + got, sz - got, off + got);
-        if (r < 0) { if (errno == EINTR) continue; return err_res("pread", "fd"); }
-        if (r == 0) break;
-        got += r;
-    }
+    if (dm_guarded_guest_read((int)h, buf, sz, off, &got, dm_data_pread)) return err_res("pread", "fd");
     *out = got;
     if (g_flag.bootprof) dm_prof_add(PROF_FS_READ, now_ns() - t0, got);
     if (g_fslog) { pthread_mutex_lock(&g_fslog_lock);
