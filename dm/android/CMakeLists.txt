@@ -535,6 +535,11 @@ if(NOT ANDROID)
                 --app ${CMAKE_CURRENT_SOURCE_DIR}/app
                 --cc ${CMAKE_C_COMPILER})
         set_tests_properties(native_callbacks PROPERTIES TIMEOUT 120)
+        add_test(NAME native_text_jni
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/native_text_jni_host.py
+                --native ${CMAKE_CURRENT_SOURCE_DIR}/app/native.c
+                --cc ${CMAKE_C_COMPILER} --mutants)
+        set_tests_properties(native_text_jni PROPERTIES TIMEOUT 120)
         add_test(NAME gamepad_events_mutants
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/gamepad_events_mutants.py
                 --cc ${CMAKE_C_COMPILER})
