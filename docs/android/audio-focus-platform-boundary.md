@@ -62,7 +62,10 @@ instead of skipping), then runs `ci/scripts/java-boundary.sh`, which
 
 - 用真实 `android.jar` 编译 `dm/android/app/java` 下**当前全部**源码（`find` 遍历，后续新增源自动纳入）；
 - 运行已验收的 `AudioFocusBoundaryTest` 主机控制（只有 `android.media` / `android.os` 窄 stub）；
-- 每次运行私有负控制：缺失 android.jar、缺失 javac、故意 malformed 源都必须失败并正确归因；
+- 运行已验收的 IME `DmInputConnectionTest` 实际类逻辑检查（107 checks）和两个现有变异
+  （endpoint-surrogate-extension、composing-deletion），任一失败都会让该必跑命令失败；
+- 每次运行私有负控制：缺失 android.jar、缺失 javac、故意 malformed 源，以及一个故意破坏 composing 删除的
+  IME 副本，都必须失败并正确归因；
 - 发布清洗过路径的 `java-boundary.log` 到 `ci-java-boundary` artifact。
 
 本地可显式运行 `ANDROID_SDK_ROOT=<sdk> bash ci/scripts/java-boundary.sh`。
