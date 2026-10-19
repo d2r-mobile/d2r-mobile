@@ -14,15 +14,17 @@ Produce one importable Android data package from the player's own game files and
   --workspace 目录   中间产物放哪（默认 ~/dm-work/pack-workspace）
   --output 路径      数据包输出路径（默认 <workspace>/d2r-package.zip）
   --reuse 目录       复用已解出的数据：该目录下应有 ExeFS/、RomFS/、game/、shaders/spirv/，
-                     给了就跳过解包与着色器翻译（这两步最慢）。**正确性由调用者负责**：
-                     流水线刻意不做游戏版本校验，复用了不匹配的数据会在游戏里暴露而不是在这里被拦住。
-  --subgroup N       着色器分组档位，默认 64（已验证的设备配置）；换 GPU 必须自行核对实际能力。
+                     给了就跳过解包与着色器翻译（这两步最慢）。必须先通过现有
+                     host-subgroup-size.txt、host-profile.json 和 shaders/work/build-config.json
+                     的一致性校验；缺记录、畸形、请求档位不一致或元数据冲突都会拒绝。
+  --subgroup N       着色器分组档位，默认 64（已验证的设备配置）；复用时必须与缓存实际档位一致。
 
 必须在项目的 Python 虚拟环境里运行：patch_nso 需要 venv 里的 lz4/capstone，而子进程用的是 sys.executable。
 Run it with the project's virtual environment: patch_nso needs lz4/capstone from it and subprocesses inherit
 sys.executable, so the wrong interpreter fails there with ModuleNotFoundError.
 """
 import argparse
+import json
 import os
 import re
 import shutil
@@ -199,6 +201,76 @@ def gather_game_files(source, target):
     return target
 
 
+def _read_reuse_json(path, label):
+    """Read one generated profile object without ever writing the cache."""
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as error:
+        raise PackageError(f"{label} 读不到：{path}（{error}）")
+    except (TypeError, ValueError) as error:
+        raise PackageError(f"{label} 不是有效 JSON：{path}（{error}）")
+    if not isinstance(value, dict):
+        raise PackageError(f"{label} 必须是 JSON 对象：{path}")
+    return value
+
+
+def _require_profile_int(profile, key, label):
+    value = profile.get(key)
+    if type(value) is not int:
+        raise PackageError(f"{label} 缺少整数 {key}：{value!r}")
+    return value
+
+
+def validate_reuse_shader_profile(reuse, requested):
+    """Validate the existing shader identity before --reuse packages it.
+
+    The generated cache owns three records: spirv/host-subgroup-size.txt,
+    spirv/host-profile.json and work/build-config.json. Reuse may only read
+    them; it must never relabel a cache for a different actual subgroup.
+    All failures leave every source-cache byte untouched.
+    """
+    spirv = reuse / "shaders" / "spirv"
+    subgroup_path = spirv / "host-subgroup-size.txt"
+    profile_path = spirv / "host-profile.json"
+    config_path = reuse / "shaders" / "work" / "build-config.json"
+
+    try:
+        raw = subgroup_path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise PackageError(f"复用的着色器缺少 host-subgroup-size.txt：{subgroup_path}（{error}）")
+    if not re.fullmatch(r"\d+\s*", raw):
+        raise PackageError(f"host-subgroup-size.txt 不是纯整数：{subgroup_path}")
+    actual = int(raw.strip())
+    if actual not in (32, 64, 128):
+        raise PackageError(f"host-subgroup-size.txt 档位非法：{actual}")
+    if requested not in (32, 64, 128):
+        raise PackageError(f"--subgroup 档位非法：{requested}")
+    if requested != actual:
+        raise PackageError(
+            f"复用缓存实际 subgroup={actual}，但请求 --subgroup={requested}；"
+            f"请匹配现有缓存或重新生成着色器，不能改写已有 profile")
+
+    profile = _read_reuse_json(profile_path, "host-profile.json")
+    config = _read_reuse_json(config_path, "build-config.json")
+    if profile.get("schema") != 1:
+        raise PackageError(f"host-profile.json schema 不支持：{profile.get('schema')!r}")
+    if _require_profile_int(profile, "host_subgroup_size", "host-profile.json") != actual:
+        raise PackageError("host-profile.json 与 host-subgroup-size.txt 的 subgroup 冲突")
+    if _require_profile_int(config, "host_subgroup_size", "build-config.json") != actual:
+        raise PackageError("build-config.json 与 host-subgroup-size.txt 的 subgroup 冲突")
+    for label, value in (("host-profile.json", profile), ("build-config.json", config)):
+        if value.get("guest_warp_size") != 32:
+            raise PackageError(f"{label} 的 guest_warp_size 不是 32")
+        if not isinstance(value.get("shader_host_capabilities"), dict):
+            raise PackageError(f"{label} 缺少 shader_host_capabilities 对象")
+        if not isinstance(value.get("jobs_sha256"), str) or not value["jobs_sha256"]:
+            raise PackageError(f"{label} 缺少 jobs_sha256")
+    for key in ("precision", "shader_host_capabilities", "jobs_sha256", "translator_sha256"):
+        if key in profile and key in config and profile[key] != config[key]:
+            raise PackageError(f"host-profile.json 与 build-config.json 的 {key} 冲突")
+    return actual, profile
+
+
 def to_nsp(source, work):
     """NSZ 是压缩过的 NSP，解包工具只吃 NSP。"""
     if source.suffix.lower() == ".nsp":
@@ -223,24 +295,31 @@ def main():
     parser.add_argument("--subgroup", type=int, default=64)
     args = parser.parse_args()
 
+    if args.reuse and args.workspace.resolve().is_relative_to(args.reuse.resolve()):
+        sys.exit("打包失败：--workspace 必须在 --reuse 目录外，否则会改写复用缓存")
     work = args.workspace
     work.mkdir(parents=True, exist_ok=True)
     output = args.output or (work / PACKAGE_NAME)
 
     try:
         if args.reuse:
-            # 复用路径：只汇编。正确性由调用者负责，流水线不做版本校验。
+            # 复用路径只读取真实生成记录；身份不符就拒绝，不补写/改写缓存。
+            # Reuse only reads the generated identity; mismatches are rejected rather than relabeled.
             reuse = args.reuse
             for required in ("ExeFS", "RomFS", "game", "shaders/spirv"):
                 if not (reuse / required).is_dir():
                     raise PackageError(f"复用目录缺少 {required}：{reuse / required}")
-            say(f"复用已解出的数据：{reuse}")
+            subgroup, _ = validate_reuse_shader_profile(reuse, args.subgroup)
+            if output.resolve().is_relative_to(reuse.resolve()):
+                raise PackageError("--output 必须在 --reuse 目录外，否则会写入复用缓存")
+            say(f"复用已解出的数据：{reuse}（真实 subgroup={subgroup}）")
             spirv = reuse / "shaders" / "spirv"
-            (spirv / "host-subgroup-size.txt").write_text(str(args.subgroup) + "\n")
-            # 复用路径也重做 derived.tsv：三张表从复用目录里的 RomFS 生成只要几十秒，比缓存它更不容易出错。
-            # The reuse path regenerates derived.tsv too: the three tables come from the RomFS in the reuse
-            # directory in tens of seconds, which is less error-prone than caching them.
-            derived = derived_tables(reuse / "RomFS", reuse)
+            derived_workspace = work / "reuse-derived"
+            if derived_workspace.resolve().is_relative_to(reuse.resolve()):
+                raise PackageError("--workspace 必须在 --reuse 目录外，否则会改写复用缓存")
+            # 复用路径也重做 derived.tsv，但写到工作目录，不能碰原缓存。
+            # The reuse path regenerates derived.tsv outside the source cache.
+            derived = derived_tables(reuse / "RomFS", derived_workspace)
             run([sys.executable, HERE / "build_package.py", "assemble", output,
                  "--game", reuse / "game", "--romfs", reuse / "RomFS", "--shaders", spirv, "--derived", derived,
                  "--note", "assembled from reused data"], "汇编数据包", timeout=60 * 60)
