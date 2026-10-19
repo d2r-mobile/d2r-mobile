@@ -2,7 +2,7 @@
 
 **Play Diablo II: Resurrected offline on iPhone, iPad and Apple silicon Mac.** Native ARM code, Metal graphics, touch controls and the Reign of the Warlock expansion. Bring your own Nintendo Switch game files.
 
-**[Build & install](../README.md#getting-started)** · [Supported devices](../README.md#which-devices-are-supported) · [Releases](https://github.com/d2r-mobile/d2r-mobile/releases) · [中文](README.zh-CN.md)
+**[Build & install](../README.md#getting-started)** · [Supported devices](../README.md#which-devices-are-supported) · [Releases](https://github.com/d2r-mobile/d2r-mobile/releases) · [中文](README.zh-CN.md) · [Español](../README.es.md)
 
 <p align="center">
   <img src="https://github.com/d2r-mobile/d2r-mobile/releases/download/assets/hero_en.jpg" width="100%" alt="Diablo II: Resurrected running natively on iPhone, with Harrogath and the red portal to the Greater Rift">
@@ -21,7 +21,7 @@
 - **Greater Rift:** 100 levels, timed clears, Rift Guardians and rewards. The skill cap rises from 20 to 40.
 - **Boss Rush:** 12 stages, ending with Diablo Clone and the three Uber bosses.
 - **Storage for collectors:** a searchable Chronicle for Unique and Set items, a wider stash, and runes, gems and crafting on one page.
-- **English and Chinese:** switch the interface and voice acting in the game settings.
+- **English, Chinese and Spanish:** switch the interface language in the game settings. Spanish uses English voice acting.
 
 <p align="center">
   <img src="https://github.com/d2r-mobile/d2r-mobile/releases/download/assets/en_boss.jpg" width="49%" alt="Diablo II: Resurrected touch combat on iPhone, with the boss health bar at the top">
