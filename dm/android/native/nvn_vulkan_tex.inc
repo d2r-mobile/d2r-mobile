@@ -6,7 +6,7 @@
 typedef struct cached_image_view { VkImageViewType type; VkImageSubresourceRange range; VkImageView view; struct cached_image_view *next; } cached_image_view;
 typedef struct image_entry {
     uint64_t serial; tex_t texture; VkImage image; VkImageView view; VkDeviceMemory memory;
-    VkFormat format; VkImageAspectFlags aspect; uint64_t stamp; int populated;
+    VkFormat format; VkImageType image_type; VkImageAspectFlags aspect; uint64_t stamp; int populated;
     uint64_t source_stamp,source_hash,source_seen;int source_valid,source_tracked;
     VkPipelineStageFlags last_stage;VkAccessFlags last_access;int gpu_written;
     cached_image_view *views;
@@ -214,7 +214,9 @@ static image_entry *image_get(const tex_t *t) {
     if(fp.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT)usage|=VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
     if(fp.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT)usage|=VK_IMAGE_USAGE_STORAGE_BIT;
     int is3d=t->d.target==NVN_TEXTURE_TARGET_3D,is1d=t->d.target==NVN_TEXTURE_TARGET_1D||t->d.target==NVN_TEXTURE_TARGET_1D_ARRAY;
-    VkImageCreateInfo ci={.sType=VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,.imageType=is3d?VK_IMAGE_TYPE_3D:is1d?VK_IMAGE_TYPE_1D:VK_IMAGE_TYPE_2D,.format=e->format,.extent={t->d.width,is1d?1:t->d.height,is3d?t->d.depth:1},.mipLevels=t->d.levels,.arrayLayers=t->L.layers,.samples=VK_SAMPLE_COUNT_1_BIT,.tiling=VK_IMAGE_TILING_OPTIMAL,.usage=usage,.sharingMode=VK_SHARING_MODE_EXCLUSIVE};
+    VkImageType image_type=is3d?VK_IMAGE_TYPE_3D:is1d?VK_IMAGE_TYPE_1D:VK_IMAGE_TYPE_2D;
+    VkImageCreateInfo ci={.sType=VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,.imageType=image_type,.format=e->format,.extent={t->d.width,is1d?1:t->d.height,is3d?t->d.depth:1},.mipLevels=t->d.levels,.arrayLayers=t->L.layers,.samples=VK_SAMPLE_COUNT_1_BIT,.tiling=VK_IMAGE_TILING_OPTIMAL,.usage=usage,.sharingMode=VK_SHARING_MODE_EXCLUSIVE};
+    e->image_type=image_type;
     if(t->d.target==NVN_TEXTURE_TARGET_CUBEMAP||t->d.target==NVN_TEXTURE_TARGET_CUBEMAP_ARRAY)ci.flags=VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
     VK_CHECK(vkCreateImage(device,&ci,NULL,&e->image));VkMemoryRequirements req;vkGetImageMemoryRequirements(device,e->image,&req);
     uint32_t type=UINT32_MAX;for(uint32_t i=0;i<memory_properties.memoryTypeCount;i++)if((req.memoryTypeBits & (1u<<i)) && (memory_properties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)){type=i;break;}
