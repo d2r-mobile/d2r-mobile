@@ -56,6 +56,13 @@ int main(void) {
           g[1].normal_frame == 4 && g[1].pressed_frame == 5);
     CHECK(g[2].status == DM_LIVE_GLYPH_UNKNOWN);
 
+    // Native general actions (weapon switch / map family) are real glyphs, not
+    // empty slots; only the explicit empty sentinel and unknown IDs fall back.
+    snap.raw_skill_id[1] = 357;
+    dm_live_touch_glyph_publish(touch, &snap, 1000000000);
+    CHECK(dm_live_touch_skill_glyphs(NULL, NULL, 0, g));
+    CHECK(g[1].status == DM_LIVE_GLYPH_GLYPH && g[1].atlas == 0 && g[1].normal_frame == 1);
+
     dm_ta_frame frame;
     CHECK(dm_ta_frame_at(0, 2, &frame) && frame.x == 136 && frame.y == 0 &&
           frame.width == 65 && frame.height == 65);
