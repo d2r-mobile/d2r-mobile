@@ -21,7 +21,7 @@
 - **Greater Rift:** 100 levels, timed clears, Rift Guardians and rewards. The skill cap rises from 20 to 40.
 - **Boss Rush:** 12 stages, ending with Diablo Clone and the three Uber bosses.
 - **Storage for collectors:** a searchable Chronicle for Unique and Set items, a wider stash, and runes, gems and crafting on one page.
-- **English, Chinese and Spanish:** switch the interface language in the game settings. Spanish uses English voice acting.
+- **English, Chinese, Spanish and Russian:** switch the interface language in the game settings. Spanish uses English voices; Russian uses Russian voices when included in your game files, otherwise English.
 
 <p align="center">
   <img src="https://github.com/d2r-mobile/d2r-mobile/releases/download/assets/en_boss.jpg" width="49%" alt="Diablo II: Resurrected touch combat on iPhone, with the boss health bar at the top">

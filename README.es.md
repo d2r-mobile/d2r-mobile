@@ -4,7 +4,7 @@
 
 Esto no es una demo técnica que «más o menos funciona». Es una versión móvil pulida para jugar a diario, desde tu primer personaje hasta el contenido de fin de juego.
 
-Plataformas: iPhone / iPad (iOS 26 o posterior; iOS 18 – 25 con la compilación para API antiguas) · Mac (Apple silicon, macOS 26 o posterior; macOS 15 – 25 con la compilación para API antiguas) · Apple TV 4K (3.ª generación, A15; port de la comunidad, versión preliminar para desarrolladores) · Versión del juego: edición de Switch con Reign of the Warlock, 1.0.34.0 (corresponde a la versión de PC 3.3.94012) · Español / English / 中文 · Licencia: MIT · **Aporta tus propios archivos del juego**
+Plataformas: iPhone / iPad (iOS 26 o posterior; iOS 18 – 25 con la compilación para API antiguas) · Mac (Apple silicon, macOS 26 o posterior; macOS 15 – 25 con la compilación para API antiguas) · Apple TV 4K (3.ª generación, A15; port de la comunidad, versión preliminar para desarrolladores) · Versión del juego: edición de Switch con Reign of the Warlock, 1.0.34.0 (corresponde a la versión de PC 3.3.94012) · Español / English / 中文 / Русский · Licencia: MIT · **Aporta tus propios archivos del juego**
 
 English: [README.md](README.md) · 中文: [README.zh-CN.md](README.zh-CN.md)
 
@@ -158,9 +158,9 @@ La mayoría de las funciones se pueden activar o desactivar una por una en el ju
   <img src="https://github.com/d2r-mobile/d2r-mobile/releases/download/assets/en_map.jpg" width="33%" alt="El mapa a pantalla completa">
 </p>
 
-### Español, inglés y chino
+### Español, inglés, chino y ruso
 
-Todo el juego cambia entre español, inglés y chino en Opciones → Extras; tras reiniciar, la interfaz queda en el idioma que elegiste. La primera vez que lo abres sigue el idioma de tu dispositivo (el español de España usa los textos esES del juego y el de otras regiones, los textos latinoamericanos esMX). En español, los objetos, las habilidades y los monstruos usan la terminología oficial del juego, y todo lo que añadimos —Grieta superior, Crónica, la página de ajustes, las indicaciones del mando y las notas de objetos— también está en español. Las voces quedan en inglés: el paquete solo incluye voces en chino e inglés.
+Todo el juego cambia entre español, inglés, chino y ruso en Opciones → Extras; tras reiniciar, la interfaz queda en el idioma que elegiste. La primera vez que lo abres sigue el idioma de tu dispositivo (el español de España usa los textos esES del juego y el de otras regiones, los textos latinoamericanos esMX; el ruso usa los textos ruRU). En español y en ruso, los objetos, las habilidades y los monstruos usan la terminología oficial del juego, y todo lo que añadimos —Grieta superior, Crónica, la página de ajustes, las indicaciones de gestos y los rótulos del mapa— también está traducido (las notas de objetos solo existen en chino y español). El ruso es el texto ruRU del juego, sin variantes regionales. Voces: en español quedan en inglés; en ruso se usan las voces rusas originales si tus archivos del juego las incluyen (un paquete hecho con los datos completos del juego las trae) y, si no, en inglés; en chino, voces en chino.
 
 <p align="center">
   <img src="https://github.com/d2r-mobile/d2r-mobile/releases/download/assets/es_game.jpg" width="58%" alt="Partida con la interfaz en español">

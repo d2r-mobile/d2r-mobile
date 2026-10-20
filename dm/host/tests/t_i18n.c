@@ -28,10 +28,11 @@ int main(int argc, char **argv) {
     else if (!strcmp(mode, "sysen")) { setenv("DM_LANG", "en-US", 1); expect("没有设置文件（首次安装）、系统语言 en-US", dm_ui("dmConfirm"), "OK"); }
     else if (!strcmp(mode, "syses")) { setenv("DM_LANG", "es-ES", 1); expect("没有设置文件（首次安装）、系统语言 es-ES", dm_ui("dmConfirm"), "Aceptar"); }
     else if (!strcmp(mode, "systw")) { setenv("DM_LANG", "zh-Hant-TW", 1); expect("没有设置文件、系统语言 zh-Hant-TW（繁体用中文）", dm_ui("dmConfirm"), "确定"); }
+    else if (!strcmp(mode, "sysru")) { setenv("DM_LANG", "ru-RU", 1); expect("没有设置文件（首次安装）、系统语言 ru-RU", dm_ui("dmConfirm"), "ОК"); }
     else if (!strcmp(mode, "tags")) {   // 语言标记 → 原版语言号 | language tag → the original game's language index
         static const struct { const char *t; int want; } c[] = { { "en-US", 0 }, { "en-GB", 0 }, { "zh-Hans-CN", 8 }, { "zh-Hans", 8 }, { "zh", 8 }, { "zh-Hans-HK", 8 }, { "zh-Hans-TW", 8 }, { "zh-Hans-MO", 8 },
             { "zh-Hant-TW", 8 }, { "zh-Hant-HK", 8 }, { "zh-Hant", 8 }, { "zh-HK", 8 }, { "zh_TW", 8 }, { "yue-Hant-HK", 8 }, { "yue-Hans-CN", 8 }, { "yue", 8 }, { "wuu-Hans-CN", 8 },
-            { "de-DE", 0 }, { "es-ES", 2 }, { "es", 2 }, { "es_ES", 2 }, { "es-Latn-ES", 2 }, { "es-419", 10 }, { "es-MX", 10 }, { "es-US", 10 }, { "es-AR", 10 }, { "fr-CA", 0 }, { "it-IT", 0 }, { "ko-KR", 0 }, { "pl-PL", 0 }, { "ru-RU", 0 }, { "ja-JP", 0 }, { "pt-BR", 0 }, { "nl-NL", 0 }, { "ar", 0 }, { "zu-ZA", 0 } };
+            { "de-DE", 0 }, { "ru-RU", 7 }, { "ru", 7 }, { "ru-UA", 7 }, { "be-BY", 0 }, { "uk-UA", 0 }, { "es-ES", 2 }, { "es", 2 }, { "es_ES", 2 }, { "es-Latn-ES", 2 }, { "es-419", 10 }, { "es-MX", 10 }, { "es-US", 10 }, { "es-AR", 10 }, { "fr-CA", 0 }, { "it-IT", 0 }, { "ko-KR", 0 }, { "pl-PL", 0 }, { "ja-JP", 0 }, { "pt-BR", 0 }, { "nl-NL", 0 }, { "ar", 0 }, { "zu-ZA", 0 } };
         for (unsigned i = 0; i < sizeof c / sizeof *c; i++) { char w[8], g[8]; snprintf(w, sizeof w, "%d", c[i].want); snprintf(g, sizeof g, "%d", dm_lang_from_tag(c[i].t)); expect(c[i].t, g, w); }
         expect("性别标记：[ms] 去掉", dm_untag("[ms]Gorro"), "Gorro"); expect("性别标记：连写去掉", dm_untag("[fs][fp]Botas"), "Botas");
         expect("性别标记：注释方括号不动", dm_untag("[Exc] Botas"), "[Exc] Botas"); expect("性别标记：中文原样", dm_untag("谐角之冠"), "谐角之冠"); expect("性别标记：只有标记 = 空串", dm_untag("[ms]"), ""); }
@@ -44,7 +45,9 @@ int main(int argc, char **argv) {
         atomic_store(&g_dm_lang, 10); expect("游戏切到 esMX（拉美西语，这条没有单独的拉美写法 = 同西语）", dm_ui("dmConfirm"), "Aceptar");
         expect("游戏切到 esMX：有拉美写法的条目取拉美写法（储藏箱 Arcón）", strstr(dm_ui("dmStoreStash"), "Arcón") ? "有" : "没有", "有");
         atomic_store(&g_dm_lang, 2); expect("游戏切到 esES：同一条取西班牙写法（储藏箱 Alijo）", strstr(dm_ui("dmStoreStash"), "Alijo") ? "有" : "没有", "有");
+        atomic_store(&g_dm_lang, 7); expect("游戏切到 ruRU（俄语）", dm_ui("dmConfirm"), "ОК");
+        expect("游戏切到 ruRU：表里的条目按俄语取（储藏箱 Тайник）", strstr(dm_ui("dmStoreStash"), "Тайник") ? "有" : "没有", "有");
         expect("表里没有的键原样返回", dm_ui("dmNoSuchKey"), "dmNoSuchKey"); }
-    else { fprintf(stderr, "用法：t_i18n en|zh|none|sysen|syses|systw|tags|game\n"); return 2; }
+    else { fprintf(stderr, "用法：t_i18n en|zh|none|sysen|syses|systw|sysru|tags|game\n"); return 2; }
     return fails ? 1 : 0;
 }
