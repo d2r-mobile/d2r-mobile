@@ -8,6 +8,19 @@
 static int failures;
 #define CHECK(c) do { if (!(c)) { failures++; fprintf(stderr, "FAIL %d: %s\n", __LINE__, #c); } } while (0)
 
+static uint32_t fixture_driver_id;
+static void VKAPI_PTR fixture_properties(VkPhysicalDevice p, VkPhysicalDeviceProperties *out) {
+    (void)p; memset(out,0,sizeof *out); out->apiVersion=VK_API_VERSION_1_2;
+}
+static void VKAPI_PTR fixture_features(VkPhysicalDevice p, VkPhysicalDeviceFeatures2 *out) {
+    (void)p; ((VkPhysicalDeviceShaderDrawParametersFeatures *)out->pNext)->shaderDrawParameters=VK_FALSE;
+}
+static void VKAPI_PTR fixture_properties2(VkPhysicalDevice p, VkPhysicalDeviceProperties2 *out) {
+    (void)p; VkPhysicalDeviceSubgroupProperties *sub=out->pNext;
+    sub->subgroupSize=64;
+    VkPhysicalDeviceDriverProperties *id=sub->pNext; id->driverID=fixture_driver_id;
+}
+
 int main(void) {
     dm_vk_driver first = {0};
     VkDeviceCreateInfo first_create = {.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
@@ -36,6 +49,19 @@ int main(void) {
     CHECK(dm_vk_driver_prepare_device(&duplicate, &duplicate_create));
     CHECK(!dm_vk_driver_prepare_device(&duplicate, &duplicate_create));
 
+    // Custom Qualcomm is an explicit identity choice, never accepted as Turnip.
+    dm_vk_driver custom={0}; custom.using_custom=1;
+    custom.vkGetPhysicalDeviceProperties=fixture_properties;
+    custom.vkGetPhysicalDeviceFeatures2=fixture_features;
+    custom.vkGetPhysicalDeviceProperties2=fixture_properties2;
+    fixture_driver_id=VK_DRIVER_ID_QUALCOMM_PROPRIETARY;
+    CHECK(!dm_vk_driver_validate(&custom,VK_NULL_HANDLE,NULL));
+    custom.expected_driver_id=VK_DRIVER_ID_QUALCOMM_PROPRIETARY;
+    CHECK(dm_vk_driver_validate(&custom,VK_NULL_HANDLE,NULL));
+    fixture_driver_id=VK_DRIVER_ID_MESA_TURNIP;
+    CHECK(!dm_vk_driver_validate(&custom,VK_NULL_HANDLE,NULL));
+    custom.expected_driver_id=VK_DRIVER_ID_MESA_TURNIP;
+    CHECK(dm_vk_driver_validate(&custom,VK_NULL_HANDLE,NULL));
     if (failures) return 1;
     puts("PASS nvn draw parameters reset/retry: no inherited support");
     return 0;

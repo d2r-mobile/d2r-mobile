@@ -80,3 +80,12 @@ dmAndroidSaveImportConfirm	导入会替换当前存档，启动游戏后生效�
 dmAndroidSaveImportConfirmGame	导入会替换当前存档并退出游戏，重开后加载导入的存档。	Importing replaces the current save and exits the game; the next launch loads the imported save.	Android 存档
 dmAndroidSaveNone	还没有存档可以导出	There is no save to export yet	Android 存档
 dmAndroidSaveWorking	正在处理存档…	Working on the save…	Android 存档
+dmAndroidDriverImport	导入自定义驱动 ZIP…	Import custom driver ZIP…	Android driver picker
+dmAndroidDriverImporting	正在校验并导入驱动…	Validating and importing driver…	Android driver picker
+dmAndroidDriverImported	驱动已导入，下次启动生效	Driver imported; applies on next launch	Android driver picker
+dmAndroidDriverImportFailed	驱动导入失败，已保留原驱动	Driver import failed; previous driver retained	Android driver picker
+dmAndroidDriverIncompatible	所选驱动不兼容	Selected driver is incompatible	Android driver check
+dmAndroidDriverTryBuiltin	请改选内置 Turnip 或系统驱动。此次没有启动游戏，数据不受影响。	Choose built-in Turnip or the system driver. The game was not started and data is unchanged.	Android driver check
+dmAndroidDriverDelete	删除已导入驱动…	Delete imported driver…	Android driver picker
+dmAndroidDriverDeleteConfirm	删除已导入的驱动？如果正在选用它，将切回内置 Turnip 或系统驱动。游戏数据和存档不会删除。	Delete the imported driver? If selected, it will switch to built-in Turnip or the system driver. Game data and saves are kept.	Android driver picker
+dmAndroidDriverDeleted	已删除导入驱动	Imported driver deleted	Android driver picker
