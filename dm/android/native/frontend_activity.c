@@ -447,8 +447,9 @@ static int live_touch_mode_enabled(void) {
     static int enabled=-1;
     if(enabled<0){
         char property[PROP_VALUE_MAX]={0};
-        enabled=__system_property_get("debug.d2r.live_touch",property)>0&&!strcmp(property,"1");
-        if(!enabled){const char *value=getenv("DM_LIVE_TOUCH");enabled=value&&!strcmp(value,"1");}
+        const char *value=getenv("DM_LIVE_TOUCH");
+        if(__system_property_get("debug.d2r.live_touch",property)>0) value=property;
+        enabled=!value||strcmp(value,"0");
     }
     return enabled;
 }
@@ -590,7 +591,7 @@ static void live_touch_sync(game_app *s) {
     // iOS defaults to touch-only panels; diagnostic controller circles cover
     // inventory slots. Only an NPC dialogue keeps the bottom menu target.
     uint32_t mask=navigation?(blocked<0?(1u<<DM_TC_MENU):0):
-        (((1u<<DM_TC_COUNT)-1)&~(1u<<DM_TC_MAP));
+        ((1u<<DM_TC_COUNT)-1);
     dm_live_touch_set_context(s->live_touch,navigation,mask,
                               snapshot.scene_epoch,snapshot.world_epoch,
                               snapshot.ui_identity,0);
