@@ -102,7 +102,7 @@ static int pfx_write(uint8_t *b, int pad) {
 #endif
     return 1;
 }
-enum { NSTR = 128 };   // 中 / 英 / esES / esMX 各一套（去重后 90 条） | One set each for Chinese / English / esES / esMX (90 entries after dedup)
+enum { NSTR = 160 };   // 中 / 英 / esES / esMX / ruRU 各一套（去重后 114 条） | One set each for Chinese / English / esES / esMX / ruRU (114 entries after dedup)
 static struct { char *key, *val; size_t klen; char sha[9]; uint64_t node, orig, olen; } g_str[NSTR];
 static int g_nstr;
 static uint8_t *g_b;
