@@ -12,8 +12,9 @@ typedef struct image_entry {
     cached_image_view *views;
     struct image_entry *next,*hash_next;
 } image_entry;
-typedef struct { int valid; tex_t texture; view_t view; } texture_descriptor;
-typedef struct { int valid; samp_par parameters; VkSampler sampler; } sampler_descriptor;
+typedef struct { int valid; tex_t texture; view_t view; uint64_t revision; } texture_descriptor;
+typedef struct { int valid; samp_par parameters; VkSampler sampler; uint64_t revision; } sampler_descriptor;
+static uint64_t texture_descriptor_revision, sampler_descriptor_revision;
 static image_entry *image_list,*image_index[4096];
 static texture_descriptor *texture_descriptors;
 static sampler_descriptor *sampler_descriptors;
@@ -435,11 +436,11 @@ void mtl_set_tex_pool_n(int n) {
     if(n<0||n>1048576)die("Vulkan texture descriptor capacity %d",n);pthread_mutex_lock(&descriptor_lock);
     if(n>texture_capacity){texture_descriptor *next=realloc(texture_descriptors,n*sizeof *next);if(!next)die("Vulkan descriptor allocation");memset(next+texture_capacity,0,(n-texture_capacity)*sizeof *next);texture_descriptors=next;texture_capacity=n;}pthread_mutex_unlock(&descriptor_lock);
 }
-void mtl_reg_tex(int id,const tex_t *t,const view_t *v) {pthread_mutex_lock(&descriptor_lock);if(id<0||id>=texture_capacity)die("Vulkan texture descriptor index %d",id);texture_descriptors[id]=(texture_descriptor){.valid=1,.texture=*t};if(v){texture_descriptors[id].view=*v;static unsigned view_diagnostics;if(v->set_format&&v->format!=t->d.format&&view_diagnostics++<12)LOG("[vulkan] texture view format texture=%#x view=%#x serial=%llu",t->d.format,v->format,(unsigned long long)t->serial);}pthread_mutex_unlock(&descriptor_lock);}
+void mtl_reg_tex(int id,const tex_t *t,const view_t *v) {pthread_mutex_lock(&descriptor_lock);if(id<0||id>=texture_capacity)die("Vulkan texture descriptor index %d",id);texture_descriptors[id]=(texture_descriptor){.valid=1,.texture=*t,.revision=++texture_descriptor_revision};if(v){texture_descriptors[id].view=*v;static unsigned view_diagnostics;if(v->set_format&&v->format!=t->d.format&&view_diagnostics++<12)LOG("[vulkan] texture view format texture=%#x view=%#x serial=%llu",t->d.format,v->format,(unsigned long long)t->serial);}pthread_mutex_unlock(&descriptor_lock);}
 void mtl_reg_samp(int id,const samp_par *p) {
     if(id<0||id>1048576)die("Vulkan sampler descriptor index %d",id);pthread_mutex_lock(&descriptor_lock);
     if(id>=sampler_capacity){int n=(id+64)&~63;sampler_descriptor *next=realloc(sampler_descriptors,n*sizeof *next);if(!next)die("Vulkan sampler allocation");memset(next+sampler_capacity,0,(n-sampler_capacity)*sizeof *next);sampler_descriptors=next;sampler_capacity=n;}
-    sampler_descriptors[id].valid=1;sampler_descriptors[id].parameters=*p;sampler_descriptors[id].sampler=VK_NULL_HANDLE;pthread_mutex_unlock(&descriptor_lock);
+    sampler_descriptors[id].valid=1;sampler_descriptors[id].parameters=*p;sampler_descriptors[id].sampler=VK_NULL_HANDLE;sampler_descriptors[id].revision=++sampler_descriptor_revision;pthread_mutex_unlock(&descriptor_lock);
 }
 // 深度比较别名与原图同寿命：释放原序号时一并释放别名序号。
 // The depth-compare alias shares the original's lifetime: releasing the serial also releases the alias serial.

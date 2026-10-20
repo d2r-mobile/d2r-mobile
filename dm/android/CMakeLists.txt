@@ -145,6 +145,14 @@ target_include_directories(dm_live_touch_portal_test PRIVATE native ../ios/Sourc
 target_compile_options(dm_live_touch_portal_test PRIVATE -Wall -Wextra -Werror)
 add_test(NAME live_touch_portal COMMAND dm_live_touch_portal_test)
 set_tests_properties(live_touch_portal PROPERTIES TIMEOUT 30)
+# Synthetic boundary fixture for the real Vulkan shop-ghost capture/replay.
+add_executable(dm_ui_ghost_policy_test tests/ui_ghost_policy_test.c)
+target_include_directories(dm_ui_ghost_policy_test PRIVATE native)
+target_compile_options(dm_ui_ghost_policy_test PRIVATE -Wall -Wextra -Werror)
+add_test(NAME ui_ghost_policy COMMAND dm_ui_ghost_policy_test)
+set_tests_properties(ui_ghost_policy PROPERTIES TIMEOUT 30)
+add_test(NAME shop_ghost_sync COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/shop_ghost_sync_test.py)
+set_tests_properties(shop_ghost_sync PROPERTIES TIMEOUT 30)
 # Physical controller vs touchscreen layout routing (real input_ready classifier).
 add_executable(dm_padmode_route_test tests/padmode_route_test.c)
 target_include_directories(dm_padmode_route_test PRIVATE native)

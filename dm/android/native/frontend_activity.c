@@ -99,6 +99,10 @@ static void ui_touch_cancel(void);
 static void live_touch_cancel_sources_all(game_app *s);
 static void live_touch_frontend_tick(game_app *s);
 static void live_touch_items_ensure(game_app *s);
+void mtl_ui_ghost(int on, float px, float py, const float grid[4], float cx, float cy);
+void dm_vk_ui_ghost_request(int on, float px, float py, const float grid[4],
+                            float cx, float cy, int dim,
+                            const _Atomic uint64_t *live, uint64_t token);
 void dm_padmode_request(int pad);
 int dm_padmode_current(void);
 int dm_padmode_busy(void);
@@ -112,6 +116,9 @@ static _Atomic int debug_overlay_enabled;
 // Is the in-game menu open (see input_ready): while it is, pad and key events are swallowed so the character does
 // not keep moving behind the menu.
 static _Atomic int menu_open;
+static _Atomic uint64_t ghost_contact;
+static _Atomic uint64_t ghost_contact_seq;
+static _Atomic int32_t ghost_pointer_id = -1;
 // 游戏内导入存档后要退出：这一次退出**不能**再请游戏存盘 —— 否则会把刚导入的存档用旧的内存状态覆盖掉。
 // 一次性的：被 settle_save 消费后清零。
 // After importing a save from the in-game menu the game exits, and that exit must NOT ask the game to save -- the
@@ -686,6 +693,9 @@ static void live_touch_items_ensure(game_app *s) {
 }
 static void live_touch_cancel_sources_all(game_app *s) {
     if (!s) return;
+    atomic_store(&ghost_contact, 0);
+    atomic_store(&ghost_pointer_id, -1);
+    mtl_ui_ghost(0,0,0,NULL,0,0);
     if(s->ui_drag_active||s->fe_drag)dm_ui_drag_end();
     s->ui_drag_active=s->fe_drag=s->fe_pointer_active=0;
     s->map_world_seq=0;s->selected_point=0;s->add_point_at=s->stat_next=0;
@@ -695,6 +705,43 @@ static void live_touch_cancel_sources_all(game_app *s) {
     if (generation && g_fe_cancel_trace_count++ < 32) LOG("[ui-trace] cancel sources gen=%u reason=4", generation);
     if (s->live_items) dm_live_touch_items_cancel(s->live_items);
     dm_live_touch_cancel_sources(s->live_touch, (int64_t)now_ns(), ui_touch_cancel);
+}
+static void shop_ghost_contact_event(game_app *s,int action,int32_t id) {
+    if(action==DM_LIVE_ACTION_CANCEL ||
+       ((action==DM_LIVE_ACTION_UP||action==DM_LIVE_ACTION_POINTER_UP)&&id==ghost_pointer_id)) {
+        atomic_store(&ghost_contact,0);
+        ghost_pointer_id=-1;
+    } else if((action==DM_LIVE_ACTION_DOWN||action==DM_LIVE_ACTION_POINTER_DOWN)&&s->live_touch) {
+        int slot=dm_live_touch_pointer_slot_for_id(s->live_touch,id);
+        if(slot>=0&&slot==dm_live_touch_pointer_slot(s->live_touch)) {
+            uint64_t next=atomic_fetch_add(&ghost_contact_seq,1)+1;
+            ghost_pointer_id=id;
+            atomic_store(&ghost_contact,next?next:1);
+        }
+    }
+}
+static void shop_ghost_sync(game_app *s,const dm_tc_state *c,const dm_tc_finger *f) {
+    if (!f || !f->active || !f->shop_drag || !c->navigation_mode ||
+        c->layout.width <= 0 || c->layout.height <= 0) {
+        mtl_ui_ghost(0,0,0,NULL,0,0);
+        return;
+    }
+    float grid[4];
+    if (!dm_ui_shelf_grid(grid) || grid[2] <= 0 || grid[3] <= 0) {
+        mtl_ui_ghost(0,0,0,NULL,0,0);
+        return;
+    }
+    uint64_t token = atomic_load(&ghost_contact);
+    if (!token || ghost_pointer_id<0 ||
+        dm_live_touch_pointer_slot_for_id(s->live_touch,ghost_pointer_id)!=c->pointer_slot) {
+        mtl_ui_ghost(0,0,0,NULL,0,0);
+        return;
+    }
+    float w=c->layout.width, h=c->layout.height;
+    float lift=DM_TC_POINTER_LIFT_PT*dm_tc_scale_for_size(w,h)/h;
+    int dim=dm_ui_stack_left()==1;
+    dm_vk_ui_ghost_request(1,f->aim_origin_x/w,f->aim_origin_y/h,grid,
+                           f->x/w,f->y/h-lift,dim,&ghost_contact,token);
 }
 static void live_cursor_set(void *context,float x,float y,float w,float h){(void)context;dm_cursor_set_screen(x,y,w,h);}
 static void live_cursor_clear(void *context){(void)context;dm_cursor_clear();}
@@ -731,6 +778,8 @@ static void live_touch_frontend_tick(game_app *s) {
     }
     if(s->frontend_scene!=s->live_observation.scene_epoch||s->frontend_world!=s->live_observation.world_epoch||s->frontend_ui!=s->live_observation.ui_identity){
         if(s->ui_drag_active)dm_ui_drag_end();s->ui_drag_active=0;
+        shop_ghost_contact_event(s,DM_LIVE_ACTION_CANCEL,-1);
+        mtl_ui_ghost(0,0,0,NULL,0,0);
         s->map_world_seq=0;s->selected_point=0;s->add_point_at=s->stat_next=0;
         s->tip_until=-2;s->tip_pointer_was=s->tip_dragged=0;
         dm_live_touch_item_snapshot_get(s->live_touch,&s->tip_last);
@@ -757,6 +806,7 @@ static void live_touch_frontend_tick(game_app *s) {
             dm_ui_drag_begin(f->ui_drag,f->aim_origin_x/c->layout.width,f->aim_origin_y/c->layout.height,44/c->layout.height);}
         dm_ui_drag_move(f->x/c->layout.width,f->y/c->layout.height);
     }else if(s->ui_drag_active){s->ui_drag_active=0;dm_ui_drag_end();}
+    shop_ghost_sync(s,c,f);
     int selected_tap=c->tap_move_seq!=s->tap_move_seen;
     if(!dm_ui_bind_active()&&selected_tap){
         uint32_t id=dm_ui_hit_id();
@@ -1170,6 +1220,9 @@ static int input_ready(int fd,int events,void *data) {
             if((s->lx||s->ly||s->rx||s->ry||hat||trigger)&&dm_padmode_route_event(1,0,source,0,0,1)==DM_PADMODE_ROUTE_PAD)padmode_request_pad(s);
             pad_publish(s);handled=1;
         }else if(is_motion){int raw_action=AMotionEvent_getAction(event),action=raw_action&AMOTION_EVENT_ACTION_MASK;unsigned lifted=(raw_action&AMOTION_EVENT_ACTION_POINTER_INDEX_MASK)>>AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT;
+            if(action==AMOTION_EVENT_ACTION_CANCEL)shop_ghost_contact_event(s,DM_LIVE_ACTION_CANCEL,-1);
+            else if(action==AMOTION_EVENT_ACTION_UP||action==AMOTION_EVENT_ACTION_POINTER_UP)
+                shop_ghost_contact_event(s,action,AMotionEvent_getPointerId(event,lifted));
             pthread_mutex_lock(&s->lock);ANativeWindow *window=s->window;int w=window?ANativeWindow_getWidth(window):1,h=window?ANativeWindow_getHeight(window):1;pthread_mutex_unlock(&s->lock);
             float gw=w,gh=w*9.f/16.f;if(gh>h){gh=h;gw=h*16.f/9.f;}float left=(w-gw)/2,top=(h-gh)/2;
             int live_on=s->live_touch&&live_touch_mode_enabled();dm_live_touch_geometry picture;
@@ -1214,6 +1267,8 @@ static int input_ready(int fd,int events,void *data) {
                         handled=1;
                     }else handled=1;
                 }else {if(ui_trace&&atomic_fetch_add(&g_fe_ui_trace_count,1)<32)LOG("[ui-trace] route skip gen=%u reason=2 count=%u",trace_gen,count);LOG("[android-touch] pointer count %u exceeds 16; refusing the event",count);}
+                    if(count<=16&&(action==AMOTION_EVENT_ACTION_DOWN||action==AMOTION_EVENT_ACTION_POINTER_DOWN)&&lifted<count)
+                        shop_ghost_contact_event(s,action,ids[lifted]);
                     touch_timer_wake(s);
                 }
             }else{

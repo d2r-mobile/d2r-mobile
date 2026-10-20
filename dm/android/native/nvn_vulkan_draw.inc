@@ -85,7 +85,7 @@ static VkResult graphics_pipeline_create(const pipeline_key *key,shader_entry *v
 static void pso_record_graphics(const shader_entry *vs,const shader_entry *fs,const graphics_pass_key *pass,const pipeline_key *key);
 static void draw_graphics_inner(const p_draw *draw,const p_draw_idx *indexed);
 static void draw_graphics(const p_draw *draw,const p_draw_idx *indexed) {
-    uint64_t phase=dm_cpu_phase_begin();draw_graphics_inner(draw,indexed);dm_cpu_phase_end(DM_CPU_PHASE_DRAW,phase);
+    uint64_t phase=dm_cpu_phase_begin();draw_graphics_inner(draw,indexed);ghost_note(draw,indexed);dm_cpu_phase_end(DM_CPU_PHASE_DRAW,phase);
 }
 static void draw_graphics_inner(const p_draw *draw,const p_draw_idx *indexed) {
     // 零顶点/零实例的 NVN 绘制不访问索引和资源，也不增加遮挡样本。
@@ -141,7 +141,7 @@ static void draw_graphics_inner(const p_draw *draw,const p_draw_idx *indexed) {
     if(highest<0)die("Vulkan negative vertex fetch");
     VkVertexInputAttributeDescription attrs[16];VkVertexInputBindingDescription streams[16];unsigned nattr=0,nstream=0;uint8_t stream_used[16]={0};uint32_t attribute_end[16]={0};VkBuffer vertex_buffers[16]={0};VkDeviceSize offsets[16]={0};
     for(unsigned i=0;i<16;i++){va_st a=state.attributes[i];if(!a.fmt||!vs->attributes[i])continue;VkFormat format=vk_format(a.fmt);if(format==VK_FORMAT_UNDEFINED)die("Vulkan vertex format %#x pending",a.fmt);attrs[nattr++]=(VkVertexInputAttributeDescription){i,a.stream,format,a.offset};stream_used[a.stream]=1;int bw,bh;uint32_t end=a.offset+nvn_fmt_bpb(a.fmt,&bw,&bh);if(end>attribute_end[a.stream])attribute_end[a.stream]=end;}
-    for(unsigned i=0;i<16;i++)if(stream_used[i]){const vs_st *s=&state.streams[i];const NVNbufferRange *v=&state.vertices[i];if(s->divisor>1)die("Vulkan vertex divisor %u pending",s->divisor);if(!v->address||!v->size)die("Vulkan missing vertex buffer %u",i);streams[nstream++]=(VkVertexInputBindingDescription){i,s->stride,s->divisor?VK_VERTEX_INPUT_RATE_INSTANCE:VK_VERTEX_INPUT_RATE_VERTEX};uint64_t element=s->divisor?(indexed?(uint64_t)indexed->base_instance+indexed->instances-1:0):(uint64_t)highest;uint64_t needed=element*s->stride+attribute_end[i];if(needed>v->size)needed=v->size;VkDescriptorBufferInfo fetched=forward_readonly_buffer(v->address,needed,1,VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT);vertex_buffers[i]=fetched.buffer;offsets[i]=fetched.offset;}
+    for(unsigned i=0;i<16;i++)if(stream_used[i]){const vs_st *s=&state.streams[i];const NVNbufferRange *v=&state.vertices[i];if(s->divisor>1)die("Vulkan vertex divisor %u pending",s->divisor);if(!v->address||!v->size)die("Vulkan missing vertex buffer %u",i);streams[nstream++]=(VkVertexInputBindingDescription){i,s->stride,s->divisor?VK_VERTEX_INPUT_RATE_INSTANCE:VK_VERTEX_INPUT_RATE_VERTEX};uint64_t element=s->divisor?(indexed?(uint64_t)indexed->base_instance+indexed->instances-1:0):(uint64_t)highest;uint64_t needed=element*s->stride+attribute_end[i];if(needed>v->size)needed=v->size;VkDescriptorBufferInfo fetched;if(!ghost_buffer_override((uintptr_t)v->address,needed,&fetched))fetched=forward_readonly_buffer(v->address,needed,1,VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT);vertex_buffers[i]=fetched.buffer;offsets[i]=fetched.offset;}
     VkPrimitiveTopology primitive=topology(draw?draw->prim:indexed->prim);
     // NVN 范围可反向或为常值，Vulkan 同样允许；默认 0..1 由状态初始化提供。
     // NVN permits reversed or constant ranges, as does Vulkan; state initialization supplies the 0..1 default.
