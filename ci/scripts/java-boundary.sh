@@ -26,6 +26,7 @@ fail() {
 
 bash "$root/dm/android/tests/live_touch_jni_registration.sh" >> "$log" 2>&1 || fail "live touch JNI registration"
 bash "$root/dm/android/tests/live_touch_timer_host.sh" >> "$log" 2>&1 || fail "live touch timer deadline"
+bash "$root/dm/android/tests/live_touch_frontend_host.sh" >> "$log" 2>&1 || fail "original frontend gestures"
 
 resolve_javac() {
     local candidate=${DM_JAVAC:-}

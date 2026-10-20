@@ -107,7 +107,7 @@ int main(void) {
     host.drop_point_ok = 1;
     host.origin_ok = 1;
     dm_live_touch_items_host h = {&host, item_query, item_result, drop_query,
-                                  drop_result, drop_last, drop_point, origin_point};
+                                  drop_result, drop_last, drop_point, origin_point, 0};
     dm_live_touch_items *items = dm_live_touch_items_create(touch, &h);
     CHECK(items != NULL);
     CHECK(dm_live_touch_items_set_context(items, 1, 1, 1, 1) == 0);
