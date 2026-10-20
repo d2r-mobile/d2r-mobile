@@ -34,7 +34,7 @@ def make_inputs(root):
 def make_overlay(root):
     overlay = root / "overlay"
     write(overlay / "ctrl_touch", b"marker\n")
-    write(overlay / "touch_strings.tsv", b"A\tABCDEF12\tB\n")
+    write(overlay / "touch_strings.tsv", b"A\tABCDEF12\tB\nHiddenHint\t1234abcd\t\n")
     write(overlay / "data" / ".build.config", b"config\n")
     write(overlay / "data" / "00-00000007.data", b"archive\n")
     return overlay
@@ -54,6 +54,14 @@ def main():
                      "overlay/data/.build.config", "overlay/data/00-00000007.data"):
             assert name in names, name
         package.inspect(output)
+
+        for malformed in (b"A\tABCDEF12\n", b"A\tABCDEF12\tB\textra\n", b"A\tNOTHEX\t\n"):
+            write(overlay / "touch_strings.tsv", malformed)
+            try:
+                package.collect_overlay(overlay)
+                raise AssertionError("malformed string record must fail")
+            except package.PackageError:
+                pass
 
         no_overlay = root / "no-overlay.zip"
         package.assemble(no_overlay, game, romfs, shaders, quiet=True)

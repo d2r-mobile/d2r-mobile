@@ -250,8 +250,8 @@ final class D2RTouchOverlay extends View {
             !TouchGlyph.frameRect(atlasInfo, atlas, frame, glyphRect)) return false;
         Bitmap glyph = glyphBitmap(atlas, frame);
         if (glyph == null) return false;
-        src.set(glyphRect[0], glyphRect[1], glyphRect[0] + glyphRect[2],
-                glyphRect[1] + glyphRect[3]);
+        // glyphBitmap already cropped the atlas; its coordinates start at zero.
+        src.set(0, 0, glyph.getWidth(), glyph.getHeight());
         float size = r * 1.28f;
         dst.set(Math.round(cx - size * .5f), Math.round(cy - size * .5f),
                 Math.round(cx + size * .5f), Math.round(cy + size * .5f));

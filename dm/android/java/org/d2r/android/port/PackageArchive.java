@@ -182,7 +182,8 @@ final class PackageArchive {
                 lines++;
                 if (line.isEmpty()) continue;
                 String[] fields = line.split("\t", -1);
-                if (fields.length != 3 || fields[0].isEmpty() || !checksum8(fields[1]) || fields[2].isEmpty())
+                // Empty replacement text hides a hint in the original touch UI.
+                if (fields.length != 3 || fields[0].isEmpty() || !checksum8(fields[1]))
                     throw new Failure("dmAndroidLaunchImportOverlay", "touch_strings.tsv line " + lines);
             }
             if (lines == 0) throw new Failure("dmAndroidLaunchImportOverlay", "touch_strings.tsv empty");

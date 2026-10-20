@@ -18,7 +18,7 @@ static void make_valid(const char *root) {
     char path[PATH_MAX];
     snprintf(path, sizeof path, "%s/data", root); mkdir(path, 0700);
     snprintf(path, sizeof path, "%s/ctrl_touch", root); write_file(path, "marker\n");
-    snprintf(path, sizeof path, "%s/touch_strings.tsv", root); write_file(path, "A\tABCDEF12\tB\n");
+    snprintf(path, sizeof path, "%s/touch_strings.tsv", root); write_file(path, "A\tABCDEF12\tB\nHiddenHint\t1234abcd\t\n");
     snprintf(path, sizeof path, "%s/data/.build.config", root); write_file(path, "config\n");
     snprintf(path, sizeof path, "%s/data/00-00000007.data", root); write_file(path, "archive\n");
 }
@@ -55,6 +55,12 @@ int main(void) {
     CHECK(dm_touch_overlay_apply(root, why, sizeof why) == -1);
     CHECK(getenv("DM_ROMFS_OVERLAY") == NULL);
     CHECK(strstr(why, "touch_strings.tsv") != NULL);
+    write_file(path, "A\tABCDEF12\n");
+    CHECK(dm_touch_overlay_apply(root, why, sizeof why) == -1);
+    CHECK(getenv("DM_ROMFS_OVERLAY") == NULL);
+    write_file(path, "A\tABCDEF12\tB\textra\n");
+    CHECK(dm_touch_overlay_apply(root, why, sizeof why) == -1);
+    CHECK(getenv("DM_ROMFS_OVERLAY") == NULL);
 
     remove_tree(root);
     puts("PASS: overlay contract accepts four-file fixture and disables absent/malformed env");

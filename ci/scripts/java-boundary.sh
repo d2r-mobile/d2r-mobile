@@ -24,6 +24,9 @@ fail() {
     exit 1
 }
 
+bash "$root/dm/android/tests/live_touch_jni_registration.sh" >> "$log" 2>&1 || fail "live touch JNI registration"
+bash "$root/dm/android/tests/live_touch_timer_host.sh" >> "$log" 2>&1 || fail "live touch timer deadline"
+
 resolve_javac() {
     local candidate=${DM_JAVAC:-}
     if [[ -z "$candidate" && -n "${JAVA_HOME:-}" ]]; then

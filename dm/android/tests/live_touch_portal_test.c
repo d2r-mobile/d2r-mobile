@@ -46,7 +46,7 @@ int main(void) {
     CHECK(!dm_live_touch_consume_portal_request(t, 1, 1, 1, &actions));
     CHECK(event(t, DM_LIVE_ACTION_MOVE, 10, px, py, 1001000000));
     CHECK(event(t, DM_LIVE_ACTION_UP, 10, px, py, 1002000000));
-    (void)dm_live_touch_scheduler_step(t, 1003000000);
+    (void)dm_live_touch_scheduler_step(t, 1003000000, (uint64_t)(1003000000 / 16000000), 0);
     CHECK(!dm_live_touch_consume_portal_request(t, 1, 1, 1, &actions));
     CHECK(calls.calls == 1);
 
