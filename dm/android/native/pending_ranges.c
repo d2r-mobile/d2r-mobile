@@ -110,7 +110,8 @@ int dm_pending_ranges_insert(dm_pending_ranges *ranges,dm_pending_kind kind,uint
     }
     dm_pending_range_node *old=collection->count?collection->versions[collection->count-1].root:NULL;
     dm_pending_range_node *root=insert_node(ranges,old,address,address+(uintptr_t)size);if(!root)return -1;
-    collection->versions[collection->count++]=(dm_pending_range_version){order,root};return 1;
+    collection->versions[collection->count++]=(dm_pending_range_version){order,root};
+    collection->min_start=root->min_start;collection->max_end=root->max_end;return 1;
 }
 
 int dm_pending_ranges_overlap(const dm_pending_ranges *ranges,dm_pending_kind kind,uintptr_t address,uint64_t size,uint64_t before_order,size_t *visited) {

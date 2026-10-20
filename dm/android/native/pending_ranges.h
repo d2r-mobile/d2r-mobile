@@ -13,12 +13,25 @@ typedef struct dm_pending_range_version dm_pending_range_version;
 typedef struct {
     dm_pending_range_version *versions;
     size_t count,capacity;
+    uintptr_t min_start,max_end;
 } dm_pending_range_collection;
 typedef struct {
     dm_pending_range_collection collections[DM_PENDING_KIND_COUNT];
     dm_pending_range_chunk *chunks,*current;
     size_t live_nodes,retained_bytes;
 } dm_pending_ranges;
+
+// Reject only ranges outside both collections; an overlap still needs the exact ordered query.
+static inline int dm_pending_ranges_may_overlap(const dm_pending_ranges *ranges,uintptr_t address,uint64_t size) {
+    if(!ranges||size>UINTPTR_MAX-address)return 1;
+    if(!size)return 0;
+    uintptr_t end=address+(uintptr_t)size;
+    for(unsigned i=0;i<DM_PENDING_KIND_COUNT;i++){
+        const dm_pending_range_collection *c=&ranges->collections[i];
+        if(c->count&&address<c->max_end&&end>c->min_start)return 1;
+    }
+    return 0;
+}
 
 // 使用全零初始化；有效非空登记返回 1、零长度返回 0、错误返回 -1 并设置 errno。
 // Initialize with all zeros; valid nonempty registration returns 1, zero length 0, errors -1 with errno.
