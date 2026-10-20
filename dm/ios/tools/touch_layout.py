@@ -1217,19 +1217,19 @@ def _custom_toggle_row(i, key, label):
             '            "untoggledFrame": 0, "untoggledPressedFrame": 1, "untoggledHoveredFrame": 3, "untoggledDisabledFrame": 2,\n'
             '            "toggledFrame": 4, "toggledPressedFrame": 5, "toggledHoveredFrame": 6,\n'
             '            "onClickMessage": "PanelManager:ClosePanel:TouchCustom_%s" } },\n') % (key, y, h, label, key, y + (h - 70) // 2, key)
-# 语言开关（第一行，普通行）：三项单选「中文 / English / Español」，下次启动生效（宿主 dm_custom.c 的 lang、hle_fs.c settings_lang_apply）。
+# 语言开关（第一行，普通行）：四项单选「中文 / English / Español / Русский」，下次启动生效（宿主 dm_custom.c 的 lang、hle_fs.c settings_lang_apply）。
 # 「重启游戏后生效」那句先放在屏外，勾选与当前语言不一致时宿主挪到这一行文字的下半（横坐标取标签的）
-# Language switch (first row, a regular row): three-option radio "中文 / English / Español", takes effect on next launch (host dm_custom.c lang, hle_fs.c settings_lang_apply).
-# The "Takes effect after restarting the game" line starts off-screen; when the selection differs from the current language the host moves it to the lower half of this row's text (x taken from the label)
+# Language switch (first row, a regular row): four-option radio "中文 / English / Español / Русский", takes effect on next launch (host dm_custom.c lang, hle_fs.c settings_lang_apply).
+# The "takes effect after restart" sentence starts off-screen; when the checked option differs from the current language the host moves it to the lower half of this row (x taken from the label)
 _CUSTOM_LANG_HINT = ''.join('        { "type": "TextBoxWidget", "name": "TouchCustomLangHint%s", "fields": { "rect": { "x": 99999, "y": %d, "width": 1400, "height": 60 }, "text": "@dmCustomLangHint%s", "style": "$StyleSettingsText", "style/fontFace": "BlizzardGlobal" } },\n'
-                            % (n, _CUSTOM_Y[0] + 112, n) for n in ('Zh', 'En', 'Es'))   # 三句各一个控件，宿主按选中的语言摆其中一句 | One widget per sentence; the host shows the one for the selected language
-# 语言那一行是并排的三个选项「中文 / English / Español」（单选：宿主 dm_custom.c 让三个勾选框互斥，存的是 lang 一个键）。
-# 这一行的字三种界面都要写汉字：英文 / 西语界面缺省的 Formal 字体没有汉字（缺字画不出），所以这几个文字控件指定原版的全球字体 BlizzardGlobal
-# （原版标题页、队伍名等同样按控件指定它）。Español 的勾选框留在各行勾选框那一列（x 1315），English、中文依次在它左边
-# The language row is three side-by-side options "中文 / English / Español" (radio: host dm_custom.c makes the three checkboxes mutually exclusive, storing one key lang).
-# This row's text must render Chinese characters in all three UIs: the default Formal font in English / Spanish UIs has no Chinese glyphs (missing glyphs can't be drawn), so these text widgets specify the original global font BlizzardGlobal
-# (the original title page, party names etc. likewise specify it per widget). The Español checkbox stays in the checkbox column of the other rows (x 1315), English and 中文 sit to its left in turn
-_LANG_ZH_X, _LANG_EN_X, _LANG_ES_X = (520, 655), (760, 965), (1080, 1315)   # （文字 x，勾选框 x） | (text x, checkbox x)
+                            % (n, _CUSTOM_Y[0] + 112, n) for n in ('Zh', 'En', 'Es', 'Ru'))   # 四句各一个控件，宿主按选中的语言摆其中一句 | One widget per sentence; the host shows the one for the selected language
+# 语言那一行是并排的四个选项「中文 / English / Español / Русский」（单选：宿主 dm_custom.c 让四个勾选框互斥，存的是 lang 一个键）。
+# 这一行的字各界面都要写汉字：英文 / 西语 / 俄语界面缺省的 Formal 字体没有汉字（缺字画不出），所以这几个文字控件指定原版的全球字体 BlizzardGlobal
+# （原版标题页、队伍名等同样按控件指定它）。Русский 的勾选框留在各行勾选框那一列（x 1315），Español、English、中文依次在它左边
+# The language row is four side-by-side options "中文 / English / Español / Русский" (radio: host dm_custom.c makes the four checkboxes mutually exclusive, storing one key lang).
+# This row must show Chinese characters in every UI: the default Formal font of the English / Spanish / Russian UI has no Chinese glyphs, so these text widgets specify the original global font BlizzardGlobal
+# (the original title page, party names etc. likewise specify it per widget). The Русский checkbox stays in the checkbox column of the other rows (x 1315); Español, English and 中文 sit to its left in turn
+_LANG_ZH_X, _LANG_EN_X, _LANG_ES_X, _LANG_RU_X = (220, 430), (515, 725), (810, 1020), (1105, 1315)   # （文字 x，勾选框 x）；文字 200 宽：English / Español / Русский 在 180 宽里会被折成「Englis h」（真机截图）；四项一组，最后一格留在各行勾选框那一列（x 1315） | (text x, checkbox x); text 200 wide: at 180 wide English / Español / Русский wrap to "Englis h" (device screenshot); four options in a group, the last one stays in the checkbox column of the other rows (x 1315)
 def _custom_lang_row():
     y, h = _CUSTOM_Y[0], 112; cy = y + (h - 70) // 2   # 标签、两个选项排在这一行的上 112，下面 68 留给提示那一句 | The label and the two options go in the top 112 of this row; the bottom 68 is left for the hint sentence
     def text(name, x, w, key): return ('        { "type": "TextBoxWidget", "name": "%s", "fields": { "rect": { "x": %d, "y": %d, "width": %d, "height": %d }, "text": "@%s", "style": "$StyleSettingsText", "style/fontFace": "BlizzardGlobal" } },\n' % (name, x, y, w, h, key))
@@ -1240,10 +1240,11 @@ def _custom_lang_row():
             '            "untoggledFrame": 0, "untoggledPressedFrame": 1, "untoggledHoveredFrame": 3, "untoggledDisabledFrame": 2,\n'
             '            "toggledFrame": 4, "toggledPressedFrame": 5, "toggledHoveredFrame": 6,\n'
             '            "onClickMessage": "PanelManager:ClosePanel:%s" } },\n') % (name, x, cy, name)
-    return (text('TouchCustom_lang_Text', 0, _LANG_ZH_X[0] - 20, 'dmCustomLang')
+    return (text('TouchCustom_lang_Text', 0, _LANG_ZH_X[0] - 20, 'dmCustomLang')   # 标签只占左半，右边让给四项 | The label takes only the left part; the right side is left to the four options
             + text('TouchCustomLangZh_Text', _LANG_ZH_X[0], _LANG_ZH_X[1] - _LANG_ZH_X[0] - 10, 'dmCustomLangZh') + box('TouchCustom_lang_zh', _LANG_ZH_X[1])
             + text('TouchCustomLangEn_Text', _LANG_EN_X[0], _LANG_EN_X[1] - _LANG_EN_X[0] - 10, 'dmCustomLangEnOpt') + box('TouchCustom_lang_en', _LANG_EN_X[1])
-            + text('TouchCustomLangEs_Text', _LANG_ES_X[0], _LANG_ES_X[1] - _LANG_ES_X[0] - 10, 'dmCustomLangEsOpt') + box('TouchCustom_lang_es', _LANG_ES_X[1]))
+            + text('TouchCustomLangEs_Text', _LANG_ES_X[0], _LANG_ES_X[1] - _LANG_ES_X[0] - 10, 'dmCustomLangEsOpt') + box('TouchCustom_lang_es', _LANG_ES_X[1])
+            + text('TouchCustomLangRu_Text', _LANG_RU_X[0], _LANG_RU_X[1] - _LANG_RU_X[0] - 10, 'dmCustomLangRuOpt') + box('TouchCustom_lang_ru', _LANG_RU_X[1]))
 # 「3D 画质」（流畅优先（缺省，掉帧自动降 3D 比例）/ 画质优先（不自动降））：上下两项单选，每项标题下一行说明小字。
 # 存的是一个键 q3d（1 = 画质优先）：「画质优先」的勾选框叫 TouchCustom_q3d、「流畅优先」的叫 TouchCustom_q3d_smooth（它的反面），宿主 dm_custom.c 让两框互斥（同语言行）。
 # TouchCustom_q3d_Text 是空字、高度盖住两项的框：手柄选中框按「文字框与勾选框的上下沿取并」框住整行（dm_custom.c），所以用它把两项一起框进去

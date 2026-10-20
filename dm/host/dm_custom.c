@@ -36,21 +36,21 @@ static const char *rev_box(int i) { return i == K_Q3D ? "TouchCustom_q3d_smooth"
 static _Atomic int g_val[NK];        // 已生效：1 开 / 0 关 | In effect: 1 on / 0 off
 static _Atomic int g_pend[NK];       // 选项页上改了还没应用：-1 = 没改 | Changed on the options page but not applied yet: -1 = not changed
 static _Atomic int g_loaded;         // 0 没读盘 / 1 已读 | 0 not read from disk / 1 read
-// lang（语言开关，自定义页第一行）：三项单选 0 中文 / 1 English / 2 Español（勾选框 TouchCustom_lang_zh / _en / _es 互斥）。它不是功能开关，生效方式不同——
+// lang（语言开关，自定义页第一行）：四项单选 0 中文 / 1 English / 2 Español / 3 Русский（勾选框 TouchCustom_lang_zh / _en / _es / _ru 互斥）。它不是功能开关，生效方式不同——
 // 下次启动挂存档时由 hle_fs.c 按它改写原版设置文件的 Language / VoiceLanguage（游戏运行中自己会把内存里的语言写回设置文件，所以只能在游戏读设置之前改；
 // 见 dm_custom_lang_explicit）。文件里没有这个键（还没点过应用；旧版本写的布尔键 lang_en 不再读——原版设置文件里本来就记着上次选的语言）
 // = 不动原版设置，勾选框按当前实际语言显示；「默认」不改它（按一下默认把语言切了不合适）
-// lang (language switch, first row of the custom page): three-option radio 0 Chinese / 1 English / 2 Español (checkboxes TouchCustom_lang_zh / _en / _es are mutually exclusive). It is not a feature switch and takes effect differently —
+// lang (language switch, first row of the custom page): four-option radio 0 Chinese / 1 English / 2 Español / 3 Russian (checkboxes TouchCustom_lang_zh / _en / _es / _ru are mutually exclusive). It is not a feature switch and takes effect differently -
 // on the next launch, when the save is mounted, hle_fs.c rewrites Language / VoiceLanguage in the original settings file according to it (while running, the game itself writes its in-memory language back to the settings file, so it can only be changed before the game reads settings;
-// see dm_custom_lang_explicit). The key is absent from the file (Apply never tapped; the boolean key lang_en written by older versions is no longer read — the original settings file already remembers the last chosen language)
+// see dm_custom_lang_explicit). The key is absent from the file (Apply never tapped; the boolean key lang_en written by older versions is no longer read - the original settings file already remembers the last chosen language)
 // = leave the original settings alone, checkboxes show the current actual language; "Default" does not change it (switching language with one tap of Default would be wrong)
-#define LANG_N 3
-static const char *const k_lang_box[LANG_N] = { "TouchCustom_lang_zh", "TouchCustom_lang_en", "TouchCustom_lang_es" };
-static const char *const k_lang_hint[LANG_N] = { "TouchCustomLangHintZh", "TouchCustomLangHintEn", "TouchCustomLangHintEs" };
-static const char *const k_lang_name[LANG_N] = { "zh", "en", "es" };   // 只进日志 | Log only
-static _Atomic int g_lang_explicit = -1;   // 文件里写着的 lang：-1 没写 / 0 中文 / 1 English / 2 Español | lang as written in the file: -1 not written / 0 Chinese / 1 English / 2 Español
+#define LANG_N 4
+static const char *const k_lang_box[LANG_N] = { "TouchCustom_lang_zh", "TouchCustom_lang_en", "TouchCustom_lang_es", "TouchCustom_lang_ru" };
+static const char *const k_lang_hint[LANG_N] = { "TouchCustomLangHintZh", "TouchCustomLangHintEn", "TouchCustomLangHintEs", "TouchCustomLangHintRu" };
+static const char *const k_lang_name[LANG_N] = { "zh", "en", "es", "ru" };   // 只进日志 | Log only
+static _Atomic int g_lang_explicit = -1;   // 文件里写着的 lang：-1 没写 / 0 中文 / 1 English / 2 Español / 3 Русский | lang as written in the file: -1 not written / 0 Chinese / 1 English / 2 Español / 3 Russian
 static int g_lang_test;   // 测试开关 DM_TEST_LANG=<0|1|2>：当作玩家选了这一项并应用（走 hle_fs.c 挂存档时的真实改写），但不写回 sw_custom.txt（容器各局共用） | Test switch DM_TEST_LANG=<0|1|2>: treated as if the player selected this option and applied it (goes through the real rewrite in hle_fs.c when mounting the save), but not written back to sw_custom.txt (the container is shared by all runs)
-static int lang_running(void) { int g = dm_lang_group(); return g == DM_LG_ZH ? 0 : g == DM_LG_ES || g == DM_LG_MX ? 2 : 1; }   // 此刻实际在跑的语言落在哪一项 | Which option the currently running language falls into
+static int lang_running(void) { int g = dm_lang_group(); return g == DM_LG_ZH ? 0 : g == DM_LG_ES || g == DM_LG_MX ? 2 : g == DM_LG_RU ? 3 : 1; }   // 此刻实际在跑的语言落在哪一项 | Which option the currently running language falls into
 // merc_pot（佣兵自动喂药）原先缺省关、现在缺省开。旧文件每次存盘都把全部键写一遍，里面的 merc_pot=0 分不出「没动过」还是「自己关的」，
 // 所以另记一行 merc_pot_v2：只有在缺省改成开之后玩家自己在页上改过这一项才写。读盘时有 merc_pot_v2 以它为准；没有 = 没在新缺省下动过 → 开
 // （旧文件里的 merc_pot=1 也是开，结果一样）。merc_pot 那一行照旧写当前值，旧版本的包读它不出错
@@ -156,9 +156,9 @@ void dm_custom_ui_pump(unsigned long long root) {
           if ((ev & DM_BTN_A) && cw && dm_wref_get(&seen[sel]) == cw) {
               if (sel == K_Q3D || sel == K_TOUCH_SWAP) { int p0 = atomic_load(&g_pend[sel]), sh = p0 >= 0 ? p0 : atomic_load(&g_val[sel]); atomic_store(&g_pend[sel], !sh); set_toggle(cw, !sh); { uint64_t z = find_w(sp, rev_box(sel), 0); if (z) set_toggle(z, sh); }
                   LOG("自定义设置：%s → %d（手柄 A 在两项间切换；点「应用」生效）",k_keys[sel],!sh); }
-              else if (sel == 0) { int p0 = atomic_load(&g_pend[0]), sh = p0 >= 0 ? p0 : atomic_load(&g_val[0]), to = (sh + 1) % LANG_N; atomic_store(&g_pend[0], to);   // 语言行是单选的三项：A 依次轮换，三个框当场摆好 | The language row is a three-option radio: A cycles through them, and all three boxes are laid out on the spot
+              else if (sel == 0) { int p0 = atomic_load(&g_pend[0]), sh = p0 >= 0 ? p0 : atomic_load(&g_val[0]), to = (sh + 1) % LANG_N; atomic_store(&g_pend[0], to);   // 语言行是单选的四项：A 依次轮换，四个框当场摆好 | The language row is a four-option radio: A cycles through them, and all four boxes are laid out on the spot
                   for (int k = 0; k < LANG_N; k++) { uint64_t z = find_w(sp, k_lang_box[k], 0); if (z) set_toggle(z, k == to); }
-                  LOG("自定义设置：语言 → %s（手柄 A 在三项间轮换；点「应用」生效）", k_lang_name[to]); }
+                  LOG("自定义设置：语言 → %s（手柄 A 在四项间轮换；点「应用」生效）", k_lang_name[to]); }
               else set_toggle(cw, !TOGGLED(cw)); } }
       if (dm) { int32_t *r = (int32_t *)(dm + 0x70), want[4] = { 99999, 0, r[2], r[3] };   /* 不用时只把 x 挪出屏：它在滚动区里，y 放远了会撑大可滚范围 | when unused only x is moved off screen: it is inside the scroll area, and a far-away y would enlarge the scrollable range */
           if (dm_padmode_current() && tw && cw) { int32_t *t = (int32_t *)(tw + 0x70), *c = (int32_t *)(cw + 0x70); int top = t[1] < c[1] ? t[1] : c[1], bot = t[1] + t[3] > c[1] + c[3] ? t[1] + t[3] : c[1] + c[3];   // 框住整行：文字与勾选框两者的上下沿取并，再各放 10 单位（原先只按文字框的高度算，文字框比字矮，框成了横穿文字中线的一条） | Frame the whole row: take the union of the top and bottom edges of the text and the checkbox, then pad 10 units on each side (previously computed from the text box height only; the text box is shorter than the glyphs, so the frame became a strip cutting across the middle of the text)
@@ -173,7 +173,7 @@ void dm_custom_ui_pump(unsigned long long root) {
           if (sv && f - lf >= 4) { int32_t *t = (int32_t *)(tw + 0x70), *c = (int32_t *)(cw + 0x70); int top = (t[1] < c[1] ? t[1] : c[1]) - 10, bot = (t[1] + t[3] > c[1] + c[3] ? t[1] + t[3] : c[1] + c[3]) + 10;
               int off = -*(int32_t *)(view + 0x74), vh = *(int32_t *)(sv + 0x7c); if (vh <= 0) vh = 1260; void dm_ui_wheel_on(uint64_t, int); if (sel == 0) top = 0;   /* 选回第一行：一直滚到最顶，把标题行露出来 | selection back on the first row: scroll all the way to the top so that the header row is revealed */
               if (top < off) { lf = f; dm_ui_wheel_on(sv, 1); } else if (bot > off + vh) { lf = f; dm_ui_wheel_on(sv, -1); } } } }
-    { uint64_t bx[LANG_N]; int ok = 1; for (int k = 0; k < LANG_N; k++) { bx[k] = find_w(sp, k_lang_box[k], 0); ok &= bx[k] && *(uint8_t *)(bx[k] + 0x50); }   // 语言行：三项单选，存一个键 lang（0 中 / 1 英 / 2 西） | Language row: three-option radio, stores one key lang (0 Chinese / 1 English / 2 Spanish)
+    { uint64_t bx[LANG_N]; int ok = 1; for (int k = 0; k < LANG_N; k++) { bx[k] = find_w(sp, k_lang_box[k], 0); ok &= bx[k] && *(uint8_t *)(bx[k] + 0x50); }   // 语言行：四项单选，存一个键 lang（0 中 / 1 英 / 2 西 / 3 俄） | Language row: four-option radio, stores one key lang (0 Chinese / 1 English / 2 Spanish / 3 Russian)
       if (ok) { int pd0 = atomic_load(&g_pend[0]), shown = pd0 >= 0 ? pd0 : atomic_load(&g_val[0]), to = shown;
           if (dm_wref_get(&seen[0]) != bx[0]) dm_wref_set(&seen[0], bx[0]);   // 页刚出现（布局里一律是没勾）：先摆成该显示的值，这一帧不当玩家点了 | The page has just appeared (in the layout everything is unchecked): first set it to the value it should show, and do not treat this frame as a player tap
           else for (int k = 0; k < LANG_N; k++) if (k != shown && TOGGLED(bx[k])) { to = k; break; }   // 点没选中的那一项 = 选它；点已选中的那一项不变（下面摆回勾上） | Tapping the unselected option = select it; tapping the selected option changes nothing (it gets re-checked below)

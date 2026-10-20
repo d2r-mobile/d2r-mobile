@@ -6,7 +6,7 @@
 
 **[构建与安装](#开始使用)** · [支持哪些设备](#支持哪些设备) · [发布页](https://github.com/d2r-mobile/d2r-mobile/releases) · [English](README.md) · [Español](README.es.md)
 
-MIT · 中文 / English / Español · iOS 26+ / macOS 26+；老接口版支持 iOS 18+ / macOS 15+。Apple TV 4K 有[社区开发者预览版](dm/tvos/README.md)，目前只验证到职业选择画面。
+MIT · 中文 / English / Español / Русский · iOS 26+ / macOS 26+；老接口版支持 iOS 18+ / macOS 15+。Apple TV 4K 有[社区开发者预览版](dm/tvos/README.md)，目前只验证到职业选择画面。
 
 <p align="center">
   <img src="https://github.com/d2r-mobile/d2r-mobile/releases/download/assets/hero_zh.jpg" width="100%" alt="iPhone 上全面屏铺满的游戏画面：地狱难度的哈洛加斯，红门通往秘境">
@@ -166,9 +166,9 @@ iPhone 17 Pro Max 实测：
   <img src="https://github.com/d2r-mobile/d2r-mobile/releases/download/assets/map.jpg" width="33%" alt="全屏地图">
 </p>
 
-### 中文、英文与西班牙语
+### 中文、英文、西班牙语与俄语
 
-整个游戏可在「选项 → 自定义」里切换中文、英文或西班牙语，重启后界面就是所选语言；第一次打开时跟随设备语言（西班牙的西语用原版 esES 文字，其他地区的西语用拉美 esMX 文字）。英文和西语下，物品、技能、怪物名沿用原版译名，我们新增的内容——秘境、编年史、设置页、手柄提示，西语还有物品注释——也全部配了对应语言。语音：中文界面配中文语音，其余配英文语音（安装包只带这两种语音）。
+整个游戏可在「选项 → 自定义」里切换中文、英文、西班牙语或俄语，重启后界面就是所选语言；第一次打开时跟随设备语言（西班牙的西语用原版 esES 文字，其他地区的西语用拉美 esMX 文字；俄语用原版 ruRU 文字）。英文、西语和俄语下，物品、技能、怪物名沿用原版译名，我们新增的内容——秘境、编年史、设置页、手势提示、地图名牌——也全部配了对应语言（物品注释只有中文与西语）。语音：中文界面配中文语音；俄语界面在你的游戏文件里带俄语配音时（用完整游戏数据出的包都带）配原版俄语语音，否则配英文；其余配英文语音。
 
 <p align="center">
   <img src="https://github.com/d2r-mobile/d2r-mobile/releases/download/assets/en_game.jpg" width="58%" alt="英文界面下的游戏画面">
