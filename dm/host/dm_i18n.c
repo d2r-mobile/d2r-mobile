@@ -81,17 +81,21 @@ int dm_lang_index(void) {
 int dm_lang_zh(void) { int l = dm_lang_index(); return l == 8 || l == 9; }   // 繁体（zhTW）我们的字也用简中（繁体玩家读简体比读英文顺） | for Traditional Chinese (zhTW) our text also uses Simplified Chinese (Traditional Chinese players read Simplified more easily than English)
 int dm_lang_group(void) { return dm_lang_group_of(dm_lang_index()); }
 
-const char *dm_ui(const char *key) { return dm_ui_group(key, dm_lang_group()); }
 int dm_lang_group_of(int l) { return l == 8 || l == 9 ? DM_LG_ZH : l == 2 ? DM_LG_ES : l == 10 ? DM_LG_MX : l == 7 ? DM_LG_RU : DM_LG_EN; }
 const char *dm_ui_group(const char *key, int group) {
     for (unsigned i = 0; i < sizeof k_dm_i18n / sizeof *k_dm_i18n; i++) if (!strcmp(k_dm_i18n[i].k, key)) {
         switch (group) { case DM_LG_ZH: return k_dm_i18n[i].zh; case DM_LG_ES: return k_dm_i18n[i].es; case DM_LG_MX: return k_dm_i18n[i].mx; case DM_LG_RU: return k_dm_i18n[i].ru; default: return k_dm_i18n[i].en; } }
 #ifdef __ANDROID__
+    // Android-added keys live in the generated Android bilingual table; the
+    // shared multilingual table remains the first source. Respect the
+    // caller's explicit group: only DM_LG_ZH selects Chinese, every other
+    // group gets the English fallback (the Android table has no es/mx/ru).
     const char *android = dm_android_ui_text(key, group == DM_LG_ZH);
     if (android) return android;
 #endif
     return key;
 }
+const char *dm_ui(const char *key) { return dm_ui_group(key, dm_lang_group()); }
 
 // 西语等语言的原版名字串开头带语法性别标记（[ms] 阳单、[fs] 阴单、[mp] / [fp] 复数，可连写），原版画名字时自己解析掉；
 // 我们自己取名字拼进标题 / 列表时要跳过它（西语截图：「[ms]Gorro (Nor)」）。标记总在串首，返回跳过后的指针、不拷贝
