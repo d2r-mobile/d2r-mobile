@@ -256,6 +256,31 @@ Preflight rejects non-finite/oversized point dimensions and validates
 `point * density` in double before any float-to-integer conversion, so infinity,
 NaN, FLT_MAX and product-overflow snapshots never reach GPU allocation.
 
+## Read-only HUD observation (#119)
+
+`dm_android_touch_observe(const dm_android_touch *, float density,
+dm_android_touch_observation *)` copies the actual adapter/core visual state
+without reading the pad, advancing timers, consuming actions/pulses/portal
+requests, mutating pointer ownership or retaining a pointer. It is same-thread
+and returns a caller-owned value snapshot.
+
+The snapshot carries logical `width_pt`/`height_pt`, the caller-owned view
+`density` (validated and copied, not derived from gesture state), the core
+`enabled_mask`, active-finger `pressed_mask`, joystick active/origin/touch/
+current/radius, and suspended/game-available flags. Availability is deliberately
+conservative: only a host-proven portal binding contributes a bit. Main, skill,
+belt, menu and map bindings, glyphs/art, cooldown and mana are not proven by this
+seam and remain unavailable/unknown; they are never guessed from emitted gamepad
+buttons. NULL, non-finite/non-positive density, invalid layout/target/joystick
+geometry and invalid resize are rejected before any output byte changes.
+
+Tests drive the real adapter through down/move/up/multitouch/cancel/resize/pause/
+context and compare repeated observations against the same HID/action script
+without observations. A portal request survives repeated observations, and a
+held pressed snapshot becomes stale only as a caller-owned value: a fresh query
+after cancel is empty. This is observation/interface evidence only; NativeActivity
+wiring, glyph resources and real device acceptance remain subsequent work.
+
 ## What remains unknown
 
 - Whether every source-backed Apple gesture has an exact game-visible equivalent

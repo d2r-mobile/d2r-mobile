@@ -5,6 +5,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 static int checks, cases;
 #define CHECK(expr) do { ++checks; if (!(expr)) { fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #expr); exit(1); } } while (0)
@@ -36,6 +37,171 @@ static dm_npad_state read_pad(fixture *f) {
     dm_npad_state s = dm_android_touch_read(f->touch);
     CHECK(s.attributes == 1);
     return s;
+}
+
+static void observe_hud(fixture *f, float density, dm_android_touch_observation *o) {
+    CHECK(dm_android_touch_observe(f->touch, density, o));
+}
+
+static uint64_t mix_state(uint64_t h, dm_npad_state s) {
+    h ^= (uint64_t)(uint32_t)s.buttons; h *= 1099511628211ull;
+    h ^= (uint64_t)(uint32_t)s.lx; h *= 1099511628211ull;
+    h ^= (uint64_t)(uint32_t)s.ly; h *= 1099511628211ull;
+    h ^= (uint64_t)(uint32_t)s.rx; h *= 1099511628211ull;
+    h ^= (uint64_t)(uint32_t)s.ry; h *= 1099511628211ull;
+    return h;
+}
+
+/* Same actual adapter event script with and without repeated observations.
+   Observation must not consume pulses/actions, move timers or change HID. */
+static uint64_t drive_hud_sequence(fixture *f, int observe) {
+    dm_android_touch_observation o;
+    uint64_t h = 1469598103934665603ull;
+    dm_npad_state s;
+    dm_android_touch_action a;
+#define DRIVE(expr) do { CHECK(expr); if (observe) observe_hud(f, 2, &o); s = read_pad(f); h = mix_state(h, s); } while (0)
+    DRIVE(dm_android_touch_down(f->touch, 31, f->layout.target[DM_TC_MAIN].x,
+                                f->layout.target[DM_TC_MAIN].y, 19000000000));
+    DRIVE(dm_android_touch_up(f->touch, 31, 19001000000));
+    DRIVE(dm_android_touch_down(f->touch, 32, f->layout.target[DM_TC_SKILL1].x,
+                                f->layout.target[DM_TC_SKILL1].y, 19002000000));
+    DRIVE(dm_android_touch_down(f->touch, 33, 90, 275, 19003000000));
+    DRIVE(dm_android_touch_move(f->touch, 33, 150, 275, 19004000000));
+    DRIVE(dm_android_touch_up(f->touch, 32, 19005000000));
+    DRIVE(dm_android_touch_up(f->touch, 33, 19006000000));
+    DRIVE(dm_android_touch_down(f->touch, 34, 400, 300, 19007000000));
+    DRIVE(dm_android_touch_up(f->touch, 34, 19007100000));
+    CHECK(dm_android_touch_take_action(f->touch, &a));
+    h ^= (uint64_t)a.kind; h *= 1099511628211ull;
+    h ^= (uint64_t)(int64_t)a.x; h *= 1099511628211ull;
+    h ^= (uint64_t)(int64_t)a.y; h *= 1099511628211ull;
+    DRIVE(dm_android_touch_cancel_all(f->touch, 19008000000));
+    DRIVE(dm_android_touch_resize(f->touch, 812, 375, 19009000000));
+    DRIVE(dm_android_touch_pause(f->touch, 19010000000));
+    DRIVE(dm_android_touch_resume(f->touch, 19011000000));
+    DRIVE(dm_android_touch_set_game_context(f->touch, 1, 1, 77, 1, 1, 1));
+#undef DRIVE
+    return h;
+}
+
+static void hud_observation_read_only(fixture *f) {
+    dm_android_touch_observation o, stale;
+    dm_android_touch_action a;
+    dm_npad_state s;
+    observe_hud(f, 2, &o);
+    CHECK(o.width_pt == 667 && o.height_pt == 375 && o.density == 2);
+    CHECK(o.enabled_mask == ((1u << DM_TC_COUNT) - 1u));
+    CHECK(o.pressed_mask == 0 && o.available_mask == 0 && !o.joystick_active);
+    CHECK(!o.suspended && o.game_available);
+
+    CHECK(dm_android_touch_down(f->touch, 41, f->layout.target[DM_TC_MAIN].x,
+                                f->layout.target[DM_TC_MAIN].y, 19100000000));
+    observe_hud(f, 2, &o);
+    CHECK(o.pressed_mask == (1u << DM_TC_MAIN));
+    s = read_pad(f); CHECK(s.buttons == DM_BTN_A);
+    CHECK(dm_android_touch_down(f->touch, 42, f->layout.target[DM_TC_SKILL1].x,
+                                f->layout.target[DM_TC_SKILL1].y, 19101000000));
+    observe_hud(f, 2, &o);
+    CHECK(o.pressed_mask == ((1u << DM_TC_MAIN) | (1u << DM_TC_SKILL1)));
+    CHECK(dm_android_touch_down(f->touch, 43, 90, 275, 19102000000));
+    observe_hud(f, 2, &o);
+    CHECK(o.joystick_active && o.joy_origin_x == 90 && o.joy_origin_y == 275);
+    CHECK(o.joy_current_x == 90 && o.joy_current_y == 275 && o.joy_radius > 0);
+    CHECK(o.pressed_mask == ((1u << DM_TC_MAIN) | (1u << DM_TC_SKILL1)));
+    CHECK(dm_android_touch_move(f->touch, 43, 150, 275, 19103000000));
+    observe_hud(f, 2, &o);
+    CHECK(o.joy_current_x == 150 && o.joy_current_y == 275);
+    s = read_pad(f); CHECK(s.lx == DM_STICK_MAX && s.ly == 0);
+    CHECK(dm_android_touch_up(f->touch, 41, 19104000000));
+    observe_hud(f, 2, &o);
+    CHECK(o.pressed_mask == (1u << DM_TC_SKILL1));
+    CHECK(dm_android_touch_up(f->touch, 43, 19105000000));
+    observe_hud(f, 2, &o);
+    CHECK(!o.joystick_active);
+
+    /* The last observation is a value, not a cache: cancel must make a fresh
+       query empty while the old value still shows what was pressed. */
+    CHECK(dm_android_touch_cancel_all(f->touch, 19106000000));
+    stale = o;
+    observe_hud(f, 2, &o);
+    CHECK(o.pressed_mask == 0 && !o.joystick_active);
+    CHECK(stale.pressed_mask == (1u << DM_TC_SKILL1));
+
+    CHECK(dm_android_touch_resize(f->touch, 812, 375, 19107000000));
+    observe_hud(f, 3, &o);
+    CHECK(o.width_pt == 812 && o.height_pt == 375 && o.density == 3);
+    CHECK(o.pressed_mask == 0 && !o.joystick_active);
+    CHECK(dm_android_touch_pause(f->touch, 19108000000));
+    observe_hud(f, 3, &o);
+    CHECK(o.suspended == 1 && o.pressed_mask == 0 && !o.joystick_active);
+    CHECK(dm_android_touch_resume(f->touch, 19109000000));
+    observe_hud(f, 3, &o);
+    CHECK(o.suspended == 0);
+    CHECK(dm_android_touch_set_game_context(f->touch, 1, 1, 78, 1, 1, 1));
+    observe_hud(f, 3, &o);
+    CHECK(o.enabled_mask == ((1u << DM_TC_COUNT) - 1u));   /* adapter has no target-mask API */
+    CHECK(o.pressed_mask == 0);
+    CHECK(dm_android_touch_set_game_context(f->touch, 0, 0, 79, 1, 1, 1));
+    observe_hud(f, 3, &o);
+    CHECK(o.enabled_mask == ((1u << DM_TC_COUNT) - 1u));
+
+    /* Return to the fixture's 667x375 point layout for portal coordinates. */
+    CHECK(dm_android_touch_resize(f->touch, 667, 375, 19109500000));
+    observe_hud(f, 2, &o);
+    CHECK(o.width_pt == 667 && o.height_pt == 375);
+
+    /* Host-proven portal availability only; all other bindings stay unknown. */
+    CHECK(dm_android_touch_set_portal_context(f->touch, 1, DM_BTN_ZL | DM_BTN_B, 77, 3));
+    observe_hud(f, 3, &o);
+    CHECK(o.available_mask == (1u << DM_TC_PORTAL));
+    CHECK(dm_android_touch_set_portal_context(f->touch, 0, 0, 0, 0));
+    observe_hud(f, 3, &o);
+    CHECK(o.available_mask == 0);
+
+    /* Portal request survives repeated observations. */
+    CHECK(dm_android_touch_set_portal_context(f->touch, 1, DM_BTN_ZL | DM_BTN_B, 77, 4));
+    CHECK(dm_android_touch_down(f->touch, 44, f->layout.target[DM_TC_PORTAL].x,
+                                f->layout.target[DM_TC_PORTAL].y, 19110000000));
+    s = read_pad(f); CHECK(s.buttons == DM_BTN_ZL);
+    observe_hud(f, 3, &o); observe_hud(f, 3, &o); observe_hud(f, 3, &o);
+    dm_android_portal_request r;
+    CHECK(dm_android_touch_take_portal_request(f->touch, &r));
+    CHECK(r.gesture_epoch != 0 && r.mask == (DM_BTN_ZL | DM_BTN_B));
+    CHECK(dm_android_touch_up(f->touch, 44, 19111000000));
+    (void)a;
+}
+
+static void hud_observation_no_side_effects(fixture *f) {
+    fixture plain = make_fixture();
+    uint64_t with_obs = drive_hud_sequence(f, 1);
+    uint64_t without = drive_hud_sequence(&plain, 0);
+    CHECK(with_obs == without);
+    drop_fixture(&plain);
+}
+
+static void hud_observation_invalid_and_stale(fixture *f) {
+    dm_android_touch_observation o;
+    memset(&o, 0x5a, sizeof o);
+    dm_android_touch_observation before = o;
+    CHECK(!dm_android_touch_observe(NULL, 2, &o));
+    CHECK(!dm_android_touch_observe(f->touch, NAN, &o));
+    CHECK(!dm_android_touch_observe(f->touch, 0, &o));
+    CHECK(!dm_android_touch_observe(f->touch, -1, &o));
+    CHECK(!dm_android_touch_observe(f->touch, 2, NULL));
+    CHECK(memcmp(&o, &before, sizeof o) == 0);
+    /* Invalid resize must not alter the observed layout either. */
+    CHECK(!dm_android_touch_resize(f->touch, NAN, 375, 19200000000));
+    observe_hud(f, 2, &o);
+    CHECK(o.width_pt == 667 && o.height_pt == 375);
+    CHECK(dm_android_touch_down(f->touch, 45, f->layout.target[DM_TC_MAIN].x,
+                                f->layout.target[DM_TC_MAIN].y, 19201000000));
+    observe_hud(f, 2, &o);
+    dm_android_touch_observation stale = o;
+    CHECK(stale.pressed_mask == (1u << DM_TC_MAIN));
+    CHECK(dm_android_touch_cancel(f->touch, 45, 19202000000));
+    observe_hud(f, 2, &o);
+    CHECK(o.pressed_mask == 0);
+    CHECK(stale.pressed_mask == (1u << DM_TC_MAIN));
 }
 
 static void belt_upper_point(const dm_tc_layout *l, int col, int row, float *x, float *y) {
@@ -1218,6 +1384,9 @@ int main(void) {
     CASE(portal_context_changes_cancel_stale_request);
     CASE(portal_context_change_releases_pointer_ownership);
     CASE(portal_context_repeated_changes_no_slot_leak);
+    CASE(hud_observation_read_only);
+    CASE(hud_observation_no_side_effects);
+    CASE(hud_observation_invalid_and_stale);
     CASE(inventory_tap_double_long_and_cancel);
     CASE(inventory_drag_release_and_context_change);
     CASE(inventory_timed_hold_consumption);
