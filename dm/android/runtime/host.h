@@ -23,6 +23,8 @@ enum {
     DM_SVC_OUT_OF_MEMORY = 0xd001, DM_SVC_BAD_STATE = 0xfa01,
     DM_SVC_INVALID_MEMORY_STATE = 0xd401, DM_SVC_INVALID_MEMORY_REGION = 0xdc01,
     DM_SVC_INVALID_HANDLE = 0xe401, DM_SVC_INVALID_COMBINATION = 0xe801,
+    // ams::svc ResultInvalidCoreId: module 1, description 113 (113 << 9 | 1).
+    DM_SVC_INVALID_CORE = 0xe201,
     DM_SVC_CANCELLED = 0xec01
 };
 
@@ -53,6 +55,11 @@ dm_host *dm_host_create_process_layout(size_t heap_capacity,size_t stack_capacit
 // TLS supports QueryMemory and explicit read/write pins; retirement rejects new pins and keeps charged mappings through old pins. TLS cannot back stacks or mutex/arbiter words.
 dm_host *dm_host_create_accounted_process(size_t heap_capacity,size_t stack_capacity,size_t alias_capacity,size_t budget);
 int dm_host_destroy(dm_host *host);
+// Explicit opt-in virtual-core policy: a 64-bit allowed mask plus one preferred core bit.
+// Configure before guest threads or attachment; EBUSY while the host is attached or any thread is active.
+// Unconfigured hosts keep GetInfo 0 unsupported.
+// No physical affinity, core-count inference or legacy mask is implied.
+int dm_host_configure_virtual_cores(dm_host *host, uint64_t mask, uint32_t preferred_core);
 // 在附着线程／开始等待前登记模块的可写映射（最多 16 段）；调用方须保持内存有效直到销毁宿主，禁止与预留堆重叠。
 // Register writable module mappings before attaching / waiting (up to 16 regions); caller keeps memory valid until host destruction, never overlap the reserved heap.
 int dm_host_register_writable(dm_host *host, void *base, size_t size);

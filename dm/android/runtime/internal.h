@@ -31,6 +31,9 @@ struct dm_host {
     struct dm_arbiter *arbiter;
     struct dm_mutex_state *mutex_state;
     dm_sdk_thread_abi sdk_thread_abi;
+    int virtual_cores_configured;
+    uint64_t virtual_core_mask;
+    uint32_t virtual_core_preferred;
     dm_host_region writable[16],executable[16];
     size_t writable_count,executable_count;
     struct{uintptr_t base;size_t size;int in_use;}thread_stacks[64];

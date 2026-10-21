@@ -208,7 +208,12 @@ static uint64_t create_thread(dm_host*h,uint64_t*r){
     dm_guest_context*c=dm_guest_current();if(!c||c->host!=h)return DM_SVC_BAD_STATE;
     // 虚拟优先级用于互斥队列；宿主调度和物理核心亲和性尚未映射。
     // Virtual priorities order mutex queues; native scheduling and physical affinity are not mapped yet.
-    if((uint32_t)r[4]>63||((int32_t)r[5]!=-2&&(uint32_t)r[5]>3))return 0xf001;
+    if((uint32_t)r[4]>63)return 0xf001;
+    int32_t core=(int32_t)r[5];
+    if(h->virtual_cores_configured){
+        if(core==-2)core=(int32_t)h->virtual_core_preferred;
+        if(core<0||core>=64||(h->virtual_core_mask&(UINT64_C(1)<<core))==0)return DM_SVC_INVALID_CORE;
+    }else if(core!=-2&&(uint32_t)core>3)return 0xf001;
     uintptr_t entry=(uintptr_t)r[1],top=(uintptr_t)r[3];unsigned stack=64;
     if(!entry||entry%4||!top||top%16)return DM_SVC_INVALID_ADDRESS;
     if(!executable(h,entry))return DM_SVC_INVALID_ADDRESS;

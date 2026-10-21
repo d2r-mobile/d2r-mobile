@@ -1,8 +1,9 @@
 # Virtual core mask contract: GetInfo ID 0 and SetThreadCoreMask
 
 Issue:  (A5.1), phase 1.
-Status: **evidence and contract only. No runtime implementation, no execution,
-no mask constant and no physical-affinity mapping is proposed here.**
+Status: **phase-1 evidence plus a bounded, opt-in owned model. No target
+inference, no SVC `0x0f`, no physical-affinity mapping and no production
+SDK/game admission.**
 
 Repository anchors use accepted main `source snapshot`. Private SDK observations are
 aggregate static metadata only: no game/SDK bytes, raw logs, saves, keys or
@@ -239,6 +240,8 @@ virtual mask `M` selected by the reviewed policy:
    cross-build for changed runtime units; no device/game claim.
 
 This plan is ready for review but is **not implemented** in this phase.
+The bounded implemented subset is section 7; it does not close the unknowns
+above or implement SVC `0x0f`.
 
 ## 6. Source anchors
 
@@ -266,8 +269,43 @@ Public reference (pinned):
   `libraries/libmesosphere/source/svc/kern_svc_thread.cpp:24-37,150-190`;
   `libraries/libmesosphere/source/svc/kern_svc_thread.cpp:302-304`
   (`SetThreadCoreMask64`, `uint64_t`);
-  `libraries/libvapours/include/vapours/svc/svc_types_common.hpp:379-381`.
+  `libraries/libvapours/include/vapours/svc/svc_types_common.hpp:379-381`;
+  Result mapping: `libraries/libvapours/include/vapours/results/svc_results.hpp:20,49-53`
+  (`InvalidCoreId` 113, `InvalidHandle` 114, `InvalidCombination` 116 in
+  module 1).
 
 These line ranges were re-read from the raw pinned files, not inferred from
 HTTP success. The ranges start at the named function/declaration and stop at
 its closing statement; adjacent functions are not included as evidence.
+
+## 7. Bounded owned opt-in implementation
+
+The implemented slice is deliberately narrower than the generic contract:
+
+- `dm_host_configure_virtual_cores(host, mask, preferred_core)` accepts a
+  host-supplied 64-bit non-zero mask and one preferred core whose bit is set.
+  It rejects zero, a core >= 64 and a preferred core outside the mask with
+  `EINVAL`. It returns `EBUSY` without changing the host if the host is
+  attached or a thread is active (sync wait/running/starting/pin or a thread
+  stack lease). A plain attached main thread is sufficient to freeze policy.
+- A host starts unconfigured. GetInfo ID 0 remains unsupported (`0x4201`)
+  until this explicit call succeeds; it never infers a mask or core count.
+- A configured GetInfo ID 0 returns exactly the configured 64-bit mask for the
+  current-process pseudo handle and sub-id 0.
+- Configured CreateThread accepts `-2` as the configured preferred core and
+  accepts a core id only when `0 <= core < 64` and its bit is in the configured
+  mask. Other values, including `-1`/`-3` and a high core outside the mask,
+  return `ams::svc ResultInvalidCoreId` (`0xe201`) without state change.
+- Unconfigured CreateThread preserves the pre-existing synthetic behavior;
+  that behavior is not a game mask contract.
+- SVC `0x0f` SetThreadCoreMask remains absent and returns the dispatcher's
+  explicit unsupported result. No physical affinity or native scheduling
+  change is made.
+- Configuration fields are host-local; a rejected call does not mutate another
+  host. The owned test exercises the real rewritten gates for configured
+  GetInfo0/CreateThread, unconfigured GetInfo0, a high-bit mask, two-host
+  isolation and attach→EBUSY/no-change→detach→allowed policy.
+
+The exact initial mask and target core count remain host policy; no legacy
+hardcoded `7` is used. This slice does not complete the negative plan above or
+claim real SDK initialization.
