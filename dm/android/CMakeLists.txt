@@ -923,6 +923,12 @@ if(NOT ANDROID)
     add_test(NAME guest_snapshot_guard COMMAND dm_guest_snapshot_guard_test)
     set_tests_properties(guest_snapshot_guard PROPERTIES TIMEOUT 30)
 
+    add_executable(dm_gpu_snapshot_ordering_test tests/gpu_snapshot_ordering.c)
+    target_include_directories(dm_gpu_snapshot_ordering_test PRIVATE native)
+    target_compile_options(dm_gpu_snapshot_ordering_test PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME gpu_snapshot_ordering COMMAND dm_gpu_snapshot_ordering_test)
+    set_tests_properties(gpu_snapshot_ordering PROPERTIES TIMEOUT 30)
+
     if(APPLE)
         add_executable(dm_nvn_dirty_transaction_test tests/nvn_dirty_transaction.c)
         target_include_directories(dm_nvn_dirty_transaction_test PRIVATE ../gfx/nvn ../host)
