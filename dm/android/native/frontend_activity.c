@@ -34,6 +34,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <sys/stat.h>
+#include <dirent.h>
 #include <sys/timerfd.h>
 #include <sys/system_properties.h>
 #include <unistd.h>
@@ -43,6 +44,7 @@
 #include <math.h>
 #include "frontend_pad.h"
 #include "module_metadata.h"
+#include "touch_overlay_contract.h"
 
 // Current host exposes resumed directly but not its declaration in dm.h; keep the
 // frontend contract local rather than editing the host header owned by H1.
@@ -301,6 +303,18 @@ static void *boot(void *argument) {
         unsetenv("DM_GUEST_LIBDIR");
         unsetenv("DM_DERIVED");
         LOG("[android] no imported package; using APK assets and pushed romfs/shaders (derived tables will be empty)");
+    }
+    // Optional original touchscreen layout overlay. It may come inside the
+    // package (overlay/) or be delta-installed by root into this fixed,
+    // app-owned directory; both are validated against the complete contract
+    // before the host can rewrite layout prefixes.
+    { char overlay_path[1200]; char overlay_why[256]={0};
+      int overlay_length=snprintf(overlay_path,sizeof overlay_path,"%s/d2r-package/overlay",s->activity->externalDataPath);
+      int overlay_state=(overlay_length>0&&(size_t)overlay_length<sizeof overlay_path)?dm_touch_overlay_apply(overlay_path,overlay_why,sizeof overlay_why):-1;
+      if(overlay_state==1){LOG("[android] original touch layout overlay in use: %s",overlay_path);}
+      else{unsetenv("DM_ROMFS_OVERLAY");
+        if(overlay_state<0)LOG("[android] 【红】touch layout overlay present but invalid: %s",overlay_why);
+        else LOG("[android] no validated original touch layout overlay; full touch layouts unavailable");}
     }
     snprintf(path,sizeof path,"%s/save",s->activity->internalDataPath);mkdir(path,0700);setenv("DM_SAVE",path,1);
     // 私有可重建的驱动缓存独立于游戏存档；不可写时正常使用内存缓存。
