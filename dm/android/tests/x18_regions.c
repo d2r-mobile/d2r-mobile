@@ -12,6 +12,7 @@
 #include <string.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include "generated_entry.h"
 #ifdef DM_TEST_REGIONS
 #include "../rewrite/jump_table.h"
 #include "../rewrite/window_decode.h"
@@ -57,7 +58,7 @@ static void verify_jump(dm_jump_request*request){
 }
 #endif
 static void trap_handler(int sig){(void)sig;_exit(77);}
-static void jump_cases(void){
+static void DM_NO_UBSAN_FUNCTION jump_cases(void){
     size_t page=(size_t)sysconf(_SC_PAGESIZE);
     for(unsigned variant=0;variant<2;variant++){
         uint32_t count=variant?65536:256,table=(uint32_t)page,tails=table+4*count;
@@ -89,10 +90,10 @@ static void jump_cases(void){
     }
 }
 typedef struct{dm_host*host;const dm_gate_table*gates;void*entry;uint64_t*counter;} worker;
-static void*increment_worker(void*opaque){worker*w=opaque;CHECK(!dm_guest_attach(w->host,w->gates));
+static void* DM_NO_UBSAN_FUNCTION increment_worker(void*opaque){worker*w=opaque;CHECK(!dm_guest_attach(w->host,w->gates));
     typedef void(*fn)(uint64_t*);for(unsigned i=0;i<1000;i++)((fn)w->entry)(w->counter);
     CHECK(!dm_guest_detach());return NULL;}
-static void window_increment(void){
+static void DM_NO_UBSAN_FUNCTION window_increment(void){
     dm_window_request request={.original_offset=4,.stub_offset=128,.count=4,.scratch={2,3,4},.host_gate=(uintptr_t)dm_gate,
         .original={0xc85ffc12,0x91000652,0xc801fc12,0x35ffffa1},
         .translated={0xc85ffc02,0x91000442,0xc801fc02,0x35ffffa1}};
@@ -110,7 +111,7 @@ static void window_increment(void){
     for(unsigned i=0;i<4;i++)CHECK(!pthread_join(threads[i],NULL));
     CHECK(counter==4000);CHECK(!dm_host_destroy(host));CHECK(!dm_image_unmap(&mapping));dm_nso_free(&im);
 }
-static void window_compare(void){
+static void DM_NO_UBSAN_FUNCTION window_compare(void){
     dm_window_request request={.original_offset=4,.stub_offset=128,.count=5,.scratch={5,6,7},.host_gate=(uintptr_t)dm_gate,
         .original={0xc87f8c12,0xeb01025f,0x540000c1,0xc8248c02,0x35ffff84},
         .translated={0xc87f8c05,0xeb0100bf,0x540000c1,0xc8248c02,0x35ffff84}};
@@ -130,7 +131,7 @@ static void window_compare(void){
     CHECK(dm_guest_current()->slots[DM_SLOT_X18]==10);
     CHECK(!dm_guest_detach());CHECK(!dm_host_destroy(host));CHECK(!dm_image_unmap(&mapping));dm_nso_free(&im);
 }
-static void window_forced_retry(void){
+static void DM_NO_UBSAN_FUNCTION window_forced_retry(void){
     dm_window_request request={.original_offset=8,.stub_offset=128,.count=8,.scratch={4,5,6},.host_gate=(uintptr_t)dm_gate,
         .original={0xc85ffc12,0x91000463,0x34000061,0x52800001,0xd5033f5f,0x91000652,0xc802fc12,0x35ffff22},
         .translated={0xc85ffc04,0x91000463,0x34000061,0x52800001,0xd5033f5f,0x91000484,0xc802fc04,0x35ffff22}};

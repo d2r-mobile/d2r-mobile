@@ -68,7 +68,8 @@ static void boundary_children(const char*program){const char*modes[]={"--boundar
 int main(int argc,char**argv){
     int boundary=argc>1;
 #if SAN_BOUNDARY
-    if(boundary){stack_t alt={.ss_sp=malloc(65536),.ss_size=65536};CHECK(alt.ss_sp&&!sigaltstack(&alt,NULL));
+    void *alt_stack=NULL;stack_t previous={0};
+    if(boundary){CHECK(!sigaltstack(NULL,&previous));alt_stack=malloc(65536);stack_t alt={.ss_sp=alt_stack,.ss_size=65536};CHECK(alt_stack&&!sigaltstack(&alt,NULL));
         struct sigaction action={.sa_handler=trapped,.sa_flags=SA_ONSTACK};sigemptyset(&action.sa_mask);
         CHECK(!sigaction(SIGTRAP,&action,NULL)&&!sigaction(SIGSEGV,&action,NULL)&&!sigaction(SIGBUS,&action,NULL));}
 #else
@@ -99,6 +100,10 @@ int main(int argc,char**argv){
     CHECK(!dm_host_destroy(h));CHECK(!dm_image_unmap(&program));
 #if SAN_BOUNDARY
     if(!boundary)boundary_children(argv[0]);
+    if(alt_stack){CHECK(!sigaltstack(&previous,NULL));stack_t restored;CHECK(!sigaltstack(NULL,&restored));
+        CHECK(restored.ss_flags==previous.ss_flags);
+        if(!(previous.ss_flags&SS_DISABLE))CHECK(restored.ss_sp==previous.ss_sp&&restored.ss_size==previous.ss_size);
+        free(alt_stack);}
 #endif
     puts("PASS: eight rewritten SVC/TLS guests, native blocking service stacks, preserved ABI/FP/x18, terminal no-return, registry full/retry/reuse/cleanup");
 }

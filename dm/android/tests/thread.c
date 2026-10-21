@@ -9,6 +9,7 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include "generated_entry.h"
 #define CHECK(c)do{if(!(c)){fprintf(stderr,"FAIL line %d: %s\n",__LINE__,#c);abort();}}while(0)
 #define UNIT (2u*1024u*1024u)
 #define STACK 65536u
@@ -26,7 +27,7 @@ static void wait_state(dm_host*h,int waiters,size_t count){uint64_t deadline=mon
 static uint64_t id(dm_host*h,uint32_t handle){uint64_t r[31]={[1]=handle};CHECK(!dm_host_svc(h,0x25,r));return r[1];}
 extern void dm_gate(void);
 typedef struct{dm_host*host;dm_event*ready,*release;void(*exit_fn)(void);uintptr_t sp,tls;uint32_t handle;uint64_t thread_id;unsigned runs;}payload;
-static void guest_entry(uint64_t argument){
+static void DM_NO_UBSAN_FUNCTION guest_entry(uint64_t argument){
     payload*p=(payload*)(uintptr_t)argument;dm_guest_context*c=dm_guest_current();CHECK(c&&c->host==p->host);
     __asm__ volatile("mov %0, sp":"=r"(p->sp));p->tls=c->slots[DM_SLOT_TLS];p->handle=c->thread_handle;
     p->thread_id=id(p->host,0xffff8000u);CHECK(p->thread_id==c->thread_id);

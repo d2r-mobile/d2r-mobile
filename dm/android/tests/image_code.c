@@ -9,9 +9,10 @@
 #include <string.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include "generated_entry.h"
 #define CHECK(c) do { if (!(c)) { fprintf(stderr,"FAIL line %d: %s\n",__LINE__,#c); abort(); } } while (0)
 static void fault(int sig) { (void)sig; _exit(77); }
-static void inaccessible(uint8_t *p, int operation) {
+static void DM_NO_UBSAN_FUNCTION inaccessible(uint8_t *p, int operation) {
     pid_t child=fork(); CHECK(child>=0);
     if(!child){
         signal(SIGBUS,fault);signal(SIGSEGV,fault);
@@ -25,7 +26,7 @@ static void inaccessible(uint8_t *p, int operation) {
 }
 static void put(uint8_t*p,uint32_t word){for(unsigned b=0;b<4;b++)p[b]=(uint8_t)(word>>(8*b));}
 
-int main(void){
+int DM_NO_UBSAN_FUNCTION main(void){
     size_t page=(size_t)sysconf(_SC_PAGESIZE);CHECK(page>0&&page<DM_NSO_MAX_IMAGE/8);
     dm_nso_image image={.header={.image_size=2*page+46,.bss_size=33}};
     image.header.segments[0].size=36;

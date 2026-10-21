@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include "generated_entry.h"
 #ifdef DM_TEST_DECODE
 #include "../rewrite/decode.h"
 #endif
@@ -15,7 +16,7 @@
 static void put(uint8_t *p, uint32_t value) { for (unsigned b = 0; b < 4; b++) p[b] = (uint8_t)(value >> (b * 8)); }
 #endif
 
-int main(void) {
+int DM_NO_UBSAN_FUNCTION main(void) {
     dm_x18_request request = {.translated = 0xd28000ec, .stub_offset = 128, .scratch = {12,13,14}, .host_gate = 1};
     dm_x18_patch patch = {.replacement = 123};
     CHECK(!dm_patch_x18(&request, &patch));

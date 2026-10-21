@@ -9,6 +9,7 @@
 #include <time.h>
 #include <string.h>
 #include <unistd.h>
+#include "generated_entry.h"
 #define CHECK(c)do{if(!(c)){fprintf(stderr,"FAIL line %d: %s\n",__LINE__,#c);abort();}}while(0)
 #define UNIT (2u*1024u*1024u)
 #define MASK 0x40000000u
@@ -42,7 +43,7 @@ static void pause_thread(void){struct timespec t={.tv_nsec=1000000};nanosleep(&t
 static void wait_value(uint32_t*p,uint32_t value){uint64_t end=mono()+3000000000ull;while(load(p)!=value){CHECK(mono()<end);pause_thread();}}
 static void wait_count(dm_host*h,size_t value){uint64_t end=mono()+3000000000ull;for(;;){
     pthread_mutex_lock(&h->mutex);size_t n=dm_host_mutex_waiters(h);pthread_mutex_unlock(&h->mutex);if(n==value)return;CHECK(mono()<end);pause_thread();}}
-static uint64_t call(dm_host*h,unsigned svc,uint64_t a,uint64_t b,uint64_t c,uint64_t d){
+static uint64_t DM_NO_UBSAN_FUNCTION call(dm_host*h,unsigned svc,uint64_t a,uint64_t b,uint64_t c,uint64_t d){
 #if defined(__aarch64__)
     // 已附着场景全部经过真正改写后的 ARM64 SVC 门，包括阻塞及跨线程移交。
     // Every attached scenario runs through rewritten ARM64 SVC gates, including blocking and cross-thread handoff.
