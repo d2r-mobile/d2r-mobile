@@ -10,6 +10,8 @@ typedef struct image_entry {
     uint64_t source_stamp,source_hash,source_seen;int source_valid,source_tracked;
     VkPipelineStageFlags last_stage;VkAccessFlags last_access;int gpu_written;
     cached_image_view *views;
+    VkImageUsageFlags usage;
+    VkImage retired_image;VkImageView retired_view;VkDeviceMemory retired_memory;cached_image_view *retired_views;
     struct image_entry *next,*hash_next;
 } image_entry;
 typedef struct { int valid; tex_t texture; view_t view; uint64_t revision; } texture_descriptor;
@@ -204,18 +206,8 @@ static uint32_t dimension(uint32_t v, unsigned level) { v >>= level; return v ? 
 static image_entry *image_find(uint64_t serial) {
     for(image_entry *e=image_index[serial&4095];e;e=e->hash_next)if(e->serial==serial)return e;return NULL;
 }
-static image_entry *image_get(const tex_t *t) {
-    unsigned bucket=t->serial&4095;for(image_entry *e=image_index[bucket];e;e=e->hash_next)if(e->serial==t->serial)return e;
-    if (t->d.target==NVN_TEXTURE_TARGET_BUFFER || t->d.samples>1) die("Vulkan texture target/samples pending: %d/%d",t->d.target,t->d.samples);
-    image_entry *e=calloc(1,sizeof *e); if(!e) die("Vulkan texture allocation"); e->serial=t->serial;e->texture=*t;e->format=vk_format(t->d.format);graphics_pass_end();
-    if(e->format==VK_FORMAT_UNDEFINED) {texture_diag_unsupported((unsigned)t->d.format);die("Unknown Vulkan NVN format %#x",t->d.format);}
-    e->aspect=VK_IMAGE_ASPECT_COLOR_BIT;
-    if(t->d.format>=0x31 && t->d.format<=0x36) {e->aspect=0;if(t->d.format!=0x31)e->aspect|=VK_IMAGE_ASPECT_DEPTH_BIT;if(t->d.format==0x31||t->d.format==0x35||t->d.format==0x36)e->aspect|=VK_IMAGE_ASPECT_STENCIL_BIT;}
-    VkFormatProperties fp;vkGetPhysicalDeviceFormatProperties(physical,e->format,&fp);
-    VkImageUsageFlags usage=VK_IMAGE_USAGE_TRANSFER_SRC_BIT|VK_IMAGE_USAGE_TRANSFER_DST_BIT|VK_IMAGE_USAGE_SAMPLED_BIT;
-    if(fp.optimalTilingFeatures & VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT)usage|=VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-    if(fp.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT)usage|=VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
-    if(fp.optimalTilingFeatures & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT)usage|=VK_IMAGE_USAGE_STORAGE_BIT;
+static void image_allocate(image_entry *e,VkImageUsageFlags usage) {
+    const tex_t *t=&e->texture;e->usage=usage;
     int is3d=t->d.target==NVN_TEXTURE_TARGET_3D,is1d=t->d.target==NVN_TEXTURE_TARGET_1D||t->d.target==NVN_TEXTURE_TARGET_1D_ARRAY;
     VkImageType image_type=is3d?VK_IMAGE_TYPE_3D:is1d?VK_IMAGE_TYPE_1D:VK_IMAGE_TYPE_2D;
     VkImageCreateInfo ci={.sType=VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,.imageType=image_type,.format=e->format,.extent={t->d.width,is1d?1:t->d.height,is3d?t->d.depth:1},.mipLevels=t->d.levels,.arrayLayers=t->L.layers,.samples=VK_SAMPLE_COUNT_1_BIT,.tiling=VK_IMAGE_TILING_OPTIMAL,.usage=usage,.sharingMode=VK_SHARING_MODE_EXCLUSIVE};
@@ -232,7 +224,40 @@ static image_entry *image_get(const tex_t *t) {
     VK_CHECK(vkCreateImageView(device,&vi,NULL,&e->view));
     VkImageMemoryBarrier b={.sType=VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,.oldLayout=VK_IMAGE_LAYOUT_UNDEFINED,.newLayout=VK_IMAGE_LAYOUT_GENERAL,.dstAccessMask=VK_ACCESS_MEMORY_READ_BIT|VK_ACCESS_MEMORY_WRITE_BIT,.srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,.image=e->image,.subresourceRange=vi.subresourceRange};
     vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,0,0,NULL,0,NULL,1,&b);
+}
+static image_entry *image_get(const tex_t *t) {
+    unsigned bucket=t->serial&4095;for(image_entry *e=image_index[bucket];e;e=e->hash_next)if(e->serial==t->serial)return e;
+    if(t->d.target==NVN_TEXTURE_TARGET_BUFFER||t->d.samples>1)die("Vulkan texture target/samples pending: %d/%d",t->d.target,t->d.samples);
+    image_entry *e=calloc(1,sizeof *e);if(!e)die("Vulkan texture allocation");e->serial=t->serial;e->texture=*t;e->format=vk_format(t->d.format);graphics_pass_end();
+    if(e->format==VK_FORMAT_UNDEFINED){texture_diag_unsupported((unsigned)t->d.format);die("Unknown Vulkan NVN format %#x",t->d.format);}
+    e->aspect=VK_IMAGE_ASPECT_COLOR_BIT;
+    if(t->d.format>=0x31&&t->d.format<=0x36){e->aspect=0;if(t->d.format!=0x31)e->aspect|=VK_IMAGE_ASPECT_DEPTH_BIT;if(t->d.format==0x31||t->d.format==0x35||t->d.format==0x36)e->aspect|=VK_IMAGE_ASPECT_STENCIL_BIT;}
+    VkFormatProperties fp;vkGetPhysicalDeviceFormatProperties(physical,e->format,&fp);
+    VkImageUsageFlags usage=VK_IMAGE_USAGE_TRANSFER_SRC_BIT|VK_IMAGE_USAGE_TRANSFER_DST_BIT|VK_IMAGE_USAGE_SAMPLED_BIT;
+    if(fp.optimalTilingFeatures&VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT)usage|=VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    if(fp.optimalTilingFeatures&VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT)usage|=VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    if((fp.optimalTilingFeatures&VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT)&&(!narrow_image_candidate||(t->d.flags&NVN_TEXTURE_FLAGS_IMAGE)))usage|=VK_IMAGE_USAGE_STORAGE_BIT;
+    image_allocate(e,usage);
+    if((fp.optimalTilingFeatures&VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT)&&!(usage&VK_IMAGE_USAGE_STORAGE_BIT))narrow_image_count++;
     e->next=image_list;image_list=e;e->hash_next=image_index[bucket];image_index[bucket]=e;return e;
+}
+static void image_require_storage(image_entry *e) {
+    if(e->usage&VK_IMAGE_USAGE_STORAGE_BIT)return;
+    VkFormatProperties fp;vkGetPhysicalDeviceFormatProperties(physical,e->format,&fp);
+    if(!(fp.optimalTilingFeatures&VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT)||e->aspect!=VK_IMAGE_ASPECT_COLOR_BIT)die("Vulkan storage image format unsupported");
+    graphics_pass_end();image_access(e,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_TRANSFER_READ_BIT);
+    image_entry upgraded={.texture=e->texture,.format=e->format,.aspect=e->aspect};image_allocate(&upgraded,e->usage|VK_IMAGE_USAGE_STORAGE_BIT);
+    if(e->populated)for(unsigned mip=0;mip<e->texture.d.levels;mip++){
+        VkImageCopy copy={.srcSubresource={e->aspect,mip,0,e->texture.L.layers},.dstSubresource={e->aspect,mip,0,e->texture.L.layers},
+            .extent={dimension(e->texture.d.width,mip),e->image_type==VK_IMAGE_TYPE_1D?1:dimension(e->texture.d.height,mip),e->image_type==VK_IMAGE_TYPE_3D?dimension(e->texture.d.depth,mip):1}};
+        vkCmdCopyImage(command,e->image,VK_IMAGE_LAYOUT_GENERAL,upgraded.image,VK_IMAGE_LAYOUT_GENERAL,1,&copy);
+    }
+    // Earlier descriptors/framebuffers may still be in flight; retire once, reclaim only after texture release drains the GPU.
+    e->retired_image=e->image;e->retired_view=e->view;e->retired_memory=e->memory;e->retired_views=e->views;
+    e->image=upgraded.image;e->view=upgraded.view;e->memory=upgraded.memory;e->usage=upgraded.usage;e->views=NULL;
+    e->last_stage=VK_PIPELINE_STAGE_TRANSFER_BIT;e->last_access=VK_ACCESS_TRANSFER_WRITE_BIT;
+    storage_promotion_count++;
+    LOG("[vulkan-render-policy] storage promotion serial=%llu",(unsigned long long)e->serial);
 }
 // 仅实验：1x1 品红贴图，绕过所有真实只读 2D 采样；不改变格式/上传/光照。
 // Experiment only: a 1x1 magenta image bypassing every real read-only 2D sample; no format/upload/lighting change.
@@ -319,12 +344,18 @@ static void clear_color(const p_clear_color *c) {
     // 非完整剪裁必须保留未覆盖像素；不能用整张清除替代。
     // A partial scissor must preserve uncovered pixels; never substitute a whole-image clear.
     if(state.scissor.w>0&&(state.scissor.x||state.scissor.y||state.scissor.w<(int)dimension(e->texture.d.width,r.baseMipLevel)||state.scissor.h<(int)dimension(e->texture.d.height,r.baseMipLevel)))die("Vulkan scissored clear pending");
-    frame_trace_transfer("clear_color",state.rt.color[c->index],r,0,0,(int)dimension(e->texture.d.width,r.baseMipLevel),(int)dimension(e->texture.d.height,r.baseMipLevel));graphics_pass_end();VkClearColorValue color;memcpy(color.float32,c->rgba,sizeof c->rgba);image_access(e,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_TRANSFER_WRITE_BIT);vkCmdClearColorImage(command,e->image,VK_IMAGE_LAYOUT_GENERAL,&color,1,&r);image_gpu_written(e);
+    frame_trace_transfer("clear_color",state.rt.color[c->index],r,0,0,(int)dimension(e->texture.d.width,r.baseMipLevel),(int)dimension(e->texture.d.height,r.baseMipLevel));
+    VkClearValue value={0};memcpy(value.color.float32,c->rgba,sizeof c->rgba);
+    if(graphics_clear_attachment(e,r,&value))return;
+    graphics_pass_end();image_access(e,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_TRANSFER_WRITE_BIT);vkCmdClearColorImage(command,e->image,VK_IMAGE_LAYOUT_GENERAL,&value.color,1,&r);image_gpu_written(e);
 }
 static void clear_depth(const p_clear_ds *c) {
     if(!state.rt.depth)return;image_entry *e=image_get(state.rt.depth);VkImageSubresourceRange r=texture_range(e,state.rt.has_dview?&state.rt.dview:NULL);r.aspectMask=0;
     if(c->depth_mask)r.aspectMask|=VK_IMAGE_ASPECT_DEPTH_BIT;if(c->stencil_mask){if(c->stencil_mask!=255)die("Vulkan partial stencil clear pending");r.aspectMask|=VK_IMAGE_ASPECT_STENCIL_BIT;}
-    r.aspectMask&=e->aspect;if(!r.aspectMask)return;frame_trace_transfer(r.aspectMask&VK_IMAGE_ASPECT_STENCIL_BIT?(r.aspectMask&VK_IMAGE_ASPECT_DEPTH_BIT?"clear_depth_stencil":"clear_stencil"):"clear_depth",state.rt.depth,r,0,0,(int)dimension(e->texture.d.width,r.baseMipLevel),(int)dimension(e->texture.d.height,r.baseMipLevel));graphics_pass_end();VkClearDepthStencilValue value={c->depth,c->stencil};image_access(e,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_TRANSFER_WRITE_BIT);vkCmdClearDepthStencilImage(command,e->image,VK_IMAGE_LAYOUT_GENERAL,&value,1,&r);image_gpu_written(e);
+    r.aspectMask&=e->aspect;if(!r.aspectMask)return;frame_trace_transfer(r.aspectMask&VK_IMAGE_ASPECT_STENCIL_BIT?(r.aspectMask&VK_IMAGE_ASPECT_DEPTH_BIT?"clear_depth_stencil":"clear_stencil"):"clear_depth",state.rt.depth,r,0,0,(int)dimension(e->texture.d.width,r.baseMipLevel),(int)dimension(e->texture.d.height,r.baseMipLevel));
+    VkClearValue value={.depthStencil={c->depth,c->stencil}};
+    if(graphics_clear_attachment(e,r,&value))return;
+    graphics_pass_end();image_access(e,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_TRANSFER_WRITE_BIT);vkCmdClearDepthStencilImage(command,e->image,VK_IMAGE_LAYOUT_GENERAL,&value.depthStencil,1,&r);image_gpu_written(e);
 }
 static void copy_buffer_texture(const p_copy_b2t *c) {
     if(c->r.width<=0||c->r.height<=0||c->r.depth<=0)return;
@@ -444,7 +475,9 @@ void mtl_tex_release(tex_t *t) {
 }
 static void image_release_serial(uint64_t serial) {
     image_entry **link=&image_list;while(*link&&(*link)->serial!=serial)link=&(*link)->next;
-    if(*link){image_entry *e=*link;graphics_cache_forget_image(e);*link=e->next;image_entry **hash=&image_index[e->serial&4095];while(*hash&&*hash!=e)hash=&(*hash)->hash_next;if(!*hash)die("Vulkan image index corruption");*hash=e->hash_next;while(e->views){cached_image_view *v=e->views;e->views=v->next;vkDestroyImageView(device,v->view,NULL);free(v);}vkDestroyImageView(device,e->view,NULL);vkDestroyImage(device,e->image,NULL);vkFreeMemory(device,e->memory,NULL);free(e);}
+    if(*link){image_entry *e=*link;graphics_cache_forget_image(e);*link=e->next;image_entry **hash=&image_index[e->serial&4095];while(*hash&&*hash!=e)hash=&(*hash)->hash_next;if(!*hash)die("Vulkan image index corruption");*hash=e->hash_next;while(e->views){cached_image_view *v=e->views;e->views=v->next;vkDestroyImageView(device,v->view,NULL);free(v);}vkDestroyImageView(device,e->view,NULL);vkDestroyImage(device,e->image,NULL);vkFreeMemory(device,e->memory,NULL);
+        while(e->retired_views){cached_image_view *v=e->retired_views;e->retired_views=v->next;vkDestroyImageView(device,v->view,NULL);free(v);}
+        if(e->retired_image){vkDestroyImageView(device,e->retired_view,NULL);vkDestroyImage(device,e->retired_image,NULL);vkFreeMemory(device,e->retired_memory,NULL);}free(e);}
 }
 void mtl_read_texels(const tex_t *t,unsigned level,unsigned layer,const NVNcopyRegion *r,uint8_t *dst,size_t row,size_t img) {
     if(r->width<=0||r->height<=0||r->depth<=0)return;mtl_sub_begin();dependencies_prepare_texture(t);image_entry *e=image_get(t);image_upload(e);

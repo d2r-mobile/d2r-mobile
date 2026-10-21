@@ -246,12 +246,13 @@ static image_entry *descriptor_image(const texture_descriptor *d,uint32_t type,i
             if(base&&base->gpu_written){static unsigned notes;if(notes++<4)LOG("[vulkan-shadow-alias] skipped GPU-written serial=%llu fmt=%#x",(unsigned long long)source->serial,(unsigned)source->d.format);}
             else if(source->mem){alias=*source;alias.d.format=alias_format;alias.serial=texture_shadow_alias_serial(source->serial);source=&alias;
                 static unsigned created;if(!image_find(alias.serial)&&created++<8)LOG("[vulkan-shadow-alias] serial=%llu fmt=%#x sampled as %#x for depth compare",(unsigned long long)d->texture.serial,(unsigned)d->texture.d.format,alias_format);}}
-        image_entry *e=image_get(source);if(!storage||(e->texture.has_layout&&e->texture.mem))image_upload(e);if(storage)image_gpu_written(e);image_access(e,stage,access);return e;}
+        image_entry *e=image_get(source);if(storage)image_require_storage(e);if(!storage||(e->texture.has_layout&&e->texture.mem))image_upload(e);if(storage)image_gpu_written(e);image_access(e,stage,access);return e;}
     // 未绑定采样资源保留零贴图；可写空槽用独立图像，防止计算输出污染后续采样。
     // Keep unbound sampled resources zero; separate writable images prevent compute output from polluting later samples.
     static tex_t dummy[2][32];unsigned index=(type&255)+(!!(type&256))*6+(!!(type&1024))*12;if(index>=32)die("Dummy texture type %u",type);
     tex_t *t=&dummy[!!storage][index];
     if(!t->serial){t->serial=UINT64_MAX-index-(!!storage)*32;t->d=(nvn_texdesc){.target=(type&255)==4?NVN_TEXTURE_TARGET_3D:(type&255)==5?NVN_TEXTURE_TARGET_CUBEMAP:(type&256)?NVN_TEXTURE_TARGET_2D_ARRAY:NVN_TEXTURE_TARGET_2D,.width=1,.height=1,.depth=(type&255)==5?6:1,.levels=1,.format=(type&1024)?NVN_FORMAT_DEPTH32F:NVN_FORMAT_RGBA8};nvn_tex_layout(&t->d,&t->L);}
+    if(storage)t->d.flags|=NVN_TEXTURE_FLAGS_IMAGE;
     image_entry *e=image_get(t);if(!e->populated){image_access(e,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_TRANSFER_WRITE_BIT);VkClearColorValue zero={0};VkImageSubresourceRange r={e->aspect,0,1,0,e->texture.L.layers};if(type&1024){VkClearDepthStencilValue depth={1,0};vkCmdClearDepthStencilImage(command,e->image,VK_IMAGE_LAYOUT_GENERAL,&depth,1,&r);}else vkCmdClearColorImage(command,e->image,VK_IMAGE_LAYOUT_GENERAL,&zero,1,&r);e->populated=1;}image_access(e,stage,access);return e;
 }
 static VkImageView descriptor_view(const texture_descriptor *descriptor,image_entry *e,uint32_t type,int storage,int flat) {
@@ -354,6 +355,16 @@ static VkPipelineStageFlags shader_pipeline_stage(const shader_entry *s) {
 }
 #include "nvn_vulkan_forward_bind.inc"
 #include "nvn_vulkan_texel.inc"
+static void shader_prepare_storage_images(const shader_entry *s) {
+    if(!narrow_image_candidate)return;
+    for(unsigned i=0;i<s->count;i++){
+        const shader_binding *b=&s->bindings[i];if(descriptor_type(b)!=VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)continue;
+        for(unsigned j=0;j<b->count;j++){
+            texture_descriptor d=descriptor_texture(shader_handle(b,s->stage,j)&0xfffff);
+            if(d.valid)image_require_storage(image_get(&d.texture));
+        }
+    }
+}
 static VkDescriptorSet bind_shader(shader_entry *s,post_op *lifetime,uint32_t *dynamic_offsets,unsigned *dynamic_count) {
     (void)lifetime;descriptor_reserve(s);
     unsigned dynamic_base=*dynamic_count;
@@ -436,6 +447,7 @@ static void dispatch_compute(const p_dispatch *d) {
     snapshot_prepare();graphics_pass_end();
     if(!state.program||!state.program->nstage)die("Vulkan dispatch without program");shader_entry *s=program_shader(state.program,0);if(s->stage!=5)die("Vulkan dispatch with graphics shader");
     dependencies_prepare_shader(s);
+    shader_prepare_storage_images(s);
     // 与固定着色器同寿命复用计算管线；批次资源只包含本次绑定，不销毁共享管线。
     // Keep compute pipelines for the shader lifetime; batch resources hold bindings, not shared pipeline ownership.
     if(!s->compute_pipeline){resource_create_start creation=resource_create_begin();VkPipelineLayoutCreateInfo li={.sType=VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,.setLayoutCount=1,.pSetLayouts=&s->layout};VK_CHECK(vkCreatePipelineLayout(device,&li,NULL,&s->compute_layout));
