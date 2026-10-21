@@ -101,6 +101,8 @@ static void texture_diag_unsupported(unsigned format) {
 // 只在真实采样绑定处记录，区分缺映射、未绑定、格式/视图/布局，不触碰资源字节。
 // Record only at real sampled binds, distinguishing missing/unbound/format/view/layout without resource bytes.
 static void texture_diag_bind(const texture_descriptor *descriptor, unsigned handle, uint32_t type, int slot, int stage, const char *shader) {
+    texture_diag_state_init(&texture_diag);
+    if (!texture_diag.active) return;
     unsigned texture_id = texture_diag_texture_id(handle);
     unsigned format = descriptor->valid ? (unsigned)descriptor->texture.d.format : 0;
     texture_diag_key key;
