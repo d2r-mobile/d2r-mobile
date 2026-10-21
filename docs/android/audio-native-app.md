@@ -10,7 +10,7 @@
 | `ANativeActivity_onCreate` | 仅保存 JavaVM/Activity global ref 与选项；不创建 session、不请求焦点、不开流。 |
 | 键盘 `P`（DOWN，`AINPUT_SOURCE_KEYBOARD` 且非 gamepad，repeat=0，App active+resumed+focused） | 首次显式请求时 lazy 创建 `dm_audio_session`，调用真实 `dm_audio_session_play`；真实 GRANTED/DELAYED/FAILED 原样保留。 |
 | 键盘 `S`（同上条件） | `dm_audio_session_stop`：停止输出并 abandon 同一平台请求；不自动重放。 |
-| 输入 timer | 串行调用 `dm_audio_session_drain`，仅当输出状态为 `DM_AF_OUT_PLAYING` 时写入自有有界 PCM（每 tick 8 帧，确定性参考生成器）。 |
+| 输入 timer | 串行调用 `dm_audio_session_drain`，按单调时钟以 48kHz 供给自有 PCM：跨 tick 保留 ns×rate 的亚帧余量，精确累计 elapsed（长 elapsed 先钳制到 4096 帧预算避免乘法溢出）；写入 session 的接受帧数推进 PCM 相位；有界 backlog 4096 帧（约 85ms），队列满/partial write 保留未写样本随后续 tick 续写。停止/暂停/基线重置同时清空余量，恢复不突发旧音频。 |
 | 输入队列退休 / 窗口丢失 | 先验证该回调指向当前 queue/window（陈旧回调零副作用），再暂停同一 owner 的音频；resume 不重放旧请求。 |
 | 窗口焦点丢失 | 同暂停：停输出并放弃意图；焦点恢复不自动播放，需要新的显式 `P`。 |
 | `onDestroy` | 先停生产者，再做有界串行 cleanup（最多两次 session destroy，覆盖 dm_audio close 成功但 stop/wait 未证明的两阶段释放）；未证明零 handle 时保留 App 状态与 JNI/AAudio handle，不释放。 |
