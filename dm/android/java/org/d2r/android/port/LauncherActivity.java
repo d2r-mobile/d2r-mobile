@@ -141,9 +141,10 @@ public final class LauncherActivity extends Activity {
 
     private File packageManifest() { return new File(packageDirectory(), MANIFEST_NAME); }
 
-    // 导入是否完成，以 manifest.json 为准（它在解包最后才写）。没导入就不该能启动游戏。
-    // "Imported" means manifest.json exists, and it is written last. Without it the game must not start.
-    private boolean packageReady() { return packageManifest().isFile(); }
+    // 导入是否完成，以 manifest.json 与十二个必需文件/每模块 target 为准；只读小标记，不遍历资源。
+    // "Ready" means manifest.json plus the twelve required files and each module's target; read-only,
+    // no resource walk.
+    private boolean packageReady() { return PackageArchive.isReady(packageDirectory(), packageGameDirectory()); }
 
     // 只做最简单的 key=value 读取；权威解析在 native 的 launch_settings.c。
     // Minimal key=value read; the authoritative parser is launch_settings.c on the native side.
@@ -589,7 +590,7 @@ public final class LauncherActivity extends Activity {
             setStatus(String.format(text("dmAndroidLaunchImporting"), 0), WARNING);
             return;
         }
-        if (!packageManifest().isFile()) {
+        if (!packageReady()) {
             setStatus(text("dmAndroidLaunchNeedsImport"), WARNING);
             return;
         }
