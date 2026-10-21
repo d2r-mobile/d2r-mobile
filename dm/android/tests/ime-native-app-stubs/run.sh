@@ -17,6 +17,9 @@ mkdir -p "$work/stubs" "$work/classes" "$work/real"
     "$root/dm/android/app/java/org/d2rmobile/android/diagnostic/DmInputConnection.java" \
     "$root/dm/android/app/java/org/d2rmobile/android/diagnostic/DmTextEditorView.java" \
     "$root/dm/android/app/java/org/d2rmobile/android/diagnostic/DmTextEditorHost.java" \
+    "$root/dm/android/app/java/org/d2rmobile/android/diagnostic/DmImeInsetsApi30.java" \
+    "$root/dm/android/app/java/org/d2rmobile/android/diagnostic/DmImeInsetsObservation.java" \
+    "$root/dm/android/app/java/org/d2rmobile/android/diagnostic/DmImeInsetsObserver.java" \
     "$root/dm/android/app/java/org/d2rmobile/android/diagnostic/DmTextEditorJniBridge.java" \
     "$here/DmTextEditorJniBridgeTest.java"
 "$java" -cp "$work/stubs:$work/classes:$framework" \

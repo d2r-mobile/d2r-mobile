@@ -28,10 +28,13 @@ diagnostic integration, not a game text-field implementation.
 
 The bridge is loaded through the Activity class loader and constructed only on
 the main looper. Native callbacks carry the checked session id (never a freed C
-pointer). Java forwards only bounded UTF-16 code-unit counts for commit,
-delete, submit and cancel; it never logs user text and never copies a document
-or composition state into a native mirror. This is an event-only diagnostic
-limit; no guest text consumer is invented.
+pointer) plus the actual event payload as a `String`. Native reads the payload
+with `GetStringLength`/`GetStringRegion`, verifies declared UTF-16 units, the
+512-unit bound, paired-surrogate shape and cancellation's empty payload, then
+copies it into one App-owned recent-event snapshot. Commit is the committed
+fragment, delete the deleted fragment and submit the final text; they are not
+appended or merged. Cancel/end/new session clear the content. Nothing is logged
+and no guest text consumer is invented.
 
 `show`/`hide`/`release` failures are checked and cleared at each JNI stage.
 The native session/gate is published before Java `show()`, so a terminal
