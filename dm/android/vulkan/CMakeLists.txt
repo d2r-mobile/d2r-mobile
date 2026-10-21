@@ -217,21 +217,37 @@ target_compile_definitions(dm_vulkan_texture_mips_createfail_test PRIVATE
     vkCreateImageView=dm_test_vkCreateImageView vkDestroyImage=dm_test_vkDestroyImage
     vkDestroyImageView=dm_test_vkDestroyImageView vkFreeMemory=dm_test_vkFreeMemory)
 
+# #95 多级上传逐阶段失败/非法输入/填充布局与设备丢失非完成回归 | #95 per-stage multi-level failure, invalid input,
+# padded layout and device-loss-not-completion regression
+add_executable(dm_vulkan_texture_mips_failures_test ../tests/vulkan_texture_mips_failures.c vk_texture_mips.c vk_texture.c vk_memory.c vk_host.c)
+target_link_libraries(dm_vulkan_texture_mips_failures_test PRIVATE dm_android_vk)
+target_compile_options(dm_vulkan_texture_mips_failures_test PRIVATE -Wall -Wextra -Werror)
+foreach(symbol vkGetPhysicalDeviceImageFormatProperties vkCreateImage vkGetImageMemoryRequirements vkAllocateMemory
+    vkBindImageMemory vkCreateBuffer vkGetBufferMemoryRequirements vkBindBufferMemory vkMapMemory
+    vkFlushMappedMemoryRanges vkCreateImageView vkAllocateCommandBuffers vkBeginCommandBuffer vkCmdPipelineBarrier
+    vkCmdCopyBufferToImage vkEndCommandBuffer vkCreateFence vkQueueSubmit vkWaitForFences vkDeviceWaitIdle
+    vkDestroyFence vkFreeCommandBuffers vkDestroyImageView vkDestroyImage vkDestroyBuffer vkUnmapMemory vkFreeMemory)
+    target_compile_definitions(dm_vulkan_texture_mips_failures_test PRIVATE ${symbol}=dm_test_${symbol})
+endforeach()
+
 if(ANDROID)
     target_link_options(dm_vulkan_sampler_test PRIVATE "-Wl,-z,max-page-size=16384")
     target_link_options(dm_vulkan_sampler_createfail_test PRIVATE "-Wl,-z,max-page-size=16384")
     target_link_options(dm_vulkan_sampler_mips_test PRIVATE "-Wl,-z,max-page-size=16384")
+    target_link_options(dm_vulkan_texture_mips_failures_test PRIVATE "-Wl,-z,max-page-size=16384")
 else()
     add_test(NAME vulkan_sampler COMMAND dm_vulkan_sampler_test ${vertex} ${sample_frag})
     add_test(NAME vulkan_sampler_createfail COMMAND dm_vulkan_sampler_createfail_test)
     add_test(NAME vulkan_sampler_nvnmap COMMAND dm_vulkan_sampler_nvnmap_test)
     add_test(NAME vulkan_sampler_mips COMMAND dm_vulkan_sampler_mips_test ${vertex} ${sample_frag})
     add_test(NAME vulkan_texture_mips_createfail COMMAND dm_vulkan_texture_mips_createfail_test)
+    add_test(NAME vulkan_texture_mips_failures COMMAND dm_vulkan_texture_mips_failures_test)
     set_tests_properties(vulkan_sampler PROPERTIES TIMEOUT 60)
     set_tests_properties(vulkan_sampler_createfail PROPERTIES TIMEOUT 60)
     set_tests_properties(vulkan_sampler_nvnmap PROPERTIES TIMEOUT 60)
     set_tests_properties(vulkan_sampler_mips PROPERTIES TIMEOUT 60)
     set_tests_properties(vulkan_texture_mips_createfail PROPERTIES TIMEOUT 60)
+    set_tests_properties(vulkan_texture_mips_failures PROPERTIES TIMEOUT 60)
     if(APPLE AND DM_MOLTENVK_ICD)
         set_tests_properties(vulkan_sampler PROPERTIES ENVIRONMENT "VK_DRIVER_FILES=${DM_MOLTENVK_ICD}")
         set_tests_properties(vulkan_sampler_createfail PROPERTIES ENVIRONMENT "VK_DRIVER_FILES=${DM_MOLTENVK_ICD}")
