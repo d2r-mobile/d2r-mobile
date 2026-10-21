@@ -187,6 +187,32 @@ int main(void){
         CHECK(!dm_host_accounting_used(h));
         CHECK(!dm_host_destroy(h));
     }
+    // Partial construction after reservation: a second module with an
+    // unsupported relocation must roll back both reserved mappings and leave
+    // accounting at zero. This is distinct from the 11 mprotect commit
+    // failpoints above.
+    {
+        dm_nso_image bad=fixture(1);
+        put64(bad.bytes+0x4308,999);
+        dm_nso_image pair[2]={images[0],bad};
+        h=dm_host_create_accounted_process(UNIT,page,page,budget);CHECK(h);
+        maps=(void*)1;
+        CHECK(dm_host_map_modules(h,pair,codes,2,NULL,0,&maps)==EINVAL&&maps==(void*)1&&!info(h,22));
+        CHECK(!dm_host_map_modules(h,images,codes,2,NULL,0,&maps)&&info(h,22)==module_bytes);
+        CHECK(!dm_host_destroy(h));
+        dm_nso_free(&bad);
+    }
+    // Repeated host init/exit: mappings, attach state and accounting must return
+    // to the same baseline on each cycle, using the same self-owned modules.
+    for (unsigned cycle=0;cycle<2;cycle++) {
+        h=dm_host_create_accounted_process(UNIT,page,page,budget);CHECK(h);
+        CHECK(!dm_host_map_modules(h,images,codes,2,NULL,0,&maps)&&info(h,22)==module_bytes);
+        CHECK(!dm_guest_attach(h,&empty));
+        CHECK(info(h,22)==module_bytes+local);
+        CHECK(!dm_guest_detach());
+        CHECK(info(h,22)==module_bytes);
+        CHECK(dm_host_destroy(h)==0);
+    }
     for(unsigned i=0;i<2;i++)dm_nso_free(&images[i]);
-    puts("PASS accounting: real linked owned images, exact backing budget, RO/gap pins, alias dedup, heap quota, real SVC21/22, TLS deferred lifetime and concurrent quota rollback; unified address containment, protected reset/reuse and11 partial-commit failures/retries, active local lease destroy refusal/release");return 0;
+    puts("PASS accounting: real linked owned images, exact backing budget, RO/gap pins, alias dedup, heap quota, real SVC21/22, TLS deferred lifetime and concurrent quota rollback; unified address containment, protected reset/reuse and11 partial-commit failures/retries, link-stage partial rollback, repeated init/exit, active local lease destroy refusal/release");return 0;
 }
