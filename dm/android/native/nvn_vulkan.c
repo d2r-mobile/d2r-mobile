@@ -21,6 +21,7 @@ static dm_vk_driver vk_api;
 #include "nvn_vulkan_host.inc"
 #include "nvn_vulkan_caps.h"
 #include "nvn_vulkan_depth_bias.h"
+#include "nvn_present_filter.h"
 static dm_nvn_host_state g_host_state = {.frz_req = -1, .frz_applied = -1};
 #include <vulkan/vulkan.h>
 #include <stdatomic.h>
@@ -139,6 +140,14 @@ static VkPhysicalDeviceFeatures gpu_features;
 static int gpu_depth_bias_clamp;
 static VkPhysicalDeviceLimits gpu_limits;
 static uint32_t gpu_subgroup_size;
+// #298: extension is enabled only when advertised; the source format is
+// checked separately at present. LINEAR remains the fallback in both cases.
+// #298：仅在驱动公开时启用扩展；出图时再检查真实源格式。两种缺失都回退 LINEAR。
+static int present_cubic_extension;
+static int present_linear_override;
+static int present_filter_logged;
+static struct { VkFormat format; VkFormatFeatureFlags features; } present_format_cache[8];
+static unsigned present_format_count;
 static VkSurfaceKHR surface;
 static VkSwapchainKHR swapchain;
 static VkExtent2D screen_extent;
@@ -296,7 +305,56 @@ void mtl_screen_attach(struct ANativeWindow *window) {
 }
 #endif
 
+static int present_cubic_advertised(void) {
+    uint32_t count=0;
+    if(vkEnumerateDeviceExtensionProperties(physical,NULL,&count,NULL)!=VK_SUCCESS||!count)return 0;
+    // 设备扩展列表正常很小；设置上限避免驱动返回异常计数时分配失控。
+    // Device extension lists are normally tiny; cap the count so an abnormal driver cannot force a huge allocation.
+    if(count>4096)return 0;
+    VkExtensionProperties *extensions=calloc(count,sizeof *extensions);
+    if(!extensions)return 0;
+    VkResult result=vkEnumerateDeviceExtensionProperties(physical,NULL,&count,extensions);
+    int supported=0;
+    if(result==VK_SUCCESS)for(uint32_t i=0;i<count;i++)
+        if(!strcmp(extensions[i].extensionName,VK_EXT_FILTER_CUBIC_EXTENSION_NAME)){supported=1;break;}
+    free(extensions);
+    return supported;
+}
+
+static const char *present_filter_property(void) {
+#ifdef __ANDROID__
+    static char value[PROP_VALUE_MAX];
+    if(__system_property_get("debug.d2r.present_filter",value)>0)return value;
+#endif
+    return NULL;
+}
+
+static VkFormatFeatureFlags present_source_features(VkFormat format) {
+    if(!present_cubic_extension||format==VK_FORMAT_UNDEFINED)return 0;
+    for(unsigned i=0;i<present_format_count;i++)
+        if(present_format_cache[i].format==format)return present_format_cache[i].features;
+    VkFormatProperties properties;
+    vkGetPhysicalDeviceFormatProperties(physical,format,&properties);
+    // 只按驱动对真实源格式报告的能力选择；不因为扩展存在就假定所有格式都支持。
+    // Select only from the capability the driver reports for the actual source format; never assume all formats support it.
+    if(present_format_count<sizeof present_format_cache/sizeof present_format_cache[0])
+        present_format_cache[present_format_count++]=(typeof(present_format_cache[0])){format,properties.optimalTilingFeatures};
+    return properties.optimalTilingFeatures;
+}
+
 static void initialize(void) {
+    present_format_count=0; present_filter_logged=0;
+    const char *present_filter_env=getenv("DM_PRESENT_FILTER");
+    const char *present_filter_prop=present_filter_property();
+    const char *present_override_source="default",*present_override_value="";
+    present_linear_override=0;
+    // Explicit env wins, then the app debug property; only exact "linear" opts out.
+    // 显式 env 优先，其次是 app debug property；只有精确的 "linear" 才关闭 cubic。
+    if(present_filter_env&&!strcmp(present_filter_env,"linear")){
+        present_linear_override=1;present_override_source="env";present_override_value=present_filter_env;
+    }else if(present_filter_prop&&!strcmp(present_filter_prop,"linear")){
+        present_linear_override=1;present_override_source="property";present_override_value=present_filter_prop;
+    }
     // 与原 NVN 后端使用相同默认状态；显式指令随后覆盖，不能改写合法深度范围。
     // Match the original NVN defaults; explicit commands override them without rewriting legal depth ranges.
     state.mask.mask=UINT32_MAX;state.depth_range=(p_depth_range){0,1};
@@ -389,8 +447,13 @@ driver_retry:;
     VkDeviceQueueCreateInfo qi = {.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO, .queueFamilyIndex = family, .queueCount = 1, .pQueuePriorities = &priority};
     VkPhysicalDeviceFeatures enable = {.textureCompressionBC = features.textureCompressionBC, .textureCompressionASTC_LDR = features.textureCompressionASTC_LDR, .independentBlend = features.independentBlend, .shaderImageGatherExtended = features.shaderImageGatherExtended, .fragmentStoresAndAtomics = features.fragmentStoresAndAtomics, .vertexPipelineStoresAndAtomics = features.vertexPipelineStoresAndAtomics, .shaderStorageImageReadWithoutFormat = features.shaderStorageImageReadWithoutFormat, .shaderStorageImageWriteWithoutFormat = features.shaderStorageImageWriteWithoutFormat, .occlusionQueryPrecise = features.occlusionQueryPrecise, .depthBiasClamp = features.depthBiasClamp, .tessellationShader = features.tessellationShader, .multiViewport = features.multiViewport};
     VkDeviceCreateInfo di = {.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, .queueCreateInfoCount = 1, .pQueueCreateInfos = &qi, .pEnabledFeatures = &enable}; gpu_depth_bias_clamp = enable.depthBiasClamp == VK_TRUE;
-    const char *swap_extension = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
-    if (surface) { di.enabledExtensionCount = 1; di.ppEnabledExtensionNames = &swap_extension; }
+    int cubic_advertised=present_cubic_advertised();
+    present_cubic_extension=dm_nvn_present_filter_extension_enabled(cubic_advertised,present_linear_override);
+    LOG("[vulkan-present-filter] extension=%s enabled=%d linear_override=%d source=%s value=%s property=debug.d2r.present_filter",cubic_advertised?VK_EXT_FILTER_CUBIC_EXTENSION_NAME:"unavailable",present_cubic_extension,present_linear_override,present_override_source,present_override_value);
+    const char *device_extensions[2]; unsigned device_extension_count=0;
+    if(surface)device_extensions[device_extension_count++]=VK_KHR_SWAPCHAIN_EXTENSION_NAME;
+    if(present_cubic_extension)device_extensions[device_extension_count++]=VK_EXT_FILTER_CUBIC_EXTENSION_NAME;
+    di.enabledExtensionCount=device_extension_count; if(device_extension_count)di.ppEnabledExtensionNames=device_extensions;
     #ifdef DM_VK_REFERENCE_GATES
     reference_gate_device_setup(&di);
 #endif
@@ -962,7 +1025,13 @@ uint64_t mtl_present(const tex_t *t, double period, const int crop[4]) {
         double scale = (double)screen_extent.width / sw; if (scale * sh > screen_extent.height) scale = (double)screen_extent.height / sh;
         int dw = sw * scale, dh = sh * scale, x = (screen_extent.width - dw) / 2, y = (screen_extent.height - dh) / 2;
         VkImageBlit blit = {.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT,0,0,1}, .srcOffsets = {{sx,sy,0},{sx+sw,sy+sh,1}}, .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT,0,0,1}, .dstOffsets = {{x,y,0},{x+dw,y+dh,1}}};
-        vkCmdBlitImage(command, e->image, VK_IMAGE_LAYOUT_GENERAL, screen_images[index], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
+        VkFormatFeatureFlags source_features=present_source_features(e->format);
+        int source_is_2d=e->image_type==VK_IMAGE_TYPE_2D;
+        dm_nvn_present_filter selected=dm_nvn_present_filter_select(present_cubic_extension,source_is_2d,source_features,present_linear_override);
+        VkFilter present_filter=selected==DM_NVN_PRESENT_FILTER_CUBIC?VK_FILTER_CUBIC_EXT:VK_FILTER_LINEAR;
+        if(!present_filter_logged){present_filter_logged=1;LOG("[vulkan-present-filter] format=%#x type=%#x 2d=%d cubic_feature=%d selected=%s",(unsigned)e->format,
+            (unsigned)e->image_type,source_is_2d,(source_features&VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_CUBIC_BIT_EXT)!=0,selected==DM_NVN_PRESENT_FILTER_CUBIC?"cubic":"linear");}
+        vkCmdBlitImage(command, e->image, VK_IMAGE_LAYOUT_GENERAL, screen_images[index], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, present_filter);
         barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT; barrier.dstAccessMask = 0; barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL; barrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
         vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, NULL, 0, NULL, 1, &barrier);
         screen_submission = 1; completion_ticket=screen_acquire_ticket=mtl_sub_commit(); screen_submission = 0; screen_initialized[index] = 1;
