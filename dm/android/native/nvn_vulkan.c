@@ -29,12 +29,12 @@ static dm_nvn_host_state g_host_state = {.frz_req = -1, .frz_applied = -1};
 #include <dlfcn.h>
 
 #define VK_CHECK(expr) do { VkResult result_ = (expr); if (result_ != VK_SUCCESS) die("Vulkan %s failed: %d", #expr, result_); } while (0)
-typedef struct { _Atomic unsigned references; uint64_t activation; } buffer_owner;
+typedef struct { _Atomic unsigned references; uint64_t activation; struct buffer_memory_page *page; unsigned slot; } buffer_owner;
 typedef struct { VkBuffer buffer; VkDeviceMemory memory; void *mapped; uint64_t size, capacity; buffer_owner *owner; } vk_buffer;
-typedef struct cached_buffer { vk_buffer buffer; struct cached_buffer *next; } cached_buffer;
-static cached_buffer *buffer_cache;
+typedef struct cached_buffer { vk_buffer buffer; struct cached_buffer *next,*prev; } cached_buffer;
+static cached_buffer *buffer_cache,*buffer_cache_tail;
 static pthread_mutex_t buffer_cache_lock = PTHREAD_MUTEX_INITIALIZER;
-static uint64_t buffer_cache_bytes, buffer_cache_large_bytes, buffer_allocations, buffer_reuses, snapshot_bytes, active_buffer_bytes, buffer_activation;
+static uint64_t buffer_cache_bytes, buffer_cache_large_bytes, buffer_allocations, buffer_reuses, snapshot_bytes, active_buffer_bytes, buffer_activation,buffer_cache_evictions;
 // 只读探针：新建一个缓冲（vkCreateBuffer + 分配显存 + 绑定 + 映射）累计花掉的墙钟与线程 CPU。
 // 用途是**先证实**"重场面下每帧上百次新建"到底吃掉多少帧时间，再决定怎么优化；只多取两次时钟，不改变行为。
 // Read-only probe: wall clock and thread CPU accumulated inside creating a buffer (vkCreateBuffer + allocate +
@@ -495,6 +495,16 @@ driver_retry:;
 }
 void mtl_init(void) { pthread_once(&once, initialize); }
 
+#include "nvn_vulkan_buffer_memory.inc"
+static void buffer_cache_unlink(cached_buffer *entry) {
+    if(entry->prev)entry->prev->next=entry->next;else buffer_cache=entry->next;
+    if(entry->next)entry->next->prev=entry->prev;else buffer_cache_tail=entry->prev;
+    buffer_cache_bytes-=entry->buffer.capacity;
+    if(entry->buffer.capacity>(8u<<20))buffer_cache_large_bytes-=entry->buffer.capacity;
+}
+static void buffer_release_backing(vk_buffer *buffer) {
+    vkDestroyBuffer(device,buffer->buffer,NULL);buffer_memory_release(buffer);free(buffer->owner);memset(buffer,0,sizeof *buffer);
+}
 static vk_buffer buffer_create(uint64_t size) {
     if (!size || size > (1ull << 32)) die("Invalid Vulkan buffer size %llu", (unsigned long long)size);
     uint64_t capacity = 4096; while (capacity < size) capacity *= 2;
@@ -503,22 +513,28 @@ static vk_buffer buffer_create(uint64_t size) {
     // Give each allocation or cache reuse a unique activation so reused handles/owners cannot match stale derived data.
     uint64_t activation=++buffer_activation;if(!activation)die("Vulkan buffer activation overflow");
     while (*link && (*link)->buffer.capacity != capacity) link = &(*link)->next;
-    if (*link) { cached_buffer *entry = *link; *link = entry->next; vk_buffer b = entry->buffer;
-        buffer_cache_bytes -= capacity; if(capacity>(8u<<20))buffer_cache_large_bytes-=capacity; buffer_reuses++; active_buffer_bytes += capacity;
+    if (*link) { cached_buffer *entry = *link;buffer_cache_unlink(entry);vk_buffer b = entry->buffer;
+        buffer_reuses++; active_buffer_bytes += capacity;
         atomic_store(&b.owner->references,1);b.owner->activation=activation;pthread_mutex_unlock(&buffer_cache_lock); free(entry); b.size = size; return b; }
     buffer_allocations++; active_buffer_bytes += capacity; pthread_mutex_unlock(&buffer_cache_lock);
     vk_buffer b = {.size = size, .capacity = capacity};b.owner=calloc(1,sizeof *b.owner);if(!b.owner)die("Vulkan buffer ownership allocation");atomic_init(&b.owner->references,1);b.owner->activation=activation;
     uint64_t probe_wall = dm_android_clock_ns(CLOCK_MONOTONIC), probe_cpu = dm_android_clock_ns(CLOCK_THREAD_CPUTIME_ID);
     VkBufferCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = capacity, .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT, .sharingMode = VK_SHARING_MODE_EXCLUSIVE};
     VK_CHECK(vkCreateBuffer(device, &ci, NULL, &b.buffer));
-    VkMemoryRequirements req; vkGetBufferMemoryRequirements(device, b.buffer, &req);
+    VkMemoryDedicatedRequirements dedicated={.sType=VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS};
+    VkMemoryRequirements2 requirements={.sType=VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2,.pNext=&dedicated};
+    VkBufferMemoryRequirementsInfo2 request={.sType=VK_STRUCTURE_TYPE_BUFFER_MEMORY_REQUIREMENTS_INFO_2,.buffer=b.buffer};
+    vkGetBufferMemoryRequirements2(device,&request,&requirements);VkMemoryRequirements req=requirements.memoryRequirements;
     uint32_t type = UINT32_MAX;
     for (uint32_t i = 0; i < memory_properties.memoryTypeCount; ++i)
         if ((req.memoryTypeBits & (1u << i)) && (memory_properties.memoryTypes[i].propertyFlags & (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) == (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) { if(type==UINT32_MAX)type=i;if(memory_properties.memoryTypes[i].propertyFlags&VK_MEMORY_PROPERTY_HOST_CACHED_BIT){type=i;break;} }
     if (type == UINT32_MAX) die("Vulkan has no coherent host-visible buffer memory");
-    VkMemoryAllocateInfo mi = {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, .allocationSize = req.size, .memoryTypeIndex = type};
-    VK_CHECK(vkAllocateMemory(device, &mi, NULL, &b.memory)); VK_CHECK(vkBindBufferMemory(device, b.buffer, b.memory, 0));
-    VK_CHECK(vkMapMemory(device, b.memory, 0, VK_WHOLE_SIZE, 0, &b.mapped));
+    if(!buffer_memory_bind(&b,&req,type,dedicated.requiresDedicatedAllocation)){
+        VkMemoryDedicatedAllocateInfo own={.sType=VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO,.buffer=b.buffer};
+        VkMemoryAllocateInfo mi = {.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO, .pNext=dedicated.requiresDedicatedAllocation?&own:NULL,.allocationSize = req.size, .memoryTypeIndex = type};
+        VK_CHECK(vkAllocateMemory(device, &mi, NULL, &b.memory)); VK_CHECK(vkBindBufferMemory(device, b.buffer, b.memory, 0));
+        VK_CHECK(vkMapMemory(device, b.memory, 0, VK_WHOLE_SIZE, 0, &b.mapped));
+    }
     buffer_create_wall_ns += dm_android_clock_ns(CLOCK_MONOTONIC) - probe_wall;
     buffer_create_cpu_ns += dm_android_clock_ns(CLOCK_THREAD_CPUTIME_ID) - probe_cpu;
     return b;
@@ -533,17 +549,30 @@ static void buffer_destroy(vk_buffer *b) {
     if (!b->buffer) return;
     if(!b->owner)die("Vulkan buffer missing ownership");unsigned references=atomic_fetch_sub(&b->owner->references,1);if(!references)die("Vulkan buffer ownership underflow");
     if(references>1){memset(b,0,sizeof *b);return;}
-    // 保留 64 MiB 小缓冲及一个 32 MiB 缓冲，避免选角每帧重建 19 MiB 复制目标；仍只回收已完成的最后引用。
-    // Keep 64 MiB of small buffers and one 32 MiB buffer; character selection otherwise reallocates its 19 MiB copy target every frame. Retain only the final completed reference.
+    // 同样的 64 MiB 小缓冲额度内淘汰最久闲置的块，避免旧尺寸占满配额、当前 2 MiB 工作缓冲反复重建。
+    // Evict the longest-idle blocks within the same 64 MiB small-buffer budget, so cold sizes cannot crowd out current 2 MiB work buffers.
+    // 独立的单个 32 MiB 槽与最后完成引用的回收规则不变。
+    // Preserve the independent single 32 MiB slot and final-completed-reference retirement rule.
     pthread_mutex_lock(&buffer_cache_lock); active_buffer_bytes -= b->capacity;
     int large=b->capacity>(8u<<20);
-    if (large ? b->capacity==(32u<<20)&&!buffer_cache_large_bytes : buffer_cache_bytes-buffer_cache_large_bytes+b->capacity<=(64u<<20)) {
+    if (large ? b->capacity==(32u<<20)&&!buffer_cache_large_bytes : b->capacity<=(8u<<20)) {
+        cached_buffer *evicted=NULL;
+        while(!large&&buffer_cache_bytes-buffer_cache_large_bytes+b->capacity>(64u<<20)){
+            cached_buffer *oldest=buffer_cache_tail;
+            if(oldest&&oldest->buffer.capacity>(8u<<20))oldest=oldest->prev;
+            if(!oldest||oldest->buffer.capacity>(8u<<20))die("Vulkan small buffer cache accounting");
+            buffer_cache_unlink(oldest);oldest->next=evicted;evicted=oldest;buffer_cache_evictions++;
+        }
         cached_buffer *entry = malloc(sizeof *entry); if (!entry) die("Vulkan buffer cache allocation");
-        entry->buffer = *b; entry->next = buffer_cache; buffer_cache = entry; buffer_cache_bytes += b->capacity;if(large)buffer_cache_large_bytes=b->capacity;
-        pthread_mutex_unlock(&buffer_cache_lock); memset(b, 0, sizeof *b); return;
+        entry->buffer = *b; entry->prev=NULL;entry->next = buffer_cache;
+        if(buffer_cache)buffer_cache->prev=entry;else buffer_cache_tail=entry;
+        buffer_cache = entry; buffer_cache_bytes += b->capacity;if(large)buffer_cache_large_bytes=b->capacity;
+        pthread_mutex_unlock(&buffer_cache_lock);
+        while(evicted){cached_buffer *next=evicted->next;buffer_release_backing(&evicted->buffer);free(evicted);evicted=next;}
+        memset(b, 0, sizeof *b); return;
     }
     pthread_mutex_unlock(&buffer_cache_lock);
-    vkUnmapMemory(device, b->memory); vkDestroyBuffer(device, b->buffer, NULL); vkFreeMemory(device, b->memory, NULL);free(b->owner); memset(b, 0, sizeof *b);
+    buffer_release_backing(b);
 }
 void mtl_pool_add(const void *mem, uint64_t size) {
     mtl_init(); if (!mem || !size || size > UINTPTR_MAX - (uintptr_t)mem) die("Invalid NVN pool");
@@ -1089,6 +1118,7 @@ uint64_t mtl_present(const tex_t *t, double period, const int crop[4]) {
     if(ticket==1){binding_hits=uniform_version_hits;binding_misses=uniform_version_misses;descriptor_hits=descriptor_version_hits;descriptor_misses=descriptor_version_misses;binding_bytes=uniform_version_read_bytes;binding_compare=uniform_version_compare_bytes;binding_copy=uniform_version_copy_bytes;dependency_waits=dependency_flushes;}
     else if(ticket%60==0){unsigned frames=ticket==60?59:60;LOG("[vulkan-bindings] frame=%llu UBO byte_hits/miss=%.1f/%.1f descriptors hits/miss=%.1f/%.1f UBO_read=%.2f MB/frame UBO_compare=%.2f MB/frame UBO_arena_copy=%.2f MB/frame dependency_wait=%.1f/frame gpu_overwrite=%.2f/frame uploads=%.2f/frame unregistered_tex=%.2f/frame",(unsigned long long)ticket,(uniform_version_hits-binding_hits)/(double)frames,(uniform_version_misses-binding_misses)/(double)frames,(descriptor_version_hits-descriptor_hits)/(double)frames,(descriptor_version_misses-descriptor_misses)/(double)frames,(uniform_version_read_bytes-binding_bytes)/(frames*1048576.),(uniform_version_compare_bytes-binding_compare)/(frames*1048576.),(uniform_version_copy_bytes-binding_copy)/(frames*1048576.),(dependency_flushes-dependency_waits)/(double)frames,(image_gpu_overwrites-binding_overwrites)/(double)frames,(texture_uploads-binding_uploads)/(double)frames,(gpu_unregistered_textures-binding_unregistered)/(double)frames);binding_unregistered=gpu_unregistered_textures;binding_hits=uniform_version_hits;binding_misses=uniform_version_misses;descriptor_hits=descriptor_version_hits;descriptor_misses=descriptor_version_misses;binding_bytes=uniform_version_read_bytes;binding_compare=uniform_version_compare_bytes;binding_copy=uniform_version_copy_bytes;dependency_waits=dependency_flushes;binding_overwrites=image_gpu_overwrites;binding_uploads=texture_uploads;}
     if(ticket%60==0){char diag_token[92]={0};char flat_token[TEXTURE_FLAT_PROPERTY_MAX]={0};
+        buffer_memory_report(ticket);
 #ifdef __ANDROID__
         __system_property_get("debug.d2r.tex_diag",diag_token);
         __system_property_get("debug.d2r.tex_flat",flat_token);

@@ -111,6 +111,7 @@
     X(vkFreeCommandBuffers) \
     X(vkFreeMemory) \
     X(vkGetBufferMemoryRequirements) \
+    X(vkGetBufferMemoryRequirements2) \
     X(vkGetDeviceQueue) \
     X(vkGetFenceStatus) \
     X(vkGetImageMemoryRequirements) \
@@ -218,6 +219,7 @@
 #define vkFreeCommandBuffers(...) (DM_VK_DISPATCH_CONTEXT.vkFreeCommandBuffers)(__VA_ARGS__)
 #define vkFreeMemory(...) (DM_VK_DISPATCH_CONTEXT.vkFreeMemory)(__VA_ARGS__)
 #define vkGetBufferMemoryRequirements(...) (DM_VK_DISPATCH_CONTEXT.vkGetBufferMemoryRequirements)(__VA_ARGS__)
+#define vkGetBufferMemoryRequirements2(...) (DM_VK_DISPATCH_CONTEXT.vkGetBufferMemoryRequirements2)(__VA_ARGS__)
 #define vkGetDeviceProcAddr(...) (DM_VK_DISPATCH_CONTEXT.vkGetDeviceProcAddr)(__VA_ARGS__)
 #define vkGetDeviceQueue(...) (DM_VK_DISPATCH_CONTEXT.vkGetDeviceQueue)(__VA_ARGS__)
 #define vkGetFenceStatus(...) (DM_VK_DISPATCH_CONTEXT.vkGetFenceStatus)(__VA_ARGS__)
