@@ -45,6 +45,9 @@ if(NOT ANDROID)
     endif()
 endif()
 include(dependencies.cmake)
+# 自有音频模块与既有运行时解耦；只新增子目录，不改现有 target。
+# Owned audio module is decoupled from the existing runtime; additive subdirectory only.
+add_subdirectory(audio)
 
 add_library(dm_android_nso STATIC nso.c nso_file.c image_map.c module.c module_map.c)
 target_link_libraries(dm_android_nso PUBLIC dm_nso_dependencies)
