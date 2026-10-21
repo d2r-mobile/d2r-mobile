@@ -323,7 +323,14 @@ static void *boot(void *argument) {
     // linked to fake empty functions.
     char *args[]={"dmhost-android",metadata,"main","sdk","subsdk0",NULL};int dm_main(int,char**);dm_main(5,args);ANativeActivity_finish(s->activity);return NULL;
 }
-void front_run(void (*guest)(void)) {void mtl_init(void);mtl_init();game_app *s=application;if(!pthread_create(&s->debug_thread,NULL,progress_watch,s))s->debug_started=1;guest();}
+void front_run(void (*guest)(void)) {void mtl_init(void);mtl_init();game_app *s=application;
+    // The original guest binding bridge attaches after load_modules, on this
+    // guest thread, exactly like front_ios. Missing gate 6 or a non-main module
+    // leaves supported=0; it never fabricates readiness or player identity.
+    { void dm_touch_game_live_check(int); int dm_touch_game_attach(void);
+      dm_touch_game_live_check(1);
+      if(!dm_touch_game_attach()) LOG("[android-touch] skill binding snapshot unavailable: gate6 absent or main module mismatch"); }
+    if(!pthread_create(&s->debug_thread,NULL,progress_watch,s))s->debug_started=1;guest();}
 void *front_metal_layer(void) {if(!application)return NULL;pthread_mutex_lock(&application->lock);ANativeWindow *w=application->window;pthread_mutex_unlock(&application->lock);return w;}
 // 出图分辨率。与 Mac（front_mac.m）和 iOS（front_ios.m）同一语义：DM_GAME_RES=宽x高 覆盖主机档，
 // 掌机档按 720/900 = 0.8 同比缩放；没有该变量时保持原版 16:9 常数（1600x900 / 1280x720），行为不变。
@@ -448,6 +455,8 @@ static void live_touch_sync(game_app *s) {
     dm_live_touch_scene_observation snapshot;
     if(!dm_live_touch_provider_observe(&s->live_provider,&snapshot)){
         live_touch_set_available(s,0);
+        { void dm_touch_game_set_scene(int,uint64_t,uint64_t);
+          dm_touch_game_set_scene(0,0,0); }
         memset(&s->live_observation,0,sizeof s->live_observation);
         // Unknown identity is a real caller boundary: cancel the original UI
         // phase-3 press, the live core and the legacy raw pointer ownership.
@@ -458,6 +467,9 @@ static void live_touch_sync(game_app *s) {
         return;
     }
     s->live_observation=snapshot;
+    { void dm_touch_game_set_scene(int,uint64_t,uint64_t);
+      dm_touch_game_set_scene(snapshot.scene==DM_LIVE_TOUCH_SCENE_GAME,
+                              snapshot.scene_epoch,snapshot.world_epoch); }
     live_touch_set_available(s,1);
     int navigation=snapshot.scene!=DM_LIVE_TOUCH_SCENE_GAME||snapshot.panel_bits||atomic_load(&menu_open);
     uint32_t mask=navigation?(dm_tc_nav_mask(1)|(1u<<DM_TC_MENU)):
