@@ -22,15 +22,15 @@
 // reserving up to 8 GB would make builds from developer accounts that cannot sign that entitlement (free accounts) exit at this step.
 static size_t g_reserve;           // 实际预留大小（逐档降级后成功的值） | Actual reserved size (the value that succeeded after stepping down)
 static uint8_t *g_as;              // ASLR 区基址 = 整块 | ASLR region base = the whole block
-static uint8_t *g_heap; static size_t g_heap_cur, g_heap_cap; static int g_heap_rejects;
-// 地址段整个落在客体堆当前已开放（可读写）的范围内：这种读不用陷内核核对，直接 memcpy（diag.c tk_rd 等每拍读客体内存的地方用）
-// The address range lies entirely within the currently opened (readable and writable) part of the guest heap: such reads need no kernel trap to check, memcpy directly (used where guest memory is read every tick, such as diag.c tk_rd)
-int dm_guest_heap_readable(uint64_t a, size_t n) { uint64_t b = (uint64_t)(uintptr_t)g_heap; size_t cur = g_heap_cur; return g_heap && a >= b && n <= cur && a - b <= cur - n; }
+static uint8_t *g_heap; static size_t g_heap_cap; static int g_heap_rejects;
+#include "hle_heap_snapshot.h"
 static uint8_t *g_alias; static size_t g_alias_cap;
 static uint8_t *g_stack; static size_t g_stack_cap;
 
-static void mem_init(void) {
-    if (g_as) return;
+#ifdef __ANDROID__
+static pthread_once_t g_mem_once = PTHREAD_ONCE_INIT;
+#endif
+static void mem_init_reserve(void) {
     // 从 5120 MiB 起逐档降级（每档减 128 MiB），下限 4864 MiB（堆容量 = reserve − 1 GB ≥ 3728 MB + 余量）
     // Step down from 5120 MiB (128 MiB per step), floor 4864 MiB (heap capacity = reserve − 1 GB ≥ 3728 MB + margin)
     const size_t start = 5ull << 30, step = 128ull << 20, limit = 4864ull << 20;
@@ -45,7 +45,18 @@ static void mem_init(void) {
     g_alias = g_as + 0x10000000; g_alias_cap = 0x20000000;
     g_stack = g_as + 0x30000000; g_stack_cap = 0x10000000;
     g_heap  = g_as + 0x40000000; g_heap_cap  = g_reserve - 0x40000000;
+#ifdef __ANDROID__
+    dm_heap_snapshot_ready();
+#endif
     LOG("guest AS %p +%zu MiB（降档后实际预留 %zu MiB）  heap %p alias %p stack %p", g_as, g_reserve >> 20, g_reserve >> 20, g_heap, g_alias, g_stack);
+}
+static void mem_init(void) {
+#ifdef __ANDROID__
+    pthread_once(&g_mem_once, mem_init_reserve);
+#else
+    if (g_as) return;
+    mem_init_reserve();
+#endif
 }
 
 // 应用内存池 = Switch（4 GB 机型）给应用的 3285 MB。游戏启动（main+0x1b66160）把 QueryMemoryInfo 报的总量整块设成堆、失败就减 2 MB 重试，
@@ -81,10 +92,10 @@ static size_t image_bytes(void) { size_t n = 0; for (int i = 0; i < g_nmod; i++)
 static module_t *mod_named(const char *n) { for (int i = 0; i < g_nmod; i++) if (!strcmp(g_mod[i].name, n)) return &g_mod[i]; return NULL; }
 static _Atomic unsigned long long g_gheap_last[3];
 int dm_guest_heap_stat(unsigned long long *total_mb, unsigned long long *free_mb, unsigned long long *maxblk_kb) {
-    module_t *mm = mod_named("main"), *ms = mod_named("sdk"); if (!mm || !ms || !g_heap_cur) return 0;
+    module_t *mm = mod_named("main"), *ms = mod_named("sdk"); size_t heap_cur = dm_heap_snapshot_size(); if (!mm || !ms || !heap_cur) return 0;
     uint8_t *al = mm->base + 0x32137a0; if (!al[0]) return 0;   // 首字节 = 已初始化（sdk+0x2f9898 写） | First byte = initialized (written by sdk+0x2f9898)
     uint64_t fr = ((uint64_t (*)(void *))(ms->base + 0x2f9d78))(al), mx = ((uint64_t (*)(void *))(ms->base + 0x2f9dbc))(al);
-    *total_mb = g_heap_cur >> 20; *free_mb = fr >> 20; *maxblk_kb = mx >> 10;
+    *total_mb = heap_cur >> 20; *free_mb = fr >> 20; *maxblk_kb = mx >> 10;
     g_gheap_last[0] = *total_mb; g_gheap_last[1] = *free_mb; g_gheap_last[2] = *maxblk_kb; return 1;
 }
 // 上次读到的主堆读数（总量 MB、余量 MB、最大可分配块 KB；没读过全 0）。任何线程可调——不进分配器（iOS 壳在主线程上记内存告警那一行用）
@@ -136,6 +147,29 @@ uint64_t svc_dispatch(int num, uint64_t *regs, uint64_t orig_addr) {
     { uint64_t svc_host_call(int, uint64_t *); if (num >= 0x80 && svc_host_call(num, regs)) return regs[0]; }   // 0x80 起：剪口约定的宿主调用（hle_tact.c） | from 0x80: host calls by cut convention (hle_tact.c)
     switch (num) {
     case 0x01: {  // SetHeapSize(out_addr*, size)  → x1 = heap base
+#ifdef __ANDROID__
+        size_t size = regs[1], image = image_bytes(); uint64_t pool = app_pool();
+        int rc = 0, protect_errno = 0, first = 0;
+        uint64_t result = 0; static int said;
+        if (size > g_heap_cap) result = 0xD401;
+        else if (size + image > pool) { g_heap_rejects++; result = 0x10801; }
+        else {
+            rc = dm_heap_snapshot_resize(size);
+            protect_errno = errno;
+            if (rc) result = protect_errno == ENOMEM ? 0xD001 : 0xD401;
+            else if (!said && size) { said = 1; first = 1; }
+        }
+        // 不在 heap 锁内记录日志或进入其它子系统；失败只发布实际 Result，不批准旧 extent 的直接读。
+        // Log and enter other subsystems outside the heap lock; failure publishes the actual Result, never approving direct reads of an old extent.
+        if (result) {
+            if (size > g_heap_cap) LOG("SetHeapSize OOM: req %#zx > cap %#zx", size, g_heap_cap);
+            else if (rc) LOG("SetHeapSize %#zx failed mprotect=%d errno=%d; heap copy leases disabled", size, rc, protect_errno);
+            regs[0] = result; return 0;
+        }
+        if (g_flag.svc) LOG("SetHeapSize %#zx -> base %p mprotect=%d errno=%d", size, g_heap, rc, protect_errno);
+        if (first) LOG("SetHeapSize：首次设堆成功 %zu MB（应用内存池 %llu MB − 映像 %zu MB；此前被拒 %d 次）", size >> 20, (unsigned long long)(pool >> 20), image >> 20, g_heap_rejects);
+        regs[0] = 0; regs[1] = (uint64_t)g_heap; return 0;
+#else
         size_t size = regs[1];
         if (size > g_heap_cap) { LOG("SetHeapSize OOM: req %#zx > cap %#zx", size, g_heap_cap); regs[0] = 0xD401; return 0; }
         if (size + image_bytes() > app_pool()) { g_heap_rejects++; regs[0] = 0x10801; return 0; }   // 超出应用内存池：ResultLimitReached。游戏启动时按 2 MB 递减重试直到放得下（main+0x1b66184） | exceeds the application memory pool: ResultLimitReached. At startup the game retries in 2 MB decrements until it fits (main+0x1b66184)
@@ -146,6 +180,7 @@ uint64_t svc_dispatch(int num, uint64_t *regs, uint64_t orig_addr) {
         { static int said; if (!said && size) { said = 1; LOG("SetHeapSize：首次设堆成功 %zu MB（应用内存池 %llu MB − 映像 %zu MB；此前被拒 %d 次）", size >> 20, (unsigned long long)(app_pool() >> 20), image_bytes() >> 20, g_heap_rejects); } }
         g_heap_cur = size;
         regs[0] = 0; regs[1] = (uint64_t)g_heap; return 0;
+#endif
     }
     case 0x02: regs[0] = 0; return 0;   // SetMemoryPermission
     case 0x03: regs[0] = 0; return 0;   // SetMemoryAttribute
@@ -176,12 +211,13 @@ uint64_t svc_dispatch(int num, uint64_t *regs, uint64_t orig_addr) {
         // MemoryInfo: base(0) size(8) state(0x10) attr(0x14) perm(0x18) ...
         uint8_t *a = (uint8_t *)addr;
         uint64_t base, size, state, perm;
+        size_t heap_cur = dm_heap_snapshot_size();
         int k;
-        if (a >= g_heap && a < g_heap + g_heap_cur) { base=(uint64_t)g_heap; size=g_heap_cur; state=5/*Heap*/; perm=3; }
+        if (a >= g_heap && a < g_heap + heap_cur) { base=(uint64_t)g_heap; size=heap_cur; state=5/*Heap*/; perm=3; }
         else if ((k = map_find(addr, 1))) { base=g_map[k-1].base; size=g_map[k-1].size; state=g_map[k-1].state; perm=3; }
         else if (a >= g_as && a < g_as + g_reserve) {   // 空闲：到相邻映射/堆边界为止 | free: up to the adjacent mapping/heap boundary
             uint64_t lo = (uint64_t)g_as, hi = (uint64_t)g_as + g_reserve;
-            if (a >= g_heap) lo = (uint64_t)g_heap + g_heap_cur;
+            if (a >= g_heap) lo = (uint64_t)g_heap + heap_cur;
             else if (hi > (uint64_t)g_heap) hi = (uint64_t)g_heap;
             for (int i = 0; i < g_nmap; i++) {
                 uint64_t e = g_map[i].base + g_map[i].size;
@@ -237,7 +273,7 @@ uint64_t svc_dispatch(int num, uint64_t *regs, uint64_t orig_addr) {
         case I_AslrAddr:  v = (uint64_t)g_as;    break;   case I_AslrSize:  v = g_reserve;     break;
         case I_StackAddr: v = (uint64_t)g_stack; break;   case I_StackSize: v = g_stack_cap; break;
         case I_TotalMem: case I_TotalNonSys: v = app_pool(); break;
-        case I_UsedMem:  case I_UsedNonSys:  v = g_heap_cur + image_bytes(); break;   // 已用 = 堆 + 映像，与 SetHeapSize 的核对同一口径（原先写死 64 MB）。sdk 的 QueryMemoryInfo（sdk+0x34f4ec）只拿它算「程序占用」那一格； | Used = heap + image, the same accounting as the check in SetHeapSize (it used to be hard-coded to 64 MB). The sdk's QueryMemoryInfo (sdk+0x34f4ec) only uses it to compute the "program usage" field;
+        case I_UsedMem:  case I_UsedNonSys:  v = dm_heap_snapshot_size() + image_bytes(); break;   // 已用 = 堆 + 映像，与 SetHeapSize 的核对同一口径（原先写死 64 MB）。sdk 的 QueryMemoryInfo（sdk+0x34f4ec）只拿它算「程序占用」那一格； | Used = heap + image, the same accounting as the check in SetHeapSize (it used to be hard-coded to 64 MB). The sdk's QueryMemoryInfo (sdk+0x34f4ec) only uses it to compute the "program usage" field;
                                                  // 「可用总量」那一格直接是池总量，所以游戏启动设堆仍要从整池起按 2 MB 往下减到 池 − 映像（约 34 次被拒）——这是原版在真机上的走法，不是我们的口径错
                                                  // The "total available" field is simply the pool total, so at startup the game still has to step down from the whole pool by 2 MB at a time until pool - image (about 34 refusals) when setting its heap -- this is how the original behaves on the real device, not a mistake in our accounting
         case I_SysResTotal: v = 0x2000000; break; case I_SysResUsed: v = 0x400000; break;
