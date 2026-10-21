@@ -63,6 +63,17 @@ typedef struct dm_android_touch_action {
     uint64_t sequence;
 } dm_android_touch_action;
 
+// One-shot observation of an armed town-portal gesture. The fields are copied
+// from the core state at the moment the portal target is pressed; the request
+// is not reissued while the same gesture epoch stays armed.
+typedef struct dm_android_portal_request {
+    uint64_t gesture_epoch;
+    uint64_t binding_identity;
+    uint64_t scene_epoch;
+    uint64_t mask;
+    int phase;   /* core portal_phase: 1 = modifier-pending, 2 = armed */
+} dm_android_portal_request;
+
 // Game context is supplied by the provider bridge. availability=0 gates all
 // new touch events and publishes a neutral sample; context changes cancel
 // deferred/queued actions when the navigation mode or scene epoch changes.
@@ -86,6 +97,31 @@ int dm_android_touch_set_game_context(dm_android_touch *touch, int navigation_mo
 // collapse, 0x100 | row<<4 | col) are still consumed once through
 // dm_android_touch_take_action.
 int dm_android_touch_set_belt_context(dm_android_touch *touch, int rows, int open);
+// Host-supplied town-portal context over the existing core portal state
+// (dm_tc_set_portal_binding / dm_tc_portal_ack). available must be 0/1. An
+// explicit available=0 disables the portal. available=1 with mask 0 is invalid
+// input: it returns 0 before any mutation and leaves the previous context in
+// place (it is not an implicit disable). A ready context needs a non-zero
+// host-verified mask; no original-game key is invented here. Same values are a
+// no-op returning 1. A real mask, identity or scene change cancels the core
+// portal arm (releases the portal finger, drops its adapter pointer ownership
+// and invalidates the gesture epoch), so a stale request cannot be acked.
+// Defaults are unavailable (0/0/0/0).
+int dm_android_touch_set_portal_context(dm_android_touch *touch, int available,
+                                        uint64_t mask, uint64_t binding_identity,
+                                        uint64_t scene_epoch);
+// One-shot observation of a portal arm produced by an actual portal press.
+// Returns 1 and fills *out for the first caller; later calls for the same arm
+// return 0. out == NULL never consumes. A binding/scene/availability change,
+// full cancel or resize drops an untaken request. Ack success also clears it.
+int dm_android_touch_take_portal_request(dm_android_touch *touch,
+                                         dm_android_portal_request *out);
+// Confirms the portal arm with the core rules: a pending modifier arm, the
+// exact gesture epoch, binding identity and scene epoch, and a still-held
+// portal finger. Wrong/stale/ended arms return 0 and leave the request alone;
+// success clears the pending state and publishes the armed mask.
+int dm_android_touch_portal_ack(dm_android_touch *touch, uint64_t gesture_epoch,
+                                uint64_t binding_identity, uint64_t scene_epoch);
 int dm_android_touch_pointer_hit(dm_android_touch *touch, int32_t pointer_id, int kind);
 int dm_android_touch_pointer_release(dm_android_touch *touch, int32_t pointer_id,
                                      int drop_kind);
