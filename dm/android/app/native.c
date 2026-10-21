@@ -37,11 +37,13 @@
 #include <time.h>
 #include <unistd.h>
 #define LOG(...) __android_log_print(ANDROID_LOG_INFO,"D2R-Diagnostic",__VA_ARGS__)
-typedef struct{dm_vk vk;AInputQueue*input;dm_app_lifecycle*lifecycle;ANativeActivity*activity;ANativeWindow*window;dm_input_arbiter*arbiter;dm_view_policy view;dm_input_policy gate;ALooper*looper;int timer_fd;int resumed,focused,touch_allowed;float density,touch_width_pt,touch_height_pt,touch_density;uint64_t last_touch_buttons;int32_t last_touch_lx,last_touch_ly,last_touch_rx,last_touch_ry;int64_t last_touch_log_ns;dm_android_touch_observation hud_obs;dm_touch_hud_frame hud_frame;int hud_obs_valid;dm_gamepad_context gamepad_context;dm_npad_state gamepad_state;uint32_t gamepad_id,gamepad_generation;int gamepad_admitted;int64_t gamepad_after_ns;uint64_t controller_session;jobject controller_boundary;jclass controller_class;jmethodID controller_release;uint64_t text_session;jobject text_bridge;jclass text_class;jmethodID text_show,text_hide,text_release;int text_active;int text_back_owned;int text_show_accepted;uint32_t text_commit_events,text_delete_events,text_submit_events,text_cancel_events;uint64_t text_event_total;int text_last_units;dm_wsi wsi;dm_wsi_bridge wsi_bridge;dm_wsi_report report;dm_vk wsi_vk;dm_vk_swapchain wsi_chain;int wsi_chain_live;int frame_fd;int wsi_last_logged;char vertex[4096],fragment[4096];native_audio*audio;}app_state;
+typedef struct{dm_vk vk;AInputQueue*input;dm_app_lifecycle*lifecycle;ANativeActivity*activity;ANativeWindow*window;dm_input_arbiter*arbiter;dm_view_policy view;dm_input_policy gate;ALooper*looper;int timer_fd;int resumed,focused,touch_allowed;float density,touch_width_pt,touch_height_pt,touch_density;uint64_t last_touch_buttons;int32_t last_touch_lx,last_touch_ly,last_touch_rx,last_touch_ry;int64_t last_touch_log_ns;dm_android_touch_observation hud_obs;dm_touch_hud_frame hud_frame;int hud_obs_valid;dm_gamepad_context gamepad_context;dm_npad_state gamepad_state;uint32_t gamepad_id,gamepad_generation;int gamepad_admitted;int64_t gamepad_after_ns;uint64_t controller_session;jobject controller_boundary;jclass controller_class;jmethodID controller_release;uint64_t text_session;jobject text_bridge;jclass text_class;jmethodID text_show,text_hide,text_release;int text_active;int text_back_owned;int text_show_accepted;uint32_t text_commit_events,text_delete_events,text_submit_events,text_cancel_events;uint64_t text_event_total;int text_last_units;jclass ime_entry_class;uint64_t ime_entry_token;int ime_entry_installed;dm_wsi wsi;dm_wsi_bridge wsi_bridge;dm_wsi_report report;dm_vk wsi_vk;dm_vk_swapchain wsi_chain;int wsi_chain_live;int frame_fd;int wsi_last_logged;char vertex[4096],fragment[4096];native_audio*audio;}app_state;
 static app_state *g_controller_app;
 static uint64_t g_controller_next_session;
 static app_state *g_text_app;
 static uint64_t g_text_next_session;
+static app_state *g_ime_entry_app;
+static uint64_t g_ime_entry_next_token;
 #define DM_TEXT_MAX_UTF16_UNITS 512
 enum{dm_controller_added=0,dm_controller_removed=1,dm_controller_changed=2};
 static int64_t monotonic_ns(void){
@@ -712,6 +714,9 @@ static void handle_gamepad(app_state*s,AInputEvent*event){
 }
 static int text_begin(app_state*s);
 static void text_end(app_state*s,const char*reason);
+static int ime_entry_install(app_state*s);
+static void ime_entry_uninstall(app_state*s);
+static jboolean native_ime_entry_request(JNIEnv*env,jclass cls,jlong token);
 static int input_ready(int fd,int events,void*data){
     (void)fd;(void)events;ANativeActivity*a=data;app_state*s=a->instance;if(!s||!s->input)return 0;
     AInputEvent*event;while(AInputQueue_getEvent(s->input,&event)>=0){
@@ -773,6 +778,7 @@ static void input_created(ANativeActivity*a,AInputQueue*queue){app_state*s=a->in
     s->looper=looper;
     s->input=queue;AInputQueue_attachLooper(queue,looper,1,input_ready,a);
     update_touch_state(s);
+    if(s->resumed)(void)ime_entry_install(s);
 }
 static void input_destroyed(ANativeActivity*a,AInputQueue*queue){app_state*s=a->instance;if(!s)return;
     if(s->input!=queue){LOG("stale input queue destroy ignored");return;}
@@ -872,6 +878,7 @@ static void window_destroyed(ANativeActivity*a,ANativeWindow*window){
     if(s->wsi.enabled){
         // 身份校验先于停表等一切副作用。| Identity check before every side effect, the timer included.
         if(!dm_wsi_bridge_owns_window(&s->wsi_bridge,window)){LOG("wsi stale window destroy ignored");return;}
+        ime_entry_uninstall(s);
         (void)native_audio_pause(s->audio);   // 仅当前 WSI 窗口丢失才暂停音频；陈旧回调零副作用
         stop_frame_timer(s);
         // 只有排空被证明成功后才让生命周期释放真实 ANativeWindow 引用。
@@ -889,7 +896,7 @@ static void window_destroyed(ANativeActivity*a,ANativeWindow*window){
         int64_t now=monotonic_ns();touch_cancel(s,"window_destroyed",now<0?0:now);
         return;
     }
-    if(s->window==window){(void)native_audio_pause(s->audio);s->window=NULL;update_touch_state(s);
+    if(s->window==window){ime_entry_uninstall(s);(void)native_audio_pause(s->audio);s->window=NULL;update_touch_state(s);
         s->hud_obs_valid=0;dm_touch_hud_frame_suppress(&s->hud_frame);
         int64_t now=monotonic_ns();touch_cancel(s,"window_destroyed",now<0?0:now);}
     if(!dm_app_lifecycle_surface_destroyed(s->lifecycle,window))
@@ -899,8 +906,15 @@ static void controller_hotplug_stop(app_state*s);
 static int text_begin(app_state*s);
 static void text_end(app_state*s,const char*reason);
 static void destroy(ANativeActivity*a){app_state*s=a->instance;if(s){
-    if(s->text_bridge)text_end(s,"destroy");
+    s->resumed=s->focused=s->touch_allowed=0;
     stop_input_timer(s);stop_frame_timer(s);
+    (void)native_audio_pause(s->audio);
+    if(s->text_bridge)text_end(s,"destroy");
+    ime_entry_uninstall(s);
+    if(s->ime_entry_class){
+        LOG("IME touch entry cleanup pending; App state retained for retry");
+        return;
+    }
     if(s->audio&&native_audio_destroy(&s->audio,a->env)!=0){
         LOG("audio session cleanup retained; retry required before freeing app state");
         return;   // 保留 App/JNI/AAudio handle，绝不带着未证明的清理释放
@@ -948,6 +962,7 @@ static void resume_app(ANativeActivity*a){app_state*s=a->instance;if(!s||!s->lif
     (void)native_audio_resume(s->audio);
     if(s->arbiter){dm_input_arbiter_pause(s->arbiter,0);dm_input_arbiter_resume(s->arbiter);}
     update_touch_state(s);
+    (void)ime_entry_install(s);
     if(s->wsi.enabled){
         dm_wsi_resume(&s->wsi);
         dm_wsi_report_event(&s->report,DM_WSI_EVENT_RESUME);
@@ -1214,6 +1229,172 @@ static void text_end(app_state*s,const char*reason){
             s->text_submit_events,s->text_cancel_events,s->text_last_units);
         if(s->arbiter)touch_cancel(s,reason,monotonic_ns());
     }
+}
+static jclass ime_entry_load_class(JNIEnv*env,ANativeActivity*activity){
+    if(!env||!activity||!activity->clazz)return NULL;
+    jobject activity_class=NULL,loader=NULL,loader_class=NULL;
+    jclass entry_class=NULL;
+    jstring class_name=NULL;
+    jmethodID get_loader=NULL,load_class=NULL;
+    if(!(activity_class=(*env)->GetObjectClass(env,activity->clazz))){
+        (void)text_jni_stage_failed(env,"ime entry activity class");
+        goto done;
+    }
+    if(text_jni_stage_failed(env,"ime entry activity class"))goto done;
+    if(!(get_loader=(*env)->GetMethodID(env,activity_class,"getClassLoader","()Ljava/lang/ClassLoader;"))){
+        (void)text_jni_stage_failed(env,"ime entry getClassLoader signature");
+        goto done;
+    }
+    if(text_jni_stage_failed(env,"ime entry getClassLoader signature"))goto done;
+    if(!(loader=(*env)->CallObjectMethod(env, activity->clazz, get_loader))){
+        (void)text_jni_stage_failed(env,"ime entry class loader");
+        goto done;
+    }
+    if(text_jni_stage_failed(env,"ime entry class loader"))goto done;
+    if(!(loader_class=(*env)->GetObjectClass(env,loader))){
+        (void)text_jni_stage_failed(env,"ime entry loader class");
+        goto done;
+    }
+    if(text_jni_stage_failed(env,"ime entry loader class"))goto done;
+    if(!(load_class=(*env)->GetMethodID(env,loader_class,"loadClass","(Ljava/lang/String;)Ljava/lang/Class;"))){
+        (void)text_jni_stage_failed(env,"ime entry loadClass signature");
+        goto done;
+    }
+    if(text_jni_stage_failed(env,"ime entry loadClass signature"))goto done;
+    if(!(class_name=(*env)->NewStringUTF(env,"org.d2rmobile.android.diagnostic.DmImeTouchEntry"))){
+        (void)text_jni_stage_failed(env,"ime entry class name");
+        goto done;
+    }
+    if(text_jni_stage_failed(env,"ime entry class name"))goto done;
+    entry_class=(jclass)(*env)->CallObjectMethod(env,loader,load_class,class_name);
+    if(text_jni_stage_failed(env,"ime entry class load")||!entry_class)entry_class=NULL;
+done:
+    if((*env)->ExceptionCheck(env)){
+        (*env)->ExceptionDescribe(env);
+        (*env)->ExceptionClear(env);
+    }
+    if(class_name)(*env)->DeleteLocalRef(env,class_name);
+    if(loader_class)(*env)->DeleteLocalRef(env,loader_class);
+    if(loader)(*env)->DeleteLocalRef(env,loader);
+    if(activity_class)(*env)->DeleteLocalRef(env,activity_class);
+    return entry_class;
+}
+static int ime_entry_install(app_state*s){
+    if(!s)return 0;
+    if(s->ime_entry_class){
+        if(s->ime_entry_installed)return 1;
+        ime_entry_uninstall(s);
+        if(s->ime_entry_class)return 0;
+    }
+    if(!s->resumed||!s->activity||!s->activity->env||!s->activity->clazz)return 0;
+    if(!s->lifecycle||dm_app_lifecycle_state(s->lifecycle)!=DM_APP_STATE_OWNED_DIAGNOSTIC)return 0;
+    if(g_ime_entry_app&&g_ime_entry_app!=s){LOG("IME touch entry owner busy; install rejected");return 0;}
+    JNIEnv*env=s->activity->env;
+    jclass entry_class=ime_entry_load_class(env,s->activity);
+    if(!entry_class)return 0;
+    s->ime_entry_class=(jclass)(*env)->NewGlobalRef(env,entry_class);
+    if(!s->ime_entry_class){
+        (void)text_jni_stage_failed(env,"ime entry class global ref");
+        if((*env)->ExceptionCheck(env))(*env)->ExceptionClear(env);
+        (*env)->DeleteLocalRef(env,entry_class);
+        return 0;
+    }
+    jmethodID install_method=NULL,uninstall_method=NULL;
+    int result=0,install_called=0;
+    uint64_t token=++g_ime_entry_next_token;
+    if(!token)token=++g_ime_entry_next_token;
+    if(!(install_method=(*env)->GetStaticMethodID(env,entry_class,"install","(Landroid/app/Activity;J)Z"))){
+        (void)text_jni_stage_failed(env,"ime entry install signature");
+        goto done;
+    }
+    if(text_jni_stage_failed(env,"ime entry install signature"))goto done;
+    if(!(uninstall_method=(*env)->GetStaticMethodID(env,entry_class,"uninstall","(Landroid/app/Activity;J)Z"))){
+        (void)text_jni_stage_failed(env,"ime entry uninstall signature");
+        goto done;
+    }
+    if(text_jni_stage_failed(env,"ime entry uninstall signature"))goto done;
+    {
+        JNINativeMethod method={"nativeRequest","(J)Z",(void*)native_ime_entry_request};
+        if((*env)->RegisterNatives(env,entry_class,&method,1)!=0){
+            (void)text_jni_stage_failed(env,"ime entry native registration");
+            goto done;
+        }
+        if(text_jni_stage_failed(env,"ime entry native registration"))goto done;
+    }
+    install_called=1;
+    jboolean installed=(*env)->CallStaticBooleanMethod(env,entry_class,install_method,s->activity->clazz,(jlong)token);
+    if(text_jni_stage_failed(env,"ime entry install"))goto done;
+    if(!installed){LOG("IME touch entry install rejected");goto done;}
+    s->ime_entry_token=token;
+    s->ime_entry_installed=1;
+    g_ime_entry_app=s;
+    LOG("IME touch entry installed (diagnostic button; no automatic IME request)");
+    result=1;
+done:
+    if((*env)->ExceptionCheck(env)){
+        (*env)->ExceptionDescribe(env);
+        (*env)->ExceptionClear(env);
+    }
+    if(!result){
+        if(install_called&&uninstall_method){
+            jboolean removed=(*env)->CallStaticBooleanMethod(env,entry_class,uninstall_method,s->activity->clazz,(jlong)token);
+            if((*env)->ExceptionCheck(env)){
+                (*env)->ExceptionDescribe(env);
+                (*env)->ExceptionClear(env);
+                removed=JNI_FALSE;
+            }
+            if(!removed){
+                s->ime_entry_token=token;
+                s->ime_entry_installed=0;
+                if(g_ime_entry_app==s)g_ime_entry_app=NULL;
+                goto cleanup_done;
+            }
+        }
+        if(s->ime_entry_class&&env){(*env)->DeleteGlobalRef(env,s->ime_entry_class);s->ime_entry_class=NULL;}
+        s->ime_entry_token=0;s->ime_entry_installed=0;
+        if(g_ime_entry_app==s)g_ime_entry_app=NULL;
+    }
+cleanup_done:
+    if((*env)->ExceptionCheck(env))(*env)->ExceptionClear(env);
+    if(entry_class)(*env)->DeleteLocalRef(env,entry_class);
+    return result;
+}
+static void ime_entry_uninstall(app_state*s){
+    if(!s||!s->ime_entry_class)return;
+    JNIEnv*env=(s->activity&&s->activity->env)?s->activity->env:NULL;
+    jclass entry_class=s->ime_entry_class;
+    uint64_t token=s->ime_entry_token;
+    /* Invalidate click authorization immediately; retain the class/token as a
+       bounded cleanup handle until Java proves the owned view was removed. */
+    s->ime_entry_installed=0;
+    if(g_ime_entry_app==s)g_ime_entry_app=NULL;
+    if(!env||!s->activity||!s->activity->clazz){
+        return;
+    }
+    jmethodID uninstall_method=(*env)->GetStaticMethodID(env,entry_class,"uninstall","(Landroid/app/Activity;J)Z");
+    if(!uninstall_method||text_jni_stage_failed(env,"ime entry uninstall signature")){
+        if((*env)->ExceptionCheck(env))(*env)->ExceptionClear(env);
+        return;
+    }
+    jboolean removed=(*env)->CallStaticBooleanMethod(env,entry_class,uninstall_method,s->activity->clazz,(jlong)token);
+    if((*env)->ExceptionCheck(env)){
+        (*env)->ExceptionDescribe(env);
+        (*env)->ExceptionClear(env);
+        removed=JNI_FALSE;
+    }
+    if(!removed){
+        return;
+    }
+    (*env)->DeleteGlobalRef(env,entry_class);
+    s->ime_entry_class=NULL;
+    s->ime_entry_token=0;
+}
+static jboolean native_ime_entry_request(JNIEnv*env,jclass cls,jlong token){
+    (void)env;(void)cls;
+    app_state*s=g_ime_entry_app;
+    if(!s||!s->ime_entry_installed||token<=0||(uint64_t)token!=s->ime_entry_token)return JNI_FALSE;
+    if(!text_begin_ready(s))return JNI_FALSE;
+    return text_begin(s)?JNI_TRUE:JNI_FALSE;
 }
 __attribute__((visibility("default"))) void ANativeActivity_onCreate(ANativeActivity*a,void*saved,size_t saved_size){
     (void)saved;(void)saved_size;app_state*s=calloc(1,sizeof(*s));if(!s){ANativeActivity_finish(a);return;}a->instance=s;dm_touch_hud_frame_init(&s->hud_frame);
