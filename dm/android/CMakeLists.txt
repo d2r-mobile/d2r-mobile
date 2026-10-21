@@ -1139,6 +1139,13 @@ if(NOT ANDROID)
         target_link_libraries(dm_nvn_dirty_transaction_test PRIVATE Threads::Threads)
         add_test(NAME nvn_dirty_transaction COMMAND dm_nvn_dirty_transaction_test)
         set_tests_properties(nvn_dirty_transaction PROPERTIES TIMEOUT 30)
+
+        add_executable(dm_nvn_dirty_write_runs_test tests/nvn_dirty_write_runs.c)
+        target_compile_definitions(dm_nvn_dirty_write_runs_test PRIVATE DM_NVN_DIRTY_TEST)
+        target_compile_options(dm_nvn_dirty_write_runs_test PRIVATE -Wall -Wextra -Werror)
+        target_link_libraries(dm_nvn_dirty_write_runs_test PRIVATE Threads::Threads)
+        add_test(NAME nvn_dirty_write_runs COMMAND dm_nvn_dirty_write_runs_test)
+        set_tests_properties(nvn_dirty_write_runs PROPERTIES TIMEOUT 30)
     endif()
 
     if(APPLE)

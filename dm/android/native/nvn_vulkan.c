@@ -78,6 +78,7 @@ extern int dm_android_guest_heap_copy_owned(uintptr_t address,void *destination,
 // 独立 GPU 夹具可不链接真实脏页模块；日志明确 API 是否存在。
 // Standalone GPU fixtures may omit the real dirty tracker; logs explicitly report API availability.
 #pragma weak nvn_dirty_diagnose_write_marks
+#pragma weak nvn_dirty_mp_stats
 // 旧独立夹具缺少事务与宿主 guard 时只走原安全全量，不把替身当作可信增量。
 // Old standalone fixtures without transactions/host guards use safe full reads, never trusted incremental substitutes.
 #pragma weak nvn_dirty_snapshot_begin
@@ -1119,6 +1120,12 @@ uint64_t mtl_present(const tex_t *t, double period, const int crop[4]) {
     else if(ticket%60==0){unsigned frames=ticket==60?59:60;LOG("[vulkan-bindings] frame=%llu UBO byte_hits/miss=%.1f/%.1f descriptors hits/miss=%.1f/%.1f UBO_read=%.2f MB/frame UBO_compare=%.2f MB/frame UBO_arena_copy=%.2f MB/frame dependency_wait=%.1f/frame gpu_overwrite=%.2f/frame uploads=%.2f/frame unregistered_tex=%.2f/frame",(unsigned long long)ticket,(uniform_version_hits-binding_hits)/(double)frames,(uniform_version_misses-binding_misses)/(double)frames,(descriptor_version_hits-descriptor_hits)/(double)frames,(descriptor_version_misses-descriptor_misses)/(double)frames,(uniform_version_read_bytes-binding_bytes)/(frames*1048576.),(uniform_version_compare_bytes-binding_compare)/(frames*1048576.),(uniform_version_copy_bytes-binding_copy)/(frames*1048576.),(dependency_flushes-dependency_waits)/(double)frames,(image_gpu_overwrites-binding_overwrites)/(double)frames,(texture_uploads-binding_uploads)/(double)frames,(gpu_unregistered_textures-binding_unregistered)/(double)frames);binding_unregistered=gpu_unregistered_textures;binding_hits=uniform_version_hits;binding_misses=uniform_version_misses;descriptor_hits=descriptor_version_hits;descriptor_misses=descriptor_version_misses;binding_bytes=uniform_version_read_bytes;binding_compare=uniform_version_compare_bytes;binding_copy=uniform_version_copy_bytes;dependency_waits=dependency_flushes;binding_overwrites=image_gpu_overwrites;binding_uploads=texture_uploads;}
     if(ticket%60==0){char diag_token[92]={0};char flat_token[TEXTURE_FLAT_PROPERTY_MAX]={0};
         buffer_memory_report(ticket);
+        if(nvn_dirty_mp_stats){
+            static uint64_t previous_frame,previous_calls,previous_pages,previous_ns;uint64_t calls,pages,ns;
+            nvn_dirty_mp_stats(&calls,&pages,&ns);uint64_t span=ticket-previous_frame;
+            LOG("[vulkan-dirty-pages] frame=%llu calls=%.2f/frame pages=%.2f/frame wall=%.4f ms/frame",(unsigned long long)ticket,(calls-previous_calls)/(double)span,(pages-previous_pages)/(double)span,(ns-previous_ns)/(span*1e6));
+            previous_frame=ticket;previous_calls=calls;previous_pages=pages;previous_ns=ns;
+        }
 #ifdef __ANDROID__
         __system_property_get("debug.d2r.tex_diag",diag_token);
         __system_property_get("debug.d2r.tex_flat",flat_token);
