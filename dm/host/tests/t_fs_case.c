@@ -19,6 +19,7 @@ struct dm_flags g_flag; uint64_t g_t0_ns;
 uint64_t now_ns(void) { return 0; }
 void dm_prof_add(int id, uint64_t ns, uint64_t b) { (void)id; (void)ns; (void)b; }
 void dm_guest_write_prepare(void *a, size_t n) { (void)a; (void)n; }
+#include "../guest_snapshot_guard.inc"
 static int checks, fails;
 #define CHECK(c, text) do { checks++; int ok = !!(c); fails += !ok; printf("%s %s\n", ok ? "✓" : "✗", text); } while (0)
 static int content(const char *path, const char *want) {
