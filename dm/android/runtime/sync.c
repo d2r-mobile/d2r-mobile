@@ -19,6 +19,9 @@ typedef struct{
     uintptr_t return_stack,initial_sp;
     dm_bridge_record *bridge;
     int wait_cancelled;
+    int virtual_core_set;
+    int32_t virtual_core;
+    uint64_t virtual_core_mask;
     sync_waiter *wait;
 }guest_thread;
 typedef struct{size_t refs;int signaled;guest_thread*thread;}sync_object;
@@ -231,10 +234,42 @@ static uint64_t create_thread(dm_host*h,uint64_t*r){
         free(t);return h->thread_stacks[stack].in_use?DM_SVC_BAD_STATE:DM_SVC_INVALID_ADDRESS;
     }
     *t=(guest_thread){.host=h,.gates=c->gates,.entry=entry,.arg=r[2],.id=++h->next_thread_id,.object=object,.stack=stack,
-        .initial_sp=top,.priority=(int)r[4],.automatic_stack=automatic};
+        .initial_sp=top,.priority=(int)r[4],.automatic_stack=automatic,
+        .virtual_core_set=h->virtual_cores_configured,.virtual_core=core,
+        .virtual_core_mask=h->virtual_cores_configured?h->virtual_core_mask:0};
     s->objects[object]=(sync_object){.thread=t};t->handle=new_handle(s,slot,object,3);
     h->thread_stacks[stack].in_use=1;s->stack_pins++;r[1]=t->handle;return 0;
 #endif
+}
+static uint64_t set_thread_core_mask(dm_host*h,uint64_t*r){
+    if(!h->virtual_cores_configured)return DM_SVC_NOT_IMPLEMENTED;
+    uint32_t handle=(uint32_t)r[0];
+    if(handle==0xffff8000u)return DM_SVC_NOT_IMPLEMENTED; // current-thread pseudo form is not part of this owned subset
+    int slot=lookup(h->sync,handle,3);if(slot<0)return BAD_HANDLE;
+    guest_thread*t=h->sync->objects[h->sync->handles[slot].event].thread;
+    int32_t core=(int32_t)r[1];uint64_t mask=r[2];
+    if(core<0)return DM_SVC_NOT_IMPLEMENTED; // IdealCoreDontCare/UseProcessValue/NoUpdate remain unsupported
+    if(core>=64)return DM_SVC_INVALID_CORE;
+    if(!mask)return DM_SVC_INVALID_COMBINATION;
+    if(mask&~h->virtual_core_mask)return DM_SVC_INVALID_CORE;
+    if(!(mask&(UINT64_C(1)<<core)))return DM_SVC_INVALID_COMBINATION;
+    t->virtual_core_set=1;t->virtual_core=core;t->virtual_core_mask=mask;
+    return 0;
+}
+int dm_host_thread_virtual_core_state(dm_host*h,uint32_t handle,int32_t*core,uint64_t*mask){
+    if(!h||!core||!mask)return EINVAL;
+    pthread_mutex_lock(&h->mutex);
+    int result=ENOTSUP;
+    if(h->virtual_cores_configured){
+        int slot=lookup(h->sync,handle,3);
+        if(slot<0)result=ESRCH;
+        else{
+            guest_thread*t=h->sync->objects[h->sync->handles[slot].event].thread;
+            if(t->virtual_core_set){*core=t->virtual_core;*mask=t->virtual_core_mask;result=0;}
+        }
+    }
+    pthread_mutex_unlock(&h->mutex);
+    return result;
 }
 static uint64_t start_thread(dm_host*h,uint32_t handle){
 #if !defined(__aarch64__)
@@ -319,6 +354,7 @@ uint64_t dm_host_sync_svc(dm_host*h,unsigned number,uint64_t*r){
         else{int slot=lookup(h->sync,handle,3);if(slot>=0)t=h->sync->objects[h->sync->handles[slot].event].thread;}
         if(t){r[1]=(uint32_t)t->priority;result=0;}goto done;
     }
+    if(number==0x0f){result=set_thread_core_mask(h,r);goto done;}
     if(number==0x19){
         guest_thread*t=NULL;uint32_t handle=(uint32_t)r[0];
         if(handle==0xffff8000u){dm_guest_context*c=dm_guest_current();if(c&&c->host==h)t=c->thread_state;}

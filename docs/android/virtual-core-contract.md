@@ -1,11 +1,12 @@
 # Virtual core mask contract: GetInfo ID 0 and SetThreadCoreMask
 
 Issue:  (A5.1), phase 1.
-Status: **phase-1 evidence plus a bounded, opt-in owned model. No target
-inference, no SVC `0x0f`, no physical-affinity mapping and no production
-SDK/game admission.**
+Status: **phase-1 evidence plus bounded opt-in owned models for GetInfo 0 and
+the narrow SVC `0x0f` state subset. No target inference, no physical-affinity
+mapping and no production SDK/game admission.**
 
-Repository anchors use accepted main `source snapshot`. Private SDK observations are
+Repository anchors use accepted main `source snapshot` for the SDK/static observations;
+the runtime base for this slice is the owned-policy merge `source snapshot`. Private SDK observations are
 aggregate static metadata only: no game/SDK bytes, raw logs, saves, keys or
 private paths are published.
 
@@ -169,9 +170,9 @@ The existing SDK metadata reports no execution of a real initializer or game.
 
 | Item | Current state | Consequence |
 |---|---|---|
-| GetInfo ID 0 | `dm/android/runtime/memory.c:130-161` has no `case 0`; the switch default returns `DM_SVC_NOT_IMPLEMENTED` (`0x4201`) | No virtual-core query exists; a success value must not be fabricated |
-| SVC `0x0f` | `dm/android/runtime/svc.c:15-49` has no `case 0x0f`; the default returns `0x4201` | No thread mask state exists |
-| CreateThread | `dm/android/runtime/sync.c:204-211` accepts only `-2` or core ids `0..3` and stores no process-mask relation | It rejects public special values `-1`/`-3` and cannot enforce the mask contract |
+| GetInfo ID 0 | `dm/android/runtime/memory.c` now returns `0x4201` when unconfigured; a configured host returns its stored 64-bit mask (section 7) | Success remains conditional on explicit host configuration |
+| SVC `0x0f` | `dm/android/runtime/sync.c` implements only the owned-state subset in section 8; unconfigured/special/pseudo forms return `0x4201` | No physical affinity or broad public behavior |
+| CreateThread | `dm/android/runtime/sync.c` validates configured cores/masks and initializes per-thread virtual state (section 7/8) | Unconfigured path preserves the pre-existing synthetic behavior |
 | Legacy host | `dm/host/hle_svc.c:225-228` hardcodes GetInfo 0 to `7`; `dm/host/hle_thread.c:481-486` returns success for `0x0f` with loose updates | Legacy macOS host behavior only; not Android production evidence and must not be reused as the contract |
 
 The hardcoded legacy `7` is not adopted as a mask here. No initial mask value
@@ -240,8 +241,8 @@ virtual mask `M` selected by the reviewed policy:
    cross-build for changed runtime units; no device/game claim.
 
 This plan is ready for review but is **not implemented** in this phase.
-The bounded implemented subset is section 7; it does not close the unknowns
-above or implement SVC `0x0f`.
+The bounded implemented subsets are section 7 and section 8; they do not
+close the unknowns above.
 
 ## 6. Source anchors
 
@@ -298,14 +299,46 @@ The implemented slice is deliberately narrower than the generic contract:
   return `ams::svc ResultInvalidCoreId` (`0xe201`) without state change.
 - Unconfigured CreateThread preserves the pre-existing synthetic behavior;
   that behavior is not a game mask contract.
-- SVC `0x0f` SetThreadCoreMask remains absent and returns the dispatcher's
-  explicit unsupported result. No physical affinity or native scheduling
-  change is made.
+- SVC `0x0f` is implemented only as the narrower owned-state subset in
+  section 8; all other forms remain explicitly unsupported. No physical
+  affinity or native scheduling change is made.
 - Configuration fields are host-local; a rejected call does not mutate another
   host. The owned test exercises the real rewritten gates for configured
-  GetInfo0/CreateThread, unconfigured GetInfo0, a high-bit mask, two-host
-  isolation and attach→EBUSY/no-change→detach→allowed policy.
+  GetInfo0/CreateThread/SVC0x0f, unconfigured GetInfo0/0x0f, high-bit mask,
+  two-host isolation and attach→EBUSY/no-change→detach→allowed policy.
 
 The exact initial mask and target core count remain host policy; no legacy
 hardcoded `7` is used. This slice does not complete the negative plan above or
 claim real SDK initialization.
+
+## 8. Bounded SVC 0x0f owned state
+
+The SVC `0x0f` slice is intentionally narrower than the public reference:
+
+- Only configured hosts participate. Unconfigured hosts return `0x4201`.
+- Only a real owned kind-3 generation thread handle is accepted. The
+  current-thread pseudo handle and stale/wrong-kind handles fail; stale or
+  wrong-kind handles return the existing invalid-handle result without
+  mutation.
+- The requested core must be explicit and non-negative, `0 <= core < 64`;
+  the mask must be non-zero, a subset of the configured host mask, and include
+  the core bit. Zero mask/absent core bit return `ResultInvalidCombination`
+  (`0xe801`); a core outside the host mask or `>= 64` returns
+  `ResultInvalidCoreId` (`0xe201`).
+- `IdealCoreDontCare`, `IdealCoreUseProcessValue` and `IdealCoreNoUpdate`
+  (`-1`/`-2`/`-3`) remain unsupported (`0x4201`); no guessed special-value
+  behavior is added.
+- A successful call stores per-thread virtual core/mask state under the host
+  mutex. CreateThread initializes that state from its validated core and the
+  host mask. State is freed with the existing guest-thread object lifecycle;
+  closing a handle removes it, and a recreated thread starts from CreateThread
+  state, not stale values.
+- No host scheduling, affinity syscall or physical-core mapping is performed.
+- The owned test seam `dm_host_thread_virtual_core_state` reads the actual
+  stored fields for verification; it is not an SVC readback or public contract.
+
+The public reference validates virtual cores against `cpu::NumVirtualCores`
+(its target bound is a Horizon property). The owned model's 0..63 domain is a
+host-policy width for the explicitly configured 64-bit mask; accepting core
+63 is a width test, not proof that Horizon has 64 virtual cores. The two
+domains must not be conflated.

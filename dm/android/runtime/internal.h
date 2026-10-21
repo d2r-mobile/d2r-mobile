@@ -74,6 +74,9 @@ void dm_host_thread_context_detach(dm_guest_context *context);
 int dm_host_thread_current(dm_host *host,unsigned *object,uint32_t *handle,int *priority);
 int dm_host_thread_retain(dm_host *host,uint32_t handle,unsigned *object);
 int dm_host_thread_priority(dm_host *host,unsigned object);
+// Read-only owned-state seam: returns the stored virtual core/mask for a live thread handle.
+// This is not an SVC readback or a public contract; ENOTSUP/ESRCH report unsupported/stale state.
+int dm_host_thread_virtual_core_state(dm_host *host,uint32_t handle,int32_t *core,uint64_t *mask);
 void dm_host_thread_ref(dm_host *host,unsigned object);
 void dm_host_thread_unref(dm_host *host,unsigned object);
 uint64_t dm_host_mutex_svc(dm_host *host,unsigned number,uint64_t registers[31]);
