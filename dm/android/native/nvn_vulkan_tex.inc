@@ -1,4 +1,5 @@
 // 贴图创建、Tegra 解排布、上传与渲染目标清除。| Texture creation, Tegra deswizzling, uploads and render-target clears.
+#include "texture_diag.h"
 typedef struct cached_image_view { VkImageViewType type; VkImageSubresourceRange range; VkImageView view; struct cached_image_view *next; } cached_image_view;
 typedef struct image_entry {
     uint64_t serial; tex_t texture; VkImage image; VkImageView view; VkDeviceMemory memory;
@@ -17,6 +18,72 @@ static int texture_capacity, sampler_capacity;
 static pthread_mutex_t descriptor_lock = PTHREAD_MUTEX_INITIALIZER;
 static uint64_t texture_uploads, render_passes, draw_count;
 static uint64_t image_barriers;
+static VkFormat vk_format(int format);
+
+// 诊断窗口只在 60 帧报告点由 app-specific token 开窗，默认关闭；不逐 bind 读属性。
+// The capture window is armed only at the 60-frame report point by an app-specific token, off by default;
+// no property lookup happens per bind.
+static texture_diag_state texture_diag;
+static void texture_diag_count(unsigned kind) {
+    switch (kind) {
+        case TEXTURE_DIAG_UNBOUND: texture_diag.unbound++; break;
+        case TEXTURE_DIAG_MISSING: texture_diag.missing++; break;
+        case TEXTURE_DIAG_UNSUPPORTED_FORMAT: texture_diag.unsupported++; break;
+        case TEXTURE_DIAG_UNSAMPLED_FORMAT: texture_diag.unsampled++; break;
+        case TEXTURE_DIAG_VIEW_FORMAT: texture_diag.view_format++; break;
+        case TEXTURE_DIAG_DEPTH: texture_diag.depth++; break;
+        case TEXTURE_DIAG_LINEAR: texture_diag.linear++; break;
+        default: texture_diag.ok++; break;
+    }
+}
+static void texture_diag_unsupported(unsigned format) {
+    if (!texture_diag_state_reserve(&texture_diag)) return;
+    texture_diag_count(TEXTURE_DIAG_UNSUPPORTED_FORMAT);
+    LOG("[vulkan-tex-diag] n=%u kind=unsupported_format format=%#x (texture creation refused)",
+        texture_diag.used, format);
+}
+// 只在真实采样绑定处记录，区分缺映射、未绑定、格式/视图/布局，不触碰资源字节。
+// Record only at real sampled binds, distinguishing missing/unbound/format/view/layout without resource bytes.
+static void texture_diag_bind(const texture_descriptor *descriptor, unsigned handle, uint32_t type, int slot, int stage) {
+    if (!texture_diag_state_reserve(&texture_diag)) return;
+    unsigned texture_id = texture_diag_texture_id(handle);
+    unsigned format = descriptor->valid ? (unsigned)descriptor->texture.d.format : 0;
+    VkFormat vf = vk_format((int)format);
+    int sampled = 0;
+    if (vf != VK_FORMAT_UNDEFINED) {
+        VkFormatProperties properties;
+        vkGetPhysicalDeviceFormatProperties(physical, vf, &properties);
+        sampled = !!(properties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT);
+    }
+    unsigned kind = texture_diag_classify(descriptor->valid, texture_id, format, vf != VK_FORMAT_UNDEFINED, sampled,
+                                          descriptor->valid && descriptor->view.set_format,
+                                          descriptor->valid ? (unsigned)descriptor->view.format : 0,
+                                          descriptor->valid ? descriptor->texture.d.flags : 0);
+    texture_diag_count(kind);
+    if (descriptor->valid) {
+        LOG("[vulkan-tex-diag] n=%u kind=%s id=%u stage=%d slot=%d type=%#x format=%#x view=%#x size=%ux%u levels=%u layers=%u flags=%#x",
+            texture_diag.used, texture_diag_name(kind), texture_id, stage, slot, (unsigned)type,
+            format, descriptor->view.set_format ? (unsigned)descriptor->view.format : 0,
+            descriptor->texture.d.width, descriptor->texture.d.height, descriptor->texture.d.levels,
+            descriptor->texture.L.layers, descriptor->texture.d.flags);
+    } else {
+        LOG("[vulkan-tex-diag] n=%u kind=%s id=%u stage=%d slot=%d type=%#x (1x1 stand-in, whole quad samples zero)",
+            texture_diag.used, texture_diag_name(kind), texture_id, stage, slot, (unsigned)type);
+    }
+}
+// 报告点先处理 token；同一 token 不重开已用完的窗口，采到实际行后只汇总一次。
+// Process the token at the report point; the same token never reopens an exhausted window and a real
+// capture is summarized once.
+static void texture_diag_report(uint64_t ticket, const char *token) {
+    texture_diag_state_tick(&texture_diag, token);
+    if (!texture_diag.used || texture_diag.summarized) return;
+    texture_diag.summarized = 1;
+    LOG("[vulkan-tex-diag] frame=%llu token=%s lines=%u ok=%u unbound=%u missing=%u unsupported=%u unsampled=%u view=%u depth=%u linear=%u",
+        (unsigned long long)ticket, texture_diag.token, texture_diag.used, texture_diag.ok, texture_diag.unbound,
+        texture_diag.missing, texture_diag.unsupported, texture_diag.unsampled, texture_diag.view_format,
+        texture_diag.depth, texture_diag.linear);
+}
+
 static VkImageView image_view_get(image_entry *e,VkImageViewType type,VkImageSubresourceRange range) {
     for(cached_image_view *v=e->views;v;v=v->next)if(v->type==type&&!memcmp(&v->range,&range,sizeof range))return v->view;
     cached_image_view *v=calloc(1,sizeof *v);if(!v)die("Vulkan image view cache allocation");v->type=type;v->range=range;
@@ -69,7 +136,7 @@ static image_entry *image_get(const tex_t *t) {
     unsigned bucket=t->serial&4095;for(image_entry *e=image_index[bucket];e;e=e->hash_next)if(e->serial==t->serial)return e;
     if (t->d.target==NVN_TEXTURE_TARGET_BUFFER || t->d.samples>1) die("Vulkan texture target/samples pending: %d/%d",t->d.target,t->d.samples);
     image_entry *e=calloc(1,sizeof *e); if(!e) die("Vulkan texture allocation"); e->serial=t->serial;e->texture=*t;e->format=vk_format(t->d.format);graphics_pass_end();
-    if(e->format==VK_FORMAT_UNDEFINED) die("Unknown Vulkan NVN format %#x",t->d.format);
+    if(e->format==VK_FORMAT_UNDEFINED) {texture_diag_unsupported((unsigned)t->d.format);die("Unknown Vulkan NVN format %#x",t->d.format);}
     e->aspect=VK_IMAGE_ASPECT_COLOR_BIT;
     if(t->d.format>=0x31 && t->d.format<=0x36) {e->aspect=0;if(t->d.format!=0x31)e->aspect|=VK_IMAGE_ASPECT_DEPTH_BIT;if(t->d.format==0x31||t->d.format==0x35||t->d.format==0x36)e->aspect|=VK_IMAGE_ASPECT_STENCIL_BIT;}
     VkFormatProperties fp;vkGetPhysicalDeviceFormatProperties(physical,e->format,&fp);

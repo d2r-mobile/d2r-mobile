@@ -374,6 +374,7 @@ static VkDescriptorSet bind_shader(shader_entry *s,post_op *lifetime,uint32_t *d
                 uint32_t handle=shader_handle(b,s->stage,j);
                 images[j]=(VkDescriptorImageInfo){.sampler=sampler_get_for_type((handle>>20)&0xfff,type==VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER?b->type:0),.imageLayout=VK_IMAGE_LAYOUT_GENERAL};
                 if(type!=VK_DESCRIPTOR_TYPE_SAMPLER){texture_descriptor descriptor=descriptor_texture(handle&0xfffff);
+                    texture_diag_bind(&descriptor,handle,b->type,b->binding,s->stage);
                     // 只读计数：游戏绑了句柄、端口却查不到登记，就会退回 1x1 替身贴图，整个四边形采到同一个颜色。
                     // Read-only counter: the game bound a handle the port cannot resolve, which falls back to a 1x1
                     // stand-in texture; the whole quad then samples one colour.
