@@ -20,6 +20,7 @@ static dm_vk_driver vk_api;
 #endif
 #include "nvn_vulkan_host.inc"
 #include "nvn_vulkan_caps.h"
+#include "nvn_vulkan_depth_bias.h"
 static dm_nvn_host_state g_host_state = {.frz_req = -1, .frz_applied = -1};
 #include <vulkan/vulkan.h>
 #include <stdatomic.h>
@@ -133,6 +134,9 @@ static uint32_t used_queries;
 static uint64_t query_counts[1024];
 static VkPhysicalDeviceMemoryProperties memory_properties;
 static VkPhysicalDeviceFeatures gpu_features;
+// 只有设备创建时真正启用了 depthBiasClamp 才能传非零 clamp。
+// A non-zero depth-bias clamp may be passed only if depthBiasClamp was actually enabled at device creation.
+static int gpu_depth_bias_clamp;
 static VkPhysicalDeviceLimits gpu_limits;
 static uint32_t gpu_subgroup_size;
 static VkSurfaceKHR surface;
@@ -383,8 +387,8 @@ driver_retry:;
     LOG("[vulkan] subgroup size=%u stages=%#x operations=%#x quad_all=%u",subgroup.subgroupSize,subgroup.supportedStages,subgroup.supportedOperations,subgroup.quadOperationsInAllStages);
     float priority = 1;
     VkDeviceQueueCreateInfo qi = {.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO, .queueFamilyIndex = family, .queueCount = 1, .pQueuePriorities = &priority};
-    VkPhysicalDeviceFeatures enable = {.textureCompressionBC = features.textureCompressionBC, .textureCompressionASTC_LDR = features.textureCompressionASTC_LDR, .independentBlend = features.independentBlend, .shaderImageGatherExtended = features.shaderImageGatherExtended, .fragmentStoresAndAtomics = features.fragmentStoresAndAtomics, .vertexPipelineStoresAndAtomics = features.vertexPipelineStoresAndAtomics, .shaderStorageImageReadWithoutFormat = features.shaderStorageImageReadWithoutFormat, .shaderStorageImageWriteWithoutFormat = features.shaderStorageImageWriteWithoutFormat, .occlusionQueryPrecise = features.occlusionQueryPrecise, .tessellationShader = features.tessellationShader, .multiViewport = features.multiViewport};
-    VkDeviceCreateInfo di = {.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, .queueCreateInfoCount = 1, .pQueueCreateInfos = &qi, .pEnabledFeatures = &enable};
+    VkPhysicalDeviceFeatures enable = {.textureCompressionBC = features.textureCompressionBC, .textureCompressionASTC_LDR = features.textureCompressionASTC_LDR, .independentBlend = features.independentBlend, .shaderImageGatherExtended = features.shaderImageGatherExtended, .fragmentStoresAndAtomics = features.fragmentStoresAndAtomics, .vertexPipelineStoresAndAtomics = features.vertexPipelineStoresAndAtomics, .shaderStorageImageReadWithoutFormat = features.shaderStorageImageReadWithoutFormat, .shaderStorageImageWriteWithoutFormat = features.shaderStorageImageWriteWithoutFormat, .occlusionQueryPrecise = features.occlusionQueryPrecise, .depthBiasClamp = features.depthBiasClamp, .tessellationShader = features.tessellationShader, .multiViewport = features.multiViewport};
+    VkDeviceCreateInfo di = {.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, .queueCreateInfoCount = 1, .pQueueCreateInfos = &qi, .pEnabledFeatures = &enable}; gpu_depth_bias_clamp = enable.depthBiasClamp == VK_TRUE;
     const char *swap_extension = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
     if (surface) { di.enabledExtensionCount = 1; di.ppEnabledExtensionNames = &swap_extension; }
     #ifdef DM_VK_REFERENCE_GATES
