@@ -901,4 +901,23 @@ if(NOT ANDROID)
     target_compile_options(dm_nvn_host_latch_test PRIVATE -Wall -Wextra -Werror)
     add_test(NAME nvn_host_latch COMMAND dm_nvn_host_latch_test)
     set_tests_properties(nvn_host_latch PROPERTIES TIMEOUT 30)
+
+    # #230 draw-parameter capability/chain counterexample. The feature policy
+    # is pure Vulkan metadata; no physical device or loader is opened here.
+    find_package(Vulkan QUIET)
+    if(Vulkan_FOUND)
+        add_executable(dm_nvn_draw_parameters_test tests/nvn_draw_parameters.c native/gpu_driver.c)
+        target_include_directories(dm_nvn_draw_parameters_test PRIVATE native ${Vulkan_INCLUDE_DIRS})
+        target_compile_options(dm_nvn_draw_parameters_test PRIVATE -Wall -Wextra -Werror)
+        target_link_libraries(dm_nvn_draw_parameters_test PRIVATE ${CMAKE_DL_LIBS})
+        add_test(NAME nvn_draw_parameters COMMAND dm_nvn_draw_parameters_test)
+        set_tests_properties(nvn_draw_parameters PROPERTIES TIMEOUT 30)
+
+        add_executable(dm_nvn_draw_parameters_reset_test tests/nvn_draw_parameters_reset.c)
+        target_include_directories(dm_nvn_draw_parameters_reset_test PRIVATE native ${Vulkan_INCLUDE_DIRS})
+        target_compile_options(dm_nvn_draw_parameters_reset_test PRIVATE -Wall -Wextra -Werror)
+        target_link_libraries(dm_nvn_draw_parameters_reset_test PRIVATE ${CMAKE_DL_LIBS})
+        add_test(NAME nvn_draw_parameters_reset COMMAND dm_nvn_draw_parameters_reset_test)
+        set_tests_properties(nvn_draw_parameters_reset PROPERTIES TIMEOUT 30)
+    endif()
 endif()
