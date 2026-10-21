@@ -709,6 +709,12 @@ endif()
 if(NOT ANDROID)
     find_package(Python3 COMPONENTS Interpreter QUIET)
     if(Python3_Interpreter_FOUND)
+        add_test(NAME vulkan_buffer_cache_host
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/vulkan_buffer_cache_host.py
+                ${CMAKE_CURRENT_SOURCE_DIR}/native/nvn_vulkan.c
+                ${CMAKE_CURRENT_BINARY_DIR}/vulkan_buffer_cache_fixture.c ${CMAKE_C_COMPILER})
+        set_tests_properties(vulkan_buffer_cache_host PROPERTIES TIMEOUT 30)
+
         add_test(NAME nvn_fence_domain_host
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/nvn_fence_domain_host.py
                 --cc ${CMAKE_C_COMPILER})
