@@ -16,6 +16,7 @@
 #include "live_touch.h"
 #include "live_touch_geometry.h"
 #include "live_touch_provider.h"
+#include "live_touch_readiness.h"
 #include "../../ios/Sources/dm_touch_controls.h"
 #include "performance_hint.h"
 #include "launch_settings.h"
@@ -57,6 +58,7 @@ typedef struct {
     uint64_t touch_buttons;int32_t touch_lx,touch_ly,touch_rx,touch_ry;
     dm_live_touch *live_touch;
     dm_live_touch_provider live_provider;
+    dm_live_touch_readiness live_readiness;
     int live_provider_ready;
     int live_provider_available;
     dm_live_touch_scene_observation live_observation;
@@ -411,12 +413,41 @@ static int live_touch_mode_enabled(void) {
     }
     return enabled;
 }
+// 只在真实 readiness 翻转时调用 Java；输入/Looper 回调本来就在 Activity 主线程。
+// Notify Java only on a real readiness transition; input/Looper callbacks already run on the Activity main thread.
+static void live_touch_notify_readiness(game_app *s, int available) {
+    if (!s || !s->activity || s->live_readiness.destroyed) return;
+    ANativeActivity *a = s->activity;
+    JNIEnv *env = NULL;
+    if ((*a->vm)->GetEnv(a->vm, (void **)&env, JNI_VERSION_1_6) != JNI_OK) {
+        LOG("[android-touch] live readiness notification skipped: caller is not the attached UI thread");
+        return;
+    }
+    jclass klass = (*env)->GetObjectClass(env, a->clazz);
+    jmethodID method = klass ? (*env)->GetMethodID(env, klass, "onLiveTouchReadinessChanged", "(Z)V") : NULL;
+    if (method && !(*env)->ExceptionCheck(env))
+        (*env)->CallVoidMethod(env, a->clazz, method, available ? JNI_TRUE : JNI_FALSE);
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionDescribe(env);
+        (*env)->ExceptionClear(env);
+        LOG("[android-touch] live readiness notification failed ready=%d", available);
+    } else if (!method) {
+        LOG("[android-touch] live readiness notification unavailable");
+    }
+    if (klass) (*env)->DeleteLocalRef(env, klass);
+}
+static void live_touch_set_available(game_app *s, int available) {
+    if (!dm_live_touch_readiness_update(&s->live_readiness, available)) return;
+    s->live_provider_available = available;
+    LOG("[android-touch] live readiness %s", available ? "ready" : "unavailable");
+    live_touch_notify_readiness(s, available);
+}
 static void live_touch_sync(game_app *s) {
-    if(!s->live_touch||!live_touch_mode_enabled()){s->live_provider_available=0;return;}
+    if(!s->input||!s->live_touch||!live_touch_mode_enabled()){live_touch_set_available(s,0);return;}
     if(!s->live_provider_ready){dm_live_touch_provider_init(&s->live_provider,NULL);s->live_provider_ready=1;}
     dm_live_touch_scene_observation snapshot;
     if(!dm_live_touch_provider_observe(&s->live_provider,&snapshot)){
-        s->live_provider_available=0;
+        live_touch_set_available(s,0);
         memset(&s->live_observation,0,sizeof s->live_observation);
         // Unknown identity is a real caller boundary: cancel the original UI
         // phase-3 press, the live core and the legacy raw pointer ownership.
@@ -426,8 +457,8 @@ static void live_touch_sync(game_app *s) {
         touch_timer_stop(s);
         return;
     }
-    s->live_provider_available=1;
     s->live_observation=snapshot;
+    live_touch_set_available(s,1);
     int navigation=snapshot.scene!=DM_LIVE_TOUCH_SCENE_GAME||snapshot.panel_bits||atomic_load(&menu_open);
     uint32_t mask=navigation?(dm_tc_nav_mask(1)|(1u<<DM_TC_MENU)):
         (((1u<<DM_TC_COUNT)-1)&~(1u<<DM_TC_MAP));
@@ -755,7 +786,7 @@ static void window_destroyed(ANativeActivity *a,ANativeWindow *w) {game_app *s=a
     if(atomic_load(&s->started)){settle_save();guest_clock_freeze_for(1,1);void mtl_screen_detach(void);mtl_screen_detach();LOG("[android] 窗口销毁：保留进程等待回到前台");}
     pthread_mutex_lock(&s->lock);if(s->window==w){s->window=NULL;ANativeWindow_release(w);}pthread_mutex_unlock(&s->lock);}
 static void input_created(ANativeActivity *a,AInputQueue *q) {game_app *s=a->instance;s->input=q;dm_touch_pointer_clear(&s->touch_map);if(!s->live_touch){s->live_touch=dm_live_touch_create(667,375);if(!s->live_touch)LOG("[android-touch] live D2R core allocation failed; using raw touch fallback");else LOG("[android-touch] live D2R core attached");}if(!s->live_provider_ready){dm_live_touch_provider_init(&s->live_provider,NULL);s->live_provider_ready=1;}AInputQueue_attachLooper(q,ALooper_forThread(),0,input_ready,s);}
-static void input_destroyed(ANativeActivity *a,AInputQueue *q) {game_app *s=a->instance;AInputQueue_detachLooper(q);s->input=NULL;dm_live_touch_cancel_sources(s->live_touch,(int64_t)now_ns(),ui_touch_cancel);touch_timer_stop(s);dm_touch_pointer_clear(&s->touch_map);dm_touch_set(NULL,0);pad_clear(s);}
+static void input_destroyed(ANativeActivity *a,AInputQueue *q) {game_app *s=a->instance;AInputQueue_detachLooper(q);s->input=NULL;live_touch_set_available(s,0);dm_live_touch_cancel_sources(s->live_touch,(int64_t)now_ns(),ui_touch_cancel);touch_timer_stop(s);dm_touch_pointer_clear(&s->touch_map);dm_touch_set(NULL,0);pad_clear(s);}
 // 注意 onPause 里**不**挂起图形（Mac 的最小化路径有这一步，安卓不能照抄）：安卓在停下来之后一定会销毁窗口，
 // 而"请游戏存盘"排在窗口销毁之前（见 window_destroyed）。图形一旦在这里挂起，游戏线程就被挡在 NVN 入口外，
 // 请求的那次自动存盘永远等不到提交 —— 真机上就是这样，日志里只剩一条"未存盘退出"的红字。真正的挂起由
@@ -778,7 +809,7 @@ static void focus_changed(ANativeActivity *a,int focused) {game_app *s=a->instan
     dm_live_touch_cancel_sources(s->live_touch,(int64_t)now_ns(),ui_touch_cancel);touch_timer_stop(s);dm_touch_pointer_clear(&s->touch_map);dm_touch_set(NULL,0);
     pad_publish(s);
 }
-static void destroyed(ANativeActivity *a) {game_app *s=a->instance;atomic_store(&s->debug_stop,1);dm_live_touch_cancel_sources(s->live_touch,(int64_t)now_ns(),ui_touch_cancel);touch_timer_stop(s);dm_touch_pointer_clear(&s->touch_map);
+static void destroyed(ANativeActivity *a) {game_app *s=a->instance;atomic_store(&s->debug_stop,1);dm_live_touch_readiness_destroy(&s->live_readiness);s->live_provider_available=0;dm_live_touch_cancel_sources(s->live_touch,(int64_t)now_ns(),ui_touch_cancel);touch_timer_stop(s);dm_touch_pointer_clear(&s->touch_map);
     // 请存盘只做一次：正常退出时 window_destroyed 一定先跑过（安卓在 Activity 停止时必然先销毁窗口），而且那时
     // 图形还没挂起、游戏跑得动，提交等得到。走到这里图形已经挂起，再请一次根本等不到提交，只会白等 3 秒再打一条
     // 假的红色报警（真机上正常退出就是这样多出一条红字）。所以只有窗口还在（window_destroyed 没跑过）时才在这里请。

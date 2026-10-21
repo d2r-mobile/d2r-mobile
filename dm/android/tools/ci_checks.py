@@ -126,7 +126,8 @@ def main():
         # accept anything with at least one file per category, so a hollow package could pass and leave the game
         # unable to start.
         for source, test, label in (("SaveArchive.java", "SaveArchiveTest", "存档包"),
-                                    ("PackageArchive.java", "PackageArchiveTest", "数据包导入")):
+                                    ("PackageArchive.java", "PackageArchiveTest", "数据包导入"),
+                                    ("TouchVisibility.java", "TouchVisibilityTest", "触控显隐")):
             if not (JAVAC.exists() and JAVA.exists()):
                 skipped.append("%s（%s）：没有项目 JDK（%s）" % (label, test, JAVAC))
                 continue

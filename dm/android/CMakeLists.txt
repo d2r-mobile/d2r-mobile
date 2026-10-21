@@ -936,6 +936,12 @@ if(NOT ANDROID)
     add_test(NAME texture_flat_probe COMMAND dm_texture_flat_probe_test)
     set_tests_properties(texture_flat_probe PROPERTIES TIMEOUT 30)
 
+    add_executable(dm_live_touch_readiness_test tests/live_touch_readiness_test.c)
+    target_include_directories(dm_live_touch_readiness_test PRIVATE native)
+    target_compile_options(dm_live_touch_readiness_test PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME live_touch_readiness COMMAND dm_live_touch_readiness_test)
+    set_tests_properties(live_touch_readiness PROPERTIES TIMEOUT 30)
+
     add_executable(dm_texture_deswizzle_formats_test tests/texture_deswizzle_formats_test.c ../gfx/nvn/nvn_tex.c ../gfx/tex/nvn_deswizzle.c)
     target_include_directories(dm_texture_deswizzle_formats_test PRIVATE native ../gfx/nvn ../gfx/tex)
     target_compile_options(dm_texture_deswizzle_formats_test PRIVATE -Wall -Wextra -Werror)

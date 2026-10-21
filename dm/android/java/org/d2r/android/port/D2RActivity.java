@@ -424,7 +424,8 @@ public final class D2RActivity extends NativeActivity {
     private void updateTouchVisibility() {
         if (touchControls == null) return;
         boolean live = liveTouchReady();
-        boolean value = controlsEnabled && activityResumed && hasWindowFocus() && textDialog == null && !physicalController && !live;
+        boolean value = TouchVisibility.visible(controlsEnabled, activityResumed, hasWindowFocus(),
+            textDialog != null, physicalController, live, isFinishing() || isDestroyed());
         // 诊断构建：每次求值都打印。只打「状态翻转」时，恒为 false 的情况一行日志都不会留下，正是最难查的那种。
         // Diagnostic build: log every evaluation. Logging only transitions leaves the always-false case with no line at
         // all, which is exactly the case that is hardest to diagnose.
@@ -433,6 +434,15 @@ public final class D2RActivity extends NativeActivity {
             " live=" + live + ")");
         touchVisible = value;
         touchControls.setVisible(value);
+    }
+
+    // Native readiness transition: notify only when the actual live provider changes. The method may be
+    // called from the Activity main thread; post anyway so visibility and view mutations stay UI-owned.
+    public void onLiveTouchReadinessChanged(boolean ready) {
+        if (isFinishing() || isDestroyed()) return;
+        runOnUiThread(() -> {
+            if (!isFinishing() && !isDestroyed()) updateTouchVisibility();
+        });
     }
 
     // NativeActivity 的真实 AInputQueue 已接上原 D2R 手势核心时，旧的 Switch 按钮层让位；未接上则保留明确 fallback。
