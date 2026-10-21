@@ -13,6 +13,10 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 #include <sched.h>
+#ifdef __ANDROID__
+#include <stdatomic.h>
+extern _Atomic int dm_debug_collection_enabled __attribute__((weak));
+#endif
 
 // 隐藏的 ELF TLS 符号也供专用汇编入口直接访问，避免经过普通 C 调用约定。
 // A hidden ELF TLS symbol lets the dedicated assembly entry bypass the ordinary C ABI.
@@ -28,6 +32,9 @@ static int context_cache_key_ready;
 static uintptr_t context_registration_logged[64];
 static unsigned context_registration_logged_count;
 static void context_registration_log(uintptr_t tp,uintptr_t owner,const char *result,int error) {
+#ifdef __ANDROID__
+    if(!error&&(!&dm_debug_collection_enabled||!atomic_load_explicit(&dm_debug_collection_enabled,memory_order_relaxed)))return;
+#endif
     for(unsigned i=0;i<context_registration_logged_count;i++)if(context_registration_logged[i]==tp)return;
     if(context_registration_logged_count==64)return;
     context_registration_logged[context_registration_logged_count++]=tp;

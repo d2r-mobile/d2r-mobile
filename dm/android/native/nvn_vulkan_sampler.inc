@@ -32,13 +32,13 @@ static void sampler_compare_note_locked(int id,uint32_t type,const sampler_descr
     static unsigned notes;const samp_par *parameters=&descriptor->parameters;
     if(notes<12&&!!(type&1024)!=!!parameters->cmp_mode){notes++;LOG("[vulkan-sampler] compare mismatch id=%d reflected_shadow=%u registered_compare=%u func=%u",id,!!(type&1024),!!parameters->cmp_mode,(unsigned)parameters->cmp_func);}
 }
-static VkSampler sampler_get_for_type(int id,uint32_t type) {
-    pthread_mutex_lock(&descriptor_lock);sampler_descriptor *descriptor=id>=0&&id<sampler_capacity&&sampler_descriptors[id].valid?&sampler_descriptors[id]:NULL;
+static VkSampler sampler_get_for_type_locked(int id,uint32_t type) {
+    sampler_descriptor *descriptor=id>=0&&id<sampler_capacity&&sampler_descriptors[id].valid?&sampler_descriptors[id]:NULL;
     sampler_compare_note_locked(id,type,descriptor);
-    if(descriptor&&descriptor->sampler){VkSampler sampler=descriptor->sampler;sampler_reuses++;pthread_mutex_unlock(&descriptor_lock);return sampler;}
+    if(descriptor&&descriptor->sampler){sampler_reuses++;return descriptor->sampler;}
     samp_par parameters=descriptor?descriptor->parameters:(samp_par){.lod_max=1000};sampler_key key=sampler_key_make(&parameters);unsigned bucket=sampler_key_bucket(&key);
     for(sampler_cache_entry *entry=sampler_cache[bucket];entry;entry=entry->next)if(!memcmp(&entry->key,&key,sizeof key)){
-        if(descriptor)descriptor->sampler=entry->sampler;sampler_reuses++;pthread_mutex_unlock(&descriptor_lock);return entry->sampler;
+        if(descriptor)descriptor->sampler=entry->sampler;sampler_reuses++;return entry->sampler;
     }
     sampler_cache_entry *entry=calloc(1,sizeof *entry);if(!entry)die("Vulkan sampler parameter cache allocation");entry->key=key;
     VkSamplerCreateInfo info={.sType=VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,.magFilter=key.mag,.minFilter=key.min,.mipmapMode=key.mip,
@@ -49,5 +49,9 @@ static VkSampler sampler_get_for_type(int id,uint32_t type) {
     static unsigned border_notes;if(border_notes<12&&(key.u==VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER||key.v==VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER||key.w==VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER)){
         border_notes++;LOG("[vulkan-sampler] id=%d wrap=%u,%u,%u border=%g,%g,%g,%g canonical=%u compare=%u/%u",id,(unsigned)parameters.ws,(unsigned)parameters.wt,(unsigned)parameters.wr,parameters.border[0],parameters.border[1],parameters.border[2],parameters.border[3],key.border,key.compare,key.compare_op);
     }
-    pthread_mutex_unlock(&descriptor_lock);return entry->sampler;
+    return entry->sampler;
+}
+static VkSampler sampler_get_for_type(int id,uint32_t type) {
+    pthread_mutex_lock(&descriptor_lock);VkSampler sampler=sampler_get_for_type_locked(id,type);
+    pthread_mutex_unlock(&descriptor_lock);return sampler;
 }

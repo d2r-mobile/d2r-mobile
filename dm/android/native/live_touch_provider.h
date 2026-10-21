@@ -44,6 +44,7 @@ typedef struct dm_live_touch_scene_observation {
     uint64_t world_epoch;
     uint64_t ui_identity;      /* actual dm_ui_gen; never synthesized */
     uint64_t captured_ns;
+    int movement_continuity; /* Same live player/game, nearby position and fresh observation only. */
 } dm_live_touch_scene_observation;
 
 typedef struct dm_live_touch_provider {
@@ -52,6 +53,8 @@ typedef struct dm_live_touch_provider {
     uint64_t scene_epoch;
     uint64_t world_epoch;
     uint64_t last_ui_identity;
+    uint64_t last_player_identity, last_game_identity, last_captured_ns;
+    int last_x, last_y;
     int have_context;
     int last_scene;
     int last_ingame;

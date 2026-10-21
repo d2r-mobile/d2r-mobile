@@ -59,7 +59,7 @@ final class LaunchSettings {
     }
 
     // 改一个键：其余行（含注释）原样保留；目标键不存在就追加。
-    // Change one key, keeping every other line (comments included); append it when absent.
+    // Change one key, keeping every other line; null removes an explicit override.
     static void write(File file, String key, String value) {
         StringBuilder content = new StringBuilder();
         boolean replaced = false;
@@ -70,7 +70,7 @@ final class LaunchSettings {
                 while ((line = reader.readLine()) != null) {
                     int separator = line.indexOf('=');
                     if (separator > 0 && line.substring(0, separator).trim().equals(key)) {
-                        content.append(key).append('=').append(value).append('\n');
+                        if (value != null) content.append(key).append('=').append(value).append('\n');
                         replaced = true;
                     } else {
                         content.append(line).append('\n');
@@ -79,7 +79,7 @@ final class LaunchSettings {
             } catch (IOException ignored) {
             }
         }
-        if (!replaced) content.append(key).append('=').append(value).append('\n');
+        if (!replaced && value != null) content.append(key).append('=').append(value).append('\n');
         try (OutputStreamWriter writer = new OutputStreamWriter(
                 new FileOutputStream(file, false), StandardCharsets.UTF_8)) {
             writer.write(content.toString());

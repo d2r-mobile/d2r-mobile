@@ -35,7 +35,29 @@ public final class LaunchSettingsTest {
         check(content.contains("# diagnostic"), "comment preserved");
         check(content.contains("input_receipts=1"), "foreign line preserved");
 
+        for (String limit : new String[] {"0", "60", "30"}) {
+            LaunchSettings.write(file, "frame_limit", limit);
+            check(limit.equals(LaunchSettings.read(file, "frame_limit")), "frame limit survives reload: " + limit);
+            check("1".equals(LaunchSettings.read(file, "input_receipts")), "frame limit preserves diagnostics");
+            check("0".equals(LaunchSettings.read(file, "debug_overlay")), "frame limit preserves overlay state");
+            String foreign = LaunchSettings.foreign(file, new String[] {"debug_overlay", "frame_limit"});
+            check(foreign.contains("input_receipts=1") && !foreign.contains("frame_limit="), "launcher rewrite owns frame limit exactly once");
+        }
+        LaunchSettings.write(file, "resolution", "1920x1080");
+        LaunchSettings.write(file, "resolution", null);
+        check(LaunchSettings.read(file, "resolution") == null, "automatic resolution removes the explicit native override");
+        check("30".equals(LaunchSettings.read(file, "frame_limit")), "resolution reset preserves frame limit");
+        check("1".equals(LaunchSettings.read(file, "input_receipts")), "resolution reset preserves foreign diagnostics");
+        check(LaunchSettings.read(file, "debug_collection") == null, "collection defaults to off when absent");
+        LaunchSettings.write(file, "debug_collection", "1");
+        check("1".equals(LaunchSettings.read(file, "debug_collection")), "collection enabled survives reload");
+        check("0".equals(LaunchSettings.read(file, "debug_overlay")), "collection does not enable FPS overlay");
+        LaunchSettings.write(file, "debug_overlay", "1");
+        LaunchSettings.write(file, "debug_collection", "0");
+        check("0".equals(LaunchSettings.read(file, "debug_collection")), "collection disabled survives reload");
+        check("1".equals(LaunchSettings.read(file, "debug_overlay")), "FPS display remains usable without collection");
+
         if (failures != 0) throw new AssertionError(failures + " launch-settings failures");
-        System.out.println("PASS: debug_overlay persists on/off without dropping unknown keys");
+        System.out.println("PASS: overlay and frame limit persist without dropping unknown keys");
     }
 }

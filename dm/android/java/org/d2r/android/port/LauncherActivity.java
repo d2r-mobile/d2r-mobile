@@ -1,8 +1,7 @@
 // 启动界面：选择设置与导入数据包，写进 launch-settings.conf 后再真正启动游戏页面。
-// 构图照标题画面来做：美术铺满整屏，标题在右上，菜单是右侧一列，版本信息在最右下。
+// Native grouped cards keep game data, graphics and diagnostics separate; landscape uses two scrollable columns.
 // Launcher: collects settings and imports a data package, writes them into launch-settings.conf, then starts the
-// game page. The composition follows a title screen: artwork fills the screen, the logo sits top-right, the menu
-// is a single right-aligned column, and app info sits at the bottom right.
+// game page. Import, driver and save actions retain their original storage and validation paths.
 package org.d2r.android.port;
 
 import android.app.Activity;
@@ -65,19 +64,16 @@ public final class LauncherActivity extends Activity {
     private static final int WARNING = 0xffd08a78;
 
     private Switch overlaySwitch;
-    private TextView profileItem, resolutionItem, driverItem, importItem, statusView, startItem;
-    private boolean handheld;
+    private Switch collectionSwitch;
+    private TextView resolutionItem, frameLimitItem, driverItem, importItem, statusView, startItem;
     private int resolutionIndex;
+    private int frameLimitIndex;
+    private static final String[] FRAME_LIMITS = {"0", "60", "30"};
     private int driverIndex;
     private String packageSummary = "";
     private boolean importing;
     private volatile boolean cancelImport;
-    // 出图分辨率只提供几档预设：空字符串 = 按当前手机窗口比例自动选择（720 级高度）；
-    // 1600x900 是 16:9 兼容档（掌机档仍为 1280x720）；其余两档是显式高分辨率，仍在原有档位语义内。
-    // The output resolution offers a few presets only: empty = derive from the current phone surface
-    // aspect at 720-level height; 1600x900 is the 16:9 compatibility preset (handheld still 1280x720);
-    // the other two keep the existing explicit high-resolution semantics.
-    private static final String[] RESOLUTION_PRESETS = {"", "1600x900", "1920x1080", "2560x1440"};
+    private String[] resolutionPresets;
     // Explicit system/built-in/imported choices apply on the next process launch.
     private static final String[] DRIVER_STATES = {"system", "turnip", "custom"};
     private DriverArchive.Info customDriver;
@@ -95,7 +91,7 @@ public final class LauncherActivity extends Activity {
     // input_receipts, for instance) and has to survive a rewrite -- otherwise starting the game from the launcher
     // silently drops it. Measured once with input_receipts=1: the file said so, native read "unset", the HID
     // receipts were never produced, and the overwrite was the last thing found.
-    private static final String[] OWNED_KEYS = {"debug_overlay", "operation_mode", "resolution"};
+    private static final String[] OWNED_KEYS = {"debug_overlay", "debug_collection", "operation_mode", "resolution", "output_resolution", "frame_limit", "render_scale"};
 
     // 游戏还活着时启动界面立刻让位。
     // 从桌面点图标回来时，安卓会在**游戏上面**再开一个启动界面（启动界面是本应用的入口活动），玩家看到的是启动界面、
@@ -175,16 +171,18 @@ public final class LauncherActivity extends Activity {
         return view;
     }
 
-    private String profileLabel() {
-        return text("dmAndroidLaunchProfile") + "：" +
-            text(handheld ? "dmAndroidLaunchHandheld" : "dmAndroidLaunchConsole");
+    private String resolutionLabel() {
+        return resolutionChoices()[resolutionIndex];
     }
 
-    private String resolutionLabel() {
-        String preset = RESOLUTION_PRESETS[resolutionIndex];
-        if (preset.isEmpty()) return text("dmAndroidLaunchResolution") + "：" + text("dmAndroidLaunchFollowProfile");
-        String[] parts = preset.split("x");
-        return text("dmAndroidLaunchResolution") + "：" + parts[0] + "×" + parts[1];
+    private String[] resolutionChoices() {
+        String[] labels = new String[resolutionPresets.length];
+        for (int i = 0; i < labels.length; i++) labels[i] =
+                (i < 4 ? text("dmAndroidResolutionFull") : i < 6 ? "16:9" : text("dmAndroidResolutionPrevious"))
+                + " " + resolutionPresets[i].replace("x", "×");
+        labels[0] += " " + text("dmAndroidResolution3D480");
+        labels[1] += " " + text("dmAndroidResolution3D640");
+        return labels;
     }
 
     private boolean turnipBundled() {
@@ -209,7 +207,7 @@ public final class LauncherActivity extends Activity {
     private String driverLabel() {
         String name = driverIndex == 2 && customDriver != null ? customDriver.name : text(
                 driverIndex == 1 ? "dmAndroidLaunchDriverTurnip" : "dmAndroidLaunchDriverSystem");
-        return text("dmAndroidLaunchDriver") + "：" + name;
+        return name;
     }
 
     private void chooseDriver() {
@@ -350,7 +348,8 @@ public final class LauncherActivity extends Activity {
     private void updateStartState() {
         boolean ready = packageReady() && !importing;
         startItem.setEnabled(ready);
-        startItem.setTextColor(ready ? GOLD : MUTED);
+        startItem.setTextColor(0xff17130e);
+        startItem.setAlpha(ready ? 1f : 0.45f);
     }
 
     // 把当前内存里的设置反映到界面上。点一下之后只调这个，**绝不重新读盘** ——
@@ -359,8 +358,8 @@ public final class LauncherActivity extends Activity {
     // reloading overwrites the value just changed, so tapping did nothing (true for both the resolution and the
     // profile row).
     private void applyLabels() {
-        if (profileItem != null) profileItem.setText(profileLabel());
         if (resolutionItem != null) resolutionItem.setText(resolutionLabel());
+        if (frameLimitItem != null) frameLimitItem.setText(frameLimitChoices()[frameLimitIndex]);
         if (driverItem != null) driverItem.setText(driverLabel());
         if (importItem != null) importItem.setText(importLabel());
         if (startItem != null) updateStartState();
@@ -369,19 +368,44 @@ public final class LauncherActivity extends Activity {
     // 从盘重读全部设置到内存，再刷新界面。只在进入/回到界面时调。
     // Read every setting from disk into memory, then refresh the labels. Called only when the screen is (re)entered.
     private void refreshFromDisk() {
-        handheld = !"console".equals(LaunchSettings.read(configFile(), "operation_mode"));
+        boolean legacyHandheld = !"console".equals(LaunchSettings.read(configFile(), "operation_mode"));
         // 调试浮层默认关闭：只有配置里明确写了 1 才是开着（用户要求全局默认不显示）。
         // The debug overlay defaults to off: only an explicit 1 in the config means on (the user asked for it to be
         // off globally by default).
         if (overlaySwitch != null) overlaySwitch.setChecked("1".equals(LaunchSettings.read(configFile(), "debug_overlay")));
+        if (collectionSwitch != null) collectionSwitch.setChecked("1".equals(LaunchSettings.read(configFile(), "debug_collection")));
         // 摘要只用于显示；是否可用由下面的真实安装检查决定。丢失摘要也不能把已安装包误报为未导入。
         // The summary is display-only; readiness comes from the actual install check below. A missing summary must
         // not make an installed package look unimported.
         String summary = LaunchSettings.read(stateFile(), "package_summary");
         packageSummary = summary == null ? "" : summary.trim();
-        String preset = LaunchSettings.read(configFile(), "resolution");
-        resolutionIndex = 0;
-        if (preset != null) for (int i = 0; i < RESOLUTION_PRESETS.length; i++) if (RESOLUTION_PRESETS[i].equals(preset)) resolutionIndex = i;
+        String preset = LaunchSettings.read(configFile(), "output_resolution");
+        if (preset == null) preset = OutputResolution.migrate(LaunchSettings.read(configFile(), "resolution"), legacyHandheld);
+        android.util.DisplayMetrics screen = new android.util.DisplayMetrics();
+        getWindowManager().getDefaultDisplay().getRealMetrics(screen);
+        String legacy640 = OutputResolution.fullScreen(screen.widthPixels,screen.heightPixels,640);
+        String renderScale = LaunchSettings.read(configFile(), "render_scale");
+        boolean reduced = "89".equals(renderScale) || legacy640.equals(preset);
+        if (legacy640.equals(preset)) preset = OutputResolution.fullScreen(screen.widthPixels,screen.heightPixels,720);
+        resolutionPresets = new String[]{OutputResolution.fullScreen(screen.widthPixels,screen.heightPixels,720),
+                OutputResolution.fullScreen(screen.widthPixels,screen.heightPixels,720),
+                OutputResolution.fullScreen(screen.widthPixels,screen.heightPixels,720),
+                OutputResolution.fullScreen(screen.widthPixels,screen.heightPixels,900),"1280x720","1600x900"};
+        String limit = LaunchSettings.read(configFile(), "frame_limit");
+        frameLimitIndex = 1;
+        for (int i = 0; i < FRAME_LIMITS.length; i++) if (FRAME_LIMITS[i].equals(limit)) frameLimitIndex = i;
+        resolutionIndex = 2;
+        if (preset != null) {
+            int match = -1;
+            for (int i = 0; i < resolutionPresets.length; i++) if (resolutionPresets[i].equals(preset)) match = i;
+            if (match < 0 && OutputResolution.migrate(preset, false) != null) {
+                resolutionPresets = java.util.Arrays.copyOf(resolutionPresets, 7);
+                resolutionPresets[6] = preset; match = 6;
+            }
+            if (match >= 0) resolutionIndex = match;
+        }
+        if (reduced && resolutionPresets[0].equals(preset)) resolutionIndex = 1;
+        if ("67".equals(renderScale) && resolutionPresets[0].equals(preset)) resolutionIndex = 0;
         // 驱动选择记在启动界面自己的状态文件里：launch-settings.conf 由 native 按严格白名单解析，塞不进新键。
         // APK 没带内置驱动时强制回到系统驱动，免得状态文件里的旧值让界面显示一个不存在的选项。
         // The driver choice lives in the launcher's own state file: launch-settings.conf is parsed by native
@@ -397,88 +421,174 @@ public final class LauncherActivity extends Activity {
         applyLabels();
     }
 
+    private int dp(float value) { return Math.round(value * getResources().getDisplayMetrics().density); }
+
+    private android.graphics.drawable.GradientDrawable panelBackground(int color) {
+        android.graphics.drawable.GradientDrawable background = new android.graphics.drawable.GradientDrawable();
+        background.setColor(color); background.setCornerRadius(dp(14));
+        background.setStroke(dp(1), 0x334f4537);
+        return background;
+    }
+
+    private void pressFeedback(View view) {
+        android.util.TypedValue value = new android.util.TypedValue();
+        if (getTheme().resolveAttribute(android.R.attr.selectableItemBackground, value, true))
+            view.setForeground(getDrawable(value.resourceId));
+    }
+
+    private LinearLayout section(String titleKey) {
+        LinearLayout card = new LinearLayout(this);
+        card.setOrientation(LinearLayout.VERTICAL); card.setPadding(dp(18), dp(14), dp(18), dp(14));
+        card.setBackground(panelBackground(0xf018191c));
+        TextView title = item(text(titleKey), 14, GOLD, true, false);
+        title.setGravity(Gravity.START); title.setLetterSpacing(0.08f); card.addView(title);
+        return card;
+    }
+
+    private void setting(LinearLayout card, String titleKey, String noteKey, TextView value, View.OnClickListener action) {
+        LinearLayout row = new LinearLayout(this); row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(0, dp(8), 0, dp(8)); row.setMinimumHeight(dp(64));
+        LinearLayout labels = new LinearLayout(this); labels.setOrientation(LinearLayout.VERTICAL);
+        TextView title = item(text(titleKey), 15, PARCHMENT, false, false);
+        title.setGravity(Gravity.START); title.setPadding(0,0,dp(12),dp(3)); labels.addView(title);
+        TextView note = item(text(noteKey), 12, MUTED, false, false);
+        note.setGravity(Gravity.START); note.setPadding(0,0,dp(12),0); labels.addView(note);
+        row.addView(labels, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+        value.setTextSize(15); value.setMaxWidth(dp(230)); value.setMaxLines(2);
+        value.setEllipsize(android.text.TextUtils.TruncateAt.END); value.setMinHeight(dp(48));
+        value.setGravity(Gravity.END | Gravity.CENTER_VERTICAL); value.setTextColor(GOLD);
+        value.setOnClickListener(action); row.setOnClickListener(action); row.setFocusable(true);
+        pressFeedback(row); pressFeedback(value);
+        row.addView(value); card.addView(row);
+        View divider = new View(this); divider.setBackgroundColor(0x224f4537);
+        card.addView(divider,new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,dp(1)));
+    }
+
+    private void chooseFrameLimit() {
+        new AlertDialog.Builder(this).setTitle(text("dmAndroidLaunchFrameLimit"))
+            .setSingleChoiceItems(frameLimitChoices(), frameLimitIndex, (dialog, selected) -> {
+                frameLimitIndex=selected; LaunchSettings.write(configFile(),"frame_limit",FRAME_LIMITS[selected]);
+                applyLabels(); dialog.dismiss(); setStatus(text("dmAndroidLaunchFrameLimitNote"),MUTED);
+            }).setNegativeButton(android.R.string.cancel,null).show();
+    }
+
+    private void immersive() {
+        if (android.os.Build.VERSION.SDK_INT >= 28) {
+            android.view.WindowManager.LayoutParams attrs=getWindow().getAttributes();
+            attrs.layoutInDisplayCutoutMode=android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+            getWindow().setAttributes(attrs);
+        }
+        getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                | View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+    }
+
+    @Override public void onWindowFocusChanged(boolean focus) {
+        super.onWindowFocusChanged(focus);
+        if (focus) immersive();
+    }
+
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         if (stepAsideForRunningGame()) return;
-        int width = getResources().getDisplayMetrics().widthPixels;
-        int height = getResources().getDisplayMetrics().heightPixels;
-        int margin = (int)(width * 0.045f);
+        immersive();
+        float density=getResources().getDisplayMetrics().density;
+        boolean wide=getResources().getDisplayMetrics().widthPixels/density>=840;
+        FrameLayout root=new FrameLayout(this);
+        LinearLayout page=new LinearLayout(this); page.setOrientation(LinearLayout.VERTICAL);
+        root.setOnApplyWindowInsetsListener((view,insets)-> {
+            if (android.os.Build.VERSION.SDK_INT >= 30) {
+                android.graphics.Insets safe=insets.getInsets(android.view.WindowInsets.Type.displayCutout());
+                page.setPadding(dp(24)+safe.left,dp(14)+safe.top,dp(24)+safe.right,dp(18)+safe.bottom);
+            } else {
+                android.view.DisplayCutout cutout=android.os.Build.VERSION.SDK_INT>=28?insets.getDisplayCutout():null;
+                page.setPadding(dp(24)+(cutout==null?0:cutout.getSafeInsetLeft()),dp(14),
+                        dp(24)+(cutout==null?0:cutout.getSafeInsetRight()),dp(18));
+            }
+            return insets;
+        });
+        root.addView(new LauncherBackgroundView(this),new FrameLayout.LayoutParams(-1,-1));
+        View shade=new View(this); shade.setBackgroundColor(0xc908090c);
+        root.addView(shade,new FrameLayout.LayoutParams(-1,-1));
+        page.setPadding(dp(24),dp(14),dp(24),dp(18));
+        TextView heading=item(text("dmAndroidLaunchTitle"),26,GOLD,true,false);
+        heading.setGravity(Gravity.START); page.addView(heading);
+        LinearLayout overview=section("dmAndroidLaunchStart");
+        LinearLayout data=section("dmAndroidLaunchPackage");
+        importItem=item("",15,PARCHMENT,false,true); importItem.setGravity(Gravity.START);
+        importItem.setMinHeight(dp(56)); importItem.setOnClickListener(v->pickPackage()); data.addView(importItem);
+        pressFeedback(importItem);
+        TextView dataNote=item(text("dmAndroidLaunchDataNote"),12,MUTED,false,false);
+        dataNote.setGravity(Gravity.START); data.addView(dataNote);
+        startItem=new android.widget.Button(this); startItem.setText(text("dmAndroidLaunchStart"));
+        ((android.widget.Button)startItem).setAllCaps(false); startItem.setTextSize(19);
+        startItem.setTypeface(Typeface.DEFAULT_BOLD); startItem.setGravity(Gravity.CENTER);
+        startItem.setBackground(panelBackground(GOLD)); startItem.setMinHeight(dp(52));
+        pressFeedback(startItem);
+        startItem.setOnClickListener(v->startGame());
+        LinearLayout.LayoutParams startLayout=new LinearLayout.LayoutParams(-1,dp(56)); startLayout.topMargin=dp(16);
+        overview.addView(startItem,startLayout);
+        TextView saveTitle=item(text("dmAndroidLaunchSaves"),13,GOLD,true,false);
+        saveTitle.setGravity(Gravity.START); overview.addView(saveTitle);
+        LinearLayout saves=new LinearLayout(this);
+        TextView export=item(text("dmAndroidSaveExport"),14,PARCHMENT,false,true); export.setGravity(Gravity.CENTER);
+        export.setMinHeight(dp(48)); export.setOnClickListener(v->exportSave());
+        TextView restore=item(text("dmAndroidSaveImport"),14,PARCHMENT,false,true); restore.setGravity(Gravity.CENTER);
+        restore.setMinHeight(dp(48)); restore.setOnClickListener(v->confirmImportSave());
+        pressFeedback(export); pressFeedback(restore);
+        saves.addView(export,new LinearLayout.LayoutParams(0,-2,1));
+        saves.addView(restore,new LinearLayout.LayoutParams(0,-2,1)); overview.addView(saves);
+        statusView=item("",12,WARNING,false,false); statusView.setGravity(Gravity.START); data.addView(statusView);
 
-        FrameLayout root = new FrameLayout(this);
-        root.addView(new LauncherBackgroundView(this),
-            new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        LinearLayout options=new LinearLayout(this); options.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout graphics=section("dmAndroidLaunchGraphics");
+        resolutionItem=item("",15,GOLD,false,true);
+        setting(graphics,"dmAndroidLaunchResolution","dmAndroidLaunchResolutionNote",resolutionItem,v-> {
+            new AlertDialog.Builder(this).setTitle(text("dmAndroidLaunchResolution"))
+                .setSingleChoiceItems(resolutionChoices(),resolutionIndex,(dialog,index)-> {
+                    resolutionIndex=index;
+                    LaunchSettings.write(configFile(),"resolution",null);
+                    LaunchSettings.write(configFile(),"output_resolution",resolutionPresets[index]);
+                    LaunchSettings.write(configFile(),"render_scale",OutputResolution.renderScale(index));
+                    applyLabels(); dialog.dismiss();
+                }).setNegativeButton(android.R.string.cancel,null).show();
+        });
+        frameLimitItem=item("",15,GOLD,false,true);
+        setting(graphics,"dmAndroidLaunchFrameLimit","dmAndroidLaunchFrameHint",frameLimitItem,v->chooseFrameLimit());
+        driverItem=item("",15,GOLD,false,true);
+        setting(graphics,"dmAndroidLaunchDriver","dmAndroidLaunchDriverNote",driverItem,v->chooseDriver());
+        options.addView(graphics);
+        LinearLayout diagnostics=section("dmAndroidLaunchDiagnostics");
+        overlaySwitch=new Switch(this); overlaySwitch.setText(text("dmAndroidLaunchOverlay"));
+        overlaySwitch.setTextColor(PARCHMENT); overlaySwitch.setTextSize(14);
+        overlaySwitch.setMinHeight(dp(48)); overlaySwitch.setPadding(0,dp(6),0,dp(6));
+        overlaySwitch.setOnCheckedChangeListener((button,checked)->LaunchSettings.write(configFile(),"debug_overlay",checked?"1":"0"));
+        diagnostics.addView(overlaySwitch);
+        collectionSwitch=new Switch(this); collectionSwitch.setText(text("dmAndroidLaunchCollection"));
+        collectionSwitch.setTextColor(PARCHMENT); collectionSwitch.setTextSize(14);
+        collectionSwitch.setMinHeight(dp(48)); collectionSwitch.setPadding(0,dp(6),0,dp(6));
+        collectionSwitch.setOnCheckedChangeListener((button,checked)->LaunchSettings.write(configFile(),"debug_collection",checked?"1":"0"));
+        diagnostics.addView(collectionSwitch);
+        TextView diagnosticNote=item(text("dmAndroidLaunchDiagnosticNote"),12,MUTED,false,false);
+        diagnosticNote.setGravity(Gravity.START); diagnostics.addView(diagnosticNote);
+        LinearLayout.LayoutParams diagnosticLayout=new LinearLayout.LayoutParams(-1,-2); diagnosticLayout.topMargin=dp(12);
+        options.addView(diagnostics,diagnosticLayout);
+        LinearLayout.LayoutParams dataLayout=new LinearLayout.LayoutParams(-1,-2); dataLayout.topMargin=dp(12);
+        options.addView(data,dataLayout);
 
-        LinearLayout column = new LinearLayout(this);
-        column.setOrientation(LinearLayout.VERTICAL);
-        column.setGravity(Gravity.END);
-        column.setPadding(margin, (int)(height * 0.075f), margin, (int)(height * 0.045f));
-
-        column.addView(item(text("dmAndroidLaunchTitle"), 42, GOLD, true, false));
-        column.addView(item(text("dmAndroidLaunchSubtitle"), 15, MUTED, false, false));
-
-        column.addView(new View(this), new LinearLayout.LayoutParams(1, 0, 1.6f));
-
-        startItem = item("▸  " + text("dmAndroidLaunchStart"), 28, GOLD, true, true);
-        startItem.setOnClickListener(v -> startGame());
-        column.addView(startItem);
-
-        overlaySwitch = new Switch(this);
-        overlaySwitch.setText(text("dmAndroidLaunchOverlay"));
-        overlaySwitch.setTextColor(PARCHMENT);
-        overlaySwitch.setTextSize(19);
-        overlaySwitch.setGravity(Gravity.END);
-        // 开关本身立即写盘。此前只在下一次“启动游戏”时写，先打开文件选择器（驱动/数据包/存档）会走 onResume ->
-        // refreshFromDisk，把还没保存的开关状态覆盖回去，表现为“开了但进游戏没有浮层”。
-        // Persist the switch itself immediately. It used to be written only on the next "start game", so opening a
-        // file picker (driver/package/save) went through onResume -> refreshFromDisk and overwrote the unsaved value,
-        // making the toggle appear ineffective in game.
-        overlaySwitch.setOnCheckedChangeListener((button, checked) ->
-                LaunchSettings.write(configFile(), "debug_overlay", checked ? "1" : "0"));
-        column.addView(overlaySwitch);
-
-        profileItem = item(profileLabel(), 19, PARCHMENT, false, true);
-        profileItem.setOnClickListener(v -> { handheld = !handheld; applyLabels(); });
-        column.addView(profileItem);
-
-        resolutionItem = item(resolutionLabel(), 19, PARCHMENT, false, true);
-        resolutionItem.setOnClickListener(v -> { resolutionIndex = (resolutionIndex + 1) % RESOLUTION_PRESETS.length; applyLabels(); });
-        column.addView(resolutionItem);
-
-        {
-            driverItem = item(driverLabel(), 19, PARCHMENT, false, true);
-            driverItem.setOnClickListener(v -> chooseDriver());
-            column.addView(driverItem);
+        if(wide){
+            LinearLayout body=new LinearLayout(this); body.setGravity(Gravity.TOP);
+            ScrollView right=new ScrollView(this); right.addView(options); right.setFillViewport(false);
+            LinearLayout.LayoutParams leftSize=new LinearLayout.LayoutParams(0,-1,0.9f); leftSize.rightMargin=dp(16);
+            body.addView(overview,leftSize); body.addView(right,new LinearLayout.LayoutParams(0,-1,1.3f));
+            page.addView(body,new LinearLayout.LayoutParams(-1,0,1)); root.addView(page,new FrameLayout.LayoutParams(-1,-1));
+        }else{
+            page.addView(overview); LinearLayout.LayoutParams optionSize=new LinearLayout.LayoutParams(-1,-2); optionSize.topMargin=dp(16);
+            page.addView(options,optionSize); ScrollView scroll=new ScrollView(this); scroll.addView(page);
+            root.addView(scroll,new FrameLayout.LayoutParams(-1,-1));
         }
-
-        importItem = item(importLabel(), 19, PARCHMENT, false, true);
-        importItem.setOnClickListener(v -> pickPackage());
-        column.addView(importItem);
-
-        // 存档导入/导出：走系统的文件选择器（应用不需要任何存储权限），包是玩家自己选的路径。
-        // Save import/export goes through the system file picker (the app needs no storage permission); the player
-        // picks the location.
-        TextView saveExportItem = item(text("dmAndroidSaveExport"), 19, PARCHMENT, false, true);
-        saveExportItem.setOnClickListener(v -> exportSave());
-        column.addView(saveExportItem);
-        TextView saveImportItem = item(text("dmAndroidSaveImport"), 19, PARCHMENT, false, true);
-        saveImportItem.setOnClickListener(v -> confirmImportSave());
-        column.addView(saveImportItem);
-
-        column.addView(new View(this), new LinearLayout.LayoutParams(1, 0, 1f));
-
-        statusView = item("", 14, WARNING, false, false);
-        column.addView(statusView);
-        column.addView(item(text("dmAndroidLaunchPending"), 13, MUTED, false, false));
-
-        ScrollView scroll = new ScrollView(this);
-        scroll.setFillViewport(true);
-        scroll.addView(column, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
-                                                            ViewGroup.LayoutParams.MATCH_PARENT));
-        root.addView(scroll, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
-                                                          ViewGroup.LayoutParams.MATCH_PARENT));
-
-        refreshFromDisk();
-        setContentView(root);
+        refreshFromDisk(); setContentView(root);
     }
 
     @Override protected void onResume() {
@@ -744,14 +854,18 @@ public final class LauncherActivity extends Activity {
         StringBuilder content = new StringBuilder();
         content.append("# 由启动界面写入 | written by the launcher\n");
         content.append("debug_overlay=").append(overlaySwitch.isChecked() ? "1" : "0").append('\n');
-        content.append("operation_mode=").append(handheld ? "handheld" : "console").append('\n');
-        // 跟随档位时不写这个键：native 语义里"省略"= 按手机窗口比例自动选择；1600x900 是 16:9 兼容档。
-        // Auto writes no key: omission means "derive from the phone surface aspect" in native; 1600x900 is the
-        // 16:9 compatibility preset.
-        if (!RESOLUTION_PRESETS[resolutionIndex].isEmpty()) content.append("resolution=").append(RESOLUTION_PRESETS[resolutionIndex]).append('\n');
+        content.append("debug_collection=").append(collectionSwitch.isChecked() ? "1" : "0").append('\n');
+        content.append("operation_mode=handheld\n");
+        content.append("frame_limit=").append(FRAME_LIMITS[frameLimitIndex]).append('\n');
+        content.append("output_resolution=").append(resolutionPresets[resolutionIndex]).append('\n');
+        content.append("render_scale=").append(OutputResolution.renderScale(resolutionIndex)).append('\n');
         content.append(LaunchSettings.foreign(configFile(), OWNED_KEYS));
         write(configFile(), content.toString());
         setStatus("", PARCHMENT);
         startActivity(new Intent(this, D2RActivity.class));
+    }
+
+    private String[] frameLimitChoices() {
+        return new String[] {text("dmAndroidLaunchUncapped"), "60 FPS", "30 FPS"};
     }
 }

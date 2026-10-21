@@ -93,7 +93,10 @@ static int parse_settings(char *content, dm_android_launch_settings *settings,
             if (!strcmp(key, "operation_mode")) bit = 1;
             else if (!strcmp(key, "input_receipts")) bit = 2;
             else if (!strcmp(key, "debug_overlay")) bit = 4;
-            else if (!strcmp(key, "resolution")) bit = 8;
+            else if (!strcmp(key, "resolution") || !strcmp(key, "output_resolution")) bit = 8;
+            else if (!strcmp(key, "frame_limit")) bit = 16;
+            else if (!strcmp(key, "render_scale")) bit = 32;
+            else if (!strcmp(key, "debug_collection")) bit = 64;
             else return fail(error, capacity, "unknown launch settings key on line %u: %s", line_number, key);
             if (seen & bit) return fail(error, capacity, "duplicate launch settings key on line %u: %s", line_number, key);
             if (bit == 1) {
@@ -109,6 +112,21 @@ static int parse_settings(char *content, dm_android_launch_settings *settings,
                     width < 320 || width > 7680 || height < 240 || height > 4320)
                     return fail(error, capacity, "launch settings line %u: resolution must be <width>x<height> with width 320-7680 and height 240-4320", line_number);
                 settings->resolution_width = (int)width; settings->resolution_height = (int)height;
+                settings->resolution_exact = !strcmp(key, "output_resolution");
+            } else if (bit == 32) {
+                if (!strcmp(value, "67")) settings->render_scale = 67;
+                else if (!strcmp(value, "89")) settings->render_scale = 89;
+                else if (!strcmp(value, "100")) settings->render_scale = 100;
+                else return fail(error, capacity, "render_scale must be 67, 89 or 100");
+            } else if (bit == 16) {
+                if (!strcmp(value, "0")) settings->frame_limit = 0;
+                else if (!strcmp(value, "30")) settings->frame_limit = 30;
+                else if (!strcmp(value, "60")) settings->frame_limit = 60;
+                else return fail(error, capacity, "launch settings line %u: frame_limit must be 0, 30 or 60", line_number);
+            } else if (bit == 64) {
+                if (!strcmp(value, "0")) settings->debug_collection = 0;
+                else if (!strcmp(value, "1")) settings->debug_collection = 1;
+                else return fail(error, capacity, "debug_collection must be 0 or 1");
             } else if (bit == 4) {
                 if (!strcmp(value, "0")) settings->debug_overlay = 0;
                 else if (!strcmp(value, "1")) settings->debug_overlay = 1;
@@ -169,7 +187,7 @@ int dm_android_launch_settings_apply(const char *temporary_directory,
                                      char *error, size_t error_capacity) {
     if (error && error_capacity) error[0] = 0;
     char path[SETTINGS_PATH_BYTES], content[SETTINGS_BYTES + 1];
-    dm_android_launch_settings settings = {0, -1, -1, -1, -1, -1};
+    dm_android_launch_settings settings = {0, -1, -1, -1, -1, -1, -1, 0, -1, 0};
     if (!make_path(temporary_directory, "launch-settings.conf", path, error, error_capacity)) return 0;
     if (!read_settings(path, content, &settings.present, error, error_capacity)) return 0;
     if (!settings.present) { if (result) *result = settings; return 1; }
@@ -177,19 +195,22 @@ int dm_android_launch_settings_apply(const char *temporary_directory,
     // 所有内容与需要的固定路径都验证完才进入环境写入；省略的键不清空其他来源设置。
     // Validate all content and required fixed paths before writing the environment; omitted keys do not clear settings supplied elsewhere.
     if (settings.input_receipts == 1 && !make_path(temporary_directory, "input-receipts.jsonl", path, error, error_capacity)) return 0;
-    environment_change changes[4] = {{0}};
+    environment_change changes[7] = {{0}};
     size_t count = 0;
     if (settings.operation_mode != -1) changes[count++] = (environment_change){.name = "DM_OPMODE", .value = settings.operation_mode ? "1" : "0"};
     if (settings.input_receipts != -1) changes[count++] = (environment_change){.name = "DM_HID_RECEIPT_LOG", .value = settings.input_receipts ? path : NULL};
     // 调试浮层开关：显式写 "0" 而不是清空变量，因为“关掉”本身就是要表达的设置。
     // Debug overlay toggle: write "0" explicitly rather than unsetting, because "hidden" is itself the setting.
     if (settings.debug_overlay != -1) changes[count++] = (environment_change){.name = "DM_DEBUG_OVERLAY", .value = settings.debug_overlay ? "1" : "0"};
+    if (settings.frame_limit != -1) changes[count++] = (environment_change){.name = "DM_PRESENT_HZ", .value = settings.frame_limit == 30 ? "30" : settings.frame_limit == 60 ? "60" : "0"};
+    if (settings.render_scale != -1) changes[count++] = (environment_change){.name = "DM_3D_SCALE", .value = settings.render_scale == 67 ? "0.666666667" : settings.render_scale == 89 ? "0.888888889" : "1.0"};
     // 分辨率：写成 DM_GAME_RES=宽x高，由 front_game_res 读（与 Mac/iOS 同一变量同一语义）。
     // Resolution: written as DM_GAME_RES=<w>x<h>, read by front_game_res, the same variable and semantics as Mac and iOS.
     char resolution[16];
     if (settings.resolution_width > 0 && settings.resolution_height > 0) {
         int n = snprintf(resolution, sizeof resolution, "%dx%d", settings.resolution_width, settings.resolution_height);
         if (n > 0 && (size_t)n < sizeof resolution) changes[count++] = (environment_change){.name = "DM_GAME_RES", .value = resolution};
+        changes[count++] = (environment_change){.name = "DM_GAME_RES_EXACT", .value = settings.resolution_exact ? "1" : NULL};
     }
     if (!apply_environment(changes, count, error, error_capacity)) return 0;
     if (result) *result = settings;

@@ -14,6 +14,8 @@ enum {ASYNC_QUERY_CAPACITY=1024,ASYNC_TIMESTAMP_BYTES=2*sizeof(uint64_t),
 typedef struct async_batch {
     VkCommandBuffer command;
     VkCommandBuffer chunks[ASYNC_CHUNK_CAPACITY];
+    VkCommandBuffer uploads[ASYNC_CHUNK_CAPACITY];
+    int upload_recording;
     unsigned chunk_count,chunk_index,chunk_draws;
     uint64_t chunk_started;
     VkFence fence;
@@ -28,8 +30,31 @@ typedef struct async_batch {
     int host_sync,has_known_cpu_copy,known_copy_unbounded,status;
     struct async_batch *next;
 } async_batch;
+static uint64_t upload_epoch;
+static async_batch *async_current;
+static VkCommandBuffer async_upload_command(void) {
+    async_batch *batch=async_current;
+    if(!batch||!recording)die("Vulkan upload outside recording");
+    VkCommandBuffer *upload=&batch->uploads[batch->chunk_index];
+    if(!batch->upload_recording){
+        if(!*upload){VkCommandBufferAllocateInfo info={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,.commandPool=commands,.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY,.commandBufferCount=1};VK_CHECK(vkAllocateCommandBuffers(device,&info,upload));}
+        VK_CHECK(vkResetCommandBuffer(*upload,0));
+        VkCommandBufferBeginInfo begin={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,.flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};VK_CHECK(vkBeginCommandBuffer(*upload,&begin));batch->upload_recording=1;
+    }
+    return *upload;
+}
+static unsigned async_submission_commands(async_batch *batch,VkCommandBuffer out[2]) {
+    unsigned count=0;
+    if(batch->upload_recording){
+        VkCommandBuffer upload=batch->uploads[batch->chunk_index];
+        VkMemoryBarrier barrier={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER,.srcAccessMask=VK_ACCESS_TRANSFER_WRITE_BIT,.dstAccessMask=VK_ACCESS_MEMORY_READ_BIT|VK_ACCESS_MEMORY_WRITE_BIT};
+        vkCmdPipelineBarrier(upload,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,0,1,&barrier,0,NULL,0,NULL);
+        VK_CHECK(vkEndCommandBuffer(upload));out[count++]=upload;batch->upload_recording=0;
+    }
+    out[count++]=batch->command;return count;
+}
 static async_batch async_batches[DM_VK_BATCH_SLOTS];
-static async_batch *async_first,*async_last,*async_current;
+static async_batch *async_first,*async_last;
 static pthread_cond_t async_condition=PTHREAD_COND_INITIALIZER;
 static pthread_t async_thread;
 static unsigned async_next_slot;
@@ -55,13 +80,14 @@ static void async_chunk_boundary_locked(void) {
     uint64_t now=dm_android_clock_ns(CLOCK_MONOTONIC);
     if(!now||!batch->chunk_started||now<batch->chunk_started||now-batch->chunk_started<ASYNC_CHUNK_RECORD_NS)return;
     VK_CHECK(vkEndCommandBuffer(command));
-    VkSubmitInfo submit={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,.commandBufferCount=1,.pCommandBuffers=&command};
+    VkCommandBuffer submit_commands[2];unsigned submit_count=async_submission_commands(batch,submit_commands);
+    VkSubmitInfo submit={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,.commandBufferCount=submit_count,.pCommandBuffers=submit_commands};
     // 同队列最终 fence 覆盖此前各段；客体 ticket 和 WSI 信号仍只在最终提交公布。
     // The final same-queue fence covers prior chunks; guest tickets and WSI signals remain exclusive to final submission.
     VK_CHECK(vkQueueSubmit(queue,1,&submit,VK_NULL_HANDLE));
     uint64_t submitted_at=dm_android_clock_ns(CLOCK_MONOTONIC);
     if(submitted_at>=now)async_early_submit_ns+=submitted_at-now;
-    async_early_submits++;batch->chunk_index++;
+    async_early_submits++;batch->chunk_index++;upload_epoch++;
     if(batch->chunk_index==batch->chunk_count){
         VkCommandBufferAllocateInfo allocation={.sType=VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,.commandPool=commands,.level=VK_COMMAND_BUFFER_LEVEL_PRIMARY,.commandBufferCount=1};
         VK_CHECK(vkAllocateCommandBuffers(device,&allocation,&batch->chunks[batch->chunk_count]));batch->chunk_count++;
@@ -313,7 +339,7 @@ static uint64_t async_batch_temporary_bytes(void) {
 }
 
 static void async_publish_locked(async_batch *batch) {
-    uint64_t started=dm_android_clock_ns(CLOCK_MONOTONIC);
+    uint64_t started=dm_diagnostics_enabled()?dm_android_clock_ns(CLOCK_MONOTONIC):0;
     if(batch->times){
         uint64_t times[2];memcpy(times,batch->query_readback.mapped,sizeof times);
         gpu_total_ns+=timestamp_delta(times[0],times[1],gpu_timestamp_bits)*gpu_timestamp_period;
@@ -367,8 +393,7 @@ static void async_publish_locked(async_batch *batch) {
     // 先真实发布/释放，再退役该批区间；其它在途批次的根与消费者引用保持不变。
     // Publish/retire resources first, then retire only this batch's ranges; other in-flight roots and consumer references remain intact.
     dm_pending_ranges_reset(&batch->pending_ranges);
-    uint64_t elapsed=dm_android_clock_ns(CLOCK_MONOTONIC)-started;
-    stability_worker_publish_ns+=elapsed;
+    if(dm_diagnostics_enabled())stability_worker_publish_ns+=dm_android_clock_ns(CLOCK_MONOTONIC)-started;
 }
 
 static void *async_completion_main(void *unused) {
@@ -386,6 +411,7 @@ static void *async_completion_main(void *unused) {
         pthread_mutex_lock(&queue_lock);
         if(async_first!=batch||batch->status!=ASYNC_PENDING||batch->ticket!=ticket)die("Vulkan asynchronous FIFO corruption");
         async_publish_locked(batch);
+        image_retire_completed(ticket);
         async_first=batch->next;if(!async_first)async_last=NULL;batch->next=NULL;batch->status=ASYNC_FREE;
         // CPU 写回与资源退役完成后才公布 completed，保持 SyncWait/Event 可见性。
         // Publish completed only after CPU writeback and retirement, preserving SyncWait/Event visibility.
@@ -409,7 +435,7 @@ static void async_initialize_locked(void) {
             VkFenceCreateInfo fence={.sType=VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};VK_CHECK(vkCreateFence(device,&fence,NULL,&batch->fence));
             VkQueryPoolCreateInfo query={.sType=VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,.queryType=VK_QUERY_TYPE_OCCLUSION,.queryCount=ASYNC_QUERY_CAPACITY};
             VK_CHECK(vkCreateQueryPool(device,&query,NULL,&batch->queries));
-            if(gpu_timestamp_bits&&gpu_timestamp_period>0){query.queryType=VK_QUERY_TYPE_TIMESTAMP;query.queryCount=2;VK_CHECK(vkCreateQueryPool(device,&query,NULL,&batch->times));}
+            if(dm_diagnostics_enabled()&&gpu_timestamp_bits&&gpu_timestamp_period>0){query.queryType=VK_QUERY_TYPE_TIMESTAMP;query.queryCount=2;VK_CHECK(vkCreateQueryPool(device,&query,NULL,&batch->times));}
         }
         // 每个 slot 的查询结果到真实 fence 完成后才读，长期容量不算临时快照。
         // Read each slot's results only after its real fence; exclude persistent capacity from temporary snapshots.
@@ -449,18 +475,20 @@ static unsigned async_begin_locked(void) {
             batch->status=ASYNC_RECORDING;batch->has_known_cpu_copy=batch->known_copy_unbounded=0;batch->known_copy_low=batch->known_copy_high=0;
             batch->temporary_base=active_buffer_bytes-read_cache_bytes-immutable_buffer_bytes;
             async_current=batch;async_next_slot=(slot+1)%DM_VK_BATCH_SLOTS;
-            batch->chunk_index=batch->chunk_draws=0;batch->command=batch->chunks[0];batch->chunk_started=0;
+            batch->chunk_index=batch->chunk_draws=0;batch->command=batch->chunks[0];batch->chunk_started=0;batch->upload_recording=0;upload_epoch++;
             batch->counter_used=0;
             command=batch->command;gpu_fence=batch->fence;draw_queries=batch->queries;batch_times=batch->times;
             return slot;
         }
         if(!async_first)die("Vulkan asynchronous slot corruption");
-        uint64_t wait_start=dm_android_clock_ns(CLOCK_MONOTONIC);async_ring_stalls++;
+        uint64_t wait_start=dm_diagnostics_enabled()?dm_android_clock_ns(CLOCK_MONOTONIC):0;async_ring_stalls++;
         // 条件等待释放 queue_lock，让已完成 GPU 的 worker 能公布结果并腾出 slot。
         // Waiting releases queue_lock so the completed GPU's worker can publish results and free a slot.
         int result=pthread_cond_wait(&async_condition,&queue_lock);if(result)die("Vulkan asynchronous slot wait %d",result);
-        uint64_t elapsed=dm_android_clock_ns(CLOCK_MONOTONIC)-wait_start;
-        fence_wait_total_ns+=elapsed;stability_ring_wait_ns+=elapsed;
+        if(dm_diagnostics_enabled()) {
+            uint64_t elapsed=dm_android_clock_ns(CLOCK_MONOTONIC)-wait_start;
+            fence_wait_total_ns+=elapsed;stability_ring_wait_ns+=elapsed;
+        }
     }
 }
 
@@ -481,7 +509,8 @@ static uint64_t async_commit_locked(void) {
     if(unknown!=batch->pending_ranges.collections[0].count||host!=batch->pending_ranges.collections[1].count)die("Vulkan pending index registration count audit");
 #endif
     VK_CHECK(vkResetFences(device,1,&batch->fence));
-    VkSubmitInfo submit={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,.commandBufferCount=1,.pCommandBuffers=&batch->command};
+    VkCommandBuffer submit_commands[2];unsigned submit_count=async_submission_commands(batch,submit_commands);
+    VkSubmitInfo submit={.sType=VK_STRUCTURE_TYPE_SUBMIT_INFO,.commandBufferCount=submit_count,.pCommandBuffers=submit_commands};
     VkPipelineStageFlags present_stage=VK_PIPELINE_STAGE_TRANSFER_BIT;
     if(screen_submission){submit.waitSemaphoreCount=1;submit.pWaitSemaphores=&screen_acquired;submit.pWaitDstStageMask=&present_stage;submit.signalSemaphoreCount=1;submit.pSignalSemaphores=&screen_rendered;}
     #ifdef DM_VK_REFERENCE_GATES

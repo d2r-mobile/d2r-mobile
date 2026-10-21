@@ -487,10 +487,12 @@ static dm_fe_selection g_fe_selection;              // Android explicit characte
 static dm_ui_trace_state g_ui_trace;
 static _Atomic int g_trace_last_pump_phase = -1;
 void dm_ui_trace_set(int on) {
+    if (!dm_diagnostics_enabled()) on = 0;
     (void)dm_ui_trace_arm(&g_ui_trace, on ? 1u : 0u);
     atomic_store(&g_trace_last_pump_phase, -1);
 }
 int dm_ui_trace_arm_generation(unsigned generation) {
+    if (!dm_diagnostics_enabled()) generation = 0;
     int changed = dm_ui_trace_arm(&g_ui_trace, generation);
     if (changed) atomic_store(&g_trace_last_pump_phase, -1);
     return changed;
@@ -2485,7 +2487,7 @@ static void hud_stack_update(const char *act, const char *arg) {
     // the bottom bar and skill buttons covered the game-completion page, and tapping 「好」(OK) became a world tap
     if(!strcmp(act,"UnloadPanel") && !strcmp(arg,"LoadScreenPanel")) {
         for(int i=0;i<HUD_STACK_MAX;i++) {
-            if(g_hud_stack[i].open>0 && strcmp(g_hud_stack[i].name,"LoadScreenPanel") && dm_ui_panel_shown(g_hud_stack[i].name)) fprintf(stderr,"[hud] 面板栈 读取画面撤下：%s 屏上还在，照记\n",g_hud_stack[i].name);
+            if(g_hud_stack[i].open>0 && strcmp(g_hud_stack[i].name,"LoadScreenPanel") && dm_ui_panel_shown(g_hud_stack[i].name)) { if(dm_diagnostics_enabled())fprintf(stderr,"[hud] 面板栈 读取画面撤下：%s 屏上还在，照记\n",g_hud_stack[i].name); }
             else memset(&g_hud_stack[i],0,sizeof g_hud_stack[i]);
         }
     }
@@ -2518,9 +2520,9 @@ static void hud_stack_update(const char *act, const char *arg) {
         // OpenPanel HireMenuPanel is sent again (with no close in between), while at the end of the whole dialog only a fixed number of closes is sent. Adding by count, when the confirmation box comes up two extra times and the hire then succeeds, leaves the count at 1:
         // no panel left on screen, yet the front end stays in panel mode (no stick, no skill buttons, every tap is "outside the panel"). Across 809 logs only 4 panels ever reached a count of 2 or more
         // (main menu links, character select page, naming candidate bar, hire list), and none of them was a real two-layer stack needing two closes. The dm_tc_navigation path was already an idempotent bitmap, so the two paths now agree
-        if(open && g_hud_stack[slot].open>0) { fprintf(stderr,"[hud] 面板栈 %s %s：已经开着，不重复计\n",act,arg); return; }
+        if(open && g_hud_stack[slot].open>0) { if(dm_diagnostics_enabled())fprintf(stderr,"[hud] 面板栈 %s %s：已经开着，不重复计\n",act,arg); return; }
         g_hud_stack[slot].open=open?1:0;
-        fprintf(stderr,"[hud] 面板栈 %s %s → %d\n",act,arg,g_hud_stack[slot].open);
+        if(dm_diagnostics_enabled())fprintf(stderr,"[hud] 面板栈 %s %s → %d\n",act,arg,g_hud_stack[slot].open);
     }
 }
 int dm_hud_stack_msg(const char *act, const char *arg) {

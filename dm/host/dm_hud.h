@@ -19,6 +19,7 @@ typedef struct {
     int holding;        // 手上（光标上）物品的 id，0 = 空（拖放没放成、物品还在手上）：前端据此把「点空白处」当取消。来源是客户端玩家，见 dm_hud.c | Id of the item in hand (on the cursor), 0 = empty (drag-and-drop failed, item still in hand): the front end uses it to treat "tap on empty space" as cancel. The source is the client player, see dm_hud.c
     int quest_unread;   // 有新任务待读：原版 HUD 任务提示亮着（客户端界面状态字节 main+0x2d5ff58）；打开任务面板后清（底栏十字红态的另一个条件） | A new quest is waiting to be read: the original game's HUD quest hint is lit (client UI state byte main+0x2d5ff58); cleared after the quest panel is opened (the other condition for the red state of the bottom bar cross)
     int dead;           // 玩家死亡（模式 0 / 17）：前端隐藏 UIKit 底栏，免挡死亡画面 | Player dead (mode 0 / 17): the front end hides the UIKit bottom bar so it does not block the death screen
+    uint64_t player_identity, game_identity; /* Observed server unit and game addresses; zero is unknown. */
 } dm_hud_info;
 // 玩家「已死」判定 = 游戏自己的定义（main+0x6e5c48 / 0x6e5cc8 客户端命令分派：玩家单位 [+0xc] 模式为 0 或 0x11 即按已死处理；
 // D2 玩家模式 0 = DEATH 死亡动画中、17 = DEAD 已死，死亡动画结束时 0 → 17，复活回城后变为城镇站立 5）

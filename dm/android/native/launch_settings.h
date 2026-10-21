@@ -13,6 +13,10 @@ typedef struct dm_android_launch_settings {
     int input_receipts; /* -1 未指定，0 关闭，1 开启 | -1 unspecified, 0 disabled, 1 enabled */
     int debug_overlay; /* -1 未指定，0 关闭，1 开启 | -1 unspecified, 0 hidden, 1 shown */
     int resolution_width, resolution_height; /* -1 未指定；否则为出图分辨率（主机档，掌机档按 0.8 同比例）| -1 unspecified; otherwise the output resolution (docked; handheld scales by 0.8) */
+    int frame_limit; /* -1 unspecified, 0 uncapped, 30 or 60 */
+    int resolution_exact;
+    int render_scale;
+    int debug_collection;
 } dm_android_launch_settings;
 
 // 在 boot 设置 DM_TEMP 后、其他线程首次读取运行模式/输入日志前调用；不是运行中切换接口。

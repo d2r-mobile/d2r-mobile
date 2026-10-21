@@ -36,6 +36,8 @@ typedef struct {
     int ingame, panel_open, panel_bits, hud_valid, dead, area;
     uint32_t ui_gen;
     uint64_t now;
+    uint64_t player_identity, game_identity;
+    int x,y;
 } fixture;
 
 static int f_ingame(void *ctx) { return ((fixture *)ctx)->ingame; }
@@ -48,6 +50,8 @@ static void f_hud(void *ctx, dm_hud_info *out) {
     out->valid = f->hud_valid;
     out->dead = f->dead;
     out->area = f->area;
+    out->player_identity=f->player_identity;out->game_identity=f->game_identity;
+    out->x=f->x;out->y=f->y;
 }
 static uint64_t f_now(void *ctx) { return ((fixture *)ctx)->now; }
 
@@ -159,6 +163,57 @@ int main(void) {
     CHECK(!dm_live_touch_event(touch, DM_LIVE_ACTION_UP, 0, 1, &id, &x, &y,
                                667, 375, 0, 0, 667, 375, 1790000000));
 
+    // A fresh, nearby observation of the same player/game can rebase ONLY movement.
+    f.ingame=1;f.hud_valid=1;f.area=1;f.x=100;f.y=100;
+    f.player_identity=0x1000;f.game_identity=0x2000;f.now=2000000000;
+    CHECK(dm_live_touch_provider_observe(&provider,&obs));
+    dm_live_touch_set_context(touch,0,(1u<<DM_TC_COUNT)-1,obs.scene_epoch,obs.world_epoch,obs.ui_identity,0);
+    x=70;y=300;
+    CHECK(dm_live_touch_event(touch,DM_LIVE_ACTION_DOWN,0,1,&id,&x,&y,667,375,0,0,667,375,2010000000));
+    x=120;y=280;
+    CHECK(dm_live_touch_event(touch,DM_LIVE_ACTION_MOVE,0,1,&id,&x,&y,667,375,0,0,667,375,2020000000));
+    dm_tc_state *controls=dm_live_touch_controls(touch);
+    int32_t before_x=controls->lx,before_y=controls->ly;
+    CHECK(before_x||before_y);
+    int32_t both_ids[]={id,id+1};
+    float both_x[]={x,controls->layout.target[DM_TC_SKILL1].x};
+    float both_y[]={y,controls->layout.target[DM_TC_SKILL1].y};
+    CHECK(dm_live_touch_event(touch,DM_LIVE_ACTION_POINTER_DOWN,1,2,both_ids,both_x,both_y,
+                              667,375,0,0,667,375,2030000000));
+    int skill_slot=-1;
+    for(int i=0;i<DM_TC_MAX_TOUCH;i++)
+        if(controls->finger[i].active&&controls->finger[i].target==DM_TC_SKILL1)skill_slot=i;
+    CHECK(skill_slot>=0);
+    uint64_t old_world=obs.world_epoch;
+    f.area=2;f.ui_gen++;f.x=101;f.now=2050000000;
+    CHECK(dm_live_touch_provider_observe(&provider,&obs));
+    CHECK(obs.movement_continuity&&obs.world_epoch>old_world);
+    dm_live_touch_set_context_moving(touch,0,(1u<<DM_TC_COUNT)-1,obs.scene_epoch,obs.world_epoch,obs.ui_identity,0,obs.movement_continuity);
+    CHECK(dm_live_touch_active(touch)&&controls->lx==before_x&&controls->ly==before_y);
+    CHECK(!controls->finger[skill_slot].active);
+    CHECK(dm_live_touch_buttons(touch)==0);
+    CHECK(!dm_live_touch_event(touch,DM_LIVE_ACTION_POINTER_UP,1,2,both_ids,both_x,both_y,
+                              667,375,0,0,667,375,2055000000));
+    CHECK(dm_live_touch_buttons(touch)==0&&controls->lx==before_x&&controls->ly==before_y);
+    CHECK(dm_live_touch_event(touch,DM_LIVE_ACTION_UP,0,1,&id,&x,&y,667,375,0,0,667,375,2060000000));
+    CHECK(!controls->lx&&!controls->ly&&!dm_live_touch_active(touch));
+
+    // A teleport, stale observation, new player/game, or panel must never authorize carry.
+    f.x+=100;f.now=2100000000;CHECK(dm_live_touch_provider_observe(&provider,&obs));CHECK(!obs.movement_continuity);
+    f.now=3100000000;CHECK(dm_live_touch_provider_observe(&provider,&obs));CHECK(!obs.movement_continuity);
+    old_world=obs.world_epoch;
+    f.player_identity++;f.now+=10000000;CHECK(dm_live_touch_provider_observe(&provider,&obs));
+    CHECK(!obs.movement_continuity&&obs.world_epoch>old_world);
+    f.game_identity++;f.now+=10000000;CHECK(dm_live_touch_provider_observe(&provider,&obs));CHECK(!obs.movement_continuity);
+    f.panel_open=1;f.now+=10000000;CHECK(dm_live_touch_provider_observe(&provider,&obs));CHECK(!obs.movement_continuity);
+    f.panel_open=0;f.now+=10000000;CHECK(dm_live_touch_provider_observe(&provider,&obs));CHECK(!obs.movement_continuity);
+
+    // Default callers still cancel on every identity change; continuity must be explicitly proven.
+    dm_live_touch_set_context(touch,0,(1u<<DM_TC_COUNT)-1,obs.scene_epoch,obs.world_epoch,obs.ui_identity,0);
+    x=70;y=300;CHECK(dm_live_touch_event(touch,DM_LIVE_ACTION_DOWN,0,1,&id,&x,&y,667,375,0,0,667,375,3200000000));
+    dm_live_touch_set_context(touch,0,(1u<<DM_TC_COUNT)-1,obs.scene_epoch+1,obs.world_epoch,obs.ui_identity+1,0);
+    CHECK(!dm_live_touch_active(touch));
+
     // The production default host path calls the real host entry points. These
     // stubs only stand in for that boundary in this host build.
     dm_live_touch_provider prod;
@@ -183,6 +238,6 @@ int main(void) {
     CHECK(dm_live_touch_provider_generic_interface(&prod) == NULL);
 
     dm_live_touch_destroy(touch);
-    puts("PASS: observation-only provider rejects unknown identity, cancels old context and has no generic module interface");
+    puts("PASS: nearby same-player movement survives area changes; skills, unknown identity and new sessions cancel safely");
     return 0;
 }
