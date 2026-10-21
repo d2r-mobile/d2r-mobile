@@ -32,17 +32,24 @@ dm_android_context_entry:
     // Query only the current TP: no eviction and owner-only withdrawal keep a hit valid.
     // 快路异或及零分支不修改条件标志；只有慢路保存和恢复 NZCV。
     // XOR and zero branches preserve flags on hits; only the slow path saves/restores NZCV.
+    // 桶号与 dm_android_context_cache_bucket 相同；向后探测 PROBES 项（数组不回绕）。
+    // Same bucket as dm_android_context_cache_bucket; probe PROBES entries forward (the array never wraps).
     mrs x16, tpidr_el0
-    eor x0, x16, x16, lsr #DM_ANDROID_CONTEXT_CACHE_HASH_SHIFT
-    lsr x0, x0, #4
+    lsr x0, x16, #DM_ANDROID_CONTEXT_CACHE_HASH_SHIFT
+    eor x0, x0, x0, lsr #DM_ANDROID_CONTEXT_CACHE_HASH_FOLD
     and x0, x0, #(DM_ANDROID_CONTEXT_CACHE_SLOTS - 1)
     adrp x1, dm_android_context_cache
     add x1, x1, :lo12:dm_android_context_cache
     add x1, x1, x0, lsl #DM_ANDROID_CONTEXT_CACHE_ENTRY_SHIFT
     add x1, x1, #8
+    .rept DM_ANDROID_CONTEXT_CACHE_PROBES
     ldar x0, [x1]
     eor x0, x0, x16
-    cbnz x0, .Lcontext_cache_miss
+    cbz x0, .Lcontext_cache_hit
+    add x1, x1, #(1 << DM_ANDROID_CONTEXT_CACHE_ENTRY_SHIFT)
+    .endr
+    b .Lcontext_cache_miss
+.Lcontext_cache_hit:
     ldr x16, [x1, #8]
     b .Lcontext_restore_integer
 .Lcontext_cache_miss:
