@@ -127,15 +127,14 @@ final class D2RTouchOverlay extends View {
 
         // Joystick: the base follows the actual floating origin while a core joystick finger is down.
         // The vertical sign matches DmTouchOverlay: dy = -ly / 32767 * radius.
-        if (v[8] > 0 && !navigation) {
+        if (v[8] > 0 && !navigation && TouchOverlayGeometry.joyActive(v)) {
             float cx = mx(v, TouchOverlayGeometry.joyBaseX(v));
             float cy = my(v, TouchOverlayGeometry.joyBaseY(v));
             float r = v[8] * v[2] / v[4];
-            circle(canvas, cx, cy, r, 0x66141b22, 0x88d8c49a);
+            circle(canvas, cx, cy, r, 0x00141b22, 0x38d8c49a);
             float kx = mx(v, TouchOverlayGeometry.joyKnobX(v, state[1]));
             float ky = my(v, TouchOverlayGeometry.joyKnobY(v, state[2]));
-            circle(canvas, kx, ky, r * .32f, 0x99d8c49a, 0xccf1e8d8);
-            text(canvas, "MOVE", cx, cy + r + label.getTextSize() * 1.2f);
+            circle(canvas, kx, ky, r * .32f, 0x30d8c49a, 0x60f1e8d8);
         }
 
         // Main attack and the four skill slots are the real target centers. A bound skill uses the
@@ -143,6 +142,8 @@ final class D2RTouchOverlay extends View {
         // empty slots draw a cross and unknown/missing assets remain an explicit "?" rather than a fake icon.
         for (int i = 0; i < 12; i++) {
             if ((mask & (1 << i)) == 0) continue;
+            // As on iOS, belt and menu artwork belongs to the native HUD.
+            if (i >= 6 && i <= 10) continue;
             float cx = mx(v, v[24 + i * 3]);
             float cy = my(v, v[25 + i * 3]);
             float r = v[26 + i * 3] * v[2] / v[4];
@@ -176,7 +177,6 @@ final class D2RTouchOverlay extends View {
         // Difficulty target: host-reported player count; the eight choices are the core's pick cells.
         if (!navigation && v[14] > 0) {
             float cx = mx(v, v[12]), cy = my(v, v[13]), r = v[14] * v[2] / v[4];
-            circle(canvas, cx, cy, r, 0x88101820, 0xccd8c49a);
             text(canvas, players > 0 ? "P" + players : "P?", cx, cy + label.getTextSize() * .36f);
             if ((int)v[16] != 0) {
                 for (int i = 0; i < 8; i++) {
