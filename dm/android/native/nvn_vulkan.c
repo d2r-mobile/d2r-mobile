@@ -34,7 +34,7 @@ typedef struct { VkBuffer buffer; VkDeviceMemory memory; void *mapped; uint64_t 
 typedef struct cached_buffer { vk_buffer buffer; struct cached_buffer *next; } cached_buffer;
 static cached_buffer *buffer_cache;
 static pthread_mutex_t buffer_cache_lock = PTHREAD_MUTEX_INITIALIZER;
-static uint64_t buffer_cache_bytes, buffer_allocations, buffer_reuses, snapshot_bytes, active_buffer_bytes, buffer_activation;
+static uint64_t buffer_cache_bytes, buffer_cache_large_bytes, buffer_allocations, buffer_reuses, snapshot_bytes, active_buffer_bytes, buffer_activation;
 // 只读探针：新建一个缓冲（vkCreateBuffer + 分配显存 + 绑定 + 映射）累计花掉的墙钟与线程 CPU。
 // 用途是**先证实**"重场面下每帧上百次新建"到底吃掉多少帧时间，再决定怎么优化；只多取两次时钟，不改变行为。
 // Read-only probe: wall clock and thread CPU accumulated inside creating a buffer (vkCreateBuffer + allocate +
@@ -503,7 +503,7 @@ static vk_buffer buffer_create(uint64_t size) {
     uint64_t activation=++buffer_activation;if(!activation)die("Vulkan buffer activation overflow");
     while (*link && (*link)->buffer.capacity != capacity) link = &(*link)->next;
     if (*link) { cached_buffer *entry = *link; *link = entry->next; vk_buffer b = entry->buffer;
-        buffer_cache_bytes -= capacity; buffer_reuses++; active_buffer_bytes += capacity;
+        buffer_cache_bytes -= capacity; if(capacity>(8u<<20))buffer_cache_large_bytes-=capacity; buffer_reuses++; active_buffer_bytes += capacity;
         atomic_store(&b.owner->references,1);b.owner->activation=activation;pthread_mutex_unlock(&buffer_cache_lock); free(entry); b.size = size; return b; }
     buffer_allocations++; active_buffer_bytes += capacity; pthread_mutex_unlock(&buffer_cache_lock);
     vk_buffer b = {.size = size, .capacity = capacity};b.owner=calloc(1,sizeof *b.owner);if(!b.owner)die("Vulkan buffer ownership allocation");atomic_init(&b.owner->references,1);b.owner->activation=activation;
@@ -532,12 +532,13 @@ static void buffer_destroy(vk_buffer *b) {
     if (!b->buffer) return;
     if(!b->owner)die("Vulkan buffer missing ownership");unsigned references=atomic_fetch_sub(&b->owner->references,1);if(!references)die("Vulkan buffer ownership underflow");
     if(references>1){memset(b,0,sizeof *b);return;}
-    // GPU 完成后才归还快照；缓存总量限制在 64 MiB，不复用仍在执行的缓冲。
-    // Return snapshots only after GPU completion; cap the cache at 64 MiB and never reuse in-flight buffers.
+    // 保留 64 MiB 小缓冲及一个 32 MiB 缓冲，避免选角每帧重建 19 MiB 复制目标；仍只回收已完成的最后引用。
+    // Keep 64 MiB of small buffers and one 32 MiB buffer; character selection otherwise reallocates its 19 MiB copy target every frame. Retain only the final completed reference.
     pthread_mutex_lock(&buffer_cache_lock); active_buffer_bytes -= b->capacity;
-    if (b->capacity <= (8u << 20) && buffer_cache_bytes + b->capacity <= (64u << 20)) {
+    int large=b->capacity>(8u<<20);
+    if (large ? b->capacity==(32u<<20)&&!buffer_cache_large_bytes : buffer_cache_bytes-buffer_cache_large_bytes+b->capacity<=(64u<<20)) {
         cached_buffer *entry = malloc(sizeof *entry); if (!entry) die("Vulkan buffer cache allocation");
-        entry->buffer = *b; entry->next = buffer_cache; buffer_cache = entry; buffer_cache_bytes += b->capacity;
+        entry->buffer = *b; entry->next = buffer_cache; buffer_cache = entry; buffer_cache_bytes += b->capacity;if(large)buffer_cache_large_bytes=b->capacity;
         pthread_mutex_unlock(&buffer_cache_lock); memset(b, 0, sizeof *b); return;
     }
     pthread_mutex_unlock(&buffer_cache_lock);
