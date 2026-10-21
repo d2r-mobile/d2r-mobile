@@ -71,6 +71,21 @@ int dm_android_touch_set_game_context(dm_android_touch *touch, int navigation_mo
                                       uint32_t panel_bits, uint64_t scene_epoch,
                                       uint64_t world_epoch, uint64_t ui_identity,
                                       uint64_t object_generation);
+// Host-supplied belt snapshot, mirroring dm_belt_rows()/expanded in
+// dm/host/dm_actions.h. rows is the worn belt row count: 1-4 per the host
+// contract, 0 when the host cell reading is empty (the same value the core
+// initializes to and dm_actions.c's (cells+3)/4 formula can produce). open is
+// the expanded bit (0/1). Values are validated before any mutation; invalid
+// input returns 0 and changes nothing (no publish, no gesture cancel). Same
+// values are a no-op returning 1. A real change cancels owned pointers and
+// queued pulses with the core's cancel-all semantics, so a stale gesture
+// cannot be resolved under the new rows/open context. The snapshot itself
+// survives cancel/focus/pause/resize, like the core's host-fed belt fields.
+// The adapter default (0 rows, not open) keeps the pre-context single-row
+// behavior until a host reading is supplied. Belt requests (1 expand, 2
+// collapse, 0x100 | row<<4 | col) are still consumed once through
+// dm_android_touch_take_action.
+int dm_android_touch_set_belt_context(dm_android_touch *touch, int rows, int open);
 int dm_android_touch_pointer_hit(dm_android_touch *touch, int32_t pointer_id, int kind);
 int dm_android_touch_pointer_release(dm_android_touch *touch, int32_t pointer_id,
                                      int drop_kind);
