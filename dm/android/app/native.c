@@ -9,6 +9,7 @@
 #include "lifecycle.h"
 #include "present_policy.h"
 #include "input_source.h"
+#include "native_audio.h"
 #include "gamepad_events.h"
 #include "touch_hud.h"
 #include "touch_hud_overlay.h"
@@ -36,7 +37,7 @@
 #include <time.h>
 #include <unistd.h>
 #define LOG(...) __android_log_print(ANDROID_LOG_INFO,"D2R-Diagnostic",__VA_ARGS__)
-typedef struct{dm_vk vk;AInputQueue*input;dm_app_lifecycle*lifecycle;ANativeActivity*activity;ANativeWindow*window;dm_input_arbiter*arbiter;dm_view_policy view;dm_input_policy gate;ALooper*looper;int timer_fd;int resumed,focused,touch_allowed;float density,touch_width_pt,touch_height_pt,touch_density;uint64_t last_touch_buttons;int32_t last_touch_lx,last_touch_ly,last_touch_rx,last_touch_ry;int64_t last_touch_log_ns;dm_android_touch_observation hud_obs;dm_touch_hud_frame hud_frame;int hud_obs_valid;dm_gamepad_context gamepad_context;dm_npad_state gamepad_state;uint32_t gamepad_id,gamepad_generation;int gamepad_admitted;int64_t gamepad_after_ns;uint64_t controller_session;jobject controller_boundary;jclass controller_class;jmethodID controller_release;uint64_t text_session;jobject text_bridge;jclass text_class;jmethodID text_show,text_hide,text_release;int text_active;int text_back_owned;int text_show_accepted;uint32_t text_commit_events,text_delete_events,text_submit_events,text_cancel_events;uint64_t text_event_total;int text_last_units;dm_wsi wsi;dm_wsi_bridge wsi_bridge;dm_wsi_report report;dm_vk wsi_vk;dm_vk_swapchain wsi_chain;int wsi_chain_live;int frame_fd;int wsi_last_logged;char vertex[4096],fragment[4096];}app_state;
+typedef struct{dm_vk vk;AInputQueue*input;dm_app_lifecycle*lifecycle;ANativeActivity*activity;ANativeWindow*window;dm_input_arbiter*arbiter;dm_view_policy view;dm_input_policy gate;ALooper*looper;int timer_fd;int resumed,focused,touch_allowed;float density,touch_width_pt,touch_height_pt,touch_density;uint64_t last_touch_buttons;int32_t last_touch_lx,last_touch_ly,last_touch_rx,last_touch_ry;int64_t last_touch_log_ns;dm_android_touch_observation hud_obs;dm_touch_hud_frame hud_frame;int hud_obs_valid;dm_gamepad_context gamepad_context;dm_npad_state gamepad_state;uint32_t gamepad_id,gamepad_generation;int gamepad_admitted;int64_t gamepad_after_ns;uint64_t controller_session;jobject controller_boundary;jclass controller_class;jmethodID controller_release;uint64_t text_session;jobject text_bridge;jclass text_class;jmethodID text_show,text_hide,text_release;int text_active;int text_back_owned;int text_show_accepted;uint32_t text_commit_events,text_delete_events,text_submit_events,text_cancel_events;uint64_t text_event_total;int text_last_units;dm_wsi wsi;dm_wsi_bridge wsi_bridge;dm_wsi_report report;dm_vk wsi_vk;dm_vk_swapchain wsi_chain;int wsi_chain_live;int frame_fd;int wsi_last_logged;char vertex[4096],fragment[4096];native_audio*audio;}app_state;
 static app_state *g_controller_app;
 static uint64_t g_controller_next_session;
 static app_state *g_text_app;
@@ -515,6 +516,7 @@ static int input_timer(int fd,int events,void*data){
     int64_t now=monotonic_ns();if(now<0)return 1;
     int ticked=dm_input_arbiter_tick(s->arbiter,now);
     if(ticked)touch_consume(s,"timer");
+    (void)native_audio_tick(s->audio,s->activity?s->activity->env:NULL);
     if(dm_touch_hud_frame_timer_ready(&s->hud_frame,s->window!=NULL&&s->touch_allowed))
         draw_diagnostic(s->activity,s->window,0);
     return 1;
@@ -735,6 +737,11 @@ static int input_ready(int fd,int events,void*data){
             handled=1; // all physical gameplay input is gated during text
         }else if(type==AINPUT_EVENT_TYPE_KEY&&key==AKEYCODE_BACK){
             if(AKeyEvent_getAction(event)==AKEY_EVENT_ACTION_UP)ANativeActivity_finish(a);handled=1;
+        }else if(type==AINPUT_EVENT_TYPE_KEY&&!gamepad_source(source)){
+            int32_t act=AKeyEvent_getAction(event),rep=AKeyEvent_getRepeatCount(event);
+            int keyboard=((source&AINPUT_SOURCE_KEYBOARD)==AINPUT_SOURCE_KEYBOARD)&&
+                         ((source&AINPUT_SOURCE_GAMEPAD)!=AINPUT_SOURCE_GAMEPAD);
+            if(native_audio_key(s->audio,a->env,key,act,rep,keyboard))handled=1;
         }else if(type==AINPUT_EVENT_TYPE_MOTION&&
                  (source&AINPUT_SOURCE_TOUCHSCREEN)==AINPUT_SOURCE_TOUCHSCREEN){
             handle_motion(s,event);handled=1;
@@ -769,6 +776,7 @@ static void input_created(ANativeActivity*a,AInputQueue*queue){app_state*s=a->in
 }
 static void input_destroyed(ANativeActivity*a,AInputQueue*queue){app_state*s=a->instance;if(!s)return;
     if(s->input!=queue){LOG("stale input queue destroy ignored");return;}
+    (void)native_audio_pause(s->audio);   // 仅当前队列退休才停生产者，陈旧回调零副作用
     s->text_back_owned=0;
     if(s->text_bridge)text_end(s,"queue_lost");
     AInputQueue_detachLooper(queue);s->input=NULL;update_touch_state(s);
@@ -864,6 +872,7 @@ static void window_destroyed(ANativeActivity*a,ANativeWindow*window){
     if(s->wsi.enabled){
         // 身份校验先于停表等一切副作用。| Identity check before every side effect, the timer included.
         if(!dm_wsi_bridge_owns_window(&s->wsi_bridge,window)){LOG("wsi stale window destroy ignored");return;}
+        (void)native_audio_pause(s->audio);   // 仅当前 WSI 窗口丢失才暂停音频；陈旧回调零副作用
         stop_frame_timer(s);
         // 只有排空被证明成功后才让生命周期释放真实 ANativeWindow 引用。
         // The lifecycle releases the real ANativeWindow reference only after a proven drain.
@@ -880,7 +889,7 @@ static void window_destroyed(ANativeActivity*a,ANativeWindow*window){
         int64_t now=monotonic_ns();touch_cancel(s,"window_destroyed",now<0?0:now);
         return;
     }
-    if(s->window==window){s->window=NULL;update_touch_state(s);
+    if(s->window==window){(void)native_audio_pause(s->audio);s->window=NULL;update_touch_state(s);
         s->hud_obs_valid=0;dm_touch_hud_frame_suppress(&s->hud_frame);
         int64_t now=monotonic_ns();touch_cancel(s,"window_destroyed",now<0?0:now);}
     if(!dm_app_lifecycle_surface_destroyed(s->lifecycle,window))
@@ -892,6 +901,10 @@ static void text_end(app_state*s,const char*reason);
 static void destroy(ANativeActivity*a){app_state*s=a->instance;if(s){
     if(s->text_bridge)text_end(s,"destroy");
     stop_input_timer(s);stop_frame_timer(s);
+    if(s->audio&&native_audio_destroy(&s->audio,a->env)!=0){
+        LOG("audio session cleanup retained; retry required before freeing app state");
+        return;   // 保留 App/JNI/AAudio handle，绝不带着未证明的清理释放
+    }
     if(s->wsi.enabled){
         dm_wsi_report_event(&s->report,DM_WSI_EVENT_STOP);
         if(dm_wsi_stop(&s->wsi)!=DM_WSI_OK){
@@ -920,6 +933,7 @@ static void destroy(ANativeActivity*a){app_state*s=a->instance;if(s){
 }}
 static void low_memory(ANativeActivity*a){app_state*s=a->instance;if(s&&s->vk.device){dm_vk_destroy(&s->vk);LOG("low memory: GPU context released; redraw recreates diagnostic");}}
 static void pause_app(ANativeActivity*a){app_state*s=a->instance;if(!s||!s->lifecycle)return;
+    (void)native_audio_pause(s->audio);
     s->resumed=0;update_touch_state(s);
     if(s->text_bridge)text_end(s,"pause");
     if(s->arbiter&&!dm_input_arbiter_pause(s->arbiter,1))LOG("arbiter pause invalidation rejected");
@@ -931,6 +945,7 @@ static void pause_app(ANativeActivity*a){app_state*s=a->instance;if(!s||!s->life
 static void resume_app(ANativeActivity*a){app_state*s=a->instance;if(!s||!s->lifecycle)return;
     if(!dm_app_lifecycle_resume(s->lifecycle)){LOG("resume rejected: state=%s",dm_app_lifecycle_state_name(dm_app_lifecycle_state(s->lifecycle)));return;}
     s->resumed=1;
+    (void)native_audio_resume(s->audio);
     if(s->arbiter){dm_input_arbiter_pause(s->arbiter,0);dm_input_arbiter_resume(s->arbiter);}
     update_touch_state(s);
     if(s->wsi.enabled){
@@ -945,6 +960,7 @@ static void resume_app(ANativeActivity*a){app_state*s=a->instance;if(!s||!s->lif
     }}
 static void focus_changed(ANativeActivity*a,int focused){app_state*s=a->instance;if(!s)return;
     s->focused=focused?1:0;
+    native_audio_set_focus(s->audio,s->focused);
     if(!focused&&s->text_bridge)text_end(s,"focus_lost");
     if(s->arbiter&&!dm_input_arbiter_focus(s->arbiter,focused?1:0))LOG("arbiter focus invalidation rejected");
     if(!focused)gamepad_rearm(s);
@@ -1245,6 +1261,8 @@ __attribute__((visibility("default"))) void ANativeActivity_onCreate(ANativeActi
     s->arbiter=dm_input_arbiter_create(667,375,s->density);
     if(!s->arbiter){LOG("input arbiter create failed");ANativeActivity_finish(a);return;}
     s->touch_width_pt=667;s->touch_height_pt=375;s->touch_density=s->density;
+    if(native_audio_create(a->env,a->clazz,NULL,&s->audio)!=0)
+        LOG("audio diagnostic helper unavailable; keyboard P/S disabled");
     if(!controller_hotplug_start(s))LOG("controller hotplug listener not registered; no hotplug claim");
     LOG("app backend=%s state=%s touch=density %.2f",dm_app_lifecycle_backend_name(),
         dm_app_lifecycle_state_name(dm_app_lifecycle_state(s->lifecycle)),s->density);

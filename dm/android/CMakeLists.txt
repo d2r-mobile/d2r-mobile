@@ -616,9 +616,9 @@ if(ANDROID)
     target_compile_options(dm_android_probe PRIVATE -Wall -Wextra -Werror)
     target_link_libraries(dm_android_probe PRIVATE vulkan)
     if(DM_ANDROID_VULKAN)
-        add_library(dm_android_app SHARED app/native.c)
+        add_library(dm_android_app SHARED app/native.c app/native_audio.c)
         target_compile_options(dm_android_app PRIVATE -Wall -Wextra -Werror)
-        target_link_libraries(dm_android_app PRIVATE dm_android_app_lifecycle dm_android_app_scene dm_android_app_wsi dm_android_wsi_frame dm_android_touch_bridge dm_android_input_source dm_android_gamepad_events dm_android_view_policy dm_android_input_policy dm_android_touch dm_android_runtime dm_android_artifact dm_android_vk dm_android_touch_hud android log)
+        target_link_libraries(dm_android_app PRIVATE dm_android_app_lifecycle dm_android_app_scene dm_android_app_wsi dm_android_wsi_frame dm_android_touch_bridge dm_android_input_source dm_android_gamepad_events dm_android_view_policy dm_android_input_policy dm_android_touch dm_android_runtime dm_android_artifact dm_android_vk dm_android_touch_hud dm_android_app_audio_session android log)
         target_link_options(dm_android_app PRIVATE "-Wl,-z,max-page-size=16384")
         add_custom_command(TARGET dm_android_app POST_BUILD
             COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/tests/bridge_shared.sh"
@@ -776,5 +776,20 @@ if(NOT ANDROID)
                 $<TARGET_FILE:dm_audio_session_host>
                 ${Java_JAVAC_EXECUTABLE} ${Java_JAVA_EXECUTABLE})
         set_tests_properties(audio_session PROPERTIES TIMEOUT 180)
+
+        # #200 NativeActivity 音频钩子：真实 native_audio 驱动已验收 session 栈；fixture 仅替换 AAudio API 表。
+        # #200 NativeActivity audio hooks over the accepted session stack; the fixture replaces only the AAudio API.
+        add_library(dm_native_audio_host SHARED
+            tests/native_audio_test.c app/native_audio.c app/audio_session.c app/audio_focus_jni.c
+            app/audio_output.c app/audio_focus.c audio/dm_aaudio.c)
+        target_include_directories(dm_native_audio_host PRIVATE app audio ${JNI_INCLUDE_DIRS})
+        target_link_libraries(dm_native_audio_host PRIVATE pthread m)
+        target_compile_options(dm_native_audio_host PRIVATE -Wall -Wextra -Werror -fno-sanitize=all)
+        target_link_options(dm_native_audio_host PRIVATE -fno-sanitize=all)
+        add_test(NAME native_audio
+            COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/native_audio_host.sh
+                $<TARGET_FILE:dm_native_audio_host>
+                ${Java_JAVAC_EXECUTABLE} ${Java_JAVA_EXECUTABLE})
+        set_tests_properties(native_audio PROPERTIES TIMEOUT 180)
     endif()
 endif()
