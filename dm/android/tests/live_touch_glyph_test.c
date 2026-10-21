@@ -63,12 +63,46 @@ int main(void) {
     CHECK(dm_live_touch_skill_glyphs(NULL, NULL, 0, g));
     CHECK(g[1].status == DM_LIVE_GLYPH_GLYPH && g[1].atlas == 0 && g[1].normal_frame == 1);
 
+    // Transient area/readiness gap: the bridge clears the snapshot while the
+    // same character is still in-game. Keep the last complete icon set.
+    dm_live_touch_set_context(touch, 0, (1u << DM_TC_COUNT) - 1, 2, 2, 1, 0);
+    dm_live_touch_glyph_publish(touch, NULL, 1000000000);
+    CHECK(dm_live_touch_skill_glyphs(NULL, NULL, 0, g));
+    CHECK(g[0].status == DM_LIVE_GLYPH_GLYPH && g[0].normal_frame == 2);
+    CHECK(g[1].status == DM_LIVE_GLYPH_GLYPH && g[1].normal_frame == 1);
+
+    // Character select/navigation is a real identity boundary, not a gap.
+    dm_live_touch_set_context(touch, 1, 0, 3, 3, 2, 0);
+    dm_live_touch_glyph_publish(touch, NULL, 1000000000);
+    CHECK(dm_live_touch_skill_glyphs(NULL, NULL, 0, g));
+    CHECK(g[0].status == DM_LIVE_GLYPH_UNKNOWN && g[1].status == DM_LIVE_GLYPH_UNKNOWN);
+
+    // A complete snapshot after the gap restores the cached binding, then a
+    // genuine skill change and an empty slot must replace it immediately.
+    dm_live_touch_set_context(touch, 0, (1u << DM_TC_COUNT) - 1, 4, 4, 1, 0);
+    dm_live_touch_glyph_publish(touch, NULL, 1000000000);
+    CHECK(g[0].status == DM_LIVE_GLYPH_UNKNOWN);
+    dm_live_touch_glyph_publish(touch, &snap, 1000000000);
+    CHECK(dm_live_touch_skill_glyphs(NULL, NULL, 0, g));
+    CHECK(g[0].status == DM_LIVE_GLYPH_GLYPH && g[0].normal_frame == 2);
+    snap.raw_skill_id[0] = 102;
+    dm_live_touch_glyph_publish(touch, &snap, 1000000000);
+    CHECK(dm_live_touch_skill_glyphs(NULL, NULL, 0, g));
+    CHECK(g[0].status == DM_LIVE_GLYPH_GLYPH && g[0].atlas == 1 && g[0].normal_frame == 4);
+    snap.raw_skill_id[0] = UINT32_MAX;
+    dm_live_touch_glyph_publish(touch, &snap, 1000000000);
+    CHECK(dm_live_touch_skill_glyphs(NULL, NULL, 0, g));
+    CHECK(g[0].status == DM_LIVE_GLYPH_EMPTY);
+
+    snap.raw_skill_id[1] = 357;
     dm_ta_frame frame;
     CHECK(dm_ta_frame_at(0, 2, &frame) && frame.x == 136 && frame.y == 0 &&
           frame.width == 65 && frame.height == 65);
     CHECK(!dm_ta_frame_at(0, 99, &frame));
     CHECK(!dm_ta_frame_at(9, 0, &frame));
 
+    snap.raw_skill_id[0] = 100;
+    dm_live_touch_glyph_publish(touch, &snap, 1000000000);
     uint64_t before = dm_live_touch_glyph_signature(NULL, NULL, 0);
     snap.raw_skill_id[0] = UINT32_MAX;
     dm_live_touch_glyph_publish(touch, &snap, 1000000000);
