@@ -101,6 +101,32 @@ else
     fail "accepted host focus controls failed"
 fi
 
+# 已验收 IME 实际类逻辑回归与两变异；失败必须传播，不能只编译签名。
+# Accepted IME actual-class logic checks and both mutations; failures must propagate, not just signatures.
+ime_dir=$root/dm/android/tests/ime-stubs
+java_bin=${DM_JAVA:-}
+if [[ -z "$java_bin" ]]; then
+    java_bin=$(command -v java 2>/dev/null || true)
+fi
+[[ -n "$java_bin" && -x "$java_bin" ]] || fail "required Java tests need java (JRE) on PATH or DM_JAVA"
+
+ime_source=${DM_IME_SOURCE:-$app_java/org/d2rmobile/android/diagnostic/DmInputConnection.java}
+if ANDROID_JAR="$jar" JAVAC="$javac" JAVA="$java_bin" IME_SOURCE="$ime_source" \
+    bash "$ime_dir/run.sh" >"$logs/ime-test.log" 2>&1; then
+    log_line "PASS IME actual-class controls: $(grep -o 'PASS ime boundary: [0-9]* checks' "$logs/ime-test.log" | tail -1)"
+else
+    cat "$logs/ime-test.log" >> "$log" 2>/dev/null
+    fail "accepted IME actual-class controls failed"
+fi
+
+if python3 "$ime_dir/mutation.py" --root "$root" --jar "$jar" --javac "$javac" --java "$java_bin" \
+    >"$logs/ime-mutation.log" 2>&1; then
+    log_line "PASS IME mutation controls: $(grep -c 'rejected as intended' "$logs/ime-mutation.log") mutations rejected"
+else
+    cat "$logs/ime-mutation.log" >> "$log" 2>/dev/null
+    fail "accepted IME mutation controls failed"
+fi
+
 # 私有负控制：证明该门禁真的有牙齿，不提交故意损坏的源码。
 # Private negative controls: prove the gate has teeth without committing deliberate broken code.
 negative_failed=0
@@ -131,6 +157,40 @@ else
 fi
 rm -rf "$broken"
 
+# 私有门禁控制：故意破坏 composing 删除的副本必须让本必跑命令的 IME 执行失败，而不只是单独 fixture。
+# Private gate control: a copy with broken composing deletion must fail inside this required command.
+bad_ime=$(mktemp -d "$work/tmp/ime-broken.XXXXXX")
+cp -R "$app_java/." "$bad_ime/src/"
+python3 - "$bad_ime/src/org/d2rmobile/android/diagnostic/DmInputConnection.java" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+anchor = "        int before = beforeLength;\n        if (before > 0) {"
+if text.count(anchor) != 1:
+    raise SystemExit("fail closed: composing anchor missing or ambiguous")
+path.write_text(text.replace(anchor, anchor + "\n            composing.setLength(0);", 1), encoding="utf-8")
+PY
+prepare_rc=$?
+if [[ $prepare_rc -ne 0 ]]; then
+    log_line "FAIL negative control: IME gate copy could not be prepared"
+    negative_failed=1
+elif "$javac" -encoding UTF-8 -cp "$jar" -d "$bad_ime/classes" \
+        "$bad_ime/src/org/d2rmobile/android/diagnostic/DmInputConnection.java" \
+        "$ime_dir/DmInputConnectionTest.java" >"$bad_ime/build.log" 2>&1 \
+    && "$java_bin" -cp "$jar:$bad_ime/classes" org.d2rmobile.android.diagnostic.DmInputConnectionTest \
+        >"$bad_ime/test.log" 2>&1; then
+    log_line "FAIL negative control: broken composing implementation passed the IME tests"
+    negative_failed=1
+elif grep -q "FAIL" "$bad_ime/test.log"; then
+    log_line "PASS negative control: required IME path fails on a broken composing implementation"
+else
+    log_line "FAIL negative control: broken composing copy failed without an IME assertion"
+    negative_failed=1
+fi
+rm -rf "$bad_ime"
+
 # 发布前清洗本机/工作区路径。| Scrub checkout/work paths before publishing evidence.
 python3 "$root/ci/scripts/sanitize_log.py" "$log" "$root" "$work" >/dev/null 2>&1 || {
     log_line "FAIL: evidence sanitisation failed"
@@ -138,4 +198,4 @@ python3 "$root/ci/scripts/sanitize_log.py" "$log" "$root" "$work" >/dev/null 2>&
 }
 
 [[ "$negative_failed" == 0 ]] || fail "one or more negative controls did not fail as intended"
-log_line "PASS required Java compile and focus host controls"
+log_line "PASS required Java compile, focus and IME controls"
