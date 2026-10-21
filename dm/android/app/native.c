@@ -8,7 +8,7 @@
 #include "input_policy.h"
 #include "lifecycle.h"
 #include "present_policy.h"
-#include "touch_bridge.h"
+#include "input_source.h"
 #include "touch_hud.h"
 #include "touch_hud_overlay.h"
 #include "view_policy.h"
@@ -35,7 +35,7 @@
 #include <time.h>
 #include <unistd.h>
 #define LOG(...) __android_log_print(ANDROID_LOG_INFO,"D2R-Diagnostic",__VA_ARGS__)
-typedef struct{dm_vk vk;AInputQueue*input;dm_app_lifecycle*lifecycle;ANativeActivity*activity;ANativeWindow*window;dm_touch_bridge*touch;dm_view_policy view;dm_input_policy gate;ALooper*looper;int timer_fd;int resumed,focused,touch_allowed;float density,touch_width_pt,touch_height_pt;uint64_t last_touch_buttons;int32_t last_touch_lx,last_touch_ly,last_touch_rx,last_touch_ry;int64_t last_touch_log_ns;dm_android_touch_observation hud_obs;dm_touch_hud_frame hud_frame;int hud_obs_valid;dm_wsi wsi;dm_wsi_bridge wsi_bridge;dm_wsi_report report;dm_vk wsi_vk;dm_vk_swapchain wsi_chain;int wsi_chain_live;int frame_fd;int wsi_last_logged;char vertex[4096],fragment[4096];}app_state;
+typedef struct{dm_vk vk;AInputQueue*input;dm_app_lifecycle*lifecycle;ANativeActivity*activity;ANativeWindow*window;dm_input_arbiter*arbiter;dm_view_policy view;dm_input_policy gate;ALooper*looper;int timer_fd;int resumed,focused,touch_allowed;float density,touch_width_pt,touch_height_pt,touch_density;uint64_t last_touch_buttons;int32_t last_touch_lx,last_touch_ly,last_touch_rx,last_touch_ry;int64_t last_touch_log_ns;dm_android_touch_observation hud_obs;dm_touch_hud_frame hud_frame;int hud_obs_valid;dm_wsi wsi;dm_wsi_bridge wsi_bridge;dm_wsi_report report;dm_vk wsi_vk;dm_vk_swapchain wsi_chain;int wsi_chain_live;int frame_fd;int wsi_last_logged;char vertex[4096],fragment[4096];}app_state;
 static int64_t monotonic_ns(void){
     struct timespec ts;
     if(clock_gettime(CLOCK_MONOTONIC,&ts))return -1;
@@ -226,9 +226,9 @@ static float activity_density(ANativeActivity*a){
 /* Read-only diagnostic HUD observation. Motion events only mark the coalesced
    scheduler dirty; the existing 8 ms looper timer performs the actual draw. */
 static void touch_refresh_hud(app_state*s){
-    if(!s||!s->touch||s->density<=0){if(s){s->hud_obs_valid=0;dm_touch_hud_frame_suppress(&s->hud_frame);}return;}
+    if(!s||!s->arbiter||s->density<=0){if(s){s->hud_obs_valid=0;dm_touch_hud_frame_suppress(&s->hud_frame);}return;}
     dm_android_touch_observation o;
-    if(!dm_touch_bridge_observe(s->touch,s->density,&o)){
+    if(!dm_input_arbiter_observe(s->arbiter,&o)){
         s->hud_obs_valid=0;dm_touch_hud_frame_suppress(&s->hud_frame);return;
     }
     if(!s->hud_obs_valid||memcmp(&s->hud_obs,&o,sizeof o)!=0){
@@ -238,7 +238,7 @@ static void touch_refresh_hud(app_state*s){
 /* Production CPU overlay seam. The platform-neutral module validates, clips
    and writes only visible pixels; this wrapper only adapts the Android buffer. */
 static int draw_hud_overlay(app_state*s,ANativeWindow_Buffer*buffer){
-    if(!s||!s->touch||!buffer||!buffer->bits||!buffer->width||!buffer->height)return 0;
+    if(!s||!s->arbiter||!buffer||!buffer->bits||!buffer->width||!buffer->height)return 0;
     if(buffer->format!=WINDOW_FORMAT_RGBA_8888||buffer->stride<(int32_t)buffer->width)return 0;
     if(!s->hud_obs_valid)return 0;
     if((uint32_t)buffer->width!=s->view.view_width_px||(uint32_t)buffer->height!=s->view.view_height_px)return 0;
@@ -252,9 +252,10 @@ static int draw_hud_overlay(app_state*s,ANativeWindow_Buffer*buffer){
                                      (uint32_t)buffer->height,(uint32_t)buffer->stride,(size_t)cap64);
 }
 static void touch_consume(app_state*s,const char*reason){
-    if(!s||!s->touch)return;
+    if(!s||!s->arbiter)return;
     touch_refresh_hud(s);
-    dm_npad_state state=dm_touch_bridge_read(s->touch);
+    dm_npad_state state;
+    if(!dm_input_arbiter_read(s->arbiter,&state))return;
     if(state.attributes!=1)return;
     int64_t now=monotonic_ns();
     int changed=state.buttons!=s->last_touch_buttons||
@@ -262,7 +263,8 @@ static void touch_consume(app_state*s,const char*reason){
         state.rx!=s->last_touch_rx||state.ry!=s->last_touch_ry;
     if(changed||s->last_touch_log_ns==0||
        (now>=0&&now-s->last_touch_log_ns>=250000000LL)){
-        const dm_touch_diag*diag=dm_touch_bridge_diag(s->touch);
+        dm_touch_diag diag_copy;
+        const dm_touch_diag*diag=dm_input_arbiter_diag(s->arbiter,&diag_copy)?&diag_copy:NULL;
         const char*first=diag?dm_touch_invalid_reason_name(diag->first_invalid_reason):"none";
         const char*last=diag?dm_touch_invalid_reason_name(diag->last_invalid_reason):"none";
         const uint64_t*rc=diag?diag->invalid_reason:NULL;
@@ -291,23 +293,24 @@ static void touch_consume(app_state*s,const char*reason){
     }
 }
 static void touch_cancel(app_state*s,const char*reason,int64_t now){
-    if(!s||!s->touch)return;
-    if(!dm_touch_bridge_cancel_all(s->touch,now))
+    if(!s||!s->arbiter)return;
+    (void)now;
+    if(!dm_input_arbiter_queue_changed(s->arbiter))
         LOG("touch cancel rejected: %s",reason);
     touch_consume(s,reason);
 }
 static void touch_resize_window(app_state*s,ANativeWindow*window){
-    if(!s||!s->touch||!window)return;
+    if(!s||!s->arbiter||!window)return;
     int width=ANativeWindow_getWidth(window),height=ANativeWindow_getHeight(window);
     if(width<=0||height<=0||s->density<=0)return;
     if(!dm_view_policy_set_view(&s->view,(uint32_t)width,(uint32_t)height,s->density))return;
     float width_pt=s->view.view_width_pt,height_pt=s->view.view_height_pt;
-    if(width_pt==s->touch_width_pt&&height_pt==s->touch_height_pt)return;
+    if(width_pt==s->touch_width_pt&&height_pt==s->touch_height_pt&&s->density==s->touch_density)return;
     int64_t now=monotonic_ns();if(now<0)now=0;
-    if(!dm_touch_bridge_resize(s->touch,width_pt,height_pt,now)){
+    if(!dm_input_arbiter_set_geometry(s->arbiter,width_pt,height_pt,s->density,now)){
         LOG("touch resize rejected: %.1fx%.1f pt",width_pt,height_pt);return;
     }
-    s->touch_width_pt=width_pt;s->touch_height_pt=height_pt;
+    s->touch_width_pt=width_pt;s->touch_height_pt=height_pt;s->touch_density=s->density;
     touch_consume(s,"resize");
 }
 // 诊断读回目标尺寸；窗口缓冲尺寸与它无关（居中裁剪由 app/present_policy.c 决定）。
@@ -428,14 +431,14 @@ static int input_timer(int fd,int events,void*data){
     }
     if(!s->touch_allowed)return 1;
     int64_t now=monotonic_ns();if(now<0)return 1;
-    int ticked=dm_touch_bridge_tick(s->touch,now);
+    int ticked=dm_input_arbiter_tick(s->arbiter,now);
     if(ticked)touch_consume(s,"timer");
     if(dm_touch_hud_frame_timer_ready(&s->hud_frame,s->window!=NULL&&s->touch_allowed))
         draw_diagnostic(s->activity,s->window,0);
     return 1;
 }
 static int start_input_timer(app_state*s){
-    if(!s||!s->touch)return 0;
+    if(!s||!s->arbiter)return 0;
     if(s->timer_fd>=0)return 1;
     int fd=timerfd_create(CLOCK_MONOTONIC,TFD_NONBLOCK|TFD_CLOEXEC);
     if(fd<0){LOG("timerfd_create failed: %d",errno);return 0;}
@@ -516,7 +519,7 @@ static void update_touch_state(app_state*s){
     dm_input_policy_set_focused(&s->gate,s->focused);
     dm_input_policy_set_queue(&s->gate,s->input!=NULL);
     dm_input_policy_set_window(&s->gate,s->window!=NULL);
-    dm_input_policy_set_touch(&s->gate,s->touch!=NULL);
+    dm_input_policy_set_touch(&s->gate,s->arbiter!=NULL);
     if(!dm_input_policy_ready(&s->gate)){
         stop_input_timer(s);dm_input_policy_set_timer(&s->gate,0);s->touch_allowed=0;return;
     }
@@ -542,7 +545,7 @@ static int motion_action(int32_t action){
     }
 }
 static void handle_motion(app_state*s,AInputEvent*event){
-    if(!s||!s->touch)return;
+    if(!s||!s->arbiter)return;
     if(!s->touch_allowed){LOG("touch event ignored while inactive");return;}
     int32_t packed=AMotionEvent_getAction(event);
     int action=motion_action(packed);
@@ -563,7 +566,7 @@ static void handle_motion(app_state*s,AInputEvent*event){
         translated.points[i].x_px=AMotionEvent_getX(event,(size_t)i);
         translated.points[i].y_px=AMotionEvent_getY(event,(size_t)i);
     }
-    if(!dm_touch_bridge_event(s->touch,&translated))
+    if(!dm_input_arbiter_touch(s->arbiter,&translated))
         LOG("touch event rejected action=%d count=%u",action,count);
     touch_consume(s,"event");
 }
@@ -583,17 +586,17 @@ static int input_ready(int fd,int events,void*data){
 static void input_created(ANativeActivity*a,AInputQueue*queue){app_state*s=a->instance;if(!s)return;
     if(s->input==queue){update_touch_state(s);return;}
     if(s->input){
-        AInputQueue_detachLooper(s->input);s->input=NULL;
-        update_touch_state(s);
-        if(s->touch){dm_npad_state neutral;dm_touch_bridge_destroy(s->touch,&neutral);s->touch=NULL;
-            LOG("touch bridge replaced on queue change buttons=%llu",(unsigned long long)neutral.buttons);}
+        AInputQueue_detachLooper(s->input);s->input=NULL;update_touch_state(s);
+        if(s->arbiter&&!dm_input_arbiter_queue_changed(s->arbiter))
+            LOG("arbiter queue-change invalidation rejected");
+        LOG("input queue replaced; arbiter retained");
     }
-    if(!s->touch){
+    if(!s->arbiter){
         s->density=activity_density(a);
-        s->touch=dm_touch_bridge_create(667,375,s->density);
-        if(!s->touch){LOG("touch bridge recreate failed");return;}
+        s->arbiter=dm_input_arbiter_create(667,375,s->density);
+        if(!s->arbiter){LOG("input arbiter create failed");return;}
         LOG("touch game provider unavailable: production scene/hit/action disabled");
-        s->touch_width_pt=667;s->touch_height_pt=375;
+        s->touch_width_pt=667;s->touch_height_pt=375;s->touch_density=s->density;
         if(s->window)touch_resize_window(s,s->window);
     }
     ALooper*looper=ALooper_forThread();if(!looper)looper=ALooper_prepare(0);
@@ -605,8 +608,9 @@ static void input_created(ANativeActivity*a,AInputQueue*queue){app_state*s=a->in
 static void input_destroyed(ANativeActivity*a,AInputQueue*queue){app_state*s=a->instance;if(!s)return;
     if(s->input!=queue){LOG("stale input queue destroy ignored");return;}
     AInputQueue_detachLooper(queue);s->input=NULL;update_touch_state(s);
-    if(s->touch){dm_npad_state neutral;dm_touch_bridge_destroy(s->touch,&neutral);s->touch=NULL;
-        LOG("touch bridge destroyed on input queue loss buttons=%llu",(unsigned long long)neutral.buttons);}
+    if(s->arbiter&&!dm_input_arbiter_queue_changed(s->arbiter))
+        LOG("arbiter queue-loss invalidation rejected");
+    touch_consume(s,"queue_lost");
 }
 static void window_ready(ANativeActivity*a,ANativeWindow*window){
     app_state*s=a->instance;if(!s||!s->lifecycle)return;
@@ -729,8 +733,8 @@ static void destroy(ANativeActivity*a){app_state*s=a->instance;if(s){
         wsi_report_snapshot(s,"destroy");
     }
     if(s->input){AInputQueue_detachLooper(s->input);s->input=NULL;}
-    if(s->touch){dm_npad_state neutral;dm_touch_bridge_destroy(s->touch,&neutral);s->touch=NULL;
-        LOG("touch bridge destroyed buttons=%llu",(unsigned long long)neutral.buttons);}
+    if(s->arbiter){dm_npad_state neutral;dm_input_arbiter_destroy(s->arbiter,&neutral);s->arbiter=NULL;
+        LOG("input arbiter destroyed buttons=%llu",(unsigned long long)neutral.buttons);}
     if(s->lifecycle){
         dm_app_lifecycle_stop(s->lifecycle);
         if(!dm_app_lifecycle_destroy(s->lifecycle)){
@@ -745,13 +749,16 @@ static void destroy(ANativeActivity*a){app_state*s=a->instance;if(s){
 static void low_memory(ANativeActivity*a){app_state*s=a->instance;if(s&&s->vk.device){dm_vk_destroy(&s->vk);LOG("low memory: GPU context released; redraw recreates diagnostic");}}
 static void pause_app(ANativeActivity*a){app_state*s=a->instance;if(!s||!s->lifecycle)return;
     s->resumed=0;update_touch_state(s);
+    if(s->arbiter&&!dm_input_arbiter_pause(s->arbiter,1))LOG("arbiter pause invalidation rejected");
     if(s->wsi.enabled){dm_wsi_pause(&s->wsi);stop_frame_timer(s);
         dm_wsi_report_event(&s->report,DM_WSI_EVENT_PAUSE);wsi_report_snapshot(s,"pause");}
-    int64_t now=monotonic_ns();touch_cancel(s,"pause",now<0?0:now);
+    touch_consume(s,"pause");
     if(!dm_app_lifecycle_pause(s->lifecycle))LOG("pause rejected: state=%s",dm_app_lifecycle_state_name(dm_app_lifecycle_state(s->lifecycle)));}
 static void resume_app(ANativeActivity*a){app_state*s=a->instance;if(!s||!s->lifecycle)return;
     if(!dm_app_lifecycle_resume(s->lifecycle)){LOG("resume rejected: state=%s",dm_app_lifecycle_state_name(dm_app_lifecycle_state(s->lifecycle)));return;}
-    s->resumed=1;update_touch_state(s);
+    s->resumed=1;
+    if(s->arbiter){dm_input_arbiter_pause(s->arbiter,0);dm_input_arbiter_resume(s->arbiter);}
+    update_touch_state(s);
     if(s->wsi.enabled){
         dm_wsi_resume(&s->wsi);
         dm_wsi_report_event(&s->report,DM_WSI_EVENT_RESUME);
@@ -763,16 +770,24 @@ static void resume_app(ANativeActivity*a){app_state*s=a->instance;if(!s||!s->lif
         else wsi_report_progress(s);
     }}
 static void focus_changed(ANativeActivity*a,int focused){app_state*s=a->instance;if(!s)return;
-    s->focused=focused?1:0;update_touch_state(s);
-    if(!focused){int64_t now=monotonic_ns();touch_cancel(s,"focus_lost",now<0?0:now);}
+    s->focused=focused?1:0;
+    if(s->arbiter&&!dm_input_arbiter_focus(s->arbiter,focused?1:0))LOG("arbiter focus invalidation rejected");
+    update_touch_state(s);
+    if(!focused)touch_consume(s,"focus_lost");
 }
 static void configuration_changed(ANativeActivity*a){app_state*s=a->instance;if(!s)return;
     float density=activity_density(a);
     if(density==s->density)return;
     s->density=density;
-    if(s->touch)dm_touch_bridge_set_density(s->touch,density);
-    s->touch_width_pt=0;s->touch_height_pt=0;
     if(s->window)touch_resize_window(s,s->window);
+    else if(s->arbiter){
+        float width=s->touch_width_pt>0?s->touch_width_pt:667;
+        float height=s->touch_height_pt>0?s->touch_height_pt:375;
+        int64_t now=monotonic_ns();if(now<0)now=0;
+        if(!dm_input_arbiter_set_geometry(s->arbiter,width,height,density,now))
+            LOG("arbiter density update rejected");
+        else { s->touch_width_pt=width; s->touch_height_pt=height; s->touch_density=density; }
+    }
     update_touch_state(s);
 }
 __attribute__((visibility("default"))) void ANativeActivity_onCreate(ANativeActivity*a,void*saved,size_t saved_size){
@@ -818,9 +833,9 @@ __attribute__((visibility("default"))) void ANativeActivity_onCreate(ANativeActi
         ANativeActivity_finish(a);return;
     }
     s->density=activity_density(a);
-    s->touch=dm_touch_bridge_create(667,375,s->density);
-    if(!s->touch){LOG("touch bridge create failed");ANativeActivity_finish(a);return;}
-    s->touch_width_pt=667;s->touch_height_pt=375;
+    s->arbiter=dm_input_arbiter_create(667,375,s->density);
+    if(!s->arbiter){LOG("input arbiter create failed");ANativeActivity_finish(a);return;}
+    s->touch_width_pt=667;s->touch_height_pt=375;s->touch_density=s->density;
     LOG("app backend=%s state=%s touch=density %.2f",dm_app_lifecycle_backend_name(),
         dm_app_lifecycle_state_name(dm_app_lifecycle_state(s->lifecycle)),s->density);
 }
