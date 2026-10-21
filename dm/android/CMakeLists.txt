@@ -653,3 +653,42 @@ if(NOT ANDROID)
         set_tests_properties(platform_audio_focus_java PROPERTIES TIMEOUT 120)
     endif()
 endif()
+
+# #184 焦点策略实例化 JNI 适配：Android 仅编译 C owner；host 需真实 JDK/JNI 才构建并运行 JVM 测试。
+# #184 instance-owned JNI adapter: Android compiles the C owner; host builds and runs the JVM test only with a real
+# JDK/JNI, so ordinary host builds without Java stay unaffected.
+if(ANDROID)
+    add_library(dm_android_app_audio_focus_jni STATIC app/audio_focus_jni.c)
+    target_include_directories(dm_android_app_audio_focus_jni PUBLIC app)
+    target_compile_options(dm_android_app_audio_focus_jni PRIVATE -Wall -Wextra -Werror)
+endif()
+
+if(NOT ANDROID)
+    find_package(JNI QUIET)
+    find_package(Java COMPONENTS Development QUIET)
+    if(NOT JNI_FOUND AND Java_FOUND)
+        # CMake 的 FindJNI 在部分 macOS JDK 上失败；从 javac 路径推导真实头文件目录。
+        # FindJNI fails on some macOS JDKs; derive the header dirs from the javac path.
+        get_filename_component(_afj_bin "${Java_JAVAC_EXECUTABLE}" DIRECTORY)
+        get_filename_component(_afj_home "${_afj_bin}" DIRECTORY)
+        if(EXISTS "${_afj_home}/include/jni.h")
+            file(GLOB _afj_md "${_afj_home}/include/*")
+            set(JNI_INCLUDE_DIRS "${_afj_home}/include" ${_afj_md})
+            set(JNI_FOUND TRUE)
+        endif()
+    endif()
+    if(JNI_FOUND AND Java_FOUND)
+        add_library(dm_audio_focus_jni_host SHARED tests/audio_focus_jni_test.c app/audio_focus_jni.c)
+        target_include_directories(dm_audio_focus_jni_host PRIVATE app ${JNI_INCLUDE_DIRS})
+        target_link_libraries(dm_audio_focus_jni_host PRIVATE pthread)
+        # JVM 加载的插件不能依赖 ASAN/UBSAN 运行时；CI host 的全局 sanitizer 标志在此目标上关闭。
+        # A JVM-loaded plugin cannot depend on the ASAN/UBSAN runtime; disable the global sanitizer flags here.
+        target_compile_options(dm_audio_focus_jni_host PRIVATE -Wall -Wextra -Werror -fno-sanitize=all)
+        target_link_options(dm_audio_focus_jni_host PRIVATE -fno-sanitize=all)
+        add_test(NAME audio_focus_jni
+            COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/audio_focus_jni_host.sh
+                $<TARGET_FILE:dm_audio_focus_jni_host>
+                ${Java_JAVAC_EXECUTABLE} ${Java_JAVA_EXECUTABLE})
+        set_tests_properties(audio_focus_jni PROPERTIES TIMEOUT 180)
+    endif()
+endif()
