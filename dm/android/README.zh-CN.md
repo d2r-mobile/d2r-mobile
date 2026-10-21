@@ -2,9 +2,20 @@
 
 English: [README.md](README.md)
 
-状态：**原生装载／执行基础阶段，Android 尚不能运行游戏；已可构建合成诊断 APK，尚未进行手机验证。** 本目录生成二十一个 Android ARM64 命令行程序、NativeActivity 诊断库及宿主改写工具，不包含游戏内容。检查器把本地游戏程序当作数据读取；测试执行自有合成 ARM64 与 GPU 程序。首个目标机型是小米 15 Ultra。最新进展／剩余工作见文末；较早里程碑日志保留当时的计数。
+状态（2026-10-18）：**Android 尚不可玩。** 目标是在小米 15 Ultra / 骁龙 8 Elite 上顺畅游玩，完整移植上游 r2d 游戏专用触控体系。持续稳定 60fps 是待测目标，不是 Android 已验证结果。见 [fork 项目介绍](../../README.zh-CN.md)、总清单与触控父任务。
+
+- 运行时／IPC／资源工具和自有测试属于基础。生产同步／抢占、TLR／SVC36 契约及严格 SDK 准入仍未闭合（、、）；原始 SDK 输入仍不能通过生产严格准备。保持扫描／quarantine 边界与显式失败。受限 macOS 诊断仅返回自一个 SDK 初始化阶段；完整 SDK 初始化／正常退出及 Android 游戏执行仍未验证（）。
+- Vulkan RGBA8 UNORM/SRGB 资源切片与 shader 合同检查已合并，不代表完整 NVN → Vulkan 绘制／呈现。shader 构建闸门须显式启用（`DMSH_CONTRACT=1`），见 、、。
+- PR已合并上游 C 手势核心复用、Android pointer-ID／时序适配器与自有测试。NativeActivity 事件、游戏状态／命中／HID 接入、HUD、IME 和小米验收仍未闭合。[冻结矩阵](../../docs/android/touch-parity.md)是源码清单，不是设备验收；[fork 触控表](../../README.zh-CN.md#完整触控目标)链接了 #31–#40。
+- 较早合成诊断 APK 在小米手机通过 ARM64／Vulkan 像素／窗口检查，见 [app/README.zh-CN.md](app/README.zh-CN.md)。后续源码改动须重新验证设备；交叉编译和该历史 APK 均不能证明完整生命周期或游戏兼容。开放 PR 不属于已验收功能。
+
+本目录包含 Android ARM64 工具、合成 NativeActivity 诊断与宿主改写工具，不含游戏内容。检查器把本地游戏程序当作数据读取；自有测试执行合成 ARM64／GPU 程序。性能验收见 ，可玩交付见 。未知缺口可能增加任务，不给完成百分比或日期。
+
+**下文阅读方式：** 实现细节和里程碑证据作为历史检查点保留原有计数与限制，后续检查点可能替代较早说明；它们不证明当前源码已在手机验收。当前验收边界以上述摘要与关联 Issue 为准。
 
 ## 存储与游戏文件
+
+在 worktree 中请显式将 `DM_ROOT` 设为外置磁盘工作区。下文 `../d2r-work` 相对路径示例假定仓库与工作区并列；覆盖后改用自己的 `$DM_ROOT`。
 
 `paths.sh` 默认使用仓库旁的 `d2r-work` 作为工作区，可设置 `DM_ROOT` 将其放到其他磁盘。其下 `tools/android` 放 NDK 和工具压缩包，`build` 放构建产物，`tmp` 放编译／测试临时文件。
 
@@ -23,6 +34,30 @@ $DM_ROOT/data/switch/3.3.94012/Update/
 ```
 
 先有 ExeFS 的三个文件即可开始验证程序解包/改写，后续着色器、资源、游戏流程需要完整 RomFS。已经导出的 ExeFS / RomFS 无需提供密钥。文件只保留本地，不进入 Git。运行 `./dm/android/check_game_files.sh --exefs-only` 检查程序，去掉选项则同时检查清单和 18 个必需运行时档案。检查器沿用上游 `setup.sh` 的三个完整程序 SHA-256；资源只查存在且非空，不查 RomFS 摘要。也可把其他 Update 目录作为最后一个参数传入。上游版本/导出说明见 [GAME_FILES.zh-CN.md](../../docs/GAME_FILES.zh-CN.md)。
+
+## 无需游戏的宿主入口与断网依赖准备
+
+在仓库根目录运行。ARM64 开发机需有 CMake 3.22+、C 编译器和 Capstone 5：
+
+```sh
+# 替换为自己的外置磁盘工作区；build/cache/tmp 不放进 checkout。
+export DM_ROOT=/path/to/external-disk/d2r-work
+./dm/android/test.sh -DDM_ANDROID_VULKAN=OFF
+```
+
+这会配置、构建并在 ASAN／UBSAN 下执行自有宿主 CTest 样例，无需游戏文件或手机。关闭 Vulkan 会省略 GPU 检查。缺少 Capstone 时可另传 `-DDM_ANDROID_REWRITE_SCAN=OFF`，省略依赖它的改写审计及测试，但不能算这些检查通过。这些是开发子集，不是完整发布验收。
+
+首次配置会下载 `dependencies.cmake` 声明并固定摘要的 LZ4 1.10.0／Mbed TLS 3.6.4 源码。断网构建前，先取得并验证完全相同的归档，在 Git 外解压，再向**每次** build/test 调用传入源码目录：
+
+```sh
+./dm/android/test.sh -DDM_ANDROID_VULKAN=OFF \
+  -DFETCHCONTENT_SOURCE_DIR_DM_LZ4="$DM_ROOT/tools/src/lz4-1.10.0" \
+  -DFETCHCONTENT_SOURCE_DIR_DM_MBEDTLS="$DM_ROOT/tools/src/mbedtls-3.6.4"
+```
+
+上述是预先解压目录的示例，脚本不会自动安装它们。CMake 源码覆盖会绕过归档下载／摘要核验，因此使用前须自行按 `dependencies.cmake` 验证归档。NDK、SDK、编译器及可选 GPU 工具也须在断网前安装。此流程不需要游戏程序、SDK 模块、密钥或存档。
+
+`bash dm/android/app/build.sh` 构建[合成诊断 APK](app/README.zh-CN.md)，需 Vulkan／glslc、NDK、Android SDK platform/build-tools 35、JDK/keytool 与 zip。它启用 Vulkan，宿主缓存缺失时可能运行宿主样例测试，导出自有夹具并用本地调试密钥签名，不自动安装或启动 APK。输出为 `$DM_ROOT/build/android/apk-diagnostic/d2r-diagnostic-debug.apk`，不是可玩的游戏构建。
 
 ## 构建与测试
 
@@ -99,13 +134,13 @@ adb shell /data/local/tmp/dm_texture_test
 ./dm/android/test.sh
 ```
 
-宿主测试默认输出到 `../d2r-work/build/host-sanitized`（可用 `DM_ANDROID_HOST_BUILD_DIR` 修改）。二十五组 CTest 覆盖解码、改写、可移植产物、原生执行、链接、输入、RomFS 导入、事件 SVC 和真实 GPU 作业。完整日志在构建目录的 `Testing/Temporary/LastTest.log`。
+宿主测试默认输出到 `../d2r-work/build/host-sanitized`（可用 `DM_ANDROID_HOST_BUILD_DIR` 修改）。CTest 覆盖解码、改写、可移植产物、原生执行、链接、输入、RomFS 导入、事件 SVC 和真实 GPU 作业。完整日志在构建目录的 `Testing/Temporary/LastTest.log`。
 
-## 已准备的解包与验证工具
+## 可选解包与验证工具
 
-本机 `../d2r-work/build/cache/dm/venv` 已安装 NSZ 5.0.0、LZ4、Capstone、Unicorn（仅验证用）、NumPy、Pillow；实际版本记录见 `../d2r-work/tools/python-tools.lock`。hactool 从提交 `1d64a83450e025622f3468c28fc4164dad2c5ef6` 编译到 `../d2r-work/tools/hactool`。这些工具都在 Git 外，不链接进 Android App。可用 `./dm/android/tools.sh <命令> ...` 设置 T2 路径。已在本机提取用户下载完成的文件，原包未修改。ExeFS 摘要匹配 3.3.94012，所需资源均存在；未独立校验全部 RomFS 内容。NSZ 5.0.0 生成的 DLC NSP 长度异常，改为直接解压原始 NCZ，所得文件哈希匹配内容 ID。本地日志在 `../d2r-work/build/dump-inspection`，密钥和游戏文件不进入 Git。
+`./dm/android/tools.sh <command> ...` 选择外置工作区的 Python／hactool 路径，不自动读取游戏或密钥。所需工具须自行安装，wrapper 不是安装器。用户自备输入见 [GAME_FILES.zh-CN.md](../../docs/GAME_FILES.zh-CN.md)，上游工具／许可见 [DEPENDENCIES.zh-CN.md](../../docs/DEPENDENCIES.zh-CN.md)。工具、解包文件与诊断日志均留在 Git 外，共享证据前先脱敏。
 
-## 剩余移植工作，按依赖顺序
+## 历史路线图：剩余移植工作，按依赖顺序
 
 目前已验证的基础包括支持取消及虚拟优先级查询的线程／同步句柄、堆与别名映射、精确栈租约、原生宿主服务栈桥，以及生产构建中有界的 4–32 KiB 汇编客体。这些是受支持的合成执行路径，尚不能证明完整 SDK 或游戏兼容。新增纹理后端也仅是宿主侧 RGBA8 资源子集。新增 `runtime/lm_wire.c` 仅解码有界 Log 请求形状（type6、一个 static、一个 map-alias buffer，长度 1–1024，指针低于 2^39）；只返回数值字段，不解引用客体内存。`runtime/lm.c` 另为活动子对象的 Log 请求按宿主保留最多四个已复制 1 KiB 数据包，并按 FIFO 取出；它不是 sink，不实现 SetDestination，也不代表完整日志服务。安装按宿主串行化，只有真实 lm 后端可拥有该端口；Log 源必须通过自有可读范围 pin。
 
@@ -187,7 +222,7 @@ adb shell /data/local/tmp/dm_texture_test
 
 证据位于 `../d2r-work`：`build/prepare-host-build.log`（21/21 ASAN/UBSAN 测试）、`build/prepare-android-build.log`（现有 17 个 Android 目标构建通过；Capstone 准备工具仍只用于宿主）、`build/static-analysis/prepare`（Clang 分析），以及 `build/dump-inspection/prepare-check.log`／`unsupported-systems.log`（真实文件只读检查）。下一步是剩余分类／缓存寄存器语义及 Android 产物绑定／初始化；尚无 APK 或设备执行。
 
-## 最新检查点：可移植产物、服务、绘制与诊断 APK
+## 检查点：可移植产物、服务、绘制与诊断 APK
 
 `rewrite/exclusive.c` 从未配对加载沿全部有界直接路径检查到存储／CLREX／下一次独占加载，只接受途中无需宿主改写、没有未知调用／返回的路径；上限是 256 个不同指令、起点前后 4 KiB。此前 43 处已确认可保持原生执行，剩余五处 SDK 路径未解决。完整验证的 MOD0 结构按元数据处理，拒绝直接分支进入。精确未分配编码 `0xe7ffdefe` 原样保留、单独计数；原生子进程测试确认仍会陷阱（本机为 SIGTRAP）。依据是 [Arm 架构手册 C4.1](https://cs140e.sergio.bz/docs/ARMv8-Reference-Manual.pdf) 顶层 `0011` 未分配组，不是把任意未知字当作填充。
 
@@ -217,7 +252,7 @@ adb shell /data/local/tmp/dm_texture_test
 
 剩余顺序：解决五条 SDK 路径／两个字及间接／数据入口问题；实现线程生命周期、互斥／条件／地址仲裁、内存／SDK 服务与安全初始化；扩展目录及事务存档；实现 NVN 资源／状态／着色器／绘制语义及游戏 swapchain 呈现；接资源导入、游戏输入／音频／UI；最后做小米 APK 进程验收。诊断 APK 不代表这些任务已完成，也不能支撑帧率／温度承诺。
 
-## 最新检查点：监视器语义与文字池分类
+## 检查点：监视器语义与文字池分类
 
 SVC 跳板现在明确在返回前执行 CLREX，对应 [Arm A64 同步指导 §3.2.4](https://documentation-service.arm.com/static/68c223238a337a2bc6645c0a) 描述的异常返回清除监视器。MRS/MSR 跳板保持原布局；SVC 的门返回／修补偏移及总计 32 字节大小不变。有界独占路径检查接受直接 SVC 和首指令就是 SVC 的直接 BL 目标，仍拒绝其他调用、间接调用及带活跃预留返回。这解决此前五条 SDK 路径中的四条，不代表已实现相应 Horizon 服务。
 
@@ -229,7 +264,7 @@ SVC／文字池回归在修复前失败、修复后通过。当前宿主 ASAN/UB
 
 此前诊断 APK 已在小米 / SM8750、Android 16 API 36、4 KiB 页通过合成 ARM64 门执行、Vulkan 256×256 像素校验／窗口提交及基本暂停恢复日志，见 [App 检查点](app/README.zh-CN.md)。完整游戏执行、NVN 图形及视觉／生命周期压力验收仍待完成。下一步先确定剩余监视器返回路径的安全处理，再补齐线程／同步服务与受控初始化。
 
-## 最新检查点：32 位地址等待／唤醒服务
+## 检查点：32 位地址等待／唤醒服务
 
 `runtime/arbiter.c` 实现 SVC 0x34 WaitForAddress 与 0x35 SignalToAddress 的 32 位类型 0/1/2，依据 [libnx ABI](https://github.com/switchbrew/libnx/blob/master/nx/include/switch/kernel/svc.h) 及 [公开内核语义](https://github.com/Atmosphere-NX/Atmosphere/blob/master/libraries/libmesosphere/source/kern_k_address_arbiter.cpp)。支持有符号小于／相等谓词、先减一再等待（包括零超时）、仅唤醒、相等则加一、按等待者数量修改。使用原子操作和明确的无符号回绕。谓词检查、队列登记与通知共享宿主锁，避免丢失唤醒；已选中的等待者不会在恢复前被后续信号重复计数。正超时使用加锁前捕获的单调时钟截止点，负超时无限等待。最多 128 个活跃等待，同址 FIFO；线程优先级排序、取消及 64 位相等等待尚未实现，禁止 pthread_cancel 等待线程。
 
@@ -239,7 +274,7 @@ SVC／文字池回归在修复前失败、修复后通过。当前宿主 ASAN/UB
 
 SDK 的监视器返回阻塞仍保留。只读调用方调查支持它是原生 ticket-lock 轮询辅助函数，三个已知直接调用方的后续路径均不再使用该预留，但仍未闭合计算地址或跨模块间接调用方。轮询指令及严格返回拒绝规则保持不变。托管线程创建／启动／退出／等待、优先级／取消、互斥／条件服务、安全游戏初始化及 NVN 图形仍待实现。没有执行真实游戏代码；此前 main／subsdk0 仍是最新已接受的导出产物。
 
-## 最新检查点：托管原生线程生命周期
+## 检查点：托管原生线程生命周期
 
 `runtime/sync.c` 现支持 CreateThread（0x08）、StartThread（0x09）、ExitThread（0x0a）、GetThreadId（0x25）、CloseHandle 及事件／线程混合 WaitSynchronization。托管线程使用独立 pthread、客体 TLS/TLR、稳定的预留 ID 与代际句柄；TLR 自有线程对象的 +0x1b0 写入线程句柄。关闭句柄不会使运行线程或已固定的等待失效。线程完成为手动复位信号，不能通过事件端点清除／触发。未启动线程在最后引用关闭时释放栈租约；已启动线程先回到宿主栈、分离上下文，再释放租约并发布完成。已完成但未关闭的线程对象仍占用一个槽。
 
@@ -253,7 +288,7 @@ StartThread 等待原生上下文初始化结果再报告成功，启动操作�
 
 这些是后端及合成测试结果，没有执行真实游戏，也未重新连接手机运行。外部附着上下文有当前线程伪句柄 ID，但真实主线程句柄／引导登记仍待接入。游戏 SDK 的栈分配尚未连接到显式登记 API。虚拟优先级／核参数只做合法性检查；优先级、亲和性、取消、互斥／条件服务及小栈支持仍待完成。SDK 最后一条监视器返回扫描阻塞保持不变。下一步是主线程引导／栈分配接入、互斥／条件服务，执行契约补齐后再做受控游戏初始化。
 
-## 最新检查点：主线程登记、SDK 式栈及互斥／条件服务
+## 检查点：主线程登记、SDK 式栈及互斥／条件服务
 
 `dm_guest_bootstrap_main(host,gates,&handle)` 现以虚拟优先级 44 附着当前 pthread 并登记真实线程句柄，写入自有 TCB 的句柄／ID。登记失败会撤销附着，错误时不修改输出。`dm_guest_register_current_thread` 可为已附着原生线程按指定优先级登记。detach 或 pthread TLS 析构会发布完成信号、释放执行引用，并唤醒所有者已结束的互斥等待者。关闭句柄保留已有执行／等待引用。外部原生线程不能再次 StartThread，也不能使用托管 ExitThread 切栈。这些登记共享现有 64 个线程对象上限；不会调用 `nnosInitialize` 或初始化器。
 
@@ -267,7 +302,7 @@ StartThread 等待原生上下文初始化结果再报告成功，启动操作�
 
 以上仍是后端及合成验证。SDK ABI 适配器必须显式启用，尚未用于真实游戏执行。它验证已映射的 SDK 分配，不实现 SDK 别名栈分配器、Horizon MapMemory/UnmapMemory 或小于 64 KiB 的栈。主线程 SDK 初始化、优先级继承／宿主调度、Oryon 亲和性及取消仍待实现。SDK 监视器返回扫描阻塞未变；没有执行真实游戏指令／初始化器，也没有新一轮手机运行，NVN 图形仍待完成。全部日志／构建仍在 T2，不进入 Git／APK。
 
-## 最新检查点：有界自有栈别名
+## 检查点：有界自有栈别名
 
 `dm_host_create_layout(heap_capacity,stack_capacity)` 可选启用连续的自有堆／栈预留，并以共享文件页支撑堆。Android 使用带 close-on-exec 的 memfd 公共系统调用接口（兼容 API 29）；macOS 使用 `TMPDIR` 下创建后立即 unlink 的临时文件。原有 `dm_host_create` 继续使用匿名堆。MapMemory/UnmapMemory（0x04/0x05）最多保存 64 个完整目标／来源／大小记录；来源仅限已提交的自有堆，目标仅限自有栈预留。映射期间来源不可访问，别名写入同一组底层页，解除映射后内容保留。地址和大小必须同时满足 Horizon 4 KiB 与宿主页对齐：4 KiB Android 可覆盖一般 4 KiB 请求，16 KiB 宿主仅覆盖对齐子集，不向相邻页扩大保护范围。
 
@@ -279,7 +314,7 @@ QueryMemory（0x06）报告自有空闲／堆／栈区间、锁定且不可访�
 
 主会话验收通过：宿主 ASAN/UBSAN 30/30、TSAN 7/7；最终原生门测试及 API29 测试声明修复后，memory/RomFS 在两种 sanitizer 下均重新构建并以 2/2 通过（`build/alias-host-tests.log`、`alias-tsan-tests.log`）。完整 NDK API29 最终构建通过（`build/alias-android-build.log`）。在小米 SM8750、Android16/API36、4KiB 页设备上，memory、RomFS、thread、bootstrap、mutex、arbiter、sync 共七个自有 CLI 测试全部通过（`build/alias-device-*.log`）；memory 测试在手机实际执行了四个改写后的 SVC 门。宿主与设备端二进制 SHA-256 一致，新 memory 可执行文件的 ELF LOAD 对齐为 0x4000。五个变更运行时单元的 Clang 静态分析诊断为零，既有 372 行 i18n 检查通过。这是 CLI 后端验收，不是新 APK 或游戏初始化结果。SDK monitor-return 扫描阻塞、完整 SDK 服务／初始化准备、小栈宿主调用桥以及 NVN／游戏图形仍未解决。
 
-## 最新检查点：原生宿主服务栈桥
+## 检查点：原生宿主服务栈桥
 
 运行时版本的 `dm_gate` 及六个 RomFS 导入入口现均在已附着 pthread 的原生栈上进入宿主 C；独立调用门测试仍使用通用分派器。附着时通过 128 槽注册表发布不透明的原生线程标识和公共 pthread 栈边界。Android 使用 TPIDR_EL0；已验证的 Darwin 路径使用清除低三位后的 TPIDRRO_EL0，不读取私有 TLS 字段，也不借用 x18。缺少登记、栈域错误及重入会在宿主分派前陷阱。注册表附着或栈桥准备失败时，StartThread 在发布启动成功前返回失败，未启动句柄仍可重试。
 
@@ -293,7 +328,7 @@ ASAN 在正常往返中跟踪两种栈，并在终止时销毁当前活动的客
 
 主会话对冻结源码的最终验收通过：启用 stack-use-after-return 检测的完整宿主 ASAN/UBSAN 测试 32/32（`build/bridge-host-tests.log`），TSAN 9/9（`build/bridge-tsan-tests.log`；关闭符号化以避开本机 atos 报告停滞）。导入测试包含真正经过插桩的客体 C 写入输入并读取原生服务输出。完整 NDK API29 构建及最终共享库六入口本地绑定检查通过（`build/bridge-android-build.log`）；四个运行时单元的 Clang 分析诊断为零。本轮无线 ADB 无法连接，因此没有新的手机运行结果，也没有新的 APK 或游戏执行结果。验收源码清单位于 `build/bridge-source-freeze.json`，共 116 个文件，不含文档。
 
-## 最新检查点：有界小栈执行
+## 检查点：有界小栈执行
 
 生产构建现允许可信、已改写的 ARM64 汇编客体使用至少 4096 字节的分配。只读 `dm_host_thread_stack_minimum()` 和 `dm_host_thread_stack_entry_headroom()` 返回当前运行时的编译策略。生产模式要求精确初始 SP 下方至少有 1056 字节：受支持改写的最大固定帧为 256 字节 x18 跳板加 800 字节调用门；系统指令跳板为 16+800 字节。此预算不含客体存活帧、原指令的栈调整／访存语义和 SDK 顶部保留区。调用方须在每处改写边界保留足够空间。准入并非全程序栈深度分析或沙箱，也不允许任意宿主／插桩 C 回调在小客体栈上运行。
 
@@ -307,7 +342,7 @@ ASAN/TSAN 构建仍要求至少 65536 字节分配，初始 SP 下方至少有 3
 
 冻结源码的最终验收通过：发布构建 26/26（`build/small-stack-release-tests.log`）、启用 stack-use-after-return 检测的完整 ASAN/UBSAN 33/33（`build/small-stack-host-tests.log`）、TSAN 10/10（`build/small-stack-tsan-tests.log`）。完整 NDK API29 构建通过，含最终共享库六导入入口及 4096 个未解析桩／终止路径的两项检查（`build/small-stack-android-build.log`）。bridge、heap、sync 三个静态分析报告的诊断数均为零。验收清单为 `build/small-stack-source-freeze.json`，共 118 个文件，不含文档。无线 ADB 仍无法连接；Android 证据仅为交叉构建及共享 ELF 验证，没有新的手机、APK 或游戏执行结果。
 
-## 最新检查点：NVN RGBA8 Vulkan 纹理资源
+## 检查点：NVN RGBA8 Vulkan 纹理资源
 
 `dm_vk_texture_upload` 现可接收经过验证的 NVN 块线性 RGBA8 UNORM（`0x25`）2D／2D 数组描述，通过现有共享辅助代码逐 mip／层解块，按需刷新非一致宿主可见暂存内存，再上传到最优平铺 Vulkan 图像。返回的图像／视图以着色器读取布局覆盖所需 mip／层，2D 与数组保持各自视图类型。格式特性、图像用途限制、分配类型以及全部源／存储大小均有检查。描述准入要求尺寸／深度／级数为正、级数不超过自然 mip 链、flags／stride 为零、samples 为 0 或 1、打包块高为 0–6；在上游布局运算前先限制每维最多 16384 纹素、最多 2048 层，再受设备上限约束。不支持的格式、sRGB、压缩、3D／立方体、多重采样及其他标志明确拒绝。
 
@@ -319,7 +354,7 @@ Apple M4／MoltenVK 的真实 GPU 测试逐一比较独立构造的 1×1、13×1
 
 集成验证先通过完整 Release 29/29（`build/texture-release-tests.log`）和完整 ASAN/UBSAN 35/35（`build/texture-host-tests.log`）。最终回滚样本与提交检查加入后，重新构建全部四项 Vulkan 测试，在 Release 和 ASAN/UBSAN 下均 4/4 通过（`build/texture-final-release.log`、`texture-final-sanitized.log`）。最终完整 NDK API29 构建通过，包含新增纹理与故障测试 CLI 目标以及既有共享入口检查（`build/texture-final-android.log`）。改动的 Vulkan 核心分析报告均为零诊断。最终源码清单为 `build/texture-source-freeze.json`（125 个文件，不含文档）；此前 TSAN／运行时结果仍属于前轮证据，不是本轮纹理驱动并发认证。
 
-## 最新检查点：同步等待取消与线程优先级
+## 检查点：同步等待取消与线程优先级
 
 `CancelSynchronization`（SVC `0x19`）现可取消已登记线程正在进行的 WaitSynchronization，或保留一次待取消标志，供下次阻塞同步等待使用；重复请求合并。已就绪对象和零超时轮询优先于待取消标志。首次完成结果在宿主互斥锁内固定，后续 signal／reset／cancel 不能覆盖已选结果；稍后的取消可留给下一次等待。取消不终止线程，也不中断地址仲裁／互斥／条件等待；已测试的地址仲裁场景会保留请求，直到随后进入同步等待。句柄引用使阻塞等待状态在 close 后仍保持有效，过期句柄和事件句柄则拒绝。
 
@@ -330,7 +365,7 @@ Apple M4／MoltenVK 的真实 GPU 测试逐一比较独立构造的 1×1、13×1
 SDK 启动仍被阻止。新增展开／重定位元数据将监视器返回的证明边界缩小到运行时对象／虚表目标，但不能封闭间接入口，也不能支持放宽扫描器（`.omo/evidence/sdk-entry-proof/report.md`）。只读启动清单明确列出 GetInfo ID 2／3／16／21／22、虚拟核心掩码行为、SetThreadCoreMask 及后续服务／IPC 初始化等仍待定义的有界约定（`.omo/evidence/sdk-startup-audit/startup-readiness.md`）。优先级 getter 是已确认的构造函数依赖；支持取消本身不证明启动前必需该服务。本轮未执行真实游戏指令或初始化器，也没有当前手机／APK 运行结果。
 
 
-## 最新检查点：进程别名地址预留区
+## 检查点：进程别名地址预留区
 
 `dm_host_create_process_layout(heap_capacity, stack_capacity, alias_capacity)` 新增可选的连续堆／栈／别名预留布局。三个容量均非零；堆按 2 MiB，栈与别名区同时按宿主页和 4 KiB 对齐，完整跨度的运算均检查溢出。GetInfo 2/3 报告真实别名区，ASLR 大小 13 包含三段。别名区保持 PROT_NONE：QueryMemory 报告精确空闲范围，可写／可执行登记、读写 pin、线程栈登记及 MapMemory 目的地均拒绝该区。已有堆到栈映射保留保护与租约语义；两个旧构造器维持原有额外 ID 拒绝及空闲区合并行为。
 
@@ -343,7 +378,7 @@ GetInfo 16 返回零字节，因为此模型没有专用客体进程系统资源
 冻结后的完整集成测试通过 Release 33/33、启用 stack-use-after-return 检测的 ASAN/UBSAN 39/39，以及 TSAN 13/13（`build/process-memory-{release-tests,host-tests,tsan-tests}.log`）。完整 NDK r29／API29 构建通过，含新增按 16 KiB 对齐的 CLI，以及六导入跳板和 4096 个未解析陷阱的两项共享库检查（`build/process-memory-android-build.log`）。heap／memory 静态分析均为零诊断（`build/process-memory-static-analysis/`）。冻结清单记录 129 个非文档文件（`build/process-memory-source-freeze.json`）。这些交叉构建结果不代表当前 Android 设备验收。
 
 
-## 最新检查点：自有客体后备预算
+## 检查点：自有客体后备预算
 
 `dm_host_create_accounted_process(heap, stack, alias, budget)` 新增独立严格模式，强制执行按页对齐的客体预算。GetInfo 21 返回该上限；22 统计已提交堆、纳入所有权的模块后备，以及仍存活或因 pin 保留的退休 TLS／TLR 映射。别名共用原堆计费。地址预留、宿主实现元数据、原生服务栈和私有装载缓冲区不计入已用客体后备；这不是 RSS，也不声明宿主页是否驻留。旧构造器继续拒绝 21/22。
 
@@ -367,7 +402,7 @@ GetInfo 16 返回零字节，因为此模型没有专用客体进程系统资源
 
 这仅是在私有诊断映射中执行一个真实 SDK 阶段。生产严格准备仍拒绝原始 SDK 输入。后续 libc／SDK 模块初始化、必需 IPC 与其他服务、完整生命周期及 Android／设备验收仍未验证；第一大块尚未完成。
 
-## 最新检查点：有界本地命名端口与同步 IPC 传输
+## 检查点：有界本地命名端口与同步 IPC 传输
 
 对未修改 SDK 映像的只读分析定位了停止边界：SDK 中只有一个 `svc #0x1f` 站点（sdk+0x39fb80），唯一调用者 `nn::sm::Initialize`（sdk+0x38736c）通过 x1 传入 rodata 字符串 `sm:`。上次诊断记录的 r0 是调用方桩保存的 C 出参指针，不是端口名。下一步传输调用是 sdk+0x385040 的 `nn::sf::hipc::SendSyncRequest`：它把消息指针与 `tpidrro_el0` 比较后使用 `svc #0x21`，因此隐式缓冲区就是线程 TLS 槽。
 
