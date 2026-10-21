@@ -15,6 +15,10 @@ struct dm_touch_bridge {
     float height_pt;
     int belt_rows;
     int belt_open;
+    int portal_available;
+    uint64_t portal_mask;
+    uint64_t portal_identity;
+    uint64_t portal_scene;
     int64_t last_time_ns;
     int32_t active[DM_TOUCH_MAX_POINTS];
     uint32_t active_count;
@@ -181,6 +185,14 @@ void dm_touch_bridge_destroy(dm_touch_bridge *bridge, dm_npad_state *neutral_out
 
 int dm_touch_bridge_attach_game(dm_touch_bridge *bridge, const dm_tgp_provider *provider) {
     if (!bridge || !provider) return 0;
+    /* A provider has no portal consumer. Disable any binding/request/arm from
+       before attach (and its unread mask edges) before provider input exists,
+       and keep the outer cache coherent with the adapter. */
+    (void)dm_android_touch_set_portal_context(bridge->touch, 0, 0, 0, 0);
+    bridge->portal_available = 0;
+    bridge->portal_mask = 0;
+    bridge->portal_identity = 0;
+    bridge->portal_scene = 0;
     if (bridge->game) {
         dm_touch_game_bridge_destroy(bridge->game);
         bridge->game = NULL;
@@ -239,6 +251,51 @@ int dm_touch_bridge_set_belt_context(dm_touch_bridge *bridge, int rows, int open
     bridge->belt_rows = rows;
     bridge->belt_open = open;
     return 1;
+}
+
+static void reconcile_portal_ownership(dm_touch_bridge *bridge) {
+    /* The adapter already released the core-canceled portal IDs; drop only
+       those from the outer table so unrelated held pointers stay owned. */
+    uint32_t i = 0;
+    while (i < bridge->active_count) {
+        if (!dm_android_touch_has_pointer(bridge->touch, bridge->active[i]))
+            active_remove(bridge, bridge->active[i]);
+        else ++i;
+    }
+}
+
+int dm_touch_bridge_set_portal_context(dm_touch_bridge *bridge, int available,
+                                       uint64_t mask, uint64_t binding_identity,
+                                       uint64_t scene_epoch) {
+    if (!bridge || bridge->game) return 0;   /* no proven provider portal consumer */
+    if (available != 0 && available != 1) return 0;
+    uint64_t effective = available ? mask : 0;
+    if (bridge->portal_available == available && bridge->portal_mask == effective &&
+        bridge->portal_identity == binding_identity && bridge->portal_scene == scene_epoch)
+        return 1;   /* same snapshot: no cancel, no reconcile, no consume */
+    if (!dm_android_touch_set_portal_context(bridge->touch, available, mask,
+                                             binding_identity, scene_epoch))
+        return 0;   /* invalid: both layers keep their previous state */
+    reconcile_portal_ownership(bridge);
+    (void)consume(bridge);
+    bridge->portal_available = available;
+    bridge->portal_mask = effective;
+    bridge->portal_identity = binding_identity;
+    bridge->portal_scene = scene_epoch;
+    return 1;
+}
+
+int dm_touch_bridge_take_portal_request(dm_touch_bridge *bridge,
+                                        dm_android_portal_request *out) {
+    if (!bridge || !out || bridge->game) return 0;
+    return dm_android_touch_take_portal_request(bridge->touch, out);
+}
+
+int dm_touch_bridge_portal_ack(dm_touch_bridge *bridge, uint64_t gesture_epoch,
+                               uint64_t binding_identity, uint64_t scene_epoch) {
+    if (!bridge || bridge->game) return 0;
+    return dm_android_touch_portal_ack(bridge->touch, gesture_epoch, binding_identity,
+                                       scene_epoch);
 }
 
 int dm_touch_bridge_event(dm_touch_bridge *bridge, const dm_touch_event *event) {
