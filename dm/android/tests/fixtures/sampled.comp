@@ -1,0 +1,16 @@
+// #105 反射驱动采样消费夹具：sampler2D + 输出 storage buffer，写入 packUnorm4x8(texel)。
+// 采样用 textureLod(...,0)，配合 nearest/clamp 采样器，期望值可由宿主按原字节独立复算。
+// #105 reflection-driven sampled consumer fixture: sampler2D + output storage buffer, writes packUnorm4x8(texel).
+// textureLod(...,0) with a nearest/clamp sampler makes the host expectation independently computable.
+#version 450
+layout(local_size_x = 4, local_size_y = 1, local_size_z = 1) in;
+layout(set = 0, binding = 0, std430) buffer Out { uint v[]; } outbuf;
+layout(set = 0, binding = 1) uniform sampler2D tex;
+layout(push_constant) uniform Params { uint w; uint h; } params;
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= params.w * params.h) return;
+    vec2 uv = vec2((float(i % params.w) + 0.5) / float(params.w),
+                   (float(i / params.w) + 0.5) / float(params.h));
+    outbuf.v[i] = packUnorm4x8(textureLod(tex, uv, 0.0));
+}
