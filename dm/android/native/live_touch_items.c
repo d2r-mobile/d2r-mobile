@@ -128,12 +128,17 @@ static void issue_drop_query(dm_live_touch_items *items, float nx, float ny, flo
 
 static int normalize_item_kind(int kind) {
     switch (kind) {
-    case 1: case 2: case 3: case 6: case 11:
+    case 0: case 1: case 2: case 3: case 6: case 11:
+        // 0 = an ordinary panel widget (including a skill-tree icon). It is a
+        // known classification, not unknown; the core must still reach its
+        // tap_move/tap_button branch. Only the explicit blocked/unsupported
+        // classes below become no-click.
         return kind;
     default:
         // 7/8/10 are real host categories for vendor/stack/blocked branches
         // that this inventory slice does not own. Refuse them as "no click"
         // instead of accidentally buying, selling, or taking a stack.
+        // Unknown results/timeouts are also no-click.
         return 6;
     }
 }
