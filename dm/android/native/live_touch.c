@@ -12,6 +12,8 @@ struct dm_live_touch {
     float width, height;
     int64_t last_ns;
     int64_t pulse_started_ns;
+    int have_context;
+    uint64_t scene_epoch, world_epoch, ui_identity, object_generation;
 };
 
 static double now_s(dm_live_touch *touch, int64_t time_ns) {
@@ -79,6 +81,24 @@ void dm_live_touch_set_mode(dm_live_touch *touch, int navigation, uint32_t mask)
     sync_pointers(touch);
 }
 
+void dm_live_touch_set_context(dm_live_touch *touch, int navigation, uint32_t mask,
+                               uint64_t scene_epoch, uint64_t world_epoch,
+                               uint64_t ui_identity, uint64_t object_generation) {
+    if (!touch) return;
+    int changed = (!touch->have_context && dm_live_touch_active(touch)) ||
+                  (touch->have_context &&
+                   (touch->scene_epoch != scene_epoch || touch->world_epoch != world_epoch ||
+                    touch->ui_identity != ui_identity ||
+                    touch->object_generation != object_generation));
+    if (changed) dm_live_touch_cancel_all(touch, touch->last_ns);
+    touch->have_context = 1;
+    touch->scene_epoch = scene_epoch;
+    touch->world_epoch = world_epoch;
+    touch->ui_identity = ui_identity;
+    touch->object_generation = object_generation;
+    dm_live_touch_set_mode(touch, navigation, mask);
+}
+
 int dm_live_touch_event(dm_live_touch *touch, int action, int action_index,
                         int pointer_count, const int32_t *ids,
                         const float *x_px, const float *y_px,
@@ -144,6 +164,7 @@ int dm_live_touch_cancel_all(dm_live_touch *touch, int64_t time_ns) {
     dm_tc_cancel_all(&touch->state);
     dm_touch_pointer_clear(&touch->pointers);
     touch->pulse_started_ns = 0;
+    touch->have_context = 0;
     return 1;
 }
 

@@ -27,6 +27,12 @@ void dm_live_touch_resize(dm_live_touch *touch, float width_pt, float height_pt)
 // navigation = menu/front-end/panel state supplied by the real host.
 // mask is the core target mask; callers use dm_tc_nav_mask/game mode mask.
 void dm_live_touch_set_mode(dm_live_touch *touch, int navigation, uint32_t mask);
+// Apply one validated provider context. Any scene/world/UI identity change
+// cancels the old core ownership before the new mode is installed, so an old
+// pointer or release is never delivered into the new scene/character.
+void dm_live_touch_set_context(dm_live_touch *touch, int navigation, uint32_t mask,
+                               uint64_t scene_epoch, uint64_t world_epoch,
+                               uint64_t ui_identity, uint64_t object_generation);
 
 // Android MotionEvent coordinates are window pixels. The viewport conversion
 // maps the game picture into the core's point layout; out-of-picture points are
