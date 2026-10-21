@@ -923,7 +923,13 @@ static void *x_thread(void *a) {
 static void x_start(void) {
     const char *e = getenv("DM_NVN_SYNC"); g_x_sync = e && atoi(e);
     if (g_x_sync) { LOG("[nvn] DM_NVN_SYNC=1：翻译在提交线程上同步做（对照档）"); return; }
-    pthread_attr_t at; pthread_attr_init(&at); pthread_attr_set_qos_class_np(&at, QOS_CLASS_USER_INTERACTIVE, 0); pthread_attr_setstacksize(&at, 8 << 20);
+    pthread_attr_t at; pthread_attr_init(&at);
+#ifdef __APPLE__
+    // Apple-only QoS attribute; Android has no pthread_attr QoS API and keeps
+    // the real attr init / 8 MiB stack / pthread_create path below.
+    pthread_attr_set_qos_class_np(&at, QOS_CLASS_USER_INTERACTIVE, 0);
+#endif
+    pthread_attr_setstacksize(&at, 8 << 20);
     if (pthread_create(&g_x_thr, &at, x_thread, NULL)) { LOG("【红】翻译线程起不来，改为同步翻译"); g_x_sync = 1; } else LOG("[nvn] 翻译线程已起：提交 / 出图在翻译线程上按序执行（队列 %d 项）", XQ);
     pthread_attr_destroy(&at);
 }

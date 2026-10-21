@@ -61,7 +61,7 @@ if __name__ == "__main__":
     # mobile touch core (hle_touch.c + ios/Sources/dm_touch_controls.c) and
     # never stub the desktop interfaces.
     sources = [(p, []) for p in sorted((ROOT / "host").glob("*.c")) if p.name != "touch_mac.c"]
-    sources += [(ROOT / "android/native" / name, []) for name in ["runtime.c", "host_posix.c", "host_tls.c", "host_sections.c", "legacy_digest.c", "pending_ranges.c", "performance_hint.c", "launch_settings.c", "frontend_activity.c" if args.activity else "frontend_headless.c", "nvn_vulkan.c", "gpu_driver.c"]]
+    sources += [(ROOT / "android/native" / name, []) for name in ["runtime.c", "host_posix.c", "host_tls.c", "host_sections.c", "legacy_digest.c", "pending_ranges.c", "performance_hint.c", "launch_settings.c", "frontend_activity.c" if args.activity else "frontend_headless.c", "host_bridge.c", "nvn_vulkan.c", "gpu_driver.c"]]
     sources += [(ROOT / "ios/Sources/dm_touch_controls.c", []), (entry, [])]
     sources += [(ROOT / "gfx" / name, []) for name in ["hle_nv.c", "hle_vi.c"]]
     sources += [(ROOT / "gfx/nvn" / name, []) for name in ["hle_nvn.c", "nvn_tex.c", "nvn_dirty.c"]]
@@ -72,7 +72,7 @@ if __name__ == "__main__":
     with ThreadPoolExecutor(max_workers=4) as pool: objects = list(pool.map(compile, sources))
     if any(obj is None for obj in objects): sys.exit(1)
     output = OUT / ("libdmandroid.so" if args.activity else "dmhost-android")
-    link_flags = ["-shared", "-Wl,-z,defs"] if args.activity else []
+    link_flags = (["-shared"] if args.activity else []) + ["-Wl,-z,defs"]
     result = subprocess.run([str(CLANG), "-Wl,-z,max-page-size=16384", *map(str, objects), *link_flags, "-landroid", "-llog", "-laaudio", "-ldl", "-lm", "-o", str(output)], capture_output=True, text=True)
     (OUT / "link.log").write_text(result.stdout + result.stderr)
     if result.returncode:
