@@ -24,7 +24,8 @@ def compile(item):
     obj = OUT / (source.stem + ".o")
     deps, stamp = obj.with_suffix(".d"), obj.with_suffix(".cmd")
     command = [str(CLANG), "-c", "-fPIC", "-O3", "-fno-strict-aliasing", "-fno-omit-frame-pointer", "-g", "-MMD", "-MF", str(deps), "-D_GNU_SOURCE", "-I", str(ROOT / "host"),
-               "-I", str(ROOT / "android/native"), "-I", str(ROOT / "gfx/nvn/include"), "-I", str(ROOT / "android/native/compat")]
+               "-I", str(ROOT / "android/native"), "-I", str(ROOT / "gfx/nvn/include"), "-I", str(ROOT / "android/native/compat"),
+               "-I", str(OUT.parent)]
     if os.environ.get("DM_SYSTEM_DRIVER_ONLY"):
         command += ["-DDM_NO_ADRENOTOOLS", "-DDM_SYSTEM_DRIVER_ONLY"]
     else:
@@ -50,6 +51,9 @@ if __name__ == "__main__":
     ref_build = os.environ.get("DM_REFERENCE_BUILD", str(DEFAULT_BUILD))
     OUT = Path(ref_build) / ("game-host-activity" if args.activity else "game-host-headless")
     OUT.mkdir(parents=True, exist_ok=True)
+    # Generate the Android-only bilingual native table together with the Java
+    # resources; dm_i18n.c includes it under __ANDROID__.
+    subprocess.run([sys.executable, str(ROOT / "android/tools/strings.py"), str(Path(ref_build))], check=True)
     if not os.environ.get("DM_SYSTEM_DRIVER_ONLY"):
         subprocess.run([sys.executable,str(ROOT / "android/tools/build_gpu_driver.py"), "--output", str(Path(ref_build) / "gpu-driver")],check=True)
     entry = OUT / "entry_elf.S"
@@ -61,7 +65,7 @@ if __name__ == "__main__":
     # mobile touch core (hle_touch.c + ios/Sources/dm_touch_controls.c) and
     # never stub the desktop interfaces.
     sources = [(p, []) for p in sorted((ROOT / "host").glob("*.c")) if p.name != "touch_mac.c"]
-    sources += [(ROOT / "android/native" / name, []) for name in ["runtime.c", "host_posix.c", "host_tls.c", "host_sections.c", "legacy_digest.c", "pending_ranges.c", "performance_hint.c", "launch_settings.c", "frontend_activity.c" if args.activity else "frontend_headless.c", "host_bridge.c", "live_touch.c", "live_touch_items.c", "live_touch_glyph.c", "touch_art_fallback.c", "live_touch_provider.c", "touch_overlay_contract.c", "nvn_vulkan.c", "nvn_present_filter.c", "gpu_driver.c"]]
+    sources += [(ROOT / "android/native" / name, []) for name in ["runtime.c", "host_posix.c", "host_tls.c", "host_sections.c", "legacy_digest.c", "pending_ranges.c", "performance_hint.c", "launch_settings.c", "frontend_activity.c" if args.activity else "frontend_headless.c", "host_bridge.c", "live_touch.c", "live_touch_items.c", "live_touch_glyph.c", "touch_art_fallback.c", "live_touch_provider.c", "touch_overlay_contract.c", "nvn_vulkan.c", "nvn_present_filter.c", "android_ui_text.c", "gpu_driver.c"]]
     sources += [(ROOT / "ios/Sources/dm_touch_controls.c", []),
                 (ROOT / "ios/Sources/dm_touch_game_state.c", []),
                 (ROOT / "ios/Sources/dm_touch_game_identity.c", []),

@@ -392,6 +392,11 @@ public final class D2RActivity extends NativeActivity {
         debugView.setClickable(false);
         debugView.setFocusable(false);
         debugView.setImportantForAccessibility(android.view.View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        // 启动时就按配置决定可见性；native 随后的 setDebugOverlay 只是同步同一状态。这样即使首个 JNI 回调
+        // 早于弹窗显示，也不会留下默认 VISIBLE。
+        // The startup visibility already follows the config; the later native setDebugOverlay only synchronizes the
+        // same state, so an early JNI callback cannot leave the default VISIBLE behind.
+        debugView.setVisibility(overlayEnabled ? android.view.View.VISIBLE : android.view.View.GONE);
         int padding = (int)(8 * getResources().getDisplayMetrics().density);
         debugView.setPadding(padding, padding, padding, padding);
         // Vulkan 拥有主窗口缓冲；独立应用内窗口才能稳定叠加系统绘制的文字。
@@ -401,7 +406,7 @@ public final class D2RActivity extends NativeActivity {
         debugPopup.setTouchModal(false);
         debugPopup.setInputMethodMode(PopupWindow.INPUT_METHOD_NOT_NEEDED);
         debugPopup.setBackgroundDrawable(new ColorDrawable(0));
-        getWindow().getDecorView().post(() -> { if (!isFinishing() && !isDestroyed()) debugPopup.showAtLocation(getWindow().getDecorView(), Gravity.TOP | Gravity.LEFT, padding, padding); });
+        getWindow().getDecorView().post(() -> setDebugOverlay(overlayEnabled));
         // 粘性广播：注册即回调一次当前值，之后只在系统电量变化时推送，不产生轮询开销。
         // Sticky broadcast: registering delivers the current value once, then only on system battery changes; no polling.
         batteryReceiver = new BroadcastReceiver() {
@@ -559,14 +564,17 @@ public final class D2RActivity extends NativeActivity {
         runOnUiThread(() -> { if (debugView != null && !isFinishing() && !isDestroyed()) debugView.setText(text); });
     }
 
-    // 由原生调试线程在启动时调用一次；关掉时把浮层内容整个隐藏，而不只是停止刷新。
-    // 弹窗本身留着不销毁（它是 setTouchable(false)，不抢输入），只是没有可见内容。
-    // Called once at startup by the native debug thread. Hiding removes the overlay content entirely rather than
-    // merely stopping refreshes; the popup itself stays (it is setTouchable(false) and takes no input), just empty.
+    // 关闭整个窗口；只隐藏弹窗根视图会在部分设备上留下最后一帧。
+    // Dismiss the window: hiding only its root view can leave the last frame visible on some devices.
     public void setDebugOverlay(boolean visible) {
         runOnUiThread(() -> {
-            if (debugView != null && !isFinishing() && !isDestroyed())
-                debugView.setVisibility(visible ? android.view.View.VISIBLE : android.view.View.GONE);
+            if (debugView == null || debugPopup == null || isFinishing() || isDestroyed()) return;
+            debugView.setVisibility(visible ? android.view.View.VISIBLE : android.view.View.GONE);
+            if (!visible) debugPopup.dismiss();
+            else if (!debugPopup.isShowing()) {
+                int padding = (int)(8 * getResources().getDisplayMetrics().density);
+                debugPopup.showAtLocation(getWindow().getDecorView(), Gravity.TOP | Gravity.LEFT, padding, padding);
+            }
         });
     }
 

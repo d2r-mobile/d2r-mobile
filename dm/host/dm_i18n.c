@@ -14,6 +14,9 @@
 //   no settings file = first install, use the iOS system language (dm_sys_lang).
 #include "dm_i18n.h"
 #include "dm_i18n_tab.h"
+#ifdef __ANDROID__
+#include "android_ui_text.h"
+#endif
 #include <TargetConditionals.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -83,6 +86,10 @@ int dm_lang_group_of(int l) { return l == 8 || l == 9 ? DM_LG_ZH : l == 2 ? DM_L
 const char *dm_ui_group(const char *key, int group) {
     for (unsigned i = 0; i < sizeof k_dm_i18n / sizeof *k_dm_i18n; i++) if (!strcmp(k_dm_i18n[i].k, key)) {
         switch (group) { case DM_LG_ZH: return k_dm_i18n[i].zh; case DM_LG_ES: return k_dm_i18n[i].es; case DM_LG_MX: return k_dm_i18n[i].mx; case DM_LG_RU: return k_dm_i18n[i].ru; default: return k_dm_i18n[i].en; } }
+#ifdef __ANDROID__
+    const char *android = dm_android_ui_text(key, group == DM_LG_ZH);
+    if (android) return android;
+#endif
     return key;
 }
 
