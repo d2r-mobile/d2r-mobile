@@ -408,6 +408,10 @@ int dm_android_touch_portal_ack(dm_android_touch *touch, uint64_t gesture_epoch,
     return 1;
 }
 
+int dm_android_touch_has_pointer(const dm_android_touch *touch, int32_t pointer_id) {
+    return touch && pointer_id >= 0 && find_pointer(touch, pointer_id) >= 0;
+}
+
 int dm_android_touch_pointer_hit(dm_android_touch *touch, int32_t pointer_id, int kind) {
     if (!touch || pointer_id < 0 || kind < 0 || kind > 11) return 0;
     int slot = find_pointer(touch, pointer_id);

@@ -82,6 +82,27 @@ int dm_touch_bridge_resize(dm_touch_bridge *bridge, float width_pt, float height
 // stays in dm_android_touch_take_action). No game/HUD context is synthesized.
 int dm_touch_bridge_set_belt_context(dm_touch_bridge *bridge, int rows, int open);
 
+// Key-bound town-portal context/request/ack over the accepted adapter API. One
+// consumer, same dm_android_portal_request type and identity/epoch contract; no
+// queue and no raw adapter handle. available=1/mask=0 is invalid and leaves the
+// previous context unchanged; available=0 is the explicit disable. Same values
+// return 1 without canceling or reconciling. A real change calls the adapter,
+// then removes only the outer active IDs the adapter no longer owns (canceled
+// portal owners), preserving unrelated joystick/skill pointers, and consumes
+// the resulting snapshot. With a #33 game provider attached these return 0:
+// the provider path is not a proven portal consumer, so the portal stays
+// explicitly unavailable instead of competing for actions. Attaching or
+// replacing a provider also disables any binding/request/arm configured
+// earlier (and its unread edges), with the outer cache reset to unavailable
+// before provider input is accepted.
+int dm_touch_bridge_set_portal_context(dm_touch_bridge *bridge, int available,
+                                       uint64_t mask, uint64_t binding_identity,
+                                       uint64_t scene_epoch);
+int dm_touch_bridge_take_portal_request(dm_touch_bridge *bridge,
+                                        dm_android_portal_request *out);
+int dm_touch_bridge_portal_ack(dm_touch_bridge *bridge, uint64_t gesture_epoch,
+                               uint64_t binding_identity, uint64_t scene_epoch);
+
 // Applies one MotionEvent-shaped event. Returns 1 when the event was consumed
 // (including a safe UP/CANCEL fallback) and 0 for malformed input or bounded
 // backpressure. Does not consume the diagnostic snapshot; call read separately.

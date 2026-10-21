@@ -122,6 +122,10 @@ int dm_android_touch_take_portal_request(dm_android_touch *touch,
 // success clears the pending state and publishes the armed mask.
 int dm_android_touch_portal_ack(dm_android_touch *touch, uint64_t gesture_epoch,
                                 uint64_t binding_identity, uint64_t scene_epoch);
+// Read-only ownership query: 1 when pointer_id currently maps to an active
+// core finger, 0 for NULL/negative/unknown. Used by the outer bridge to drop
+// only IDs the adapter/core canceled; it does not mutate ownership.
+int dm_android_touch_has_pointer(const dm_android_touch *touch, int32_t pointer_id);
 int dm_android_touch_pointer_hit(dm_android_touch *touch, int32_t pointer_id, int kind);
 int dm_android_touch_pointer_release(dm_android_touch *touch, int32_t pointer_id,
                                      int drop_kind);
