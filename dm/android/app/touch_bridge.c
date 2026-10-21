@@ -13,6 +13,8 @@ struct dm_touch_bridge {
     float density;
     float width_pt;
     float height_pt;
+    int belt_rows;
+    int belt_open;
     int64_t last_time_ns;
     int32_t active[DM_TOUCH_MAX_POINTS];
     uint32_t active_count;
@@ -220,6 +222,22 @@ int dm_touch_bridge_resize(dm_touch_bridge *bridge, float width_pt, float height
     bridge->width_pt = width_pt;
     bridge->height_pt = height_pt;
     bridge->last_time_ns = time_ns;
+    return 1;
+}
+
+int dm_touch_bridge_set_belt_context(dm_touch_bridge *bridge, int rows, int open) {
+    if (!bridge) return 0;
+    if (bridge->belt_rows == rows && bridge->belt_open == open) return 1;   /* same snapshot: no cancel */
+    /* The adapter validates rows/open before mutating and, on a real change,
+       cancels its pointer ownership and queued pulses. Only after that
+       succeeds do we mirror the invalidation in the bridge table and consume
+       the neutral sample. An invalid update therefore leaves both layers
+       untouched. */
+    if (!dm_android_touch_set_belt_context(bridge->touch, rows, open)) return 0;
+    active_clear(bridge);
+    (void)consume(bridge);
+    bridge->belt_rows = rows;
+    bridge->belt_open = open;
     return 1;
 }
 
