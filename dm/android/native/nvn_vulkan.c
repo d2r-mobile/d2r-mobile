@@ -343,6 +343,7 @@ static VkFormatFeatureFlags present_source_features(VkFormat format) {
 }
 
 static void initialize(void) {
+    dm_cpu_phase_configure();
     present_format_count=0; present_filter_logged=0;
     const char *present_filter_env=getenv("DM_PRESENT_FILTER");
     const char *present_filter_prop=present_filter_property();
@@ -1001,7 +1002,7 @@ uint64_t mtl_present(const tex_t *t, double period, const int crop[4]) {
     // Inform system display policy of the actual target period without changing pacing or GPU synchronization.
     if(dm_android_window_frame_period)dm_android_window_frame_period(period);
     uint64_t completion_ticket=mtl_last_fence(),previous_acquire=screen_acquire_ticket;
-    uint64_t previous_start=dm_cpu_phase_begin();
+    uint64_t previous_start=dm_android_clock_ns(CLOCK_MONOTONIC);
     if(previous_acquire&&!mtl_wait(previous_acquire,UINT64_MAX))die("Vulkan prior acquire consumer wait failed");
     uint64_t previous_acquire_ns=dm_android_clock_ns(CLOCK_MONOTONIC)-previous_start;
     dm_cpu_phase_end(DM_CPU_PHASE_WAIT_PRIOR,previous_start);
