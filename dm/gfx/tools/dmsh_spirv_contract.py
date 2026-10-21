@@ -28,7 +28,7 @@
 # 用法 | Usage:
 #   dmsh_spirv_contract.py <key>.spv <key>.res.json [--local x,y,z] [--quiet]
 # 退出码 | Exit codes: 0 = contract holds; 1 = violation (message on stderr); 2 = usage/IO problem
-import json, struct, sys
+import json, os, struct, sys
 
 MAGIC = 0x07230203
 OP_ENTRY_POINT, OP_EXECUTION_MODE, OP_TYPE_IMAGE, OP_TYPE_SAMPLED_IMAGE = 15, 16, 25, 27
@@ -162,16 +162,10 @@ def parse_local(argv):
     return value, None
 
 
-def main(argv):
-    if len(argv) < 3:
-        sys.stderr.write(__doc__ or "usage: dmsh_spirv_contract.py <spv> <res.json> [--local x,y,z]\n")
-        return 2
-    spv, resp = argv[1], argv[2]
-    quiet = "--quiet" in argv
-    want_local, usage = parse_local(argv)
-    if usage:
-        sys.stderr.write("用法错误：%s\n" % usage)
-        return 2
+def check_pair(spv, resp, want_local=None):
+    """校验一对产物（翻译器 <key>.spv + <key>.res.json），违反契约时抛 Violation。返回 (stage, 版本, 绑定数, LocalSize)。
+    Validate one artifact pair (<key>.spv + <key>.res.json from the translator); raise Violation on any contract breach.
+    Returns (stage, version, binding count, LocalSize)."""
     try:
         insts, bound, version = parse(spv)
         entry, modes, types, sampled_images, pointers, decorations, variables = analyse(insts)
@@ -228,23 +222,40 @@ def main(argv):
             need(got_kind == kind, "绑定 %d 的种类不一致：模块 %s / 反射 %s" % (b, got_kind, cat))
             if kind in ("texture", "image"):
                 check_image(b, kind, info, item)
-        if not quiet:
-            local_dims = local_modes[0][1] if stage == "cs" else None
-            print("OK %s: stage=%s spirv=%d.%d bindings=%d (cbuf %d, sbuf %d, tex %d, img %d)%s"
-                  % (res.get("key", "?"), stage, version[0], version[1], len(found),
-                     len(res.get("cbufs", [])), len(res.get("sbufs", [])),
-                     len(res.get("textures", [])), len(res.get("images", [])),
-                     "" if local_dims is None else " local=%dx%dx%d" % local_dims))
-        return 0
-    except Violation as e:
-        sys.stderr.write("FAIL %s: %s\n" % (spv.rsplit("/", 1)[-1], e))
-        return 1
+        local_dims = local_modes[0][1] if stage == "cs" else None
+        return stage, tuple(version), len(found), local_dims
+    except Violation:
+        raise
     except OSError as e:
-        sys.stderr.write("无法读取输入：%s\n" % e)
+        raise Violation("无法读取输入：%s" % e)
+
+
+def main(argv):
+    if len(argv) < 3:
+        sys.stderr.write(__doc__ or "usage: dmsh_spirv_contract.py <spv> <res.json> [--local x,y,z]\n")
         return 2
-    except Exception as e:   # 契约外的输入形态也不抛栈：报内部错误并失败 | unexpected input shapes also fail without a traceback
-        sys.stderr.write("FAIL %s: 内部错误 %s: %s\n" % (spv.rsplit("/", 1)[-1], type(e).__name__, e))
+    spv, resp = argv[1], argv[2]
+    quiet = "--quiet" in argv
+    want_local, usage = parse_local(argv)
+    if usage:
+        sys.stderr.write("用法错误：%s\n" % usage)
+        return 2
+    try:
+        stage, version, nbind, local_dims = check_pair(spv, resp, want_local)
+    except Violation as e:
+        sys.stderr.write("FAIL %s: %s\n" % (os.path.basename(spv), e))
         return 1
+    except Exception as e:   # 契约外的输入形态也不抛栈：报内部错误并失败 | unexpected input shapes also fail without a traceback
+        sys.stderr.write("FAIL %s: 内部错误 %s: %s\n" % (os.path.basename(spv), type(e).__name__, e))
+        return 1
+    if not quiet:
+        res = json.load(open(resp, encoding="utf-8"))
+        print("OK %s: stage=%s spirv=%d.%d bindings=%d (cbuf %d, sbuf %d, tex %d, img %d)%s"
+              % (res.get("key", "?"), stage, version[0], version[1], nbind,
+                 len(res.get("cbufs", [])), len(res.get("sbufs", [])),
+                 len(res.get("textures", [])), len(res.get("images", [])),
+                 "" if local_dims is None else " local=%dx%dx%d" % local_dims))
+    return 0
 
 
 if __name__ == "__main__":
