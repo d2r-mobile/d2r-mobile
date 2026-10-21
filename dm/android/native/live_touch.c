@@ -653,7 +653,8 @@ uint64_t dm_live_touch_visual_signature(const dm_live_touch_visual *v,
     uint64_t h = 1469598103934665603ull;
     const uint64_t parts[] = {(uint64_t)v->buttons, (uint64_t)(uint32_t)v->lx,
         (uint64_t)(uint32_t)v->ly, (uint64_t)v->skill_set, (uint64_t)v->diff_open,
-        (uint64_t)v->navigation_mode, (uint64_t)v->joy_active, (uint64_t)(uint32_t)v->joy_origin_x,
+        (uint64_t)v->navigation_mode, (uint64_t)v->frontend, (uint64_t)v->joy_active,
+        (uint64_t)(uint32_t)v->joy_origin_x,
         (uint64_t)(uint32_t)v->joy_origin_y, (uint64_t)v->enabled_targets,
         (uint64_t)(uint32_t)g->left, (uint64_t)(uint32_t)g->top,
         (uint64_t)(uint32_t)g->width, (uint64_t)(uint32_t)g->height};
