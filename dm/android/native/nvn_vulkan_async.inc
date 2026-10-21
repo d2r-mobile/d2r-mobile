@@ -487,24 +487,3 @@ static uint64_t async_commit_locked(void) {
     recording=0;screen_submission=0;async_current=NULL;
     pthread_cond_signal(&async_condition);return ticket;
 }
-
-// 仅在停止新的图形调用后使用；普通 suspend/drain 不需要销毁 context 或 worker。
-// Use only after stopping new graphics calls; ordinary suspend/drain need not destroy contexts or the worker.
-static void async_shutdown(void) {
-    mtl_finish();pthread_mutex_lock(&queue_lock);
-    if(!async_initialized){pthread_mutex_unlock(&queue_lock);return;}
-    if(async_current)die("Vulkan asynchronous shutdown while recording");
-    async_stopping=1;pthread_cond_broadcast(&async_condition);pthread_mutex_unlock(&queue_lock);
-    int result=pthread_join(async_thread,NULL);if(result)die("Vulkan completion worker join %d",result);
-    pthread_mutex_lock(&queue_lock);
-    for(unsigned i=0;i<DM_VK_BATCH_SLOTS;i++){
-        async_batch *batch=&async_batches[i];if(batch->status!=ASYNC_FREE)die("Vulkan asynchronous shutdown with live slot");
-        if(batch->times)vkDestroyQueryPool(device,batch->times,NULL);
-        if(batch->counter_queries)vkDestroyQueryPool(device,batch->counter_queries,NULL);
-        vkDestroyQueryPool(device,batch->queries,NULL);vkDestroyFence(device,batch->fence,NULL);vkFreeCommandBuffers(device,commands,batch->chunk_count,batch->chunks);
-        immutable_buffer_bytes-=batch->query_readback.capacity;buffer_destroy(&batch->query_readback);
-        dm_pending_ranges_destroy(&batch->pending_ranges);
-    }
-    memset(async_batches,0,sizeof async_batches);command=VK_NULL_HANDLE;gpu_fence=VK_NULL_HANDLE;draw_queries=batch_times=VK_NULL_HANDLE;
-    async_initialized=async_stopping=0;async_next_slot=0;pthread_mutex_unlock(&queue_lock);
-}
