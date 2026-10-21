@@ -48,9 +48,10 @@ static _Atomic int g_overflow_logged;
 static uint64_t g_range_incarnation;
 static pthread_mutex_t g_slot_mu = PTHREAD_MUTEX_INITIALIZER;   // 建池 / 销池（客体线程，可能并发）互斥选槽；缺页处理路径不碰它 | Pool creation / destruction (guest threads, possibly concurrent) pick slots under a mutex; the page-fault handling path does not touch it
 static _Atomic uint64_t g_mp_calls, g_mp_pages, g_mp_ticks;   // 本模块的 mprotect：调用次数、覆盖页数、耗时（mach 时基，缺页路径里也安全） | This module's mprotect: call count, pages covered, time spent (mach timebase, safe in the page-fault path too)
-static void mp(uintptr_t a, size_t len, int prot) {
-    uint64_t t = mach_absolute_time(); mprotect((void *)a, len, prot);
+static int mp(uintptr_t a, size_t len, int prot) {
+    uint64_t t = mach_absolute_time(); int result=mprotect((void *)a, len, prot),error=errno;
     atomic_fetch_add(&g_mp_ticks, mach_absolute_time() - t); atomic_fetch_add(&g_mp_calls, 1); atomic_fetch_add(&g_mp_pages, len >> g_shift);
+    errno=error;return result;
 }
 
 static mach_timebase_info_data_t g_tb;   // 首次登记池时取好（缺页路径里只做乘除） | Obtained when a pool is first registered (the fault path only multiplies and divides)
@@ -89,17 +90,32 @@ static int on_fault(void *addr, int is_write, void *uc) {
     if (st == PG_BUSY) return busy_wait(r, p);   // 别的线程正在改这页的保护：等它改完重执行（改成了只读就再缺页一次、走上面那一支） | Another thread is changing this page's protection: wait for it to finish and re-execute (if it became read-only, it faults once more and takes the branch above)
     return atomic_load(&r->gen[p]) != 0;   // 刚被别的线程解掉（本次缺页发生在解之前）：重执行；从未保护过的页不是我们的 | Just unprotected by another thread (this fault happened before the unprotect): re-execute; pages that were never protected are not ours
 }
+static void unprotect_write_run(range_t *r,uintptr_t first,uintptr_t end) {
+    // 所有页均已独占 BUSY；先逐页发布新代数，才允许整个连续段变为可写。
+    // Every page is exclusively BUSY. Publish each new generation before any page in the run becomes writable.
+    for(uintptr_t p=first;p<end;p++)atomic_store(&r->gen[p],atomic_fetch_add(&g_now,1)+1);
+    if(mp(r->base+(first<<g_shift),(end-first)<<g_shift,PROT_READ|PROT_WRITE))
+        die("dirty host write unprotect failed: address=%p pages=%zu errno=%d",(void*)(r->base+(first<<g_shift)),(size_t)(end-first),errno);
+    for(uintptr_t p=first;p<end;p++)atomic_store(&r->state[p],PG_NONE);
+    atomic_fetch_add(&g_preps,end-first);
+}
 static void prep_write(void *addr, size_t len) {
     uintptr_t a = (uintptr_t)addr, e = a + len;
     while (len && a < e) {
         range_t *r = find(a);
         if (!r) { a = (a + g_pg) & ~(g_pg - 1); continue; }
         uintptr_t stop = e < r->end ? e : r->end;
-        for (uintptr_t p = (a - r->base) >> g_shift, q = (stop - 1 - r->base) >> g_shift; p <= q; p++) {
+        uintptr_t first=0;int open=0;
+        uintptr_t p=(a-r->base)>>g_shift,q=(stop-1-r->base)>>g_shift;
+        for (;p<=q;p++) {
             for (;;) { uint8_t st = PG_PROT;   // 见 BUSY 等完要重看：对方可能是在设只读，等完这页是 PROT，照样得解 | After waiting out BUSY, look again: the other side may have been setting read-only, in which case the page is PROT after the wait and still has to be unprotected
-                if (atomic_compare_exchange_strong(&r->state[p], &st, PG_BUSY)) { unprotect_page(r, p); atomic_fetch_add(&g_preps, 1); break; }
+                if (atomic_compare_exchange_strong(&r->state[p], &st, PG_BUSY)) {if(!open){first=p;open=1;}break;}
+                // 等别人的 BUSY 前先释放已认领的前缀，避免跨线程互等。
+                // Flush the claimed prefix before waiting on another BUSY page, avoiding cross-thread hold-and-wait.
+                if(open){unprotect_write_run(r,first,p);open=0;}
                 if (st != PG_BUSY || !busy_wait(r, p)) break; }
         }
+        if(open)unprotect_write_run(r,first,q+1);
         a = stop;
     }
 }
