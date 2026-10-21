@@ -38,9 +38,16 @@ VkResult dm_vk_texture_upload(dm_vk *vk, const nvn_texdesc *desc,
         layers > limits->maxImageArrayLayers) return VK_ERROR_FORMAT_NOT_SUPPORTED;
     VkFormatProperties features;
     vkGetPhysicalDeviceFormatProperties(vk->physical, VK_FORMAT_R8G8B8A8_UNORM, &features);
-    VkFormatFeatureFlags needed = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+    VkFormatFeatureFlags needed = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT |
+        VK_FORMAT_FEATURE_TRANSFER_SRC_BIT;
     if ((features.optimalTilingFeatures & needed) != needed) return VK_ERROR_FORMAT_NOT_SUPPORTED;
-    VkImageUsageFlags usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+    // 读回走 vkCmdCopyImageToBuffer，源映像必须带 TRANSFER_SRC（VUID-vkCmdCopyImageToBuffer-srcImage-00186）；
+    // 能力查询用同一整掩码，缺任何一位都按不支持如实拒绝。
+    // Readback goes through vkCmdCopyImageToBuffer, so the source image must carry TRANSFER_SRC
+    // (VUID-vkCmdCopyImageToBuffer-srcImage-00186); the capability query uses the same full mask and reports
+    // unsupported truthfully when any bit is missing.
+    VkImageUsageFlags usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+        VK_IMAGE_USAGE_SAMPLED_BIT;
     VkImageFormatProperties supported;
     VkResult result = vkGetPhysicalDeviceImageFormatProperties(vk->physical, VK_FORMAT_R8G8B8A8_UNORM,
         VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL, usage, 0, &supported);
@@ -143,5 +150,129 @@ done:
     free(copies);
     if (result == VK_SUCCESS) *out = texture;
     else dm_vk_texture_destroy(vk, &texture);
+    return result;
+}
+
+// ---------- 线性 RGBA8 区域更新／读回（行距与填充） ----------
+// ---------- Linear RGBA8 region update/readback (row stride and padding) ----------
+static int region_within(const dm_vk_texture *texture, uint32_t level, uint32_t layer, const dm_vk_region *region) {
+    if (!region || !region->width || !region->height) return 0;
+    if (level >= texture->levels || layer >= texture->layers) return 0;
+    return (uint64_t)region->x + region->width <= mip(texture->width, level) &&
+           (uint64_t)region->y + region->height <= mip(texture->height, level);
+}
+
+// 行距语义与 nvn_copy_pitch 一致：0 = 紧排；非 0 须不小于区域宽度字节数。extent 是源／目的缓冲至少需要的字节数。
+// Row-stride semantics match nvn_copy_pitch: 0 = tight; non-zero must be at least the extent width in bytes. extent is the
+// minimum byte count the source/destination buffer must provide.
+static VkResult row_layout(const dm_vk_region *region, uint32_t row_bytes, size_t *stride, size_t *extent) {
+    size_t tight = (size_t)region->width * 4;
+    if (!tight) return VK_ERROR_INITIALIZATION_FAILED;
+    if (row_bytes && row_bytes < tight) return VK_ERROR_INITIALIZATION_FAILED;
+    size_t selected = row_bytes ? (size_t)row_bytes : tight;
+    if ((size_t)(region->height - 1) > (SIZE_MAX - tight) / selected) return VK_ERROR_INITIALIZATION_FAILED;
+    *stride = selected;
+    *extent = (size_t)(region->height - 1) * selected + tight;
+    return VK_SUCCESS;
+}
+
+VkResult dm_vk_texture_update_rows(dm_vk *vk, dm_vk_texture *texture, uint32_t level, uint32_t layer,
+    const dm_vk_region *region, const void *source, size_t source_size, uint32_t row_bytes) {
+    if (!vk || !vk->device || !texture || !texture->image || !source) return VK_ERROR_INITIALIZATION_FAILED;
+    if (texture->format != VK_FORMAT_R8G8B8A8_UNORM) return VK_ERROR_FORMAT_NOT_SUPPORTED;
+    if (!region_within(texture, level, layer, region)) return VK_ERROR_INITIALIZATION_FAILED;
+    size_t stride, extent;
+    VkResult result = row_layout(region, row_bytes, &stride, &extent);
+    if (result != VK_SUCCESS) return result;
+    if (source_size < extent) return VK_ERROR_INITIALIZATION_FAILED;
+    size_t tight = (size_t)region->width * 4, height = region->height;
+    dm_vk_buffer staging = {0};
+    dm_vk_buffer_info info = {.size = tight * height, .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT};
+    result = dm_vk_buffer_create(vk, &info, &staging);
+    if (result != VK_SUCCESS) return result;   // 创建失败已自行回收 | create already cleaned up after itself
+    VkCommandBuffer command = VK_NULL_HANDLE;
+    // 逐行只取区域宽度，行距里的填充留在调用者的源缓冲里。
+    // Take only the extent width per row; padding inside the row stride stays in the caller's source buffer.
+    for (size_t y = 0; y < height; y++)
+        memcpy((uint8_t *)staging.mapped + y * tight, (const uint8_t *)source + y * stride, tight);
+    result = dm_vk_buffer_sync(vk, &staging, 1);
+    if (result == VK_SUCCESS) result = dm_vk_begin(vk, &command);
+    if (result == VK_SUCCESS) {
+        VkImageSubresourceRange range = {VK_IMAGE_ASPECT_COLOR_BIT, level, 1, layer, 1};
+        VkImageMemoryBarrier barrier = {.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .srcAccessMask = VK_ACCESS_SHADER_READ_BIT, .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+            .oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED, .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .image = texture->image, .subresourceRange = range};
+        vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL, 1, &barrier);
+        VkBufferImageCopy copy = {.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level, layer, 1},
+            .imageOffset = {region->x, region->y, 0}, .imageExtent = {region->width, region->height, 1}};
+        vkCmdCopyBufferToImage(command, staging.handle, texture->image,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, NULL, 0, NULL, 1, &barrier);
+        result = dm_vk_submit(vk, command);
+        command = VK_NULL_HANDLE;   // 提交消费命令缓冲 | submit consumes the command buffer
+    }
+    if (command) vkFreeCommandBuffers(vk->device, vk->pool, 1, &command);
+    dm_vk_buffer_destroy(vk, &staging);
+    return result;
+}
+
+VkResult dm_vk_texture_read_rows(dm_vk *vk, const dm_vk_texture *texture, uint32_t level, uint32_t layer,
+    const dm_vk_region *region, uint32_t row_bytes, void *dest, size_t dest_size) {
+    if (!vk || !vk->device || !texture || !texture->image || !dest) return VK_ERROR_INITIALIZATION_FAILED;
+    if (texture->format != VK_FORMAT_R8G8B8A8_UNORM) return VK_ERROR_FORMAT_NOT_SUPPORTED;
+    if (!region_within(texture, level, layer, region)) return VK_ERROR_INITIALIZATION_FAILED;
+    size_t stride, extent;
+    VkResult result = row_layout(region, row_bytes, &stride, &extent);
+    if (result != VK_SUCCESS) return result;
+    if (dest_size < extent) return VK_ERROR_INITIALIZATION_FAILED;
+    size_t tight = (size_t)region->width * 4, height = region->height;
+    dm_vk_buffer staging = {0};
+    dm_vk_buffer_info info = {.size = tight * height, .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT};
+    result = dm_vk_buffer_create(vk, &info, &staging);
+    if (result != VK_SUCCESS) return result;
+    VkCommandBuffer command = VK_NULL_HANDLE;
+    result = dm_vk_begin(vk, &command);
+    if (result == VK_SUCCESS) {
+        VkImageSubresourceRange range = {VK_IMAGE_ASPECT_COLOR_BIT, level, 1, layer, 1};
+        VkImageMemoryBarrier barrier = {.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .srcAccessMask = VK_ACCESS_SHADER_READ_BIT, .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+            .oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED, .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .image = texture->image, .subresourceRange = range};
+        vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+            VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL, 1, &barrier);
+        VkBufferImageCopy copy = {.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, level, layer, 1},
+            .imageOffset = {region->x, region->y, 0}, .imageExtent = {region->width, region->height, 1}};
+        vkCmdCopyImageToBuffer(command, texture->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            staging.handle, 1, &copy);
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+        barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, NULL, 0, NULL, 1, &barrier);
+        result = dm_vk_submit(vk, command);
+        command = VK_NULL_HANDLE;
+    }
+    if (command) vkFreeCommandBuffers(vk->device, vk->pool, 1, &command);
+    if (result == VK_SUCCESS) {
+        result = dm_vk_buffer_sync(vk, &staging, 0);   // GPU 已完成后让主机读回 | let the host read back after the GPU finished
+        // 逐行写回，目的缓冲行距里的填充保持原样。
+        // Write row by row; padding inside the destination row stride stays untouched.
+        if (result == VK_SUCCESS)
+            for (size_t y = 0; y < height; y++)
+                memcpy((uint8_t *)dest + y * stride, (const uint8_t *)staging.mapped + y * tight, tight);
+    }
+    dm_vk_buffer_destroy(vk, &staging);
     return result;
 }
