@@ -88,8 +88,13 @@ if(ANDROID)
 else()
     add_test(NAME vulkan_texture_rows COMMAND dm_vulkan_texture_rows_test)
     set_tests_properties(vulkan_texture_rows PROPERTIES TIMEOUT 45)
+    # 同一个资源回归在真实验证层下再跑一次；层不可用 → 77 SKIP，绝不当作通过（#42）。
+    # The same resource regression under the real validation layer; unavailable layer -> 77 SKIP, never a pass (#42).
+    add_test(NAME vulkan_texture_rows_validation COMMAND dm_vulkan_texture_rows_test --validation)
+    set_tests_properties(vulkan_texture_rows_validation PROPERTIES TIMEOUT 45 SKIP_RETURN_CODE 77)
     if(APPLE AND DM_MOLTENVK_ICD)
         set_tests_properties(vulkan_texture_rows PROPERTIES ENVIRONMENT "VK_DRIVER_FILES=${DM_MOLTENVK_ICD}")
+        set_tests_properties(vulkan_texture_rows_validation PROPERTIES ENVIRONMENT "VK_DRIVER_FILES=${DM_MOLTENVK_ICD}")
     endif()
 endif()
 
@@ -109,4 +114,51 @@ if(ANDROID)
 else()
     add_test(NAME vulkan_texture_failures COMMAND dm_vulkan_texture_failures_test)
     set_tests_properties(vulkan_texture_failures PROPERTIES TIMEOUT 45)
+endif()
+
+# #42：验证层诊断契约（层不可用 → 77 SKIP）与实例创建失败清理（注入 loader 边界）。
+# #42 validation contract (unavailable layer -> 77 SKIP) and instance-creation failure cleanup (injected loader boundary).
+add_executable(dm_vulkan_validation_test ../tests/vulkan_validation.c)
+target_link_libraries(dm_vulkan_validation_test PRIVATE dm_android_vk)
+target_compile_options(dm_vulkan_validation_test PRIVATE -Wall -Wextra -Werror)
+add_executable(dm_vulkan_validation_createfail_test ../tests/vulkan_validation_createfail.c vk_host.c)
+target_link_libraries(dm_vulkan_validation_createfail_test PRIVATE dm_android_vk)
+target_compile_options(dm_vulkan_validation_createfail_test PRIVATE -Wall -Wextra -Werror)
+target_compile_definitions(dm_vulkan_validation_createfail_test PRIVATE vkCreateInstance=dm_test_vkCreateInstance)
+if(ANDROID)
+    target_link_options(dm_vulkan_validation_test PRIVATE "-Wl,-z,max-page-size=16384")
+    target_link_options(dm_vulkan_validation_createfail_test PRIVATE "-Wl,-z,max-page-size=16384")
+else()
+    add_test(NAME vulkan_validation COMMAND dm_vulkan_validation_test)
+    add_test(NAME vulkan_validation_createfail COMMAND dm_vulkan_validation_createfail_test)
+    set_tests_properties(vulkan_validation PROPERTIES TIMEOUT 45 SKIP_RETURN_CODE 77)
+    set_tests_properties(vulkan_validation_createfail PROPERTIES TIMEOUT 45)
+    if(APPLE AND DM_MOLTENVK_ICD)
+        set_tests_properties(vulkan_validation PROPERTIES ENVIRONMENT "VK_DRIVER_FILES=${DM_MOLTENVK_ICD}")
+    endif()
+endif()
+
+# 注入 loader 边界：层存在 + debug utils 可用、messenger 失败/清理、回调计数与并发读取（无需 GPU/真实层）。
+# Injected loader boundary: layer present + debug utils, messenger failure/cleanup, callback counters and concurrent
+# readers, without GPU or a real layer.
+find_package(Threads REQUIRED)
+add_executable(dm_vulkan_validation_fakeloader_test ../tests/vulkan_validation_fakeloader.c vk_host.c)
+target_link_libraries(dm_vulkan_validation_fakeloader_test PRIVATE dm_android_vk Threads::Threads)
+target_compile_options(dm_vulkan_validation_fakeloader_test PRIVATE -Wall -Wextra -Werror)
+foreach(symbol vkEnumerateInstanceLayerProperties vkEnumerateInstanceExtensionProperties vkCreateInstance vkDestroyInstance
+    vkGetInstanceProcAddr vkEnumeratePhysicalDevices vkGetPhysicalDeviceQueueFamilyProperties vkGetPhysicalDeviceProperties
+    vkGetPhysicalDeviceMemoryProperties vkEnumerateDeviceExtensionProperties vkCreateDevice vkDestroyDevice vkGetDeviceQueue
+    vkCreateCommandPool vkDestroyCommandPool vkDeviceWaitIdle)
+    target_compile_definitions(dm_vulkan_validation_fakeloader_test PRIVATE ${symbol}=dm_test_${symbol})
+endforeach()
+option(DM_VK_SANITIZE_THREAD "Build the fake-loader validation test with ThreadSanitizer" OFF)
+if(DM_VK_SANITIZE_THREAD)
+    target_compile_options(dm_vulkan_validation_fakeloader_test PRIVATE -fsanitize=thread -g)
+    target_link_options(dm_vulkan_validation_fakeloader_test PRIVATE -fsanitize=thread)
+endif()
+if(ANDROID)
+    target_link_options(dm_vulkan_validation_fakeloader_test PRIVATE "-Wl,-z,max-page-size=16384")
+else()
+    add_test(NAME vulkan_validation_fakeloader COMMAND dm_vulkan_validation_fakeloader_test)
+    set_tests_properties(vulkan_validation_fakeloader PROPERTIES TIMEOUT 60)
 endif()

@@ -56,9 +56,25 @@ static void expect_pixels(const uint8_t *rows, size_t row_bytes, int updated, co
     EXPECT(bad == 0);
 }
 
-int main(void) {
+int main(int argc, char **argv) {
     dm_vk vk = {0};
-    VK_CHECK(dm_vk_create(&vk));
+    // --validation：请求真实验证层并通过错误计数参与判定；层不可用时返回 77（CTest SKIP），不当作通过。
+    // --validation: request the real layer and let its error count decide; when unavailable return 77 (CTest SKIP), never a pass.
+    int want_validation = argc > 1 && !strcmp(argv[1], "--validation");
+    dm_vk_options options = DM_VK_OPTIONS_INIT;
+    options.validation = DM_VK_VALIDATION_REQUIRED;
+    VkResult created = dm_vk_create_ex(want_validation ? &options : NULL, &vk);
+    if (want_validation && created == VK_ERROR_LAYER_NOT_PRESENT) {
+        printf("vulkan_texture_rows: VK_LAYER_KHRONOS_validation unavailable; SKIP (validation not run, not a pass)\n");
+        return 77;
+    }
+    VK_CHECK(created);
+    if (want_validation) {
+        CHECK(dm_vk_validation_enabled(&vk));
+        printf("validation: %s (instance %u.%u, driver %u.%u)\n", dm_vk_validation_status(&vk),
+               VK_VERSION_MAJOR(vk.api_version), VK_VERSION_MINOR(vk.api_version),
+               VK_VERSION_MAJOR(vk.driver_api_version), VK_VERSION_MINOR(vk.driver_api_version));
+    }
     shape s = make_shape();
     dm_vk_texture texture = {0};
     make_texture(&vk, &s, &texture);
@@ -174,6 +190,12 @@ int main(void) {
     dm_vk_texture_destroy(&vk, &texture);
     free(rows);
     printf("vulkan_texture_rows: %u checks, %u failures (GPU: %s)\n", checks, failures, vk.properties.deviceName);
+    if (want_validation) {
+        uint32_t errors = dm_vk_validation_errors(&vk), warnings = dm_vk_validation_warnings(&vk);
+        printf("validation: errors %u, warnings %u\n", errors, warnings);
+        if (errors) { char first[256] = {0}; dm_vk_validation_first_error(&vk, first, sizeof first); fprintf(stderr, "  first validation error: %s\n", first); }
+        EXPECT(errors == 0);   // 真实验证层报错即失败 | any real validation error fails the run
+    }
     dm_vk_destroy(&vk);
     CHECK(!vk.device && !vk.instance);
     return failures ? 1 : 0;
