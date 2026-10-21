@@ -19,12 +19,15 @@ from pathlib import Path
 from native_callbacks_host import extract_function
 
 FUNCTIONS = ["text_jni_stage_failed", "native_text_event", "text_end",
-             "text_begin_ready", "text_begin"]
+             "text_begin_ready", "text_begin", "ime_entry_load_class",
+             "ime_entry_install", "ime_entry_uninstall", "native_ime_entry_request",
+             "destroy"]
 
 PRELUDE = r'''
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 typedef void *jobject;
@@ -34,6 +37,8 @@ typedef void *jstring;
 typedef unsigned char jboolean;
 typedef int jint;
 typedef long long jlong;
+#define JNI_FALSE 0
+#define JNI_TRUE 1
 typedef struct JNINativeInterface JNINativeInterface;
 typedef const JNINativeInterface *JNIEnv;
 typedef struct { const char *name, *signature; void *fnPtr; } JNINativeMethod;
@@ -41,11 +46,13 @@ typedef struct { const char *name, *signature; void *fnPtr; } JNINativeMethod;
 struct JNINativeInterface {
     jobject (*GetObjectClass)(JNIEnv *, jobject);
     jmethodID (*GetMethodID)(JNIEnv *, jclass, const char *, const char *);
+    jmethodID (*GetStaticMethodID)(JNIEnv *, jclass, const char *, const char *);
     jobject (*CallObjectMethod)(JNIEnv *, jobject, jmethodID, ...);
     jstring (*NewStringUTF)(JNIEnv *, const char *);
     jint (*RegisterNatives)(JNIEnv *, jclass, const JNINativeMethod *, jint);
     jobject (*NewObject)(JNIEnv *, jclass, jmethodID, ...);
     jboolean (*CallBooleanMethod)(JNIEnv *, jobject, jmethodID, ...);
+    jboolean (*CallStaticBooleanMethod)(JNIEnv *, jclass, jmethodID, ...);
     jobject (*NewGlobalRef)(JNIEnv *, jobject);
     void (*DeleteGlobalRef)(JNIEnv *, jobject);
     void (*DeleteLocalRef)(JNIEnv *, jobject);
@@ -55,6 +62,7 @@ struct JNINativeInterface {
 };
 
 enum { DM_APP_STATE_CREATED = 0, DM_APP_STATE_OWNED_DIAGNOSTIC = 3 };
+enum { DM_WSI_EVENT_STOP = 0, DM_WSI_OK = 0, DM_WSI_STAGE_DRAIN = 0, DM_WSI_CODE_UNKNOWN = 0 };
 #define DM_TEXT_MAX_UTF16_UNITS 512
 #define EVENT_COMMIT 0
 #define EVENT_DELETE 1
@@ -63,7 +71,17 @@ enum { DM_APP_STATE_CREATED = 0, DM_APP_STATE_OWNED_DIAGNOSTIC = 3 };
 
 typedef struct { int state; void *surface; } dm_app_lifecycle;
 typedef struct { int width, height; } ANativeWindow;
-typedef struct ANativeActivity { JNIEnv *env; jobject clazz; } ANativeActivity;
+typedef struct { int device; } dm_vk;
+typedef struct { int enabled; } dm_wsi;
+typedef struct { int unused; } dm_wsi_report;
+typedef struct { int unused; } dm_input_arbiter;
+typedef struct { int buttons; } dm_npad_state;
+typedef struct { int unused; } AInputQueue;
+typedef struct { int unused; } native_audio;
+static int audio_pause_calls;
+static int native_audio_pause(native_audio *audio) { (void)audio; audio_pause_calls++; return 0; }
+static int native_audio_destroy(native_audio **audio, JNIEnv *env) { (void)audio; (void)env; return 0; }
+typedef struct ANativeActivity { JNIEnv *env; jobject clazz; void *instance; } ANativeActivity;
 
 typedef struct {
     ANativeActivity *activity;
@@ -81,12 +99,27 @@ typedef struct {
     uint32_t text_commit_events, text_delete_events, text_submit_events, text_cancel_events;
     uint64_t text_event_total;
     int text_last_units;
+    jclass ime_entry_class;
+    uint64_t ime_entry_token;
+    int ime_entry_installed;
+    int timer_fd, frame_fd;
+    dm_vk vk;
+    dm_wsi wsi;
+    dm_wsi_report report;
+    AInputQueue *input;
+    native_audio *audio;
 } app_state;
 
 static app_state *g_text_app;
 static uint64_t g_text_next_session;
+static app_state *g_ime_entry_app;
+static uint64_t g_ime_entry_next_token;
 static int text_begin(app_state *);
 static void text_end(app_state *, const char *);
+static int ime_entry_install(app_state *);
+static void ime_entry_uninstall(app_state *);
+static jboolean native_ime_entry_request(JNIEnv *, jclass, jlong);
+static void destroy(ANativeActivity *);
 static int touch_cancel_calls;
 static void touch_cancel(app_state *s, const char *reason, int64_t now) {
     (void)s; (void)reason; (void)now; touch_cancel_calls++;
@@ -94,6 +127,21 @@ static void touch_cancel(app_state *s, const char *reason, int64_t now) {
 static int64_t monotonic_ns(void) { return 1000000000LL; }
 static int dm_app_lifecycle_state(const dm_app_lifecycle *l) { return l ? l->state : 0; }
 static void *dm_app_lifecycle_surface(const dm_app_lifecycle *l) { return l ? l->surface : NULL; }
+static void stop_input_timer(app_state *s) { s->timer_fd = -1; }
+static void stop_frame_timer(app_state *s) { s->frame_fd = -1; }
+static int dm_wsi_stop(dm_wsi *w) { (void)w; return 0; }
+static void dm_wsi_report_event(dm_wsi_report *r, int event) { (void)r; (void)event; }
+static void wsi_report_fail(app_state *s, int stage, int code, int unsupported, int open_failure) {
+    (void)s; (void)stage; (void)code; (void)unsupported; (void)open_failure;
+}
+static void wsi_report_snapshot(app_state *s, const char *reason) { (void)s; (void)reason; }
+static void AInputQueue_detachLooper(AInputQueue *q) { (void)q; }
+static void controller_hotplug_stop(app_state *s) { (void)s; }
+static void gamepad_rearm(app_state *s) { (void)s; }
+static void dm_input_arbiter_destroy(dm_input_arbiter *a, dm_npad_state *n) { (void)a; (void)n; }
+static int dm_app_lifecycle_stop(dm_app_lifecycle *l) { (void)l; return 1; }
+static int dm_app_lifecycle_destroy(dm_app_lifecycle *l) { (void)l; return 1; }
+static void dm_vk_destroy(dm_vk *v) { (void)v; }
 #define LOG(...) do { } while (0)
 #define CHECK(c) do { if (!(c)) { \
     fprintf(stderr, "FAIL line %d: %s\n", __LINE__, #c); return 1; } } while (0)
@@ -101,8 +149,11 @@ static void *dm_app_lifecycle_surface(const dm_app_lifecycle *l) { return l ? l-
 typedef struct { int id; } FakeObject;
 static FakeObject activity_obj = {1}, activity2_obj = {2}, activity_class = {3},
     loader_class = {4}, app_loader = {5}, bridge_class = {6}, bridge_obj = {7},
-    string_obj = {8};
+    entry_class = {8}, string_obj = {9};
 static int mid_activity_loader, mid_loadclass, mid_constructor, mid_show, mid_hide, mid_release;
+static int mid_entry_install, mid_entry_uninstall;
+#define MID_ENTRY_INSTALL ((jmethodID)&mid_entry_install)
+#define MID_ENTRY_UNINSTALL ((jmethodID)&mid_entry_uninstall)
 #define MID_ACTIVITY_LOADER ((jmethodID)&mid_activity_loader)
 #define MID_LOADCLASS ((jmethodID)&mid_loadclass)
 #define MID_CONSTRUCTOR ((jmethodID)&mid_constructor)
@@ -110,6 +161,7 @@ static int mid_activity_loader, mid_loadclass, mid_constructor, mid_show, mid_hi
 #define MID_HIDE ((jmethodID)&mid_hide)
 #define MID_RELEASE ((jmethodID)&mid_release)
 
+static int root_fail_class;
 static int pending, exception_describes, native_registers, show_calls, release_calls;
 static int release_result = 1, show_result = 1, show_exception;
 static int reentrant_event = -1, reentrant_units;
@@ -117,12 +169,18 @@ static int global_ref_calls, globals_deleted, fail_global_at;
 static int register_signature_ok, loader_receiver_calls, loaded_from_app_loader;
 static jlong constructed_session;
 static void *loader_receiver, *loaded_from;
+static const char *last_load_name;
+static int entry_install_calls, entry_uninstall_calls, entry_install_result = 1;
+static int entry_uninstall_result = 1;
+static jlong entry_install_token, entry_uninstall_token;
+static void *entry_install_activity;
 
 static void set_exception(void) { pending = 1; }
 static void native_text_event(JNIEnv *, jclass, jlong, jint, jint);
 
 static jobject fake_get_object_class(JNIEnv *env, jobject obj) {
     (void)env;
+    if (root_fail_class) { set_exception(); return NULL; }
     if (obj == &activity_obj || obj == &activity2_obj) return &activity_class;
     if (obj == &app_loader) return &loader_class;
     set_exception();
@@ -137,6 +195,15 @@ static jmethodID fake_get_method_id(JNIEnv *env, jclass cls, const char *name, c
         if (strcmp(name, "show") == 0) return MID_SHOW;
         if (strcmp(name, "hide") == 0) return MID_HIDE;
         if (strcmp(name, "release") == 0) return MID_RELEASE;
+    }
+    set_exception();
+    return NULL;
+}
+static jmethodID fake_get_static_method_id(JNIEnv *env, jclass cls, const char *name, const char *sig) {
+    (void)env; (void)sig;
+    if (cls == &entry_class) {
+        if (strcmp(name, "install") == 0) return MID_ENTRY_INSTALL;
+        if (strcmp(name, "uninstall") == 0) return MID_ENTRY_UNINSTALL;
     }
     set_exception();
     return NULL;
@@ -157,10 +224,12 @@ static jobject fake_class_loader(JNIEnv *env, jobject receiver, jmethodID mid, v
 }
 static jobject fake_load_class(JNIEnv *env, jobject receiver, jmethodID mid, va_list ap) {
     (void)env; (void)mid;
-    (void)va_arg(ap, jstring);
+    jstring name = va_arg(ap, jstring);
+    (void)name;
     loaded_from = receiver;
     loaded_from_app_loader = receiver == &app_loader;
     if (receiver != &app_loader) { set_exception(); return NULL; }
+    if (last_load_name && strstr(last_load_name, "DmImeTouchEntry")) return &entry_class;
     return &bridge_class;
 }
 static jobject fake_call_object(JNIEnv *env, jobject receiver, jmethodID mid, ...) {
@@ -172,11 +241,17 @@ static jobject fake_call_object(JNIEnv *env, jobject receiver, jmethodID mid, ..
     va_end(ap);
     return out;
 }
-static jstring fake_new_string(JNIEnv *env, const char *s) { (void)env; (void)s; return &string_obj; }
+static jstring fake_new_string(JNIEnv *env, const char *s) {
+    (void)env;
+    last_load_name = s;
+    return &string_obj;
+}
 static jint fake_register_natives(JNIEnv *env, jclass cls, const JNINativeMethod *m, jint n) {
     (void)env; (void)cls; (void)n;
     native_registers++;
-    register_signature_ok = m && m[0].signature && strcmp(m[0].signature, "(JII)V") == 0;
+    register_signature_ok = m && m[0].signature
+            && (strcmp(m[0].signature, "(JII)V") == 0
+                || strcmp(m[0].signature, "(J)Z") == 0);
     return register_signature_ok ? 0 : -1;
 }
 static jobject fake_new_object(JNIEnv *env, jclass cls, jmethodID mid, ...) {
@@ -205,6 +280,27 @@ static jboolean fake_call_boolean(JNIEnv *env, jobject obj, jmethodID mid, ...) 
     set_exception();
     return 0;
 }
+static jboolean fake_call_static_boolean(JNIEnv *env, jclass cls, jmethodID mid, ...) {
+    (void)env;
+    if (cls != &entry_class) { set_exception(); return 0; }
+    va_list ap; va_start(ap, mid);
+    jobject activity = va_arg(ap, jobject);
+    jlong token = va_arg(ap, jlong);
+    va_end(ap);
+    if (mid == MID_ENTRY_INSTALL) {
+        entry_install_calls++;
+        entry_install_activity = activity;
+        entry_install_token = token;
+        return (jboolean)entry_install_result;
+    }
+    if (mid == MID_ENTRY_UNINSTALL) {
+        entry_uninstall_calls++;
+        entry_uninstall_token = token;
+        return (jboolean)entry_uninstall_result;
+    }
+    set_exception();
+    return 0;
+}
 static jobject fake_new_global(JNIEnv *env, jobject obj) {
     (void)env;
     global_ref_calls++;
@@ -220,8 +316,9 @@ static jboolean fake_exception_check(JNIEnv *env) { (void)env; return (jboolean)
 static void fake_exception_describe(JNIEnv *env) { (void)env; exception_describes++; }
 static void fake_exception_clear(JNIEnv *env) { (void)env; pending = 0; }
 static const JNINativeInterface fake_functions = {
-    fake_get_object_class, fake_get_method_id, fake_call_object, fake_new_string,
-    fake_register_natives, fake_new_object, fake_call_boolean, fake_new_global,
+    fake_get_object_class, fake_get_method_id, fake_get_static_method_id,
+    fake_call_object, fake_new_string, fake_register_natives, fake_new_object,
+    fake_call_boolean, fake_call_static_boolean, fake_new_global,
     fake_delete_global, fake_delete_local, fake_exception_check,
     fake_exception_describe, fake_exception_clear
 };
@@ -232,7 +329,12 @@ static void reset_fake(JNIEnv *env) {
     global_ref_calls = globals_deleted = fail_global_at = 0;
     register_signature_ok = loader_receiver_calls = loaded_from_app_loader = 0;
     loader_receiver = loaded_from = NULL; constructed_session = 0;
+    last_load_name = NULL; entry_install_calls = entry_uninstall_calls = 0;
+    entry_install_result = 1; entry_uninstall_result = 1;
+    entry_install_token = entry_uninstall_token = 0;
+    entry_install_activity = NULL; root_fail_class = 0;
     g_text_app = NULL; g_text_next_session = 0; touch_cancel_calls = 0;
+    g_ime_entry_app = NULL; g_ime_entry_next_token = 0;
     *env = &fake_functions;
 }
 
@@ -371,6 +473,120 @@ static int test_reentrant_terminal_during_show(JNIEnv *env) {
     return 0;
 }
 
+static int test_entry_owner_request(JNIEnv *env) {
+    ANativeActivity act = {env, &activity_obj};
+    ANativeActivity act2 = {env, &activity2_obj};
+    dm_app_lifecycle life = {DM_APP_STATE_OWNED_DIAGNOSTIC, NULL};
+    ANativeWindow window = {1, 1};
+    app_state a; memset(&a, 0, sizeof a);
+    a.activity = &act; a.lifecycle = &life; a.window = &window;
+    a.resumed = a.focused = a.touch_allowed = 1; a.arbiter = (void *)1;
+    life.surface = &window;
+    CHECK(ime_entry_install(&a) == 1);
+    CHECK(a.ime_entry_installed && a.ime_entry_token != 0 && a.ime_entry_class == &entry_class);
+    CHECK(entry_install_calls == 1 && entry_install_activity == &activity_obj);
+    CHECK(entry_install_token == (jlong)a.ime_entry_token);
+    app_state b; memset(&b, 0, sizeof b);
+    b.activity = &act2; b.lifecycle = &life; b.window = &window;
+    b.resumed = b.focused = b.touch_allowed = 1;
+    CHECK(ime_entry_install(&b) == 0);
+    CHECK(entry_install_calls == 1 && g_ime_entry_app == &a);
+    CHECK(native_ime_entry_request(env, NULL, (jlong)a.ime_entry_token) == JNI_TRUE);
+    CHECK(a.text_active && a.text_session != 0 && show_calls == 1);
+    CHECK(native_ime_entry_request(env, NULL, (jlong)a.ime_entry_token + 1) == JNI_FALSE);
+    CHECK(native_ime_entry_request(env, NULL, 0) == JNI_FALSE);
+    text_end(&a, "entry_test_end");
+    uint64_t token = a.ime_entry_token;
+    entry_uninstall_result = 0;
+    ime_entry_uninstall(&a);
+    CHECK(!a.ime_entry_installed && a.ime_entry_token == token);
+    CHECK(a.ime_entry_class == &entry_class);
+    CHECK(entry_uninstall_calls == 1);
+    CHECK(native_ime_entry_request(env, NULL, (jlong)token) == JNI_FALSE);
+    entry_uninstall_result = 1;
+    ime_entry_uninstall(&a);
+    CHECK(!a.ime_entry_installed && a.ime_entry_token == 0 && a.ime_entry_class == NULL);
+    CHECK(g_ime_entry_app == NULL && entry_uninstall_calls == 2);
+    CHECK(entry_uninstall_token == (jlong)token);
+    CHECK(native_ime_entry_request(env, NULL, (jlong)token) == JNI_FALSE);
+    return 0;
+}
+
+static int test_entry_exception_cleanup(JNIEnv *env) {
+    ANativeActivity act = {env, &activity_obj};
+    dm_app_lifecycle life = {DM_APP_STATE_OWNED_DIAGNOSTIC, NULL};
+    ANativeWindow window = {1, 1};
+    app_state a; memset(&a, 0, sizeof a);
+    a.activity = &act; a.lifecycle = &life; a.window = &window;
+    a.resumed = a.focused = a.touch_allowed = 1; life.surface = &window;
+    root_fail_class = 1;
+    CHECK(ime_entry_install(&a) == 0);
+    CHECK(!pending && !a.ime_entry_installed && a.ime_entry_class == NULL);
+    CHECK(g_ime_entry_app == NULL);
+    root_fail_class = 0;
+    CHECK(ime_entry_install(&a) == 1);
+    return 0;
+}
+
+static int test_entry_install_false_retained_rollback(JNIEnv *env) {
+    ANativeActivity act = {env, &activity_obj, NULL};
+    dm_app_lifecycle life = {DM_APP_STATE_OWNED_DIAGNOSTIC, NULL};
+    ANativeWindow window = {1, 1};
+    app_state *a = calloc(1, sizeof *a);
+    CHECK(a != NULL);
+    a->activity = &act; a->lifecycle = &life; a->window = &window;
+    a->resumed = a->focused = a->touch_allowed = 1;
+    a->timer_fd = a->frame_fd = -1;
+    life.surface = &window;
+    act.instance = a;
+    entry_install_result = 0;
+    entry_uninstall_result = 0;
+    CHECK(ime_entry_install(a) == 0);
+    CHECK(a->ime_entry_class == &entry_class && a->ime_entry_token != 0);
+    CHECK(!a->ime_entry_installed && entry_uninstall_calls == 1);
+    CHECK(native_ime_entry_request(env, NULL, (jlong)a->ime_entry_token) == JNI_FALSE);
+    entry_install_result = 1;
+    entry_uninstall_result = 1;
+    CHECK(ime_entry_install(a) == 1);
+    CHECK(a->ime_entry_installed && entry_uninstall_calls == 2);
+    ime_entry_uninstall(a);
+    CHECK(a->ime_entry_class == NULL && a->ime_entry_token == 0);
+    free(a);
+    return 0;
+}
+
+static int test_destroy_cleanup_retry(JNIEnv *env) {
+    ANativeActivity act = {env, &activity_obj, NULL};
+    dm_app_lifecycle life = {DM_APP_STATE_OWNED_DIAGNOSTIC, NULL};
+    ANativeWindow window = {1, 1};
+    app_state *a = calloc(1, sizeof *a);
+    CHECK(a != NULL);
+    a->activity = &act; a->lifecycle = &life; a->window = &window;
+    a->resumed = a->focused = a->touch_allowed = 1;
+    a->timer_fd = 41; a->frame_fd = 42;
+    life.surface = &window;
+    act.instance = a;
+    CHECK(ime_entry_install(a) == 1);
+    entry_uninstall_result = 0;
+    int pauses_before = audio_pause_calls;
+    destroy(&act);
+    CHECK(act.instance == a);
+    CHECK(a->timer_fd == -1 && a->frame_fd == -1);
+    CHECK(!a->resumed && !a->focused && !a->touch_allowed);
+    CHECK(audio_pause_calls == pauses_before + 1);
+    CHECK(a->ime_entry_class == &entry_class && a->ime_entry_token != 0);
+    CHECK(!a->ime_entry_installed && entry_uninstall_calls == 1);
+    CHECK(native_ime_entry_request(env, NULL, (jlong)a->ime_entry_token) == JNI_FALSE);
+    destroy(&act);
+    CHECK(act.instance == a);
+    CHECK(a->ime_entry_class == &entry_class && entry_uninstall_calls == 2);
+    entry_uninstall_result = 1;
+    destroy(&act);
+    CHECK(act.instance == NULL);
+    CHECK(entry_uninstall_calls == 3);
+    return 0;
+}
+
 int main(void) {
     JNIEnv env;
     reset_fake(&env); if (test_success_and_events(&env)) return 1;
@@ -378,7 +594,11 @@ int main(void) {
     reset_fake(&env); if (test_global_ref_rollback(&env)) return 1;
     reset_fake(&env); if (test_owner_busy_and_inactive(&env)) return 1;
     reset_fake(&env); if (test_reentrant_terminal_during_show(&env)) return 1;
-    puts("PASS text JNI start/event/end");
+    reset_fake(&env); if (test_entry_owner_request(&env)) return 1;
+    reset_fake(&env); if (test_entry_exception_cleanup(&env)) return 1;
+    reset_fake(&env); if (test_entry_install_false_retained_rollback(&env)) return 1;
+    reset_fake(&env); if (test_destroy_cleanup_retry(&env)) return 1;
+    puts("PASS text JNI start/event/end + entry cleanup");
     return 0;
 }
 '''
@@ -393,7 +613,8 @@ def run(cc: str, source: str, work: Path, label: str) -> int:
     exe = work / label
     c.write_text(source)
     subprocess.run([cc, "-std=c11", "-O1", "-g", "-Wall", "-Wextra", "-Werror",
-                    "-Wno-unused-parameter", "-o", str(exe), str(c)], check=True)
+                    "-Wno-unused-parameter", "-Wno-missing-field-initializers",
+                    "-o", str(exe), str(c)], check=True)
     return subprocess.run([str(exe)], check=False).returncode
 
 
@@ -406,6 +627,9 @@ def main() -> int:
     text = Path(args.native).read_text()
     text = text.replace("static int text_begin(app_state*s);\n", "")
     text = text.replace("static void text_end(app_state*s,const char*reason);\n", "")
+    text = text.replace("static int ime_entry_install(app_state*s);\n", "")
+    text = text.replace("static void ime_entry_uninstall(app_state*s);\n", "")
+    text = text.replace("static jboolean native_ime_entry_request(JNIEnv*env,jclass cls,jlong token);\n", "")
     with tempfile.TemporaryDirectory() as td:
         work = Path(td)
         if run(args.cc, build(text), work, "text-jni") != 0:
