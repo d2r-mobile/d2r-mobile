@@ -25,6 +25,9 @@ struct dm_live_touch {
     uint64_t skill_bind_request, skill_bind_key, skill_bind_scene_epoch, skill_bind_world_epoch;
     dm_live_touch_tap_hook tap_hook;
     void *tap_context;
+    float minimap[4], map_x, map_y;
+    int minimap_valid, map_full, map_request;
+    struct { int kind; float x, y; double began; } map_finger[DM_TC_MAX_TOUCH];
     struct {
         int active;
         int pointer_slot;
@@ -59,7 +62,7 @@ static float point_y(const dm_live_touch *touch, float y_px, float top, float he
 static void sync_pointers(dm_live_touch *touch) {
     for (int i = 0; i < DM_TC_MAX_TOUCH; ++i) {
         if (touch->pointers.platform[i] >= 0 && !touch->state.finger[i].active &&
-            !touch->skill_bind[i].active) {
+            !touch->skill_bind[i].active && !touch->map_finger[i].kind) {
             touch->pointers.platform[i] = -1;
         }
     }
@@ -174,11 +177,40 @@ void dm_live_touch_set_holding(dm_live_touch *touch, int holding, int targeting)
     if (touch) dm_tc_set_holding(&touch->state, holding && !targeting);
 }
 
+dm_tc_state *dm_live_touch_controls(dm_live_touch *touch) { return touch ? &touch->state : NULL; }
+void dm_live_touch_set_minimap(dm_live_touch *touch, const float rect[4], int full) {
+    if (!touch) return;
+    touch->map_full = !!full;
+    touch->minimap_valid = rect && isfinite(rect[0]) && isfinite(rect[1]) &&
+        isfinite(rect[2]) && isfinite(rect[3]) && rect[0] >= 0 && rect[1] >= 0 &&
+        rect[2] <= 1 && rect[3] <= 1 && rect[2] > rect[0] && rect[3] > rect[1];
+    if (touch->minimap_valid) memcpy(touch->minimap, rect, sizeof touch->minimap);
+}
+int dm_live_touch_take_map_request(dm_live_touch *touch, float *nx, float *ny) {
+    if (!touch) return 0;
+    int request = touch->map_request; touch->map_request = 0;
+    if (!touch->have_context || touch->state.navigation_mode) return 0;
+    if (nx) *nx = touch->map_x;
+    if (ny) *ny = touch->map_y;
+    return request;
+}
+static int minimap_title_hit(const dm_live_touch *touch, float x, float y) {
+    if (!touch->minimap_valid || touch->state.navigation_mode ||
+        dm_tc_hit(&touch->state.layout, x, y) >= 0) return 0;
+    const float *r = touch->minimap;
+    float h = (r[3] - r[1]) * touch->height;
+    float band = h / 4; if (band < 30) band = fminf(30, h * .4f);
+    return x >= r[0] * touch->width && x < r[2] * touch->width &&
+        y >= r[1] * touch->height && y < r[1] * touch->height + band;
+}
+
 void dm_live_touch_resize(dm_live_touch *touch, float width_pt, float height_pt) {
     if (!touch || !isfinite(width_pt) || !isfinite(height_pt) || width_pt <= 0 || height_pt <= 0) return;
     if (touch->width == width_pt && touch->height == height_pt) return;
     dm_tc_resize(&touch->state, width_pt, height_pt);
     clear_skill_bind(touch, 1);
+    memset(touch->map_finger, 0, sizeof touch->map_finger);
+    touch->map_request = 0;
     touch->state.belt_request = 0;
     touch->state.diff_request = 0;
     touch->portal_request = 0;
@@ -404,6 +436,8 @@ void dm_live_touch_set_mode(dm_live_touch *touch, int navigation, uint32_t mask)
     if (mask != touch->state.enabled_targets) dm_tc_enable_targets(&touch->state, mask);
     if (changed) {
         clear_skill_bind(touch, 1);
+        memset(touch->map_finger, 0, sizeof touch->map_finger);
+        touch->map_request = 0;
         touch->state.diff_request = 0;
         touch->portal_request = 0;
         touch->belt_fingers = 0;
@@ -461,6 +495,17 @@ int dm_live_touch_event(dm_live_touch *touch, int action, int action_index,
         // the gesture layer and binds only if it is a tap. Unknown/stale data
         // never enters this branch.
         int target = dm_tc_hit(&touch->state.layout, px, py);
+        // The iOS frontend collapses an expanded belt before its map/bind hooks.
+        if (dm_tc_belt_outside(&touch->state,px,py)) {
+            dm_tc_begin_at(&touch->state,slot,px,py,t);
+            return 1;
+        }
+        if (touch->have_context && minimap_title_hit(touch, px, py)) {
+            touch->map_finger[slot].kind = 1;
+            touch->map_finger[slot].x = px; touch->map_finger[slot].y = py;
+            touch->map_finger[slot].began = t;
+            return 1;
+        }
         if (!touch->state.navigation_mode && !touch->skill_bind_active &&
             touch->have_context && target >= DM_TC_MAIN && target <= DM_TC_SKILL4 &&
             (touch->state.enabled_targets & (1u << target))) {
@@ -480,6 +525,12 @@ int dm_live_touch_event(dm_live_touch *touch, int action, int action_index,
             }
         }
         dm_tc_begin_at(&touch->state, slot, px, py, t);
+        if (!touch->state.navigation_mode && touch->map_full &&
+            touch->state.finger[slot].target == DM_TC_NONE && touch->state.joy_slot != slot) {
+            touch->map_finger[slot].kind = 2;
+            touch->map_finger[slot].x = px; touch->map_finger[slot].y = py;
+            touch->map_finger[slot].began = t;
+        }
         if (!touch->state.finger[slot].active) {
             dm_touch_pointer_release(&touch->pointers, id);
             return 0;
@@ -508,6 +559,7 @@ int dm_live_touch_event(dm_live_touch *touch, int action, int action_index,
         for (int i = 0; i < pointer_count; ++i) {
             int slot = dm_touch_pointer_slot(&touch->pointers, ids[i]);
             if (slot < 0) continue;
+            if (touch->map_finger[slot].kind == 1) { changed = 1; continue; }
             if (touch->skill_bind[slot].active) {
                 touch->skill_bind[slot].x = point_x(touch, x_px[i], picture_left, picture_width);
                 touch->skill_bind[slot].y = point_y(touch, y_px[i], picture_top, picture_height);
@@ -527,6 +579,19 @@ int dm_live_touch_event(dm_live_touch *touch, int action, int action_index,
         int32_t id = ids[action_index];
         int slot = dm_touch_pointer_slot(&touch->pointers, id);
         if (slot < 0) return 0;
+        if (touch->map_finger[slot].kind) {
+            int kind = touch->map_finger[slot].kind;
+            float px = point_x(touch, x_px[action_index], picture_left, picture_width);
+            float py = point_y(touch, y_px[action_index], picture_top, picture_height);
+            if (!touch->state.navigation_mode && t - touch->map_finger[slot].began < .6 &&
+                hypotf(px-touch->map_finger[slot].x, py-touch->map_finger[slot].y) <= 14 &&
+                (kind == 1 || touch->map_full)) {
+                touch->map_request = touch->map_full ? 2 : 1;
+                touch->map_x = px/touch->width; touch->map_y = py/touch->height;
+            }
+            touch->map_finger[slot].kind = 0;
+            if (kind == 1) { dm_touch_pointer_release(&touch->pointers, id); return 1; }
+        }
         if (touch->skill_bind[slot].active) {
             float px = point_x(touch, x_px[action_index], picture_left, picture_width);
             float py = point_y(touch, y_px[action_index], picture_top, picture_height);
@@ -565,6 +630,8 @@ int dm_live_touch_cancel_all(dm_live_touch *touch, int64_t time_ns) {
     if (!touch || time_ns < 0) return 0;
     (void)now_s(touch, time_ns);
     clear_skill_bind(touch, 0);
+    memset(touch->map_finger, 0, sizeof touch->map_finger);
+    touch->map_request = 0;
     dm_tc_cancel_all(&touch->state);
     dm_touch_pointer_clear(&touch->pointers);
     touch->state.belt_request = 0;
@@ -709,7 +776,8 @@ int dm_live_touch_has_pointer(const dm_live_touch *touch, int32_t id) {
 int dm_live_touch_active(const dm_live_touch *touch) {
     if (!touch) return 0;
     for (int i = 0; i < DM_TC_MAX_TOUCH; ++i)
-        if (touch->pointers.platform[i] >= 0 && touch->state.finger[i].active) return 1;
+        if (touch->pointers.platform[i] >= 0 &&
+            (touch->state.finger[i].active || touch->map_finger[i].kind)) return 1;
     return 0;
 }
 

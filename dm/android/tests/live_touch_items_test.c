@@ -19,6 +19,7 @@ typedef struct {
     float drop_point_x, drop_point_y, origin_x, origin_y;
     int drop_point_ok, origin_ok;
     int item_tap, identify, use, long_press, tab_go, stack_take, mouse_click;
+    int shop_calls, shop_origin, shop_drop;
     int order[32], order_count;
     float mouse_x, mouse_y;
     dm_live_touch *touch;
@@ -89,6 +90,10 @@ static void stack_take(void *context) { fake_host *f = context; f->stack_take++;
 static void mouse_click(void *context, float x, float y) {
     fake_host *f = context; f->mouse_click++; f->mouse_x = x; f->mouse_y = y; note(f, 7);
 }
+static void shop_drop(void *context,int kind,int drop,float x,float y){
+    fake_host *f=context;f->shop_calls++;f->shop_origin=kind;f->shop_drop=drop;
+    f->mouse_x=x;f->mouse_y=y;
+}
 
 static const dm_live_touch_items_host host_vtable = {
     .item_query = item_query, .item_result = item_result,
@@ -99,27 +104,26 @@ static const dm_live_touch_items_actions actions = {
     .item_tap = item_tap, .identify = identify, .use = use,
     .long_press = long_press, .tab_go = tab_go, .stack_take = stack_take,
     .mouse_click = mouse_click,
+    .shop_drop = shop_drop,
 };
 
 typedef struct { dm_live_touch *touch; dm_live_touch_items *items; fake_host fake; } rig;
 
-static rig make_rig(void) {
-    rig r;
-    memset(&r, 0, sizeof r);
-    r.touch = dm_live_touch_create(667, 375);
+static void make_rig(rig *r) {
+    memset(r, 0, sizeof *r);
+    r->touch = dm_live_touch_create(667, 375);
     dm_live_touch_items_host host = host_vtable;
-    host.context = &r.fake;
-    r.items = dm_live_touch_items_create(r.touch, &host);
-    dm_live_touch_set_mode(r.touch, 1, dm_tc_nav_mask(1) | (1u << DM_TC_MENU));
-    r.fake.item_answer = 1;
-    r.fake.drop_answer = 5;
-    r.fake.drop_point_ok = 1;
-    r.fake.origin_ok = 1;
-    r.fake.drop_point_x = 0.42f; r.fake.drop_point_y = 0.58f;
-    r.fake.origin_x = 0.31f; r.fake.origin_y = 0.44f;
-    r.fake.touch = r.touch;
-    (void)dm_live_touch_items_set_context(r.items, 1, 1, 1, 1);
-    return r;
+    host.context = &r->fake;
+    r->items = dm_live_touch_items_create(r->touch, &host);
+    dm_live_touch_set_mode(r->touch, 1, dm_tc_nav_mask(1) | (1u << DM_TC_MENU));
+    r->fake.item_answer = 1;
+    r->fake.drop_answer = 5;
+    r->fake.drop_point_ok = 1;
+    r->fake.origin_ok = 1;
+    r->fake.drop_point_x = 0.42f; r->fake.drop_point_y = 0.58f;
+    r->fake.origin_x = 0.31f; r->fake.origin_y = 0.44f;
+    r->fake.touch = r->touch;
+    (void)dm_live_touch_items_set_context(r->items, 1, 1, 1, 1);
 }
 static void drop_rig(rig *r) {
     dm_live_touch_items_destroy(r->items);
@@ -153,8 +157,38 @@ static int event2(rig *r, int action, int action_index,
                                      ids, xs, ys, 667, 375, 0, 0, 667, 375, time_ns);
 }
 
+static void shop_drag_case(int kind,int drop,int expected){
+    rig r={0};r.touch=dm_live_touch_create(667,375);
+    dm_live_touch_items_host h=host_vtable;h.context=&r.fake;h.shop_supported=1;
+    r.items=dm_live_touch_items_create(r.touch,&h);
+    dm_live_touch_set_context(r.touch,1,0,1,1,1,0);
+    dm_live_touch_items_set_context(r.items,1,1,1,1);
+    int delayed=kind==7&&drop==5;
+    r.fake.item_answer=delayed?-1:kind;r.fake.drop_answer=drop;
+    r.fake.drop_point_ok=r.fake.origin_ok=1;
+    r.fake.origin_x=.15f;r.fake.origin_y=.27f;
+    event(&r,DM_LIVE_ACTION_DOWN,0,1,9,100,100,1000000000);
+    if(delayed){
+        event(&r,DM_LIVE_ACTION_MOVE,-1,1,9,145,100,1005000000);
+        CHECK(!dm_live_touch_items_pointer_ready(r.items));
+        r.fake.item_answer=kind;
+    }
+    dm_live_touch_items_tick(r.items,1010000000);
+    CHECK(dm_live_touch_items_pointer_ready(r.items));
+    CHECK(!dm_live_touch_controls(r.touch)->finger[dm_live_touch_pointer_slot(r.touch)].ui_drag);
+    event(&r,DM_LIVE_ACTION_MOVE,-1,1,9,220,160,1100000000);
+    event(&r,DM_LIVE_ACTION_UP,0,1,9,220,160,1120000000);
+    dm_live_touch_items_tick(r.items,1130000000);
+    consume(&r);consume(&r);
+    CHECK(r.fake.shop_calls==expected);
+    if(expected){CHECK(r.fake.shop_origin==kind);CHECK(r.fake.shop_drop==drop);}
+    CHECK(!r.fake.mouse_click&&!r.fake.use);
+    drop_rig(&r);
+}
 int main(void) {
-    rig r = make_rig();
+    shop_drag_case(7,5,1);shop_drag_case(8,5,1);shop_drag_case(8,11,1);shop_drag_case(1,7,1);
+    shop_drag_case(7,3,0);shop_drag_case(7,11,0);shop_drag_case(8,0,0);
+    rig r; make_rig(&r);
     CHECK(r.touch && r.items);
 
     // Tap: hit answer is applied only after the async answer, then one host tap.
