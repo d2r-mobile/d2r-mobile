@@ -1136,7 +1136,7 @@ def compile_and_run(cc: str, app: Path, source: str, work: Path, label: str,
     compile_command = [cc, "-std=gnu11", "-g", "-fsanitize=address,undefined",
                        f"-I{app}",                       f"-I{app.parent / 'runtime'}",
                        f"-I{app.parent.parent / 'ios' / 'Sources'}", f"-I{app.parent.parent / 'host'}",
-                       str(c_file)] + app_sources + ["-o", str(exe)]
+                       str(c_file)] + app_sources + ["-lm", "-o", str(exe)]
     built = subprocess.run(compile_command, text=True, capture_output=True)
     if built.returncode != 0:
         if not quiet:

@@ -127,9 +127,103 @@ else
     fail "accepted IME mutation controls failed"
 fi
 
-# 私有负控制：证明该门禁真的有牙齿，不提交故意损坏的源码。
-# Private negative controls: prove the gate has teeth without committing deliberate broken code.
+# #189 必需的热插拔回归：真实 Android jar + Java listener、实际 JNI start/stop、
+# 实际 NativeActivity callback。它们都在当前 checkout 上执行；失败会直接使本任务失败。
+# #189 required hotplug regressions: real jar + actual Java listener, actual JNI
+# start/stop, and actual NativeActivity callbacks from this checkout. Failures propagate.
 negative_failed=0
+hotplug_java=$root/dm/android/tests/controller_hotplug_java.sh
+hotplug_jni=$root/dm/android/tests/controller_hotplug_jni_host.py
+hotplug_native=$root/dm/android/tests/native_callbacks_host.py
+hotplug_source=${DM_HOTPLUG_NATIVE_SOURCE:-$root/dm/android/app/native.c}
+[[ -f "$hotplug_source" ]] || fail "required hotplug native source is missing: $hotplug_source"
+cc_bin=${DM_CC:-${CC:-cc}}
+command -v "$cc_bin" >/dev/null 2>&1 || fail "required hotplug controls need a C compiler ($cc_bin)"
+
+if ANDROID_JAR="$jar" PATH="$(dirname "$javac"):$(dirname "$java_bin"):$PATH" \
+    bash "$hotplug_java" >"$logs/hotplug-java.log" 2>&1; then
+    log_line "PASS hotplug actual Java listener: $(tail -2 "$logs/hotplug-java.log" | tr '\n' ' ')"
+else
+    cat "$logs/hotplug-java.log" >> "$log" 2>/dev/null
+    fail "required hotplug actual Java listener failed"
+fi
+
+if python3 "$hotplug_jni" --native "$hotplug_source" --cc "$cc_bin" --mutants \
+    >"$logs/hotplug-jni.log" 2>&1; then
+    log_line "PASS hotplug actual JNI start/stop: $(grep -o 'PASS controller hotplug JNI start/stop' "$logs/hotplug-jni.log" | tail -1)"
+else
+    cat "$logs/hotplug-jni.log" >> "$log" 2>/dev/null
+    fail "required hotplug actual JNI start/stop failed"
+fi
+
+if python3 "$hotplug_native" --native "$hotplug_source" \
+    --app "$root/dm/android/app" --cc "$cc_bin" >"$logs/hotplug-native.log" 2>&1; then
+    log_line "PASS hotplug actual NativeActivity callbacks: $(grep -o 'native callbacks: OK[^$]*' "$logs/hotplug-native.log" | tail -1)"
+else
+    cat "$logs/hotplug-native.log" >> "$log" 2>/dev/null
+    fail "required hotplug actual NativeActivity callbacks failed"
+fi
+
+# 私有负控制：错误 loader receiver 的 native.c 副本必须让实际 JNI 测试失败。
+# Private negative control: a copied production source with the old loader receiver
+# must make the actual JNI test fail inside this required command.
+bad_hotplug=$(mktemp -d "$work/tmp/hotplug-broken.XXXXXX")
+cp "$hotplug_source" "$bad_hotplug/native.c"
+python3 - "$bad_hotplug/native.c" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+anchor = "CallObjectMethod(env,s->activity->clazz,get_loader)"
+if text.count(anchor) != 1:
+    raise SystemExit("fail closed: hotplug loader receiver anchor missing or ambiguous")
+path.write_text(text.replace(anchor, "CallObjectMethod(env,activity_class,get_loader)", 1),
+                encoding="utf-8")
+PY
+prepare_rc=$?
+if [[ $prepare_rc -ne 0 ]]; then
+    log_line "FAIL negative control: hotplug loader copy could not be prepared"
+    negative_failed=1
+elif python3 "$hotplug_jni" --native "$bad_hotplug/native.c" --cc "$cc_bin" \
+    >"$logs/hotplug-bad-loader.log" 2>&1; then
+    log_line "FAIL negative control: wrong hotplug loader receiver passed actual JNI test"
+    negative_failed=1
+else
+    log_line "PASS negative control: actual required JNI path rejects wrong loader receiver"
+fi
+rm -rf "$bad_hotplug"
+
+# 编译器失败控制：损坏副本必须让实际测试入口非零退出，而不是被当成通过。
+# Compiler-failure control: a malformed copy must make the actual test entrypoint exit
+# nonzero instead of being reported as a pass.
+bad_compile=$(mktemp -d "$work/tmp/hotplug-compile-broken.XXXXXX")
+cp "$hotplug_source" "$bad_compile/native.c"
+python3 - "$bad_compile/native.c" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+anchor = "static int controller_hotplug_start(app_state*s){\n"
+if text.count(anchor) != 1:
+    raise SystemExit("fail closed: hotplug compile anchor missing or ambiguous")
+path.write_text(text.replace(anchor, anchor + "this is not valid C\n", 1),
+                encoding="utf-8")
+PY
+prepare_rc=$?
+if [[ $prepare_rc -ne 0 ]]; then
+    log_line "FAIL negative control: hotplug compile copy could not be prepared"
+    negative_failed=1
+elif python3 "$hotplug_jni" --native "$bad_compile/native.c" --cc "$cc_bin" \
+    >"$logs/hotplug-bad-compile.log" 2>&1; then
+    log_line "FAIL negative control: malformed hotplug source compiled"
+    negative_failed=1
+else
+    log_line "PASS negative control: malformed hotplug source rejected"
+fi
+rm -rf "$bad_compile"
+
 if DM_ANDROID_JAR="$work/does-not-exist/android.jar" resolve_jar >/dev/null 2>&1; then
     log_line "FAIL negative control: missing android.jar was accepted"
     negative_failed=1
@@ -198,4 +292,4 @@ python3 "$root/ci/scripts/sanitize_log.py" "$log" "$root" "$work" >/dev/null 2>&
 }
 
 [[ "$negative_failed" == 0 ]] || fail "one or more negative controls did not fail as intended"
-log_line "PASS required Java compile, focus and IME controls"
+log_line "PASS required Java compile, focus, IME and hotplug controls"
