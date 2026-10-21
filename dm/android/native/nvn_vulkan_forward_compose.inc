@@ -51,7 +51,7 @@ static void forward_compose_into(vk_buffer output,uintptr_t address,uint64_t byt
     if(!forward_compose_possible(address,bytes,scope_marker)||!output.owner||atomic_load(&output.owner->references)!=1||output.size<bytes)die("Vulkan compose without owned destination/complete plan");
     // 不使用 snapshot_read：它会先套用 CPU copy，随后旧 GPU 覆盖会打乱 FIFO。
     // Do not use snapshot_read: its early CPU-copy overlays would be overwritten out of FIFO order by older GPU writes.
-    if(dm_android_read_memory(address,output.mapped,bytes))die("Vulkan compose baseline unreadable");snapshot_read_account(bytes);
+    if(guest_baseline_read(address,output.mapped,bytes))die("Vulkan compose baseline unreadable");snapshot_read_account(bytes);
     graphics_pass_end();const post_op *stop=scope_marker?*scope_marker:NULL;
     for(async_batch *batch=async_first;batch;batch=batch->next)forward_compose_chain(batch->posts,NULL,address,bytes,output);
     forward_compose_chain(post_first,stop,address,bytes,output);
