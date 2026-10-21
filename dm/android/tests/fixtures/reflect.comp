@@ -1,0 +1,12 @@
+// 反射驱动计算夹具：线性索引写 uint 数组，数值只依赖 push constant 与索引，宿主可用纯算术独立复算。
+// Reflection-driven compute fixture: writes a uint array by linear index; values depend only on push constants and the
+// index, so the host can recompute them with plain arithmetic.
+#version 450
+layout(local_size_x = 4, local_size_y = 1, local_size_z = 1) in;
+layout(set = 0, binding = 0, std430) buffer Out { uint v[]; } outbuf;
+layout(push_constant) uniform Params { uint base; uint step; } params;
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= outbuf.v.length()) return;
+    outbuf.v[i] = params.base + i * params.step;
+}
