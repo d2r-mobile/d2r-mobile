@@ -26,6 +26,18 @@
 - 预检负例：纹理字节短、空纹理指针、零宽纹理、错误 stride、过少顶点、非 3 倍数/超上限索引数、空指针、NaN 位置、越界 UV/索引、目标容量不足、超宽目标；全部 GPU 前拒绝且画布保持哨兵。
 - 后创建失败注入：descriptor-pool、pipeline、draw command 结束、readback invalidate 四条路径；跟踪三 draw buffer、2 image/memory/view、sampler、两个 shader、descriptor layout/pool/set、pipeline/layout、command/fence，全部计数归零，调用者顶点/索引/纹理与画布哨兵不变。
 
+## #117 应用侧接入（工程诊断壳）
+
+- `app/diagnostic_scene.c` 持有接入所用的全部场景数据：非均匀 4×4 RGBA8 纹理（16 个两两不同的 texel）、NDC ±0.75 且 UV 0..1 的四边形、六个 `uint16` 索引；`app/native.c` 把它复制进本接口要求的 16 字节顶点布局并渲染 256×256 读回。未新增绘制 API、未改 peer HUD/touch/reflection 代码。
+- 检查点由同一场景几何独立推算：16 个 texel 中心 + 4 个清屏角点（20 个）；不符时记录首个坏点的期望/实测 RGBA 且不呈现该帧。
+- 绘制门 `dm_diag_scene_ready()` 复用 `app/lifecycle.c`：仅 `owned-diagnostic` 且控制器持有该 Surface 时绘制；暂停、停止中、已停止、`failed`、陈旧令牌与停止后的迟到回调都抑制绘制。
+- 呈现接缝 `app/present_policy.c`：要求 RGBA_8888、`stride >= width`、容量覆盖 `width*height*4`，64 位尺寸运算；只清零可见行区、居中复制（窗口更小时从源居中裁剪），行距填充不读不写，拒绝路径零写入。
+- APK 只打包 `indexed_textured.vert.spv` / `indexed_textured.frag.spv` 两个固定着色器资源，由 `app/build.sh` 从交叉编译输出取；不再打包旧的片段坐标图案着色器。
+- 新增测试：`app_diagnostic_scene`（场景字面值 + 检查器 + 真实生命周期抑制，含停止后迟到回调）、`app_present_policy`（格式/行距/容量/溢出、拒绝零写入、居中与填充）、`vulkan_app_diagnostic_scene`（宿主 GPU 渲染同一场景 + 改 texel 负控）。前两个不依赖 Vulkan/Android，在 CI 的 `DM_ANDROID_VULKAN=OFF` 配置下也构建并运行。
+- 本机已执行：宿主 71/71（2 个验证层用例按设计 SKIP）、CI host 模式、ARM64/API29 交叉编译与诊断 APK 打包（未安装）。
+
+未验证：真机 `ANativeWindow_lock` 的格式/行距行为、Adreno/Android Vulkan 驱动、swapchain 与帧调度；不声称 Android/设备验收。
+
 ## 边界
 
 - 仅宿主 MoltenVK/授权 Vulkan 证据；不声称 Adreno/真机、GPU 完成或镜像回滚。

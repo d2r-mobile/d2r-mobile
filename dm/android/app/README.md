@@ -4,7 +4,35 @@
 
 This NativeActivity development app bundles **only owned synthetic fixtures**. It is not a playable D2R build. No game data or Switch keys enter the APK. Package: `org.d2rmobile.android.diagnostic`; ARM64 only, minimum API 29, target API 35. No network or shared-storage permission is requested.
 
-At startup it reads a synthetic artifact, rebinds gates, maps RX/R/RW pages and attempts a native guest-TLS round trip in the actual app process. Log tag: `D2R-Diagnostic`. When a window exists it draws the tested Vulkan fragment-coordinate pattern, reads it back and copies it into an Android native window. This is a one-frame engineering diagnostic, not an optimized game presenter. Pause/resume are logged; low memory releases the GPU context, and redraw recreates it. No background rendering loop, game resource importer, saves, game controls or audio is implemented here.
+At startup it reads a synthetic artifact, rebinds gates, maps RX/R/RW pages and attempts a native guest-TLS round trip in the actual app process. Log tag: `D2R-Diagnostic`. When a window exists and the lifecycle is ready it draws the owned indexed-textured scene (#117, see below), reads it back and copies it into an Android native window. This is a one-frame engineering diagnostic, not an optimized game presenter. Pause/resume are logged; low memory releases the GPU context, and redraw recreates it. No background rendering loop, game resource importer, saves, game controls or audio is implemented here.
+
+## Owned indexed-textured scene (#117)
+
+`app/diagnostic_scene.c` owns the whole scene: a nonuniform 4x4 RGBA8 texture (16 pairwise distinct texels), four vertices at NDC ±0.75 with UV 0..1 and six `uint16` indices. `app/native.c` copies those vertices into the fixed 16-byte layout of the accepted #115 call `dm_vk_draw_indexed_textured_offscreen()` and renders a 256x256 RGBA8 readback. The packaged shaders are `indexed_textured.vert.spv` and `indexed_textured.frag.spv`; `app/build.sh` stages exactly those two files from `android/arm64-v8a/vulkan/`, and no other shader asset is packaged.
+
+Verification is the same scene data: 20 probes (the centre of every texel plus the four clear corners) are derived from the documented geometry by `dm_diag_scene_check_pixels()`. A mismatch logs the first failing pixel with its expected and observed RGBA and the frame is not presented, so a wrong image is visible as a log failure rather than a plausible-looking window.
+
+Drawing is bounded by the existing lifecycle controller. `dm_diag_scene_ready()` requires the `owned-diagnostic` state and the Surface the controller currently owns, so there is no draw before a Surface exists, while paused, while stopping with outstanding work, after stop, in `failed`, for a stale window token or from a late callback after stop. The window path additionally re-checks readiness and the staged shader assets.
+
+`app/present_policy.c` is the presentation seam: it requires `WINDOW_FORMAT_RGBA_8888`, `stride >= width`, a capacity covering exactly `width*height*4` bytes and 64-bit size arithmetic. It clears only the visible row area, copies a centred crop (cropping the source when the window is smaller) and never reads or writes stride padding. A rejected copy writes zero destination bytes. Asset-copy, Vulkan-create, draw and window-lock failures are logged with their actual code; the readback buffer is freed on every path and the Vulkan context is destroyed only by stop/low-memory.
+
+Tests added with the integration:
+
+| Test | What it verifies independently |
+|---|---|
+| `app_diagnostic_scene` | Scene literals (16 distinct texels, ±0.75 geometry, fixed indices) and the probe checker against a canvas the test computes itself; one changed texel and one dirty corner are located; short capacity/null/zero-size canvases are rejected; a real lifecycle controller suppresses drawing across pause, resume, Surface loss, stopping with pending work, stop and late callbacks. |
+| `app_present_policy` | Format/stride/capacity/overflow boundaries, zero writes on every rejection, centred placement, centred crop and untouched stride padding when resizing. |
+| `vulkan_app_diagnostic_scene` | The same owned scene through the accepted #115 API on the host Vulkan device (MoltenVK on this Mac), 20 probes then a changed-texel control that must fail at the expected probe. |
+
+```sh
+python3 dm/i18n/scan_literals.py
+bash dm/android/test.sh
+PATH=/opt/homebrew/bin:$PATH bash dm/android/app/build.sh
+bash ci/scripts/ci.sh host
+DM_CI_ALLOW_ARM_CROSS=1 bash ci/scripts/ci.sh android
+```
+
+Unverified: no install or launch on a phone, no device `ANativeWindow_lock` format/stride behaviour, no Adreno or Android Vulkan driver validation, no swapchain, frame scheduling or game presenter. The 2026-10-17 checkpoint below belongs to the earlier fragment-coordinate pattern; the current APK has not been reinstalled or observed on any device.
 
 ## Lifecycle ownership
 
