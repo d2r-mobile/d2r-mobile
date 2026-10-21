@@ -887,7 +887,11 @@ static void x_submit(const uint64_t *h, int n, uint64_t sub, uint64_t host) {
     for (int i = 0; i < n; i++) { mtl_exec_rest(h + i + 1, n - i - 1); mtl_exec((const uint8_t *)h[i]); }
     mtl_exec_rest(NULL, 0);
     uint64_t f = mtl_sub_commit();
+#ifdef __ANDROID__
+    if (f != sub) { static int noted; if (!noted++) LOG("[nvn-fence-domain] NVN ordinal=%llu Vulkan ticket=%llu; sync uses actual ticket after CPU translation", (unsigned long long)sub, (unsigned long long)f); }
+#else
     if (f != sub) { static int red; if (!red++) LOG("【红】翻译队列：第 %llu 次提交的 Metal 栅栏是 %llu，栅栏与提交数对不上，游戏等同步会提前 / 推迟放行", (unsigned long long)sub, (unsigned long long)f); }
+#endif
     snap_tick(sub);
     uint64_t dw = now_ns() - t0;
     atomic_fetch_add(&g_nvn_ns, dw); atomic_fetch_add(&g_sub_wall_ns, dw);
@@ -948,7 +952,16 @@ static uint64_t x_push(xjob *j) {   // 返回任务号 | Returns the job number
 }
 static void x_wait(uint64_t job) { pthread_mutex_lock(&g_xmu); while (g_xq_done < job) pthread_cond_wait(&g_xcv, &g_xmu); pthread_mutex_unlock(&g_xmu); }
 static void x_drain(void) { pthread_mutex_lock(&g_xmu); uint64_t job = g_xq_in; pthread_mutex_unlock(&g_xmu); x_wait(job); }
-static uint64_t x_fence(void) { return atomic_load(&g_x_subs); }
+static uint64_t x_fence(void) {
+#ifdef __ANDROID__
+    // Vulkan may split one NVN submission into several GPU batches. Finish CPU
+    // translation before taking its real GPU ticket; the NVN ordinal is not a fence.
+    x_drain();
+    return mtl_last_fence();
+#else
+    return atomic_load(&g_x_subs);
+#endif
+}
 static uint64_t x_present_ticket(uint64_t job) {   // 出图任务执行完后换来的出图线程票号（0 = 那次出图被丢弃，不用等） | Present thread ticket obtained after the present job runs (0 = that present was dropped, nothing to wait for)
     x_wait(job);
     pthread_mutex_lock(&g_xmu); uint64_t tk = g_xtk[job % XTK].job == job ? g_xtk[job % XTK].tk : 0; int lost = g_xtk[job % XTK].job != job; pthread_mutex_unlock(&g_xmu);
