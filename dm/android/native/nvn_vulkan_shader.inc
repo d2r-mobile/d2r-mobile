@@ -238,7 +238,15 @@ static texture_descriptor descriptor_texture(int id) {
 }
 static image_entry *descriptor_image(const texture_descriptor *d,uint32_t type,int storage,VkPipelineStageFlags stage,VkAccessFlags access,int flat) {
     if(flat){image_entry *e=texture_flat_image();image_access(e,stage,access);texture_flat_overrides++;return e;}
-    if(d->valid){image_entry *e=image_get(&d->texture);if(!storage||(e->texture.has_layout&&e->texture.mem))image_upload(e);if(storage)image_gpu_written(e);image_access(e,stage,access);return e;}
+    if(d->valid){const tex_t *source=&d->texture;tex_t alias;int alias_format=texture_shadow_alias_format(type,storage,source->d.format);
+        // 颜色格式上的深度比较改走同字节的深度格式别名；别名只由 CPU 源上传，GPU 写过的原图保持原路径并记一次。
+        // Depth compares on color formats go through a same-byte depth-format alias; the alias uploads only from the CPU
+        // source, so a GPU-written original keeps the original path and is logged once.
+        if(alias_format){image_entry *base=image_find(source->serial);
+            if(base&&base->gpu_written){static unsigned notes;if(notes++<4)LOG("[vulkan-shadow-alias] skipped GPU-written serial=%llu fmt=%#x",(unsigned long long)source->serial,(unsigned)source->d.format);}
+            else if(source->mem){alias=*source;alias.d.format=alias_format;alias.serial=texture_shadow_alias_serial(source->serial);source=&alias;
+                static unsigned created;if(!image_find(alias.serial)&&created++<8)LOG("[vulkan-shadow-alias] serial=%llu fmt=%#x sampled as %#x for depth compare",(unsigned long long)d->texture.serial,(unsigned)d->texture.d.format,alias_format);}}
+        image_entry *e=image_get(source);if(!storage||(e->texture.has_layout&&e->texture.mem))image_upload(e);if(storage)image_gpu_written(e);image_access(e,stage,access);return e;}
     // 未绑定采样资源保留零贴图；可写空槽用独立图像，防止计算输出污染后续采样。
     // Keep unbound sampled resources zero; separate writable images prevent compute output from polluting later samples.
     static tex_t dummy[2][32];unsigned index=(type&255)+(!!(type&256))*6+(!!(type&1024))*12;if(index>=32)die("Dummy texture type %u",type);
@@ -256,6 +264,16 @@ static VkImageView descriptor_view(const texture_descriptor *descriptor,image_en
     if(vt==VK_IMAGE_VIEW_TYPE_1D||vt==VK_IMAGE_VIEW_TYPE_2D||vt==VK_IMAGE_VIEW_TYPE_3D)count=1;
     VkImageAspectFlags aspect=e->aspect & VK_IMAGE_ASPECT_DEPTH_BIT?VK_IMAGE_ASPECT_DEPTH_BIT:e->aspect;
     return image_view_get(e,vt,(VkImageSubresourceRange){aspect,mip,levels,layers,count});
+}
+// 实际解析后的采样/存储图像（上传之后）；未绑定/未登记也记一条，用于对照着色器输入。
+// Actually resolved sampled/storage images (after upload); unbound/unregistered ones are recorded too, to compare shader inputs.
+static void frame_trace_image(const shader_entry *s,const shader_binding *b,unsigned element,uint32_t handle,const texture_descriptor *d,const image_entry *e,int storage,int flat) {
+    if(!frame_trace_reserve(&frame_trace))return;
+    if(!d->valid||flat){FRAME_TRACE_LOG("img stage=%u shader=%s binding=%u el=%u type=%#x id=%u kind=%s",s->stage,s->key,b->binding,element,b->type,handle&0xfffff,flat?"flat_probe":handle?"unregistered":"unbound");return;}
+    const tex_t *t=&d->texture;const view_t *v=&d->view;
+    FRAME_TRACE_LOG("img stage=%u shader=%s binding=%u el=%u type=%#x storage=%d serial=%llu fmt=%#x view_fmt=%#x size=%ux%ux%u levels=%u layers=%u mip=%d+%d layer=%d+%d flags=%#x populated=%d gpu_written=%d",
+        s->stage,s->key,b->binding,element,b->type,storage,(unsigned long long)t->serial,(unsigned)t->d.format,v->set_format?(unsigned)v->format:0u,t->d.width,t->d.height,t->d.depth,t->d.levels,t->L.layers,
+        v->set_levels?v->base_level:0,v->set_levels?v->nlevels:0,v->set_layers?v->min_layer:0,v->set_layers?v->nlayers:0,t->d.flags,e->populated,e->gpu_written);
 }
 #include "nvn_vulkan_uniform.inc"
 #include "nvn_vulkan_binding_cache.inc"
@@ -387,7 +405,8 @@ static VkDescriptorSet bind_shader(shader_entry *s,post_op *lifetime,uint32_t *d
                     if(b->kind==4&&(b->flags&4))access|=VK_ACCESS_SHADER_WRITE_BIT;
                     unsigned flat_format=descriptor.valid?descriptor.texture.d.format:0;
                     int flat=texture_flat_state_matches(&texture_flat,s->key,s->stage,b->binding,b->type,b->kind==4,flat_format);
-                    image_entry *e=descriptor_image(&descriptor,b->type,b->kind==4,shader_pipeline_stage(s),access,flat);images[j].imageView=descriptor_view(&descriptor,e,b->type,b->kind==4,flat);}
+                    image_entry *e=descriptor_image(&descriptor,b->type,b->kind==4,shader_pipeline_stage(s),access,flat);images[j].imageView=descriptor_view(&descriptor,e,b->type,b->kind==4,flat);
+                    frame_trace_image(s,b,j,handle,&descriptor,e,b->kind==4,flat);}
                 w.pImageInfo=images;
             }
         }
@@ -425,7 +444,7 @@ static void dispatch_compute(const p_dispatch *d) {
     post_op *const *output_scope=post_copy_tail;forward_scope_marker=output_scope;
     uint32_t dynamic_offsets[256];unsigned dynamic_count=0;
     VkDescriptorSet set=bind_shader(s,NULL,dynamic_offsets,&dynamic_count);
-    vkCmdBindPipeline(command,VK_PIPELINE_BIND_POINT_COMPUTE,s->compute_pipeline);vkCmdBindDescriptorSets(command,VK_PIPELINE_BIND_POINT_COMPUTE,s->compute_layout,0,1,&set,dynamic_count,dynamic_offsets);graphics_probe_dispatch(d);vkCmdDispatch(command,d->x,d->y,d->z);gpu_snapshot_consumer_encoded();forward_record_outputs(output_scope,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
+    vkCmdBindPipeline(command,VK_PIPELINE_BIND_POINT_COMPUTE,s->compute_pipeline);vkCmdBindDescriptorSets(command,VK_PIPELINE_BIND_POINT_COMPUTE,s->compute_layout,0,1,&set,dynamic_count,dynamic_offsets);graphics_probe_dispatch(d);if(frame_trace_reserve(&frame_trace))FRAME_TRACE_LOG("dispatch shader=%s groups=%d,%d,%d",s->key,d->x,d->y,d->z);vkCmdDispatch(command,d->x,d->y,d->z);gpu_snapshot_consumer_encoded();forward_record_outputs(output_scope,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
     graphics_probe_cs_outputs(s);
     // 图像消费者由 image_access 精确同步；仅真实缓冲写回需要主机可见性屏障。
     // image_access synchronizes image consumers precisely; only actual buffer writebacks need host visibility.

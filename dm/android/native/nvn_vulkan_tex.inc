@@ -1,6 +1,8 @@
 // 贴图创建、Tegra 解排布、上传与渲染目标清除。| Texture creation, Tegra deswizzling, uploads and render-target clears.
 #include "texture_diag.h"
 #include "texture_flat_probe.h"
+#include "frame_trace.h"
+#include "texture_shadow_alias.h"
 typedef struct cached_image_view { VkImageViewType type; VkImageSubresourceRange range; VkImageView view; struct cached_image_view *next; } cached_image_view;
 typedef struct image_entry {
     uint64_t serial; tex_t texture; VkImage image; VkImageView view; VkDeviceMemory memory;
@@ -44,6 +46,38 @@ static void texture_flat_report(uint64_t ticket) {
     LOG("[vulkan-tex-probe] frame=%llu overrides=%u shader=%s stage=%u slot=%u",
         (unsigned long long)ticket, texture_flat_overrides, texture_flat.selector.shader,
         texture_flat.selector.stage, texture_flat.selector.slot);
+}
+// 默认关闭的单帧记录（frame_trace.h）：出图边界取 property，只记实际开始的通道与实际绑定。
+// The default-off one-frame trace (frame_trace.h): read the property at present boundaries and record only
+// passes actually begun and bindings actually made.
+static frame_trace_state frame_trace;
+#define FRAME_TRACE_LOG(fmt, ...) LOG("[vulkan-frame-trace] frame=%llu n=%u " fmt, (unsigned long long)frame_trace.frame, frame_trace.seen, ##__VA_ARGS__)
+static void frame_trace_present(uint64_t ticket) {
+    if (!(ticket % 60)) {
+        char token[FRAME_TRACE_TOKEN_MAX] = {0};
+#ifdef __ANDROID__
+        __system_property_get("debug.d2r.frame_trace", token);
+#endif
+        if (frame_trace_tick(&frame_trace, token))
+            LOG("[vulkan-frame-trace] armed at=%llu skip=%u cap=%u (records the next whole frame)",
+                (unsigned long long)ticket, frame_trace.skip, FRAME_TRACE_RECORD_CAP);
+    }
+    uint64_t frame = frame_trace.frame; unsigned seen = frame_trace.seen, records = frame_trace.records, dropped = frame_trace.dropped;
+    unsigned events = frame_trace_boundary(&frame_trace, ticket);
+    if (events & FRAME_TRACE_EVENT_END)
+        LOG("[vulkan-frame-trace] end frame=%llu seen=%u records=%u dropped=%u truncated=%u",
+            (unsigned long long)frame, seen, records, dropped, dropped ? 1u : 0u);
+    if (events & FRAME_TRACE_EVENT_BEGIN)
+        LOG("[vulkan-frame-trace] begin frame=%llu capture=%u skip=%u cap=%u",
+            (unsigned long long)frame_trace.frame, frame_trace.captures, frame_trace.skip, FRAME_TRACE_RECORD_CAP);
+}
+// 清除/复制决定附件是否已有内容（populated），一并记录目标序号与子资源。
+// Clears/copies decide whether attachments have contents (populated); record the target serial and subresource.
+static void frame_trace_transfer(const char *op, const tex_t *t, VkImageSubresourceRange r, int x, int y, int w, int h) {
+    if (!frame_trace_reserve(&frame_trace)) return;
+    FRAME_TRACE_LOG("%s serial=%llu fmt=%#x size=%ux%u mip=%u layer=%u+%u region=%d,%d %dx%d", op,
+                    (unsigned long long)t->serial, (unsigned)t->d.format, t->d.width, t->d.height,
+                    r.baseMipLevel, r.baseArrayLayer, r.layerCount, x, y, w, h);
 }
 static void texture_diag_count(unsigned kind) {
     switch (kind) {
@@ -164,6 +198,9 @@ static void image_access(image_entry *e,VkPipelineStageFlags stage,VkAccessFlags
     }else{e->last_stage|=stage;e->last_access|=access;}
 }
 static uint32_t dimension(uint32_t v, unsigned level) { v >>= level; return v ? v : 1; }
+static image_entry *image_find(uint64_t serial) {
+    for(image_entry *e=image_index[serial&4095];e;e=e->hash_next)if(e->serial==serial)return e;return NULL;
+}
 static image_entry *image_get(const tex_t *t) {
     unsigned bucket=t->serial&4095;for(image_entry *e=image_index[bucket];e;e=e->hash_next)if(e->serial==t->serial)return e;
     if (t->d.target==NVN_TEXTURE_TARGET_BUFFER || t->d.samples>1) die("Vulkan texture target/samples pending: %d/%d",t->d.target,t->d.samples);
@@ -285,18 +322,18 @@ static void clear_color(const p_clear_color *c) {
     // 非完整剪裁必须保留未覆盖像素；不能用整张清除替代。
     // A partial scissor must preserve uncovered pixels; never substitute a whole-image clear.
     if(state.scissor.w>0&&(state.scissor.x||state.scissor.y||state.scissor.w<(int)dimension(e->texture.d.width,r.baseMipLevel)||state.scissor.h<(int)dimension(e->texture.d.height,r.baseMipLevel)))die("Vulkan scissored clear pending");
-    graphics_pass_end();VkClearColorValue color;memcpy(color.float32,c->rgba,sizeof c->rgba);image_access(e,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_TRANSFER_WRITE_BIT);vkCmdClearColorImage(command,e->image,VK_IMAGE_LAYOUT_GENERAL,&color,1,&r);image_gpu_written(e);
+    frame_trace_transfer("clear_color",state.rt.color[c->index],r,0,0,(int)dimension(e->texture.d.width,r.baseMipLevel),(int)dimension(e->texture.d.height,r.baseMipLevel));graphics_pass_end();VkClearColorValue color;memcpy(color.float32,c->rgba,sizeof c->rgba);image_access(e,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_TRANSFER_WRITE_BIT);vkCmdClearColorImage(command,e->image,VK_IMAGE_LAYOUT_GENERAL,&color,1,&r);image_gpu_written(e);
 }
 static void clear_depth(const p_clear_ds *c) {
     if(!state.rt.depth)return;image_entry *e=image_get(state.rt.depth);VkImageSubresourceRange r=texture_range(e,state.rt.has_dview?&state.rt.dview:NULL);r.aspectMask=0;
     if(c->depth_mask)r.aspectMask|=VK_IMAGE_ASPECT_DEPTH_BIT;if(c->stencil_mask){if(c->stencil_mask!=255)die("Vulkan partial stencil clear pending");r.aspectMask|=VK_IMAGE_ASPECT_STENCIL_BIT;}
-    r.aspectMask&=e->aspect;if(!r.aspectMask)return;graphics_pass_end();VkClearDepthStencilValue value={c->depth,c->stencil};image_access(e,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_TRANSFER_WRITE_BIT);vkCmdClearDepthStencilImage(command,e->image,VK_IMAGE_LAYOUT_GENERAL,&value,1,&r);image_gpu_written(e);
+    r.aspectMask&=e->aspect;if(!r.aspectMask)return;frame_trace_transfer(r.aspectMask&VK_IMAGE_ASPECT_STENCIL_BIT?(r.aspectMask&VK_IMAGE_ASPECT_DEPTH_BIT?"clear_depth_stencil":"clear_stencil"):"clear_depth",state.rt.depth,r,0,0,(int)dimension(e->texture.d.width,r.baseMipLevel),(int)dimension(e->texture.d.height,r.baseMipLevel));graphics_pass_end();VkClearDepthStencilValue value={c->depth,c->stencil};image_access(e,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_TRANSFER_WRITE_BIT);vkCmdClearDepthStencilImage(command,e->image,VK_IMAGE_LAYOUT_GENERAL,&value,1,&r);image_gpu_written(e);
 }
 static void copy_buffer_texture(const p_copy_b2t *c) {
     if(c->r.width<=0||c->r.height<=0||c->r.depth<=0)return;
     snapshot_prepare();
     dependencies_prepare_copy_texture(c);
-    graphics_pass_end();image_entry *e=image_get(c->tex);image_upload(e);image_access(e,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_TRANSFER_WRITE_BIT);VkImageSubresourceRange range=texture_range(e,c->has_view?&c->view:NULL);
+    graphics_pass_end();image_entry *e=image_get(c->tex);image_upload(e);image_access(e,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_TRANSFER_WRITE_BIT);VkImageSubresourceRange range=texture_range(e,c->has_view?&c->view:NULL);frame_trace_transfer("copy_buffer",c->tex,range,c->r.xoffset,c->r.yoffset,c->r.width,c->r.height);
     int bw,bh;unsigned bpb=nvn_fmt_bpb(c->tex->d.format,&bw,&bh),pitch=(c->r.width+bw-1)/bw*bpb,rows=(c->r.height+bh-1)/bh;uint64_t bytes=(uint64_t)pitch*rows*c->r.depth;
     uint64_t stride=state.copy_stride>0?state.copy_stride:pitch;if(stride<pitch)die("Vulkan texture copy stride");post_op *p=post_new(3);p->source=buffer_create(bytes);
     for(int z=0;z<c->r.depth;z++)for(unsigned y=0;y<rows;y++)if(snapshot_read(c->src+(z*rows+y)*stride,(uint8_t*)p->source.mapped+(z*rows+y)*pitch,pitch))die("Vulkan texture copy source");
@@ -356,6 +393,7 @@ static void clear_texture(const p_clear_tex *c) {
     // 与 Metal tex_mtl 一样先保留 packaged 源：区域外、其余 mip 和层不能被清除值覆盖。
     // Like Metal tex_mtl, preserve packaged sources first; the region exterior, other mips and layers must retain their contents.
     if(c->tex->has_layout&&c->tex->mem)image_upload(e);
+    frame_trace_transfer("clear_texture",c->tex,range,c->r.xoffset,c->r.yoffset,c->r.width,c->r.height);
     image_access(e,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_TRANSFER_WRITE_BIT);
     int whole_xy=!c->r.xoffset&&!c->r.yoffset&&c->r.width==(int)w&&c->r.height==(int)h;
     if(!is3d&&whole_xy&&vk_format(format)==e->format&&((c->is_uint&&f.channels&&f.kind==TEXTURE_CLEAR_UINT)||(!c->is_uint&&(!f.channels||f.kind==TEXTURE_CLEAR_UNORM||f.kind==TEXTURE_CLEAR_SNORM||f.kind==TEXTURE_CLEAR_FLOAT)))){
@@ -382,7 +420,7 @@ static void copy_texture_texture(const p_copy_t2t *c) {
     // Metal also resolves destinations through tex_mtl; preserve untouched blocks/mips of packaged destinations from their real source.
     if(dst->texture.has_layout&&dst->texture.mem)image_upload(dst);
     image_access(src,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_TRANSFER_READ_BIT);image_access(dst,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_TRANSFER_WRITE_BIT);
-    VkImageSubresourceRange sr=texture_range(src,c->has_sv?&c->sv:NULL),dr=texture_range(dst,c->has_dv?&c->dv:NULL);int s3=c->src->d.target==NVN_TEXTURE_TARGET_3D,d3=c->dst->d.target==NVN_TEXTURE_TARGET_3D;
+    VkImageSubresourceRange sr=texture_range(src,c->has_sv?&c->sv:NULL),dr=texture_range(dst,c->has_dv?&c->dv:NULL);frame_trace_transfer("copy_src",c->src,sr,c->sr.xoffset,c->sr.yoffset,c->sr.width,c->sr.height);frame_trace_transfer("copy_dst",c->dst,dr,c->dr.xoffset,c->dr.yoffset,c->dr.width,c->dr.height);int s3=c->src->d.target==NVN_TEXTURE_TARGET_3D,d3=c->dst->d.target==NVN_TEXTURE_TARGET_3D;
     VkImageAspectFlags aspects=src->aspect & dst->aspect;if(!aspects)die("Vulkan incompatible copy aspects");
     for(unsigned aspect=1;aspect<=VK_IMAGE_ASPECT_STENCIL_BIT;aspect<<=1)if(aspects & aspect){
         VkImageSubresourceLayers sl={aspect,sr.baseMipLevel,sr.baseArrayLayer+(s3?0:c->sr.zoffset),s3?1:c->sr.depth},dl={aspect,dr.baseMipLevel,dr.baseArrayLayer+(d3?0:c->dr.zoffset),d3?1:c->dr.depth};
@@ -401,9 +439,15 @@ void mtl_reg_samp(int id,const samp_par *p) {
     if(id>=sampler_capacity){int n=(id+64)&~63;sampler_descriptor *next=realloc(sampler_descriptors,n*sizeof *next);if(!next)die("Vulkan sampler allocation");memset(next+sampler_capacity,0,(n-sampler_capacity)*sizeof *next);sampler_descriptors=next;sampler_capacity=n;}
     sampler_descriptors[id].valid=1;sampler_descriptors[id].parameters=*p;sampler_descriptors[id].sampler=VK_NULL_HANDLE;pthread_mutex_unlock(&descriptor_lock);
 }
+// 深度比较别名与原图同寿命：释放原序号时一并释放别名序号。
+// The depth-compare alias shares the original's lifetime: releasing the serial also releases the alias serial.
+static void image_release_serial(uint64_t serial);
 void mtl_tex_release(tex_t *t) {
-    if(!device)return;mtl_finish();pthread_mutex_lock(&queue_lock);image_entry **link=&image_list;while(*link&&(*link)->serial!=t->serial)link=&(*link)->next;
-    if(*link){image_entry *e=*link;graphics_cache_forget_image(e);*link=e->next;image_entry **hash=&image_index[e->serial&4095];while(*hash&&*hash!=e)hash=&(*hash)->hash_next;if(!*hash)die("Vulkan image index corruption");*hash=e->hash_next;while(e->views){cached_image_view *v=e->views;e->views=v->next;vkDestroyImageView(device,v->view,NULL);free(v);}vkDestroyImageView(device,e->view,NULL);vkDestroyImage(device,e->image,NULL);vkFreeMemory(device,e->memory,NULL);free(e);}pthread_mutex_unlock(&queue_lock);
+    if(!device)return;mtl_finish();pthread_mutex_lock(&queue_lock);image_release_serial(t->serial);image_release_serial(texture_shadow_alias_serial(t->serial));pthread_mutex_unlock(&queue_lock);
+}
+static void image_release_serial(uint64_t serial) {
+    image_entry **link=&image_list;while(*link&&(*link)->serial!=serial)link=&(*link)->next;
+    if(*link){image_entry *e=*link;graphics_cache_forget_image(e);*link=e->next;image_entry **hash=&image_index[e->serial&4095];while(*hash&&*hash!=e)hash=&(*hash)->hash_next;if(!*hash)die("Vulkan image index corruption");*hash=e->hash_next;while(e->views){cached_image_view *v=e->views;e->views=v->next;vkDestroyImageView(device,v->view,NULL);free(v);}vkDestroyImageView(device,e->view,NULL);vkDestroyImage(device,e->image,NULL);vkFreeMemory(device,e->memory,NULL);free(e);}
 }
 void mtl_read_texels(const tex_t *t,unsigned level,unsigned layer,const NVNcopyRegion *r,uint8_t *dst,size_t row,size_t img) {
     if(r->width<=0||r->height<=0||r->depth<=0)return;mtl_sub_begin();dependencies_prepare_texture(t);image_entry *e=image_get(t);image_upload(e);
