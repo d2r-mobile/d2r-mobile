@@ -26,6 +26,9 @@ typedef struct {
     uint32_t family; VkCommandPool pool;
     VkSurfaceKHR surface;            // 仅 present init 拥有；离屏为 NULL | owned only by present init; NULL offscreen
     int surface_owned;               // surface 由本上下文创建并负责销毁 | created and owned by this context
+    int swapchain_maintenance1;      // 设备已启用 VK_EXT_swapchain_maintenance1 present fences | enabled device feature
+    int surface_maintenance1;        // 实例已启用 VK_EXT_surface_maintenance1 + KHR_get_surface_capabilities2
+    VkResult retire_error;           // 无法证明 presentation 完成时的原始错误 | reason retirement proof unavailable
     VkPhysicalDeviceMemoryProperties memory;
     VkPhysicalDeviceProperties properties;
     // 验证诊断：仅当通过 dm_vk_create_ex 请求时分配（堆上，生命周期与实例一致）。
