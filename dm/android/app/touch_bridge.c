@@ -447,6 +447,15 @@ int dm_touch_bridge_cancel_all(dm_touch_bridge *bridge, int64_t time_ns) {
     return 1;
 }
 
+int dm_touch_bridge_retire_requests(dm_touch_bridge *bridge, int64_t time_ns) {
+    if (!bridge || time_ns < 0 || bridge->game) return 0; /* standalone-only; provider path unproven */
+    if (!dm_android_touch_retire_requests(bridge->touch, time_ns)) return 0;
+    active_clear(bridge);
+    (void)consume(bridge);
+    bridge->last_time_ns = time_ns;
+    return 1;
+}
+
 int dm_touch_bridge_observe(const dm_touch_bridge *bridge, float density,
                             dm_android_touch_observation *out) {
     if (!bridge || !out) return 0;

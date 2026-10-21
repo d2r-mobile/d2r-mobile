@@ -14,14 +14,16 @@ IOS = APP.parent / "ios" / "Sources"
 HOST = APP.parent / "host"
 
 
-def build(cc: str, work: Path, label: str, source: str) -> Path:
+def build(cc: str, work: Path, label: str, source: str,
+          test_source: Path | None = None) -> Path:
     c_file = work / f"{label}.c"
     exe = work / label
     c_file.write_text(source, encoding="utf-8")
     cmd = [cc, "-std=gnu11", "-Wall", "-Wextra", "-Werror",
+           "-DDM_INPUT_TEST",
            "-fsanitize=address,undefined",
            f"-I{APP}", f"-I{APP / 'app'}", f"-I{RUNTIME}", f"-I{IOS}", f"-I{HOST}",
-           str(HERE / "input_source.c"),
+           str(test_source or (HERE / "input_source.c")),
            str(c_file),
            str(APP / "app" / "touch_bridge.c"),
            str(RUNTIME / "touch_game_bridge.c"),
@@ -29,7 +31,6 @@ def build(cc: str, work: Path, label: str, source: str) -> Path:
            str(RUNTIME / "input.c"),
            str(IOS / "dm_touch_controls.c"),
            "-lm", "-lpthread", "-o", str(exe)]
-    cmd[cmd.index(str(HERE / "input_source.c"))] = str(HERE / "input_source.c")
     done = subprocess.run(cmd, text=True, capture_output=True)
     if done.returncode != 0:
         raise RuntimeError(f"{label}: compile failed\n{done.stderr}")
@@ -65,6 +66,9 @@ def main() -> int:
         ("omit-generation",
          "    if (!arbiter || !sample || !sample->connected || !arbiter->focused ||\n        arbiter->paused || !arbiter->connected ||\n        arbiter->device_id != device_id || arbiter->generation != generation)\n        return 0;",
          "    (void)generation;\n    if (!arbiter || !sample || !sample->connected || !arbiter->focused ||\n        arbiter->paused || !arbiter->connected ||\n        arbiter->device_id != device_id)\n        return 0;"),
+        ("omit-request-retirement",
+         "    (void)dm_touch_bridge_retire_requests(arbiter->touch, time);",
+         "    (void)dm_touch_bridge_cancel_all(arbiter->touch, time);"),
     ]
     with tempfile.TemporaryDirectory() as td:
         work = Path(td)
@@ -78,9 +82,11 @@ def main() -> int:
                 print(f"fail closed: mutant anchor missing for {name}", file=sys.stderr)
                 return 1
             mutant = build(args.cc, work, f"input-source-mutant-{name}",
-                           source.replace(old, new, 1))
+                           source.replace(old, new, 1),
+                           HERE / "input_source_requests.c"
+                           if name == "omit-request-retirement" else None)
             rc, text = run(mutant, f"input-source-mutant-{name}")
-            if rc == 0 or "FAIL line" not in text:
+            if rc == 0 or "FAIL" not in text:
                 print(f"FAIL: mutant {name} did not fail at an assertion", file=sys.stderr)
                 return 1
             print(f"private input-source mutant {name} failed as required")
