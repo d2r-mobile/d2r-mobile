@@ -279,6 +279,63 @@ endif()
 # #12 reflection consumer regression: real-GPU positive run with an independent oracle, negatives rejected before
 # any Vulkan object exists.
 file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/reflect-tmp)
+set(sampled_spv ${CMAKE_CURRENT_BINARY_DIR}/sampled.spv)
+add_custom_command(OUTPUT ${sampled_spv}
+    COMMAND ${DM_GLSLC} --target-env=vulkan1.1 -O ${CMAKE_CURRENT_SOURCE_DIR}/../tests/fixtures/sampled.comp -o ${sampled_spv}
+    DEPENDS ../tests/fixtures/sampled.comp VERBATIM)
+add_custom_target(dm_vk_sampled_fixture DEPENDS ${sampled_spv})
+set(sampled_uint_spv ${CMAKE_CURRENT_BINARY_DIR}/sampled_uint.spv)
+set(sampled_sint_spv ${CMAKE_CURRENT_BINARY_DIR}/sampled_sint.spv)
+set(sampled_shadow_spv ${CMAKE_CURRENT_BINARY_DIR}/sampled_shadow.spv)
+foreach(pair "sampled_uint:${sampled_uint_spv}" "sampled_sint:${sampled_sint_spv}" "sampled_shadow:${sampled_shadow_spv}")
+    string(REPLACE ":" ";" pair_list "${pair}")
+    list(GET pair_list 0 srcname)
+    list(GET pair_list 1 outspv)
+    add_custom_command(OUTPUT ${outspv}
+        COMMAND ${DM_GLSLC} --target-env=vulkan1.1 -O ${CMAKE_CURRENT_SOURCE_DIR}/../tests/fixtures/${srcname}.comp -o ${outspv}
+        DEPENDS ../tests/fixtures/${srcname}.comp VERBATIM)
+    list(APPEND sampled_negative_spv ${outspv})
+endforeach()
+add_custom_target(dm_vk_sampled_negative_fixtures DEPENDS ${sampled_negative_spv})
+add_executable(dm_vulkan_reflect_sampled_test ../tests/vulkan_reflect_sampled.c)
+target_link_libraries(dm_vulkan_reflect_sampled_test PRIVATE dm_android_vk)
+target_compile_options(dm_vulkan_reflect_sampled_test PRIVATE -Wall -Wextra -Werror)
+add_dependencies(dm_vulkan_reflect_sampled_test dm_vk_sampled_fixture dm_vk_sampled_negative_fixtures)
+if(ANDROID)
+    target_link_options(dm_vulkan_reflect_sampled_test PRIVATE "-Wl,-z,max-page-size=16384")
+else()
+    add_test(NAME vulkan_reflect_sampled COMMAND dm_vulkan_reflect_sampled_test ${sampled_spv}
+        ${CMAKE_CURRENT_SOURCE_DIR}/../tests/fixtures/sampled.res.json
+        ${CMAKE_CURRENT_SOURCE_DIR}/../tests/fixtures/reflect.res.json
+        ${sampled_uint_spv} ${sampled_sint_spv} ${sampled_shadow_spv})
+    set_tests_properties(vulkan_reflect_sampled PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77)
+    if(APPLE AND DM_MOLTENVK_ICD)
+        set_tests_properties(vulkan_reflect_sampled PROPERTIES ENVIRONMENT "VK_DRIVER_FILES=${DM_MOLTENVK_ICD}")
+    endif()
+endif()
+
+add_executable(dm_vulkan_reflect_sampled_fail_test ../tests/vulkan_reflect_sampled_fail.c vk_shader_reflect.c vk_memory.c vk_host.c)
+target_link_libraries(dm_vulkan_reflect_sampled_fail_test PRIVATE dm_android_vk)
+target_include_directories(dm_vulkan_reflect_sampled_fail_test PRIVATE ${dm_mbedtls_SOURCE_DIR}/include)
+target_compile_options(dm_vulkan_reflect_sampled_fail_test PRIVATE -Wall -Wextra -Werror)
+foreach(symbol vkCreateBuffer vkGetBufferMemoryRequirements vkAllocateMemory vkBindBufferMemory vkMapMemory
+    vkInvalidateMappedMemoryRanges vkCreateShaderModule vkDestroyShaderModule vkCreateDescriptorSetLayout
+    vkDestroyDescriptorSetLayout vkCreatePipelineLayout vkDestroyPipelineLayout vkCreateComputePipelines
+    vkDestroyPipeline vkCreateDescriptorPool vkDestroyDescriptorPool vkAllocateDescriptorSets
+    vkUpdateDescriptorSets vkAllocateCommandBuffers vkBeginCommandBuffer vkEndCommandBuffer vkCreateFence
+    vkQueueSubmit vkWaitForFences vkDeviceWaitIdle vkDestroyFence vkFreeCommandBuffers vkDestroyBuffer
+    vkUnmapMemory vkFreeMemory vkCmdBindPipeline vkCmdBindDescriptorSets vkCmdPushConstants vkCmdDispatch
+    vkCmdPipelineBarrier vkDestroyImage vkDestroyImageView vkDestroySampler)
+    target_compile_definitions(dm_vulkan_reflect_sampled_fail_test PRIVATE ${symbol}=dm_test_${symbol})
+endforeach()
+if(ANDROID)
+    target_link_options(dm_vulkan_reflect_sampled_fail_test PRIVATE "-Wl,-z,max-page-size=16384")
+else()
+    add_test(NAME vulkan_reflect_sampled_fail COMMAND dm_vulkan_reflect_sampled_fail_test ${sampled_spv}
+        ${CMAKE_CURRENT_SOURCE_DIR}/../tests/fixtures/sampled.res.json)
+    set_tests_properties(vulkan_reflect_sampled_fail PROPERTIES TIMEOUT 60)
+endif()
+
 add_executable(dm_vulkan_reflect_test ../tests/vulkan_reflect.c)
 target_link_libraries(dm_vulkan_reflect_test PRIVATE dm_android_vk)
 target_compile_options(dm_vulkan_reflect_test PRIVATE -Wall -Wextra -Werror)

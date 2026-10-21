@@ -1,0 +1,6 @@
+#version 450
+layout(local_size_x = 4) in;
+layout(set = 0, binding = 0, std430) buffer Out { uint v[]; } outbuf;
+layout(set = 0, binding = 1) uniform usampler2D tex;
+layout(push_constant) uniform P { uint w; uint h; } params;
+void main() { uint i = gl_GlobalInvocationID.x; if (i < params.w * params.h) outbuf.v[i] = textureLod(tex, vec2(0.5), 0.0).r; }

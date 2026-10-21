@@ -322,8 +322,8 @@ int main(int argc, char **argv) {
     EXPECT(mutate_json(g_res, "\"offset\": 0", "\"offset\": 4", path_of("pc-offset.json")));
     expect_reject("push-offset", g_spv, path_of("pc-offset.json"), "push constant");
     EXPECT(write_json(path_of("unsupported.json"),
-        "{\"stage\":\"cs\",\"sbufs\":[{\"binding\":0,\"count\":1}],\"textures\":[{\"binding\":0,\"count\":1}]}"));
-    expect_reject("textures-unsupported", g_spv, path_of("unsupported.json"), "textures");
+        "{\"stage\":\"cs\",\"sbufs\":[{\"binding\":0,\"count\":1}],\"textures\":[{\"binding\":1,\"count\":1}]}"));
+    expect_reject("textures-mismatch", g_spv, path_of("unsupported.json"), "声明");
     EXPECT(write_json(path_of("no-pc.json"), "{\"stage\":\"cs\",\"sbufs\":[{\"binding\":0,\"count\":1}]}"));
     expect_reject("missing-pc", g_spv, path_of("no-pc.json"), "push constant");
     EXPECT(write_json(path_of("dup.json"),
