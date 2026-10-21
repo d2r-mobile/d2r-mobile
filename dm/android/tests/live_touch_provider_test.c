@@ -13,10 +13,12 @@
 // Controlled host stubs for the production-default entry path. The injected
 // host below is the only source of the other cases.
 static int prod_ingame, prod_panel_open, prod_panel_bits, prod_hud_valid, prod_dead, prod_area;
+static int prod_panel_stack;
 static uint32_t prod_ui_gen = 1;
 static uint64_t prod_now = 1;
 int dm_uiscreen_ingame(void) { return prod_ingame; }
 int dm_uiscreen_panel(void) { return prod_panel_open; }
+int dm_ui_panel_stack_count(void) { return prod_panel_stack; }
 int dm_ui_panel_state(void) { return prod_panel_bits; }
 uint32_t dm_ui_gen(void) { return prod_ui_gen; }
 void dm_hud_get(dm_hud_info *out) {
@@ -165,6 +167,15 @@ int main(void) {
     dm_live_touch_scene_observation pobs;
     CHECK(dm_live_touch_provider_observe(&prod, &pobs));
     CHECK(pobs.available && pobs.scene == DM_LIVE_TOUCH_SCENE_GAME && pobs.ui_identity == 9);
+    // Actual original panel stack transition: inventory open/close must move
+    // the production default observation into/out of PANEL, not rely on the
+    // unset front-end dm_uiscreen_panel flag.
+    prod_panel_stack = 1; prod_now = 1810000000;
+    CHECK(dm_live_touch_provider_observe(&prod, &pobs));
+    CHECK(pobs.available && pobs.scene == DM_LIVE_TOUCH_SCENE_PANEL);
+    prod_panel_stack = 0; prod_now = 1820000000;
+    CHECK(dm_live_touch_provider_observe(&prod, &pobs));
+    CHECK(pobs.available && pobs.scene == DM_LIVE_TOUCH_SCENE_GAME);
     prod_ui_gen = 0;
     CHECK(!dm_live_touch_provider_observe(&prod, &pobs));
     prod_ui_gen = 9; prod_hud_valid = 0;

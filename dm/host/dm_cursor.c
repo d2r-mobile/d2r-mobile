@@ -2474,6 +2474,8 @@ int dm_ui_panel_resident(const char *name) {
 // Returns the stack reading: number of open non-resident panels; -1 when only the NPC dialog menu / speech box is open. The log text "[hud] 面板栈 ..." is kept as is (regression scripts match on it)
 enum { HUD_STACK_MAX = 64 };
 static struct { char name[64]; int open; } g_hud_stack[HUD_STACK_MAX];
+static _Atomic int g_hud_stack_blocked;
+int dm_ui_panel_stack_count(void) { return atomic_load(&g_hud_stack_blocked); }
 static void hud_stack_update(const char *act, const char *arg) {
     // 读取画面撤下：清掉此刻在游戏面板树里已经看不见的记录（防只开不关的漏配），屏上还在的照记——
     // 通关页是读取画面撤下前 0.5 秒开的（OpenExclusivePanel EndScreenPanelExpansion → UnloadPanel LoadScreenPanel），原先整栈清零把它也清了：
@@ -2529,6 +2531,7 @@ int dm_hud_stack_msg(const char *act, const char *arg) {
     // Encoded into the same number: dialog menu open with no other panel → -1 (the bottom bar does not yield, and navigation-mode hiding is waived)
     int n=0, dlg=0; for(int i=0;i<HUD_STACK_MAX;i++) { if(!strcmp(g_hud_stack[i].name,"NpcDialogPanel")||!strcmp(g_hud_stack[i].name,"ScrollSpeechPanel")) dlg|=g_hud_stack[i].open>0; else n+=g_hud_stack[i].open; }   // ScrollSpeechPanel = NPC 说话的滚动文字框（屏幕上方一小块），同样不挡底栏 | ScrollSpeechPanel = the scrolling text box of NPC speech (a small block at the top of the screen); it likewise does not block the bottom bar
     if(!n && dlg) n=-1;
+    atomic_store(&g_hud_stack_blocked,n);
     return n;
 }
 void dm_hud_stack_dump(void) { for (int i = 0; i < HUD_STACK_MAX; i++) if (g_hud_stack[i].open) fprintf(stderr, "%s×%d ", g_hud_stack[i].name, g_hud_stack[i].open); }   // 开着的记录（巡检日志用） | Records currently open (for the patrol log)
@@ -2968,6 +2971,11 @@ void dm_ui_on_uimsg(const char *cat, const char *act, const char *arg) {
           note_dock_restore(root, ex ? (act[0] == 'E' ? "保存并退出" : "回到前端") : "读取画面（切场景）"); } }
     if (!strcmp(cat, "QuestLogPanelMessage") && !strcmp(act, "DialogueFinished")) atomic_store(&g_speech_end, dm_guest_frame());
     if (!strcmp(cat, "PanelManager")) ui_panel_note(act, arg ? arg : "");
+#ifdef __ANDROID__
+    // Android has no front-end hud_stack_message; feed the same host panel
+    // stack here so the live owner observes the original panel state.
+    if (!strcmp(cat, "PanelManager")) (void)dm_hud_stack_msg(act, arg ? arg : "");
+#endif
     if (!strcmp(cat, "ChroniclePanelMessage") && !strcmp(act, "ToggleChildPanel") && arg && arg[0]) { int c = 0; while (c < 8 && g_chr_child[c][0] && strcmp(g_chr_child[c], arg)) c++; if (c < 8 && !g_chr_child[c][0]) strlcpy(g_chr_child[c], arg, sizeof g_chr_child[c]); }
     if (!strcmp(cat, "PanelManager") && arg && !strcmp(arg, "ChroniclePanel") && (!strcmp(act, "ClosePanel") || !strcmp(act, "UnloadPanel"))) atomic_store(&g_chr_closed, 1);
     dm_custom_on_uimsg(cat, act, arg ? arg : "");

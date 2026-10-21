@@ -65,8 +65,14 @@ int main(void) {
     dm_live_touch_destroy(jt);
 
     // Actual navigation state suppresses gameplay-only entries; legal targets stay in the mask.
-    dm_live_touch_set_context(t, 1, dm_tc_nav_mask(1), 2, 2, 2, 0);
+    uint32_t nav_mask = dm_tc_nav_mask(1) | (1u << DM_TC_MENU);
+    dm_live_touch_set_context(t, 1, nav_mask, 2, 2, 2, 0);
     CHECK(dm_live_touch_visual_snapshot(t, &v) == 1 && v.navigation_mode == 1);
+    CHECK(v.enabled_targets == nav_mask);
+    CHECK((v.enabled_targets & (1u << DM_TC_PORTAL)) == 0);
+    CHECK((v.enabled_targets & (1u << DM_TC_BELT1)) == 0);
+    CHECK((v.enabled_targets & (1u << DM_TC_MENU)) != 0);
+    CHECK((v.enabled_targets & (1u << DM_TC_MAIN)) != 0);
 
     // Direct production signature: mask-only change must invalidate; identical snapshot must not.
     dm_live_touch_visual sig_a = {0}, sig_b = {0};

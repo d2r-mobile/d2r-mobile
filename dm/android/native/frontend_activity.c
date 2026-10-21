@@ -542,6 +542,10 @@ static void live_touch_sync(game_app *s) {
     live_touch_set_available(s,1);
     int bind_state=dm_ui_bind_active();
     int navigation=bind_state||snapshot.scene!=DM_LIVE_TOUCH_SCENE_GAME||snapshot.panel_bits||atomic_load(&menu_open);
+    // Android has no front-end setter; publish the same original panel stack
+    // reading the iOS front end uses, so host panel layout and gesture mode
+    // agree during inventory/open/close.
+    { int blocked=dm_ui_panel_stack_count(); dm_uiscreen_set_panel(blocked>0); }
     uint32_t mask=navigation?(dm_tc_nav_mask(1)|(1u<<DM_TC_MENU)):
         (((1u<<DM_TC_COUNT)-1)&~(1u<<DM_TC_MAP));
     dm_live_touch_set_context(s->live_touch,navigation,mask,
