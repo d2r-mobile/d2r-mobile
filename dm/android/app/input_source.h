@@ -87,6 +87,19 @@ int dm_input_arbiter_queue_changed(dm_input_arbiter *arbiter);
 // coherent snapshot. While source is NONE, reads stay neutral. The caller must
 // keep all calls on the input thread.
 int dm_input_arbiter_read(dm_input_arbiter *arbiter, dm_npad_state *out);
+// Read-only observation/diagnostic copy from the arbiter's SAME actual bridge.
+// No pad read, pulse/request consumption, timer advance, source/sampling change
+// or ownership mutation. Invalid arguments return 0 and leave *out untouched.
+int dm_input_arbiter_observe(const dm_input_arbiter *arbiter,
+                             dm_android_touch_observation *out);
+int dm_input_arbiter_diag(const dm_input_arbiter *arbiter, dm_touch_diag *out);
+// Atomically validate and apply width/height/density. Invalid geometry/time
+// returns 0 before mutation. Identical geometry is a no-op preserving held
+// input, requests and boundaries. A real change updates the actual bridge and
+// takeover probe cache, retires both sources and requires fresh input.
+int dm_input_arbiter_set_geometry(dm_input_arbiter *arbiter, float width_pt,
+                                  float height_pt, float density,
+                                  int64_t time_ns);
 // Advances touch-owned timers only while touch is active. Returns 0 for invalid
 // time or rejected tick.
 int dm_input_arbiter_tick(dm_input_arbiter *arbiter, int64_t time_ns);
@@ -95,6 +108,10 @@ int dm_input_arbiter_tick(dm_input_arbiter *arbiter, int64_t time_ns);
 // Test build only: expose the actual bridge so an arbiter invalidation test can
 // stage a real pending belt/portal request and verify it was retired.
 dm_touch_bridge *dm_input_arbiter_test_touch(dm_input_arbiter *arbiter);
+// Test build only: read the takeover probe cache geometry without exposing it.
+int dm_input_arbiter_test_probe_geometry(const dm_input_arbiter *arbiter,
+                                         float *width_pt, float *height_pt,
+                                         float *density);
 #endif
 
 #ifdef __cplusplus
