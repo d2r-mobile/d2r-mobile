@@ -2,17 +2,13 @@
 
 中文：[README.zh-CN.md](README.zh-CN.md)
 
-Status (2026-10-18): **Android is not playable.** The target is smooth Xiaomi 15 Ultra / Snapdragon 8 Elite play with the complete upstream r2d game-specific touch system. Sustained 60 fps is a measurement target, not a verified Android result. See the [fork introduction](../../README.md), project checklist and touch parent.
+## Current playable branch (2026-10-21)
 
-- Runtime/IPC/resource tooling and owned tests are foundations. Production synchronization/preemption, TLR/SVC36 contracts and strict SDK admission remain incomplete (, , ); the original SDK input still fails production strict preparation. Keep scanner/quarantine boundaries and explicit failures intact. A restricted macOS diagnostic returned from one SDK initialization stage; full SDK initialization/normal exit and Android game execution are unverified ().
-- Vulkan RGBA8 UNORM/SRGB resource slices and shader contract checks are merged; they do not implement the complete NVN → Vulkan draw/presentation path. The shader build gate is opt-in (`DMSH_CONTRACT=1`); see ,  and .
-- PR merged upstream C gesture-core reuse and an Android pointer-ID/timing adapter with owned tests. NativeActivity events, game-state/hit/HID wiring, HUD, IME and Xiaomi acceptance remain open. The [frozen matrix](../../docs/android/touch-parity.md) is a source inventory, not device acceptance; the [fork touch table](../../README.md#the-complete-touch-target) links #31–#40.
-- #33 adds a bounded Android scene/identity/hit provider boundary over the accepted touch path. It validates module ABI/identity/generation and scene/world/UI epochs, gates touch when the provider is unavailable, and explicitly rejects object-specific actions without a retained target. A coherent invalidation epoch crosses the app bridge before event validation, clearing pointer ownership and neutral diagnostics when the provider disappears or scene/world/UI/object identity changes. The NativeActivity app does not fabricate a provider; production scene/hit/action paths stay disabled. No real game/SDK/device, HUD/HID or full-touch acceptance is claimed.
-- An earlier synthetic diagnostic APK passed ARM64/Vulkan pixel/window checks on the Xiaomi phone; see [app/README.md](app/README.md). Later source changes need fresh device validation. Neither cross-compilation nor that historical APK proves full lifecycle or game compatibility. Open PRs are not accepted functionality.
+The development build now starts the real game, enters camp and saves/exits on the target phone. Turnip is the rendering baseline. Combat, skills, pickup and inventory/stash dragging have user verification; complete touch parity, broad lifecycle/device coverage, sustained 60 fps and energy savings are not established. Current priorities and known limitations are in the [fork README](../../README.md#current-status) and project board.
 
-This directory contains Android ARM64 tools, a synthetic NativeActivity diagnostic and host-only rewrite tools, with no game content. Inspectors read local game programs as data; owned tests execute synthetic ARM64/GPU programs. Performance acceptance is ; playable delivery is . Unknown gaps may add tasks; no completion percentage or date is claimed.
+The Android implementation is included on both `main` and `dev`. Build the playable APK with `python3 dm/android/tools/build.py --game-run`; `app/build.sh` is the synthetic diagnostic build.
 
-**Reading the notes below:** implementation details and milestone evidence are retained as historical checkpoints, with their original counts and limits. Later checkpoints may supersede earlier ones; they do not certify the current tree on a phone. Use the summary above and linked issues for the current acceptance boundary.
+**Historical tooling below:** the remaining sections document the earlier standalone runtime, fixtures and synthetic diagnostic milestones. Their counts, blockers and old device results apply to those checkpoints, not to the current game frontend. In particular, `app/build.sh` builds the synthetic diagnostic, not the playable APK; `paths.sh` workspace conventions below describe those tools. Archived contract tasks are not claimed as proven by the reference runtime first run. Preserve strict validation and failure boundaries.
 
 ## Storage and game files
 
