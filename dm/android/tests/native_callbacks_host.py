@@ -17,7 +17,9 @@ import sys
 import tempfile
 from pathlib import Path
 
-FUNCTIONS = ["window_ready", "window_resized", "window_destroyed",
+FUNCTIONS = ["wsi_report_now", "wsi_report_progress", "wsi_report_snapshot", "wsi_report_fail",
+             "host_stop",
+             "window_ready", "window_resized", "window_destroyed",
              "pause_app", "resume_app", "draw_diagnostic", "frame_timer", "input_timer"]
 
 
@@ -70,6 +72,7 @@ PRELUDE = r'''
 #include "lifecycle.h"
 #include "wsi_diagnostic.h"
 #include "wsi_bridge.h"
+#include "wsi_report.h"
 #include "view_policy.h"
 #include "present_policy.h"
 #include "diagnostic_scene.h"
@@ -93,6 +96,7 @@ typedef struct { int width, height, refs; } ANativeWindow;
 typedef struct { void *instance; } ANativeActivity;
 typedef struct { void *bits; int width, height, stride, format; } ANativeWindow_Buffer;
 typedef struct { int device; } dm_vk;
+static void dm_vk_destroy(dm_vk *vk) { if (vk) vk->device = 0; }
 typedef struct { uint32_t width, height; uint8_t *bytes; size_t capacity; } dm_vk_pixels;
 typedef struct { float position[2], uv[2]; } dm_vk_indexed_textured_vertex;
 typedef struct {
@@ -110,6 +114,7 @@ typedef struct {
     dm_app_lifecycle *lifecycle;
     dm_wsi wsi;
     dm_wsi_bridge wsi_bridge;
+    dm_wsi_report report;
     ANativeWindow *window;
     int resumed;
     int frame_fd;
@@ -207,6 +212,10 @@ static int closed(void *ctx) { (void)ctx; return fail_close ? 1 : 0; }
 static int framed(void *ctx) { (void)ctx; frame_calls++; return frame_status; }
 static int created(void *ctx, void *w) { return dm_app_lifecycle_surface_created(ctx, w); }
 static int destroyed(void *ctx, void *w) { return dm_app_lifecycle_surface_destroyed(ctx, w); }
+/* Mirror of the production observer: attempts are recorded only at the real open boundary. */
+static void opened_observed(void *ctx, uint32_t w, uint32_t h) {
+    app_state *st = ctx; dm_wsi_report_attempt(&st->report, w, h);
+}
 
 #define CHECK(c) do { if (!(c)) { fprintf(stderr, "FAIL line %d: %s\n", __LINE__, #c); return 1; } } while (0)
 '''
@@ -226,6 +235,7 @@ int main(void) {
     CHECK(dm_app_lifecycle_start(s.lifecycle));
     dm_wsi_ops wops = {.ctx = &s, .open = opened, .close = closed, .frame = framed};
     dm_wsi_init(&s.wsi, &wops, 1);
+    dm_wsi_set_open_observer(&s.wsi, opened_observed, &s);
     dm_wsi_lifecycle_ops lops = {.ctx = s.lifecycle, .surface_created = created,
                                  .surface_destroyed = destroyed, .trace = NULL};
     dm_wsi_bridge_init(&s.wsi_bridge, &s.wsi, &lops);
@@ -245,6 +255,19 @@ int main(void) {
     CHECK(bad_touch_reads == 0);
     CHECK(last_touch == &B);
     fail_open = 0;
+
+    /* Report evidence on the real callback path: one attempt for this window, one honest failure,
+       requested size recorded, no invented VkResult, no queued frame, exactly one final snapshot. */
+    CHECK(s.report.open_failures == 1);
+    CHECK(s.report.errors == 1);
+    CHECK(s.report.unsupported == 0);
+    CHECK(s.report.queued_presents == 0);
+    CHECK(s.report.config.requested_width == 800 && s.report.config.requested_height == 600);
+    CHECK(s.report.config.extent_width == 0 && s.report.config.format == -1);
+    CHECK(s.report.config.stale == 1);
+    CHECK(s.report.last_stage == DM_WSI_STAGE_OPEN);
+    CHECK(s.report.has_code == 0 && s.report.last_code == 0);
+    CHECK(s.report.snapshots == 1);
 
     /* Successfully reopen active B with an armed frame timer. Stale A
        callbacks must leave B's timer, size and touch geometry untouched. */
@@ -309,6 +332,12 @@ int main(void) {
     pause_app(&activity);
     CHECK(s.frame_fd == -1);
     CHECK(start_calls == 0);
+    /* Duplicate pause callbacks during the same paused period are not counted again. */
+    uint64_t paused_once = s.report.paused;
+    uint64_t snapshots_once = s.report.snapshots;
+    pause_app(&activity);
+    CHECK(s.report.paused == paused_once);
+    CHECK(s.report.snapshots == snapshots_once);
     s.resumed = 1;
     s.wsi.error = DM_WSI_ERROR;
     resume_app(&activity);
@@ -362,8 +391,69 @@ int main(void) {
     draw_diagnostic(&activity, &B, 1);
     CHECK(lock_calls == 1);
 
+    /* #147 repair: open attempts belong to real opens, not to redraw callbacks. */
+    s.wsi.enabled = 1;
+    s.wsi.error = 0;
+    s.wsi.paused = 0;
+    s.resumed = 1;
+    ANativeWindow F = {900, 700, 0};
+    window_ready(&activity, &F);
+    CHECK(F.refs == 1);
+    uint64_t attempts_after_open = s.report.open_attempts;
+    CHECK(attempts_after_open >= 2);
+    window_ready(&activity, &F);
+    CHECK(s.report.open_attempts == attempts_after_open);   /* repeated redraw adds no attempt */
+
+    /* A same-window dimension change is a legitimate REBUILD: no open failure, timer stays armed, and the
+       rebuild performs exactly one real open with the new requested extent. */
+    int failures_before_rebuild = (int)s.report.open_failures;
+    int fd_before_rebuild = s.frame_fd;
+    uint64_t attempts_before_rebuild = s.report.open_attempts;
+    F.width = 1024; F.height = 768;
+    window_resized(&activity, &F);
+    CHECK(s.report.open_failures == failures_before_rebuild);
+    CHECK(s.frame_fd != -1);
+    frame_status = DM_WSI_OK;
+    frame_timer(devnull, 0, &s);
+    CHECK(s.report.open_attempts == attempts_before_rebuild + 1);
+    CHECK(s.report.config.requested_width == 1024 && s.report.config.requested_height == 768);
+    F.width = 900; F.height = 700;
+
+    /* Present DEVICE_LOST during a rebuild: the callback fallback must not double count or erase the code. */
+    s.report.attempt_failed = 0;
+    dm_wsi_report_note_stage(&s.report, DM_WSI_STAGE_PRESENT, -4);
+    dm_wsi_report_result(&s.report, DM_WSI_ERROR);
+    int errors_before_fallback = (int)s.report.errors;
+    fail_close = 1;
+    s.wsi.needs_rebuild = 1;
+    frame_status = DM_WSI_OK;
+    window_resized(&activity, &F);
+    CHECK(s.report.errors == errors_before_fallback);
+    CHECK(s.report.last_stage == DM_WSI_STAGE_PRESENT);
+    CHECK(s.report.has_code == 1 && s.report.last_code == -4);
+    fail_close = 0;
+    s.wsi.needs_rebuild = 0;
+
+    /* A timer failure is recorded, but never counted as an open attempt or open failure. */
+    s.report.attempt_failed = 0;
+    uint64_t attempts_before_timer = s.report.open_attempts;
+    int failures_before_timer = (int)s.report.open_failures;
+    int errors_before_timer = (int)s.report.errors;
+    frame_timer(devnull, ALOOPER_EVENT_ERROR, &s);
+    CHECK(s.report.errors == errors_before_timer + 1);
+    CHECK(s.report.open_attempts == attempts_before_timer);
+    CHECK(s.report.open_failures == failures_before_timer);
+
     fail_close = 0;
     window_destroyed(&activity, &B);
+    /* One shutdown: destroy and the lifecycle host stop are the same stop, counted once, one snapshot. */
+    s.wsi.enabled = 1;
+    int snapshots_before_stop = (int)s.report.snapshots;
+    CHECK(host_stop(&s) == 0);
+    CHECK(s.report.stops == 1);
+    CHECK(host_stop(&s) == 0);
+    CHECK(s.report.stops == 1);
+    CHECK(s.report.snapshots == snapshots_before_stop + 1);
     dm_wsi_stop(&s.wsi);
     dm_app_lifecycle_stop(s.lifecycle);
     dm_app_lifecycle_destroy(s.lifecycle);
@@ -387,6 +477,7 @@ def compile_and_run(cc: str, app: Path, source: str, work: Path, label: str,
     compile_command = [cc, "-std=gnu11", "-g", "-fsanitize=address,undefined",
                        f"-I{app}", str(c_file),
                        str(app / "wsi_bridge.c"), str(app / "wsi_diagnostic.c"),
+                       str(app / "wsi_report.c"),
                        str(app / "lifecycle.c"), "-o", str(exe)]
     built = subprocess.run(compile_command, text=True, capture_output=True)
     if built.returncode != 0:

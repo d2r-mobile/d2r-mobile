@@ -50,6 +50,10 @@ DM_CI_ALLOW_ARM_CROSS=1 bash ci/scripts/ci.sh android
 
 不声称 Android 验收：宿主测试与 ARM64 编译都不等于 Adreno 行为、真机像素、帧率或完整触控验收。
 
+有界证据行（#147）只在这个显式模式下输出：创建 swapchain 时一行配置（模式、请求与实际 extent、格式、present 模式、图像数、maintenance 能力；未知值写 `unknown`），有真实进展时至多每秒一行进度（queued presents、suboptimal、重建请求、surface 丢失、错误、暂停/恢复/停止计数），并在暂停、窗口丢失、停止或终态错误时输出最终快照。速率只表示 queued-present 吞吐，明确不等于显示 FPS、帧节奏、延迟或 vsync。报告复用既有帧/生命周期回调，因此不新增定时器，暂停/无窗口/失败时也没有额外唤醒。
+
+失败被如实命名而不是合并：每次打开都记录一次尝试与真实请求尺寸，失败时给出阶段、存在时的原始 `VkResult`（缺少能力而非 Vulkan 调用失败时写 `code=unknown`）以及 `unsupported` 或 `error` 类别；先前成功的协商会被清除并标记 stale，不再当作当前值上报。失败后的再次尝试计入 retries。生命周期计数只反映真实转换：重复的暂停回调，以及拆卸与 lifecycle host stop 共同执行的同一次停止，都只计一次；每个终态恰好对应一次最终快照。
+
 ## 生命周期所有权
 
 `app/lifecycle.c` 是 NativeActivity 使用的生产生命周期控制器。状态为
