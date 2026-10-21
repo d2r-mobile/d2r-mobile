@@ -16,6 +16,9 @@ struct dm_android_touch {
     struct {
         uint64_t buttons;
         int32_t rx, ry;
+        double hold_s;
+        int hold_started;
+        int64_t hold_until_ns;
     } pulses[DM_ANDROID_TOUCH_PULSE_CAPACITY];
     int pulse_head;
     int pulse_count;
@@ -129,7 +132,28 @@ static void sync_pointer_slots(dm_android_touch *touch) {
     }
 }
 
+static int timed_head_due(const dm_android_touch *touch, int64_t time_ns) {
+    if (touch->pulse_count == 0) return 0;
+    const int head = touch->pulse_head;
+    return touch->pulses[head].hold_s > 0 && touch->pulses[head].hold_started &&
+           time_ns >= touch->pulses[head].hold_until_ns;
+}
+
+static void expire_timed_pulse(dm_android_touch *touch) {
+    if (touch->pulse_count == 0) return;
+    int head = touch->pulse_head;
+    if (touch->pulses[head].hold_s <= 0 || !touch->pulses[head].hold_started) return;
+    if (touch->last_ns < touch->pulses[head].hold_until_ns) return;
+    uint64_t buttons = touch->pulses[head].buttons;
+    touch->pulse_head = (head + 1) % DM_ANDROID_TOUCH_PULSE_CAPACITY;
+    --touch->pulse_count;
+    publish_core(touch);
+    if (touch->pulse_count > 0 && touch->pulses[touch->pulse_head].buttons == buttons)
+        touch->release_waiting = 1;   /* neutral read before a same-button successor */
+}
+
 static void publish(dm_android_touch *touch) {
+    expire_timed_pulse(touch);
     sync_pointer_slots(touch);
     portal_sync(touch);
     dm_tc_state *s = &touch->state;
@@ -139,6 +163,9 @@ static void publish(dm_android_touch *touch) {
         touch->pulses[tail].buttons = s->buttons;
         touch->pulses[tail].rx = s->pulse_rx;
         touch->pulses[tail].ry = s->pulse_ry;
+        touch->pulses[tail].hold_s = s->pulse_hold_s;
+        touch->pulses[tail].hold_started = 0;
+        touch->pulses[tail].hold_until_ns = 0;
         ++touch->pulse_count;
         uint64_t epoch = s->pulse_epoch;
         (void)dm_tc_pulse_end(s, epoch);
@@ -508,8 +535,13 @@ int dm_android_touch_take_action(dm_android_touch *touch, dm_android_touch_actio
 
 int dm_android_touch_tick(dm_android_touch *touch, int64_t time_ns) {
     double now_s;
-    if (!touch) return 0;
-    if (pending_full(touch)) return 0;   /* backpressure before timer/core mutation */
+    if (!touch || time_ns < 0) return 0;
+    /* A full queue normally rejects timer mutation (explicit backpressure),
+       but an already observed timed head must still be allowed to expire:
+       otherwise the held key can never be released and the queue can never
+       drain. An unobserved head stays queued for a full first-read hold. */
+    int64_t effective_ns = time_ns < touch->last_ns ? touch->last_ns : time_ns;
+    if (pending_full(touch) && !timed_head_due(touch, effective_ns)) return 0;
     if (!accept_time(touch, time_ns, &now_s)) return 0;
     if (!touch->suspended) {
         dm_tc_tick(&touch->state, now_s);
@@ -532,6 +564,27 @@ dm_npad_state dm_android_touch_read(dm_android_touch *touch) {
     int head = touch->pulse_head;
     uint64_t buttons = touch->pulses[head].buttons;
     int32_t rx = touch->pulses[head].rx, ry = touch->pulses[head].ry;
+    if (touch->pulses[head].hold_s > 0) {
+        /* Standalone consumption boundary: the hold starts at the first read,
+           using the last accepted timestamp, so a delayed consumer still gets
+           the full upstream duration. Ticks before this read cannot expire it. */
+        if (!touch->pulses[head].hold_started) {
+            touch->pulses[head].hold_started = 1;
+            touch->pulses[head].hold_until_ns =
+                touch->last_ns + (int64_t)llround(touch->pulses[head].hold_s * 1e9);
+        }
+        if (touch->last_ns < touch->pulses[head].hold_until_ns) {
+            publish_entry(touch, buttons, rx, ry);   /* still held across reads */
+            return dm_android_pad_read(touch->pad);
+        }
+        touch->pulse_head = (head + 1) % DM_ANDROID_TOUCH_PULSE_CAPACITY;
+        --touch->pulse_count;
+        publish_core(touch);
+        out = dm_android_pad_read(touch->pad);
+        if (touch->pulse_count > 0 && touch->pulses[touch->pulse_head].buttons == buttons)
+            touch->release_waiting = 1;
+        return out;
+    }
     touch->pulse_head = (head + 1) % DM_ANDROID_TOUCH_PULSE_CAPACITY;
     --touch->pulse_count;
     publish_entry(touch, buttons, rx, ry);
