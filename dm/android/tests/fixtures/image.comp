@@ -1,0 +1,7 @@
+// 本切片不执行 storage image：该夹具只用于证明消费方在载入阶段明确拒绝，而不是声称 image 支持。
+// This slice does not execute storage images: the fixture only proves the consumer rejects them at load rather than
+// claiming image support.
+#version 450
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+layout(set = 0, binding = 0, rgba8) uniform writeonly image2D outimg;
+void main() { imageStore(outimg, ivec2(gl_GlobalInvocationID.xy), vec4(1.0)); }
