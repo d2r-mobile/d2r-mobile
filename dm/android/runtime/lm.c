@@ -8,14 +8,15 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { LM_FREE = 0, LM_STAGED = 1, LM_READY = 2 };
+enum { LM_FREE = 0, LM_STAGED = 1, LM_READY = 2, LM_DELIVERING = 3 };
 typedef struct {
     int state;
     uint32_t client, object_id, length;
     uint64_t seq;
     uint8_t data[DM_LM_PACKET_MAX];
 } lm_slot;
-struct dm_lm { lm_slot slots[DM_LM_QUEUE_PACKETS]; uint64_t next_seq; int registered; pthread_mutex_t install_lock; };
+struct dm_lm { lm_slot slots[DM_LM_QUEUE_PACKETS]; uint64_t next_seq; int registered; pthread_mutex_t install_lock;
+    dm_lm_sink sink; void *sink_user; int delivering; int consuming; };
 
 static int lm_handler(void *user, uint64_t client, unsigned flags, uint32_t command,
                       const uint8_t *request, size_t size,
@@ -138,6 +139,7 @@ size_t dm_lm_packet_count(dm_host *host) {
 int dm_lm_take_packet(dm_host *host, dm_lm_packet *out) {
     if (!host || !out) return EINVAL;
     pthread_mutex_lock(&host->mutex);
+    if (host->lm && host->lm->consuming) { pthread_mutex_unlock(&host->mutex); return EBUSY; }
     lm_slot *slot = NULL;
     if (host->lm)
         for (unsigned i = 0; i < DM_LM_QUEUE_PACKETS; ++i) {
@@ -153,6 +155,78 @@ int dm_lm_take_packet(dm_host *host, dm_lm_packet *out) {
     memset(slot, 0, sizeof *slot);
     pthread_mutex_unlock(&host->mutex);
     return 0;
+}
+
+int dm_lm_set_sink(dm_host *host, dm_lm_sink sink, void *user) {
+    if (!host) return EINVAL;
+    pthread_mutex_lock(&host->mutex);
+    if (!host->lm) { pthread_mutex_unlock(&host->mutex); return ENOENT; }
+    if (host->lm->delivering || host->lm->consuming) { pthread_mutex_unlock(&host->mutex); return EBUSY; }
+    host->lm->sink = sink;
+    host->lm->sink_user = user;
+    pthread_mutex_unlock(&host->mutex);
+    return 0;
+}
+
+static int consume_finish(dm_host *host, int result) {
+    pthread_mutex_lock(&host->mutex);
+    if (host->lm) host->lm->consuming = 0;
+    pthread_mutex_unlock(&host->mutex);
+    return result;
+}
+
+int dm_lm_consume(dm_host *host, unsigned budget) {
+    if (!host || !budget) return -EINVAL;
+    pthread_mutex_lock(&host->mutex);
+    if (!host->lm) { pthread_mutex_unlock(&host->mutex); return -ENOENT; }
+    if (host->lm->consuming) { pthread_mutex_unlock(&host->mutex); return -EBUSY; }
+    host->lm->consuming = 1;   // 整个调用期间阻止 close/destroy 释放 lm/宿主 | block close/destroy for the whole call
+    pthread_mutex_unlock(&host->mutex);
+
+    int delivered = 0;
+    for (;;) {
+        dm_lm_packet packet;
+        uint64_t seq = 0;
+        dm_lm_sink sink;
+        void *user;
+        pthread_mutex_lock(&host->mutex);
+        struct dm_lm *lm = host->lm;   // consuming 保证 lm 存活 | consuming keeps lm alive
+        if (!lm->sink) { pthread_mutex_unlock(&host->mutex); return consume_finish(host, delivered ? delivered : -EAGAIN); }
+        lm_slot *slot = NULL;
+        for (unsigned i = 0; i < DM_LM_QUEUE_PACKETS; ++i) {
+            lm_slot *candidate = &lm->slots[i];
+            if (candidate->state == LM_READY && (!slot || candidate->seq < slot->seq)) slot = candidate;
+        }
+        if (!slot) { pthread_mutex_unlock(&host->mutex); return consume_finish(host, delivered ? delivered : -ENOENT); }
+        packet.client = slot->client;
+        packet.object_id = slot->object_id;
+        packet.length = slot->length;
+        memcpy(packet.data, slot->data, slot->length);
+        seq = slot->seq;
+        slot->state = LM_DELIVERING;
+        lm->delivering = 1;
+        sink = lm->sink;
+        user = lm->sink_user;
+        pthread_mutex_unlock(&host->mutex);
+
+        int rc = sink(user, &packet);
+
+        pthread_mutex_lock(&host->mutex);
+        lm = host->lm;
+        lm->delivering = 0;
+        for (unsigned i = 0; i < DM_LM_QUEUE_PACKETS; ++i) {
+            lm_slot *candidate = &lm->slots[i];
+            if (candidate->state == LM_DELIVERING && candidate->seq == seq) {
+                if (rc == 0) memset(candidate, 0, sizeof *candidate);
+                else candidate->state = LM_READY;
+                break;
+            }
+        }
+        pthread_mutex_unlock(&host->mutex);
+        if (rc != 0) return consume_finish(host, delivered ? delivered : -EIO);
+        delivered++;
+        if ((unsigned)delivered == budget) return consume_finish(host, delivered);
+    }
 }
 
 int dm_lm_install(dm_host *host) {
@@ -201,11 +275,25 @@ int dm_lm_install(dm_host *host) {
     return rc;
 }
 
-void dm_lm_close(dm_host *host) {
-    if (!host) return;
+int dm_lm_busy_locked(dm_host *host) {
+    return host && host->lm && host->lm->consuming;
+}
+
+int dm_lm_close_locked(dm_host *host) {
+    if (!host) return EINVAL;
     if (host->lm) {
+        if (host->lm->consuming) return EBUSY;
         pthread_mutex_destroy(&host->lm->install_lock);
         free(host->lm);
         host->lm = NULL;
     }
+    return 0;
+}
+
+int dm_lm_close(dm_host *host) {
+    if (!host) return EINVAL;
+    pthread_mutex_lock(&host->mutex);
+    int rc = dm_lm_close_locked(host);
+    pthread_mutex_unlock(&host->mutex);
+    return rc;
 }
