@@ -1,0 +1,434 @@
+#!/usr/bin/env python3
+"""Actual-source JNI fixture for #190 text start/event/end.
+
+Extracts the production text_begin_ready/text_begin/native_text_event/text_end
+from native.c and compiles them against a tiny JNI function table. This does
+not reimplement those functions; the table only supplies the Java boundary.
+It covers show failure/exception, global-ref rollback, owner busy, session
+callback bounds/staleness, release, inactive App rejection and a terminal
+callback re-entering synchronously from show().
+"""
+from __future__ import annotations
+
+import argparse
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+from native_callbacks_host import extract_function
+
+FUNCTIONS = ["text_jni_stage_failed", "native_text_event", "text_end",
+             "text_begin_ready", "text_begin"]
+
+PRELUDE = r'''
+#include <stdarg.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+
+typedef void *jobject;
+typedef void *jclass;
+typedef void *jmethodID;
+typedef void *jstring;
+typedef unsigned char jboolean;
+typedef int jint;
+typedef long long jlong;
+typedef struct JNINativeInterface JNINativeInterface;
+typedef const JNINativeInterface *JNIEnv;
+typedef struct { const char *name, *signature; void *fnPtr; } JNINativeMethod;
+
+struct JNINativeInterface {
+    jobject (*GetObjectClass)(JNIEnv *, jobject);
+    jmethodID (*GetMethodID)(JNIEnv *, jclass, const char *, const char *);
+    jobject (*CallObjectMethod)(JNIEnv *, jobject, jmethodID, ...);
+    jstring (*NewStringUTF)(JNIEnv *, const char *);
+    jint (*RegisterNatives)(JNIEnv *, jclass, const JNINativeMethod *, jint);
+    jobject (*NewObject)(JNIEnv *, jclass, jmethodID, ...);
+    jboolean (*CallBooleanMethod)(JNIEnv *, jobject, jmethodID, ...);
+    jobject (*NewGlobalRef)(JNIEnv *, jobject);
+    void (*DeleteGlobalRef)(JNIEnv *, jobject);
+    void (*DeleteLocalRef)(JNIEnv *, jobject);
+    jboolean (*ExceptionCheck)(JNIEnv *);
+    void (*ExceptionDescribe)(JNIEnv *);
+    void (*ExceptionClear)(JNIEnv *);
+};
+
+enum { DM_APP_STATE_CREATED = 0, DM_APP_STATE_OWNED_DIAGNOSTIC = 3 };
+#define DM_TEXT_MAX_UTF16_UNITS 512
+#define EVENT_COMMIT 0
+#define EVENT_DELETE 1
+#define EVENT_SUBMIT 2
+#define EVENT_CANCEL 3
+
+typedef struct { int state; void *surface; } dm_app_lifecycle;
+typedef struct { int width, height; } ANativeWindow;
+typedef struct ANativeActivity { JNIEnv *env; jobject clazz; } ANativeActivity;
+
+typedef struct {
+    ANativeActivity *activity;
+    dm_app_lifecycle *lifecycle;
+    ANativeWindow *window;
+    void *arbiter;
+    int resumed, focused, touch_allowed;
+    uint64_t text_session;
+    jobject text_bridge;
+    jclass text_class;
+    jmethodID text_show, text_hide, text_release;
+    int text_active;
+    int text_back_owned;
+    int text_show_accepted;
+    uint32_t text_commit_events, text_delete_events, text_submit_events, text_cancel_events;
+    uint64_t text_event_total;
+    int text_last_units;
+} app_state;
+
+static app_state *g_text_app;
+static uint64_t g_text_next_session;
+static int text_begin(app_state *);
+static void text_end(app_state *, const char *);
+static int touch_cancel_calls;
+static void touch_cancel(app_state *s, const char *reason, int64_t now) {
+    (void)s; (void)reason; (void)now; touch_cancel_calls++;
+}
+static int64_t monotonic_ns(void) { return 1000000000LL; }
+static int dm_app_lifecycle_state(const dm_app_lifecycle *l) { return l ? l->state : 0; }
+static void *dm_app_lifecycle_surface(const dm_app_lifecycle *l) { return l ? l->surface : NULL; }
+#define LOG(...) do { } while (0)
+#define CHECK(c) do { if (!(c)) { \
+    fprintf(stderr, "FAIL line %d: %s\n", __LINE__, #c); return 1; } } while (0)
+
+typedef struct { int id; } FakeObject;
+static FakeObject activity_obj = {1}, activity2_obj = {2}, activity_class = {3},
+    loader_class = {4}, app_loader = {5}, bridge_class = {6}, bridge_obj = {7},
+    string_obj = {8};
+static int mid_activity_loader, mid_loadclass, mid_constructor, mid_show, mid_hide, mid_release;
+#define MID_ACTIVITY_LOADER ((jmethodID)&mid_activity_loader)
+#define MID_LOADCLASS ((jmethodID)&mid_loadclass)
+#define MID_CONSTRUCTOR ((jmethodID)&mid_constructor)
+#define MID_SHOW ((jmethodID)&mid_show)
+#define MID_HIDE ((jmethodID)&mid_hide)
+#define MID_RELEASE ((jmethodID)&mid_release)
+
+static int pending, exception_describes, native_registers, show_calls, release_calls;
+static int release_result = 1, show_result = 1, show_exception;
+static int reentrant_event = -1, reentrant_units;
+static int global_ref_calls, globals_deleted, fail_global_at;
+static int register_signature_ok, loader_receiver_calls, loaded_from_app_loader;
+static jlong constructed_session;
+static void *loader_receiver, *loaded_from;
+
+static void set_exception(void) { pending = 1; }
+static void native_text_event(JNIEnv *, jclass, jlong, jint, jint);
+
+static jobject fake_get_object_class(JNIEnv *env, jobject obj) {
+    (void)env;
+    if (obj == &activity_obj || obj == &activity2_obj) return &activity_class;
+    if (obj == &app_loader) return &loader_class;
+    set_exception();
+    return NULL;
+}
+static jmethodID fake_get_method_id(JNIEnv *env, jclass cls, const char *name, const char *sig) {
+    (void)env; (void)sig;
+    if (cls == &activity_class && strcmp(name, "getClassLoader") == 0) return MID_ACTIVITY_LOADER;
+    if (cls == &loader_class && strcmp(name, "loadClass") == 0) return MID_LOADCLASS;
+    if (cls == &bridge_class) {
+        if (strcmp(name, "<init>") == 0) return MID_CONSTRUCTOR;
+        if (strcmp(name, "show") == 0) return MID_SHOW;
+        if (strcmp(name, "hide") == 0) return MID_HIDE;
+        if (strcmp(name, "release") == 0) return MID_RELEASE;
+    }
+    set_exception();
+    return NULL;
+}
+static jobject fake_class_loader(JNIEnv *env, jobject receiver, jmethodID mid, va_list ap) {
+    (void)env; (void)ap;
+    if (mid == MID_ACTIVITY_LOADER) {
+        loader_receiver_calls++;
+        loader_receiver = receiver;
+        if (receiver != &activity_obj && receiver != &activity2_obj) {
+            set_exception();
+            return NULL;
+        }
+        return &app_loader;
+    }
+    set_exception();
+    return NULL;
+}
+static jobject fake_load_class(JNIEnv *env, jobject receiver, jmethodID mid, va_list ap) {
+    (void)env; (void)mid;
+    (void)va_arg(ap, jstring);
+    loaded_from = receiver;
+    loaded_from_app_loader = receiver == &app_loader;
+    if (receiver != &app_loader) { set_exception(); return NULL; }
+    return &bridge_class;
+}
+static jobject fake_call_object(JNIEnv *env, jobject receiver, jmethodID mid, ...) {
+    va_list ap; va_start(ap, mid);
+    jobject out;
+    if (mid == MID_ACTIVITY_LOADER) out = fake_class_loader(env, receiver, mid, ap);
+    else if (mid == MID_LOADCLASS) out = fake_load_class(env, receiver, mid, ap);
+    else { set_exception(); out = NULL; }
+    va_end(ap);
+    return out;
+}
+static jstring fake_new_string(JNIEnv *env, const char *s) { (void)env; (void)s; return &string_obj; }
+static jint fake_register_natives(JNIEnv *env, jclass cls, const JNINativeMethod *m, jint n) {
+    (void)env; (void)cls; (void)n;
+    native_registers++;
+    register_signature_ok = m && m[0].signature && strcmp(m[0].signature, "(JII)V") == 0;
+    return register_signature_ok ? 0 : -1;
+}
+static jobject fake_new_object(JNIEnv *env, jclass cls, jmethodID mid, ...) {
+    (void)env; (void)mid;
+    if (cls != &bridge_class) { set_exception(); return NULL; }
+    va_list ap; va_start(ap, mid);
+    jobject activity = va_arg(ap, jobject);
+    constructed_session = va_arg(ap, jlong);
+    va_end(ap);
+    if (activity != &activity_obj && activity != &activity2_obj) {
+        set_exception();
+        return NULL;
+    }
+    return &bridge_obj;
+}
+static jboolean fake_call_boolean(JNIEnv *env, jobject obj, jmethodID mid, ...) {
+    if (obj != &bridge_obj) { set_exception(); return 0; }
+    if (mid == MID_SHOW) {
+        show_calls++;
+        if (show_exception) { set_exception(); return 0; }
+        if (reentrant_event >= 0)
+            native_text_event(env, NULL, constructed_session, reentrant_event, reentrant_units);
+        return (jboolean)show_result;
+    }
+    if (mid == MID_RELEASE) { release_calls++; return (jboolean)release_result; }
+    set_exception();
+    return 0;
+}
+static jobject fake_new_global(JNIEnv *env, jobject obj) {
+    (void)env;
+    global_ref_calls++;
+    if (fail_global_at && global_ref_calls == fail_global_at) {
+        set_exception();
+        return NULL;
+    }
+    return obj;
+}
+static void fake_delete_global(JNIEnv *env, jobject obj) { (void)env; (void)obj; globals_deleted++; }
+static void fake_delete_local(JNIEnv *env, jobject obj) { (void)env; (void)obj; }
+static jboolean fake_exception_check(JNIEnv *env) { (void)env; return (jboolean)pending; }
+static void fake_exception_describe(JNIEnv *env) { (void)env; exception_describes++; }
+static void fake_exception_clear(JNIEnv *env) { (void)env; pending = 0; }
+static const JNINativeInterface fake_functions = {
+    fake_get_object_class, fake_get_method_id, fake_call_object, fake_new_string,
+    fake_register_natives, fake_new_object, fake_call_boolean, fake_new_global,
+    fake_delete_global, fake_delete_local, fake_exception_check,
+    fake_exception_describe, fake_exception_clear
+};
+
+static void reset_fake(JNIEnv *env) {
+    pending = exception_describes = native_registers = show_calls = release_calls = 0;
+    release_result = show_result = 1; show_exception = 0; reentrant_event = -1; reentrant_units = 0;
+    global_ref_calls = globals_deleted = fail_global_at = 0;
+    register_signature_ok = loader_receiver_calls = loaded_from_app_loader = 0;
+    loader_receiver = loaded_from = NULL; constructed_session = 0;
+    g_text_app = NULL; g_text_next_session = 0; touch_cancel_calls = 0;
+    *env = &fake_functions;
+}
+
+static int test_success_and_events(JNIEnv *env) {
+    ANativeActivity act = {env, &activity_obj};
+    dm_app_lifecycle life = {DM_APP_STATE_OWNED_DIAGNOSTIC, NULL};
+    ANativeWindow window = {1, 1};
+    app_state a; memset(&a, 0, sizeof a);
+    a.activity = &act; a.lifecycle = &life; a.window = &window;
+    a.resumed = a.focused = a.touch_allowed = 1;
+    a.arbiter = (void *)1;
+    life.surface = &window;
+    CHECK(text_begin(&a) == 1);
+    CHECK(loader_receiver == &activity_obj && loaded_from == &app_loader && loaded_from_app_loader);
+    CHECK(native_registers == 1 && register_signature_ok && show_calls == 1);
+    CHECK(constructed_session > 0 && a.text_session == (uint64_t)constructed_session);
+    CHECK(a.text_active && a.text_show_accepted && a.text_bridge == &bridge_obj);
+    CHECK(a.text_class == &bridge_class && a.text_release == MID_RELEASE);
+    CHECK(touch_cancel_calls == 1);
+    native_text_event(env, NULL, (jlong)a.text_session, EVENT_COMMIT, 3);
+    native_text_event(env, NULL, (jlong)a.text_session, EVENT_DELETE, 1);
+    CHECK(a.text_commit_events == 1 && a.text_delete_events == 1 && a.text_event_total == 2);
+    CHECK(a.text_last_units == 1);
+    native_text_event(env, NULL, (jlong)a.text_session, EVENT_COMMIT, 513);
+    native_text_event(env, NULL, (jlong)a.text_session, 4, 0);
+    native_text_event(env, NULL, (jlong)a.text_session + 1, EVENT_COMMIT, 1);
+    CHECK(a.text_commit_events == 1 && a.text_event_total == 2);
+    native_text_event(env, NULL, (jlong)a.text_session, EVENT_SUBMIT, 2);
+    CHECK(!a.text_active && a.text_session == 0 && a.text_submit_events == 1);
+    native_text_event(env, NULL, (jlong)constructed_session, EVENT_COMMIT, 1);
+    CHECK(a.text_commit_events == 1);
+    text_end(&a, "test_end");
+    CHECK(release_calls == 1 && a.text_bridge == NULL && a.text_class == NULL);
+    CHECK(g_text_app == NULL && touch_cancel_calls >= 2);
+    native_text_event(env, NULL, (jlong)constructed_session, EVENT_COMMIT, 1);
+    CHECK(a.text_commit_events == 1);
+    return 0;
+}
+
+static int test_show_failure_and_exception(JNIEnv *env) {
+    ANativeActivity act = {env, &activity_obj};
+    dm_app_lifecycle life = {DM_APP_STATE_OWNED_DIAGNOSTIC, NULL};
+    ANativeWindow window = {1, 1};
+    app_state a; memset(&a, 0, sizeof a);
+    a.activity = &act; a.lifecycle = &life; a.window = &window;
+    a.resumed = a.focused = a.touch_allowed = 1; life.surface = &window;
+    show_result = 0;
+    CHECK(text_begin(&a) == 0);
+    CHECK(!a.text_active && !a.text_show_accepted && a.text_bridge == NULL && a.text_class == NULL);
+    CHECK(g_text_app == NULL && show_calls == 1 && release_calls == 1);
+    show_result = 1; show_exception = 1;
+    CHECK(text_begin(&a) == 0);
+    CHECK(!pending && !a.text_active && a.text_bridge == NULL && g_text_app == NULL);
+    CHECK(show_calls == 2 && exception_describes >= 1);
+    return 0;
+}
+
+static int test_global_ref_rollback(JNIEnv *env) {
+    ANativeActivity act = {env, &activity_obj};
+    dm_app_lifecycle life = {DM_APP_STATE_OWNED_DIAGNOSTIC, NULL};
+    ANativeWindow window = {1, 1};
+    app_state a; memset(&a, 0, sizeof a);
+    a.activity = &act; a.lifecycle = &life; a.window = &window;
+    a.resumed = a.focused = a.touch_allowed = 1; life.surface = &window;
+    fail_global_at = 1;
+    CHECK(text_begin(&a) == 0);
+    CHECK(global_ref_calls == 1 && release_calls == 1);
+    CHECK(!a.text_active && a.text_bridge == NULL && a.text_class == NULL && g_text_app == NULL);
+    reset_fake(env);
+    a.activity = &act; a.lifecycle = &life; a.window = &window;
+    a.resumed = a.focused = a.touch_allowed = 1; life.surface = &window;
+    fail_global_at = 2;
+    CHECK(text_begin(&a) == 0);
+    CHECK(global_ref_calls == 2 && globals_deleted == 1 && release_calls == 1);
+    CHECK(!a.text_active && a.text_bridge == NULL && a.text_class == NULL && g_text_app == NULL);
+    return 0;
+}
+
+static int test_owner_busy_and_inactive(JNIEnv *env) {
+    ANativeActivity act = {env, &activity_obj};
+    ANativeActivity act2 = {env, &activity2_obj};
+    dm_app_lifecycle life = {DM_APP_STATE_OWNED_DIAGNOSTIC, NULL};
+    ANativeWindow window = {1, 1};
+    app_state a; memset(&a, 0, sizeof a);
+    a.activity = &act; a.lifecycle = &life; a.window = &window;
+    a.resumed = a.focused = a.touch_allowed = 1; life.surface = &window;
+    CHECK(text_begin(&a) == 1);
+    app_state b; memset(&b, 0, sizeof b);
+    b.activity = &act2; b.lifecycle = &life; b.window = &window;
+    b.resumed = b.focused = b.touch_allowed = 1;
+    CHECK(text_begin(&b) == 0);
+    CHECK(show_calls == 1 && g_text_app == &a && !b.text_active);
+    text_end(&a, "busy_done");
+    app_state c; memset(&c, 0, sizeof c);
+    c.activity = &act; c.lifecycle = &life; c.window = &window;
+    c.resumed = 0; c.focused = 1; c.touch_allowed = 1; life.surface = &window;
+    CHECK(text_begin(&c) == 0);
+    CHECK(show_calls == 1 && !c.text_active && g_text_app == NULL);
+    c.resumed = 1; c.focused = 0;
+    CHECK(text_begin(&c) == 0);
+    c.focused = 1; c.touch_allowed = 0;
+    CHECK(text_begin(&c) == 0);
+    c.touch_allowed = 1; c.window = NULL;
+    CHECK(text_begin(&c) == 0);
+    c.window = &window; life.state = DM_APP_STATE_CREATED;
+    CHECK(text_begin(&c) == 0);
+    life.state = DM_APP_STATE_OWNED_DIAGNOSTIC; life.surface = NULL;
+    CHECK(text_begin(&c) == 0);
+    CHECK(show_calls == 1 && !c.text_active && g_text_app == NULL);
+    life.surface = &window;
+    c.window = &window; c.resumed = c.focused = c.touch_allowed = 1;
+    CHECK(text_begin(&c) == 1);
+    text_end(&c, "pause");
+    CHECK(release_calls == 2 && c.text_bridge == NULL && g_text_app == NULL);
+    CHECK(text_begin(&c) == 1);
+    text_end(&c, "window_destroyed");
+    CHECK(release_calls == 3 && c.text_bridge == NULL && g_text_app == NULL);
+    return 0;
+}
+
+static int test_reentrant_terminal_during_show(JNIEnv *env) {
+    ANativeActivity act = {env, &activity_obj};
+    dm_app_lifecycle life = {DM_APP_STATE_OWNED_DIAGNOSTIC, NULL};
+    ANativeWindow window = {1, 1};
+    app_state a; memset(&a, 0, sizeof a);
+    a.activity = &act; a.lifecycle = &life; a.window = &window;
+    a.resumed = a.focused = a.touch_allowed = 1;
+    a.arbiter = (void *)1;
+    life.surface = &window;
+    reentrant_event = EVENT_CANCEL;
+    CHECK(text_begin(&a) == 0);
+    CHECK(show_calls == 1 && release_calls == 1);
+    CHECK(!a.text_active && !a.text_show_accepted && a.text_session == 0);
+    CHECK(a.text_bridge == NULL && a.text_class == NULL && g_text_app == NULL);
+    CHECK(a.text_cancel_events == 1 && touch_cancel_calls >= 1);
+    return 0;
+}
+
+int main(void) {
+    JNIEnv env;
+    reset_fake(&env); if (test_success_and_events(&env)) return 1;
+    reset_fake(&env); if (test_show_failure_and_exception(&env)) return 1;
+    reset_fake(&env); if (test_global_ref_rollback(&env)) return 1;
+    reset_fake(&env); if (test_owner_busy_and_inactive(&env)) return 1;
+    reset_fake(&env); if (test_reentrant_terminal_during_show(&env)) return 1;
+    puts("PASS text JNI start/event/end");
+    return 0;
+}
+'''
+
+
+def build(text: str) -> str:
+    return PRELUDE + "\n".join(extract_function(text, name) for name in FUNCTIONS)
+
+
+def run(cc: str, source: str, work: Path, label: str) -> int:
+    c = work / f"{label}.c"
+    exe = work / label
+    c.write_text(source)
+    subprocess.run([cc, "-std=c11", "-O1", "-g", "-Wall", "-Wextra", "-Werror",
+                    "-Wno-unused-parameter", "-o", str(exe), str(c)], check=True)
+    return subprocess.run([str(exe)], check=False).returncode
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--native", default="dm/android/app/native.c")
+    ap.add_argument("--cc", default="cc")
+    ap.add_argument("--mutants", action="store_true")
+    args = ap.parse_args()
+    text = Path(args.native).read_text()
+    text = text.replace("static int text_begin(app_state*s);\n", "")
+    text = text.replace("static void text_end(app_state*s,const char*reason);\n", "")
+    with tempfile.TemporaryDirectory() as td:
+        work = Path(td)
+        if run(args.cc, build(text), work, "text-jni") != 0:
+            print("FAIL: actual text JNI start/event/end", file=sys.stderr)
+            return 1
+        if args.mutants:
+            mutants = [
+                ("bypass-ready-gate",
+                 "if(!s->resumed||!s->focused||!s->window||!s->touch_allowed)return 0;",
+                 "if(0)return 0;"),
+                ("wrong-loader-receiver",
+                 "CallObjectMethod(env, s->activity->clazz, get_loader)",
+                 "CallObjectMethod(env, loader, get_loader)"),
+            ]
+            for name, old, new in mutants:
+                if old not in text:
+                    print(f"fail closed: mutant anchor missing: {name}", file=sys.stderr)
+                    return 1
+                if run(args.cc, build(text.replace(old, new, 1)), work, f"mutant-{name}") == 0:
+                    print(f"FAIL: mutant survived: {name}", file=sys.stderr)
+                    return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
