@@ -4,7 +4,7 @@
 
 ## Current playable branch (2026-10-21)
 
-The development build now starts the real game, enters camp and saves/exits on the target phone. Turnip is the rendering baseline. Combat, skills, pickup and inventory/stash dragging have user verification; complete touch parity, broad lifecycle/device coverage, sustained 60 fps and energy savings are not established. Current priorities and known limitations are in the [fork README](../../README.md#current-status) and project board.
+The development build now starts the real game, enters camp and saves/exits on the target phone. Turnip is the rendering baseline. Combat, skills, pickup and inventory/stash dragging have user verification; complete touch parity, broad lifecycle/device coverage, sustained 60 fps and energy savings are not established. Current priorities and known limitations are in the [fork README](../../docs/android/README.md#current-status) and project board.
 
 The Android implementation is included on both `main` and `dev`. Build the playable APK with `python3 dm/android/tools/build.py --game-run`; `app/build.sh` is the synthetic diagnostic build.
 
