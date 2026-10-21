@@ -692,3 +692,31 @@ if(NOT ANDROID)
         set_tests_properties(audio_focus_jni PROPERTIES TIMEOUT 180)
     endif()
 endif()
+
+# #195 串行音频会话：组合已验收 JNI 焦点适配与真实音频输出 owner；不复制队列/策略。
+# #195 serialized audio session combining the accepted JNI focus adapter and the real audio output owner.
+if(ANDROID)
+    add_library(dm_android_app_audio_session STATIC app/audio_session.c)
+    target_include_directories(dm_android_app_audio_session PUBLIC app)
+    target_link_libraries(dm_android_app_audio_session PUBLIC dm_android_app_audio_focus_jni dm_android_app_audio_output)
+    target_compile_options(dm_android_app_audio_session PRIVATE -Wall -Wextra -Werror)
+endif()
+
+if(NOT ANDROID)
+    if(JNI_FOUND AND Java_FOUND)
+        add_library(dm_audio_session_host SHARED
+            tests/audio_session_test.c app/audio_session.c app/audio_focus_jni.c
+            app/audio_output.c app/audio_focus.c audio/dm_aaudio.c)
+        target_include_directories(dm_audio_session_host PRIVATE app audio ${JNI_INCLUDE_DIRS})
+        target_link_libraries(dm_audio_session_host PRIVATE pthread m)
+        # JVM 插件不能依赖 sanitizer 运行时；与 #184 相同处理。
+        # A JVM plugin cannot depend on the sanitizer runtime; same as #184.
+        target_compile_options(dm_audio_session_host PRIVATE -Wall -Wextra -Werror -fno-sanitize=all)
+        target_link_options(dm_audio_session_host PRIVATE -fno-sanitize=all)
+        add_test(NAME audio_session
+            COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/audio_session_host.sh
+                $<TARGET_FILE:dm_audio_session_host>
+                ${Java_JAVAC_EXECUTABLE} ${Java_JAVA_EXECUTABLE})
+        set_tests_properties(audio_session PROPERTIES TIMEOUT 180)
+    endif()
+endif()
