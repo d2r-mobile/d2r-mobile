@@ -6,6 +6,7 @@
 
 struct dm_input_arbiter {
     dm_touch_bridge *touch;
+    dm_touch_bridge *probe;
     dm_android_pad *gamepad;
     dm_input_source source;
     dm_input_layout layout;
@@ -94,15 +95,12 @@ static int invalidate(dm_input_arbiter *arbiter) {
    A rejected event therefore leaves the prior source, layout, held gamepad
    sample and pending boundary untouched. */
 static int take_touch(dm_input_arbiter *arbiter, const dm_touch_event *event) {
-    dm_touch_bridge *probe = dm_touch_bridge_create(arbiter->width_pt,
-                                                    arbiter->height_pt,
-                                                    arbiter->density);
-    if (!probe) return 0;
-    if (!dm_touch_bridge_event(probe, event)) {
-        dm_touch_bridge_destroy(probe, NULL);
+    if (!arbiter->probe) return 0;
+    if (!dm_touch_bridge_event(arbiter->probe, event)) {
+        (void)dm_touch_bridge_retire_requests(arbiter->probe, event->time_ns);
         return 0;
     }
-    dm_touch_bridge_destroy(probe, NULL);
+    (void)dm_touch_bridge_retire_requests(arbiter->probe, event->time_ns);
     claim_source(arbiter, DM_INPUT_SOURCE_TOUCH);
     if (!dm_touch_bridge_event(arbiter->touch, event)) return 0;
     arbiter->last_time_ns = event->time_ns;
@@ -140,9 +138,11 @@ dm_input_arbiter *dm_input_arbiter_create(float width_pt, float height_pt,
     dm_input_arbiter *arbiter = calloc(1, sizeof *arbiter);
     if (!arbiter) return NULL;
     arbiter->touch = dm_touch_bridge_create(width_pt, height_pt, density);
+    arbiter->probe = dm_touch_bridge_create(width_pt, height_pt, density);
     arbiter->gamepad = dm_android_pad_create();
-    if (!arbiter->touch || !arbiter->gamepad) {
+    if (!arbiter->touch || !arbiter->probe || !arbiter->gamepad) {
         if (arbiter->touch) dm_touch_bridge_destroy(arbiter->touch, NULL);
+        if (arbiter->probe) dm_touch_bridge_destroy(arbiter->probe, NULL);
         if (arbiter->gamepad) dm_android_pad_destroy(arbiter->gamepad);
         free(arbiter);
         return NULL;
@@ -159,6 +159,7 @@ dm_input_arbiter *dm_input_arbiter_create(float width_pt, float height_pt,
 void dm_input_arbiter_destroy(dm_input_arbiter *arbiter, dm_npad_state *neutral_out) {
     if (!arbiter) return;
     if (arbiter->touch) dm_touch_bridge_destroy(arbiter->touch, neutral_out);
+    if (arbiter->probe) dm_touch_bridge_destroy(arbiter->probe, NULL);
     if (arbiter->gamepad) dm_android_pad_destroy(arbiter->gamepad);
     free(arbiter);
 }
@@ -282,6 +283,71 @@ int dm_input_arbiter_read(dm_input_arbiter *arbiter, dm_npad_state *out) {
     return 1;
 }
 
+int dm_input_arbiter_observe(const dm_input_arbiter *arbiter,
+                             dm_android_touch_observation *out) {
+    if (!arbiter || !arbiter->touch || !out) return 0;
+    return dm_touch_bridge_observe(arbiter->touch, arbiter->density, out);
+}
+
+int dm_input_arbiter_diag(const dm_input_arbiter *arbiter, dm_touch_diag *out) {
+    if (!arbiter || !arbiter->touch || !out) return 0;
+    const dm_touch_diag *diag = dm_touch_bridge_diag(arbiter->touch);
+    if (!diag) return 0;
+    *out = *diag;
+    return 1;
+}
+
+static void restore_geometry(dm_touch_bridge *bridge, float width_pt,
+                             float height_pt, float density, int64_t time_ns) {
+    if (!bridge) return;
+    (void)dm_touch_bridge_resize(bridge, width_pt, height_pt, time_ns);
+    (void)dm_touch_bridge_set_density(bridge, density);
+}
+
+static int apply_geometry(dm_input_arbiter *arbiter, float width_pt,
+                          float height_pt, float density, int64_t time_ns) {
+    if (!dm_touch_bridge_resize(arbiter->touch, width_pt, height_pt, time_ns))
+        return 0;
+    if (!dm_touch_bridge_set_density(arbiter->touch, density)) {
+        restore_geometry(arbiter->touch, arbiter->width_pt, arbiter->height_pt,
+                         arbiter->density, time_ns);
+        return 0;
+    }
+    if (!dm_touch_bridge_resize(arbiter->probe, width_pt, height_pt, time_ns)) {
+        restore_geometry(arbiter->touch, arbiter->width_pt, arbiter->height_pt,
+                         arbiter->density, time_ns);
+        return 0;
+    }
+    if (!dm_touch_bridge_set_density(arbiter->probe, density)) {
+        restore_geometry(arbiter->probe, arbiter->width_pt, arbiter->height_pt,
+                         arbiter->density, time_ns);
+        restore_geometry(arbiter->touch, arbiter->width_pt, arbiter->height_pt,
+                         arbiter->density, time_ns);
+        return 0;
+    }
+    return 1;
+}
+
+int dm_input_arbiter_set_geometry(dm_input_arbiter *arbiter, float width_pt,
+                                  float height_pt, float density,
+                                  int64_t time_ns) {
+    if (!arbiter || !arbiter->touch || !arbiter->probe ||
+        !isfinite(width_pt) || !isfinite(height_pt) || !isfinite(density) ||
+        width_pt <= 0.0f || height_pt <= 0.0f || density <= 0.0f ||
+        time_ns < 0)
+        return 0;
+    if (arbiter->width_pt == width_pt && arbiter->height_pt == height_pt &&
+        arbiter->density == density)
+        return 1;
+    if (!apply_geometry(arbiter, width_pt, height_pt, density, time_ns))
+        return 0;
+    arbiter->width_pt = width_pt;
+    arbiter->height_pt = height_pt;
+    arbiter->density = density;
+    arbiter->last_time_ns = time_ns;
+    return invalidate(arbiter);
+}
+
 int dm_input_arbiter_tick(dm_input_arbiter *arbiter, int64_t time_ns) {
     if (!arbiter || time_ns < 0 || !arbiter->focused || arbiter->paused) return 0;
     arbiter->last_time_ns = time_ns;
@@ -293,5 +359,20 @@ int dm_input_arbiter_tick(dm_input_arbiter *arbiter, int64_t time_ns) {
 #ifdef DM_INPUT_TEST
 dm_touch_bridge *dm_input_arbiter_test_touch(dm_input_arbiter *arbiter) {
     return arbiter ? arbiter->touch : NULL;
+}
+
+int dm_input_arbiter_test_probe_geometry(const dm_input_arbiter *arbiter,
+                                         float *width_pt, float *height_pt,
+                                         float *density) {
+    if (!arbiter || !arbiter->probe || !width_pt || !height_pt || !density)
+        return 0;
+    dm_android_touch_observation o;
+    if (!dm_touch_bridge_observe(arbiter->probe,
+                                 dm_touch_bridge_density(arbiter->probe), &o))
+        return 0;
+    *width_pt = o.width_pt;
+    *height_pt = o.height_pt;
+    *density = o.density;
+    return 1;
 }
 #endif

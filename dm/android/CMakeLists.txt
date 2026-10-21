@@ -203,6 +203,14 @@ if(NOT ANDROID)
     target_compile_options(dm_input_source_requests_test PRIVATE -Wall -Wextra -Werror)
     add_test(NAME input_source_requests COMMAND dm_input_source_requests_test)
     set_tests_properties(input_source_requests PROPERTIES TIMEOUT 30)
+    # #165 arbiters' read-only view and atomic geometry over the same bridge.
+    add_executable(dm_input_source_view_test tests/input_source_view.c app/input_source.c)
+    target_include_directories(dm_input_source_view_test PRIVATE app runtime)
+    target_compile_definitions(dm_input_source_view_test PRIVATE DM_INPUT_TEST)
+    target_link_libraries(dm_input_source_view_test PRIVATE dm_android_touch_bridge dm_android_runtime m)
+    target_compile_options(dm_input_source_view_test PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME input_source_view COMMAND dm_input_source_view_test)
+    set_tests_properties(input_source_view PROPERTIES TIMEOUT 30)
 endif()
 # #117 自有诊断场景与窗口呈现策略：纯 C，无 Vulkan/Android 头文件，故在 CI 的 Vulkan=OFF 配置下也构建并运行。
 # #117 owned diagnostic scene and window presentation policy: plain C without Vulkan/Android headers, so it builds
@@ -509,6 +517,10 @@ if(NOT ANDROID)
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/input_source_mutants.py
                 --cc ${CMAKE_C_COMPILER})
         set_tests_properties(input_source_mutants PROPERTIES TIMEOUT 120)
+        add_test(NAME input_source_view_mutants
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/input_source_view_mutants.py
+                --cc ${CMAKE_C_COMPILER})
+        set_tests_properties(input_source_view_mutants PROPERTIES TIMEOUT 120)
     endif()
 endif()
 
