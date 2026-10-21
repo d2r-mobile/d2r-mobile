@@ -52,6 +52,30 @@ requests focus on construction.
 `app/build.sh` compiles the Java against the local android.jar, dexes it with the SDK's d8, packages `classes.dex`,
 sets `hasCode=true` and keeps the NativeActivity and owned synthetic assets. Provenance covers the dex when present.
 
+## 必需的 Java CI | Required Java CI
+
+`.github/workflows/ci.yml` 的 `java-boundary` job（ubuntu-24.04）是必跑路径：先要求 runner 的 JDK 与
+`platforms/android-35/android.jar`（缺失直接失败，不 skip；runner 已带 SDK 时按需用 sdkmanager 安装 API 35），
+然后执行 `ci/scripts/java-boundary.sh`：
+The `java-boundary` job is mandatory: it requires the runner JDK and the real API 35 android.jar (missing inputs fail
+instead of skipping), then runs `ci/scripts/java-boundary.sh`, which
+
+- 用真实 `android.jar` 编译 `dm/android/app/java` 下**当前全部**源码（`find` 遍历，后续新增源自动纳入）；
+- 运行已验收的 `AudioFocusBoundaryTest` 主机控制（只有 `android.media` / `android.os` 窄 stub）；
+- 每次运行私有负控制：缺失 android.jar、缺失 javac、故意 malformed 源都必须失败并正确归因；
+- 发布清洗过路径的 `java-boundary.log` 到 `ci-java-boundary` artifact。
+
+本地可显式运行 `ANDROID_SDK_ROOT=<sdk> bash ci/scripts/java-boundary.sh`。
+`dm/android/tests/platform_audio_focus_java.sh` 在本地仍是可选流程（缺 jar 时明确打印 skip），
+设置 `DM_JAVA_REQUIRE_ANDROID=1` 后缺 jar 会失败；CMake 中的 `platform_audio_focus_java` 测试仍只在
+`Java_FOUND` 时注册，因此不能替代这条必需 CI。
+Locally run the script with an explicit SDK; the older helper script remains optional locally but fails on a missing
+jar when `DM_JAVA_REQUIRE_ANDROID=1`. The conditional CMake test is not a substitute for this required path.
+
+该路径只证明真实 Android API 编译与主机控制通过，不安装/运行 APK，也不证明设备焦点或播放行为。
+This path proves real-Android-API compilation and host controls only; it does not install or run the APK and does not
+prove device focus or playback behaviour.
+
 ## 限制 | Limits
 
 本切片只是打包好的平台边界：不证明设备焦点请求、音频播放、延迟、AV 同步或 App 音频 UI。父任务在原生 JNI /
