@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 13 主题图标用的单色层：系统只取透明度、自己上色，所以这里画双层菱形轮廓（不要实心块，
+     否则主题化后会变成一团）。Monochrome layer for Android 13 themed icons: the system uses only the alpha
+     channel and tints it, so this is the double diamond outline (a solid shape would turn into a blob). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M54,24 L84,54 L54,84 L24,54 Z"
+        android:strokeColor="#ffffff"
+        android:strokeLineJoin="round"
+        android:strokeWidth="5" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M54,37 L71,54 L54,71 L37,54 Z"
+        android:strokeColor="#ffffff"
+        android:strokeLineJoin="round"
+        android:strokeWidth="4" />
+</vector>

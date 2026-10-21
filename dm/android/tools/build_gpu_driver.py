@@ -12,12 +12,14 @@ import os
 import shlex
 import shutil
 import subprocess
+import sys
 import tarfile
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 TOOLS = Path(os.environ.get("DM_ANDROID_TOOLS", str(Path.home() / "dm-work/tools/android")))
-BIN = TOOLS / "ndk/toolchains/llvm/prebuilt/linux-x86_64/bin"
+NDK_PREBUILT = os.environ.get("DM_NDK_PREBUILT", "darwin-x86_64" if sys.platform == "darwin" else "linux-x86_64")
+BIN = TOOLS / "ndk/toolchains/llvm/prebuilt" / NDK_PREBUILT / "bin"
 PINNED = (("eden-emulator/libadrenotools", "8ba23b42d7"),
           ("bylaws/liblinkernsbypass", "aa3975893d"))
 

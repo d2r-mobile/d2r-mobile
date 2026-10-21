@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 自适应图标（API 26+）：深色底 + 全矢量前景。minSdk 已是 29，所以不需要为更老的系统准备 PNG 位图。
+     Adaptive icon (API 26+): dark background plus a vector foreground. minSdk is 29, so no legacy PNGs are needed. -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_launcher_background" />
+    <foreground android:drawable="@drawable/ic_launcher_foreground" />
+</adaptive-icon>
