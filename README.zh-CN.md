@@ -32,6 +32,10 @@ MIT · 中文 / English / Español / Русский · iOS 26+ / macOS 26+；老
 
 它会检查你的电脑、准备工作区、签名装机，再把游戏资源拷进手机。只有两件事会停下来问你：Apple 签名信息，以及需要 `sudo` 的安装要不要做。skill 在 [skills/d2r-mobile/SKILL.md](skills/d2r-mobile/SKILL.md)，两个助手都会通过 `.claude/skills/` 和 `.agents/skills/` 自己找到它。手动构建与安装步骤见[开始使用](#开始使用)。
 
+## Android
+
+Android 开发版包含原生运行时、Vulkan 渲染器、启动器与触屏操作。已测试机型、构建命令和当前限制见 [Android 构建与安装指南](docs/android/README.zh-CN.md)。
+
 ## 为什么玩起来像原生游戏
 
 - **手机跑的就是原版程序。** iPhone 和 Switch 用同一类 ARM 处理器。改写器只改苹果内核不认的那几类指令（线程指针寄存器、系统调用、计时器），其余逐字节保持原样。职业、符文之语、恐怖地带、首领、掉落规则、任务流程和原版一样，因为它们就是原版代码。

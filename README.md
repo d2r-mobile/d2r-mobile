@@ -32,6 +32,10 @@ Use the d2r-mobile skill from https://github.com/d2r-mobile/d2r-mobile to build 
 
 The agent checks your machine, prepares the workspace, signs and installs the app, and copies the game resources to your phone. It stops to ask you for your Apple signing details and before any install that needs `sudo`. The skill lives at [skills/d2r-mobile/SKILL.md](skills/d2r-mobile/SKILL.md), and both agents find it on their own through `.claude/skills/` and `.agents/skills/`. For manual builds and installation, see [Getting started](#getting-started).
 
+## Android
+
+The Android development port includes the native runtime, Vulkan renderer, launcher and touch controls. See the [Android build and setup guide](docs/android/README.md) for the tested device, build commands and current limitations.
+
 ## Why it plays like a native game
 
 - **Your phone runs the original program.** iPhone and Switch use the same family of ARM processors. The rewriter changes only the instructions Apple's kernel rejects (thread-pointer registers, system calls, timers) and leaves every other byte as shipped. Classes, Runewords, Terror Zones, bosses, drop rules and quests match the original because they are the original code.
