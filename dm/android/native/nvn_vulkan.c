@@ -10,6 +10,7 @@
 #include "debug_stats.h"
 #include "performance_hint.h"
 #include "pending_ranges.h"
+#include "nvn_vulkan_batch_policy.h"
 #ifdef __ANDROID__
 #define VK_USE_PLATFORM_ANDROID_KHR
 #include <android/native_window.h>
@@ -49,6 +50,7 @@ static void snapshot_diag_poll(void);
 static void gpu_snapshot_report(void);
 static void pso_warm_start(void);
 static unsigned batch_draws;
+static dm_vk_batch_policy batch_policy={3,256};
 static void descriptor_reset(void);
 static void batch_resources_select(unsigned slot);
 static void forward_reset(void);
@@ -354,6 +356,14 @@ static VkFormatFeatureFlags present_source_features(VkFormat format) {
 }
 
 static void initialize(void) {
+    const char *slots=getenv("DM_VK_BATCH_SLOTS"),*draws=getenv("DM_VK_BATCH_DRAWS");
+#ifdef __ANDROID__
+    char slot_property[PROP_VALUE_MAX]={0},draw_property[PROP_VALUE_MAX]={0};
+    if(!slots&&__system_property_get("debug.d2r.batch_slots",slot_property)>0)slots=slot_property;
+    if(!draws&&__system_property_get("debug.d2r.batch_draws",draw_property)>0)draws=draw_property;
+#endif
+    int valid_policy=dm_vk_batch_policy_parse(slots,draws,&batch_policy);
+    LOG_ALWAYS("[vulkan-batch-policy] slots=%u capacity=%u draw_limit=%u temporary_limit_mib=32 valid=%d",batch_policy.slots,DM_VK_BATCH_SLOTS,batch_policy.draw_limit,valid_policy);
     const char *upload_setting=getenv("DM_VK_UPLOAD_PROLOGUE"),*release_setting=getenv("DM_VK_DEFER_TEXTURE_RELEASE");
     upload_prologue_enabled=upload_setting&&!strcmp(upload_setting,"1");
     defer_texture_release_enabled=release_setting&&!strcmp(release_setting,"1");
@@ -661,7 +671,7 @@ static uint64_t timestamp_delta(uint64_t begin,uint64_t end,unsigned bits) {
 static void snapshot_prepare(void) {
     // 普通复制有已知 CPU 输入，可转发；着色器写回与事件/计数器须先真正完成。
     // Ordinary copies have known CPU inputs and can be forwarded; shader writebacks and events/counters must complete first.
-    int flush = batch_draws >= 256 || async_batch_temporary_bytes() >= (32u << 20);
+    int flush = dm_vk_batch_should_flush(batch_policy,batch_draws,async_batch_temporary_bytes()) || used_queries >= 1023;
     if (flush) { mtl_sub_commit(); mtl_sub_begin(); }
 }
 typedef struct owned_snapshot_counters {

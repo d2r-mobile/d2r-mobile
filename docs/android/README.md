@@ -34,6 +34,8 @@ The CPU candidate combines single-pass descriptor encoding/hash, reuse of identi
 
 Fullscreen Medium and Low keep the UI/output at720 high and render internal3D at640 and480 high respectively. On a1600×720 output, Medium's nominal3D pixel count is about99% of1280×720; similar pixel counts do not guarantee equal frame times.
 
+ADPF now receives paired translation-thread frame work and the actual capped frame budget; unavailable APIs fall back normally, and uncapped work retires any previous capped session. Vulkan keeps the conservative three-slot/256-draw defaults and the 32 MiB temporary-memory limit. A short six-slot camp trial reduced ring waits but did not establish higher FPS; eight-slot and larger-draw-limit comparisons remain pending. This is not a stable-60-FPS or power-saving claim.
+
 ## Trying a development build
 
 Build a development APK from `main` or `dev`. This is a device-tested development port, not a general compatibility or stable-release claim.

@@ -1,11 +1,6 @@
 // 环中每个批次独占描述符池与 uniform arena；选择/释放前调用方必须完成该 slot 的 GPU fence。
 // Each ring batch owns its descriptor pools and uniform arena; the caller must complete this slot's GPU fence before selecting/releasing it.
-#ifndef DM_VK_BATCH_SLOTS
-#define DM_VK_BATCH_SLOTS 3
-#endif
-#if DM_VK_BATCH_SLOTS < 1 || DM_VK_BATCH_SLOTS > 8
-#error DM_VK_BATCH_SLOTS must be between 1 and 8
-#endif
+#include "nvn_vulkan_batch_policy.h"
 #ifndef DM_VK_ARENA_RETAIN_BYTES
 #define DM_VK_ARENA_RETAIN_BYTES (128ull << 20)
 #endif
