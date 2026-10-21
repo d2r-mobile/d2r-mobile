@@ -444,12 +444,22 @@ static void live_touch_sync(game_app *s) {
 }
 static void belt_expand_host(void *context, int on) { (void)context; dm_belt_expand(on); }
 static void belt_use_host(void *context, int col, int row) { (void)context; dm_belt_use(col, row); }
+static void request_players_host(void *context, int players) { (void)context; dm_hud_request_players(players); }
 static void live_touch_consume_belt(game_app *s) {
     if(!s->live_touch||!live_touch_mode_enabled()||!s->live_provider_available)return;
     live_touch_sync(s);
     if(!s->live_provider_available)return;
     dm_live_touch_belt_actions actions={s,belt_expand_host,belt_use_host};
     (void)dm_live_touch_consume_belt_request(s->live_touch,
+        s->live_observation.scene_epoch,s->live_observation.world_epoch,
+        s->live_observation.ui_identity,&actions);
+}
+static void live_touch_consume_difficulty(game_app *s) {
+    if(!s->live_touch||!live_touch_mode_enabled()||!s->live_provider_available)return;
+    live_touch_sync(s);
+    if(!s->live_provider_available)return;
+    dm_live_touch_difficulty_actions actions={s,request_players_host};
+    (void)dm_live_touch_consume_difficulty_request(s->live_touch,
         s->live_observation.scene_epoch,s->live_observation.world_epoch,
         s->live_observation.ui_identity,&actions);
 }
@@ -485,6 +495,7 @@ static int touch_timer_tick(int fd,int events,void *data) {
     int needs=dm_live_touch_scheduler_step(s->live_touch,(int64_t)now_ns());
     pad_publish(s);
     live_touch_consume_belt(s);
+    live_touch_consume_difficulty(s);
     if(!needs)touch_timer_stop(s);
     return 1;
 }
@@ -614,6 +625,7 @@ static int input_ready(int fd,int events,void *data) {
                         pad_publish(s);
                         if(dm_live_touch_end_released_pulse(s->live_touch))pad_publish(s);
                         live_touch_consume_belt(s);
+                        live_touch_consume_difficulty(s);
                         handled=1;
                     }else handled=1;
                 }else LOG("[android-touch] pointer count %u exceeds 16; refusing the event",count);
