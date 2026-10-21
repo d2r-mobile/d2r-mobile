@@ -21,6 +21,7 @@ from pathlib import Path
 
 SCHEMA = "dm-diagnostic-apk-provenance/v1"
 NATIVE = "libdm_android_app.so"
+DEX = "classes.dex"
 FIXTURE = "assets/synthetic.dma"
 SHADER_VERT = "assets/indexed_textured.vert.spv"
 SHADER_FRAG = "assets/indexed_textured.frag.spv"
@@ -111,6 +112,10 @@ def select_entries(apk: Path, abi: str) -> list[tuple[str, bytes]]:
             raise ProvenanceError("APK native ABI is unknown or ambiguous")
         native = native_candidates[0]
     required = [native, FIXTURE, SHADER_VERT, SHADER_FRAG]
+    if DEX in infos:
+        # #170 Java 焦点边界：一旦打包 dex，sidecar 必须覆盖其精确字节。
+        # #170 Java focus boundary: once a dex is packaged, the sidecar must cover its exact bytes.
+        required.append(DEX)
     for name in required:
         if name not in infos:
             raise ProvenanceError(f"APK is missing required owned entry: {name}")
