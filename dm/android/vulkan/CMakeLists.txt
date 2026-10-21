@@ -1,6 +1,6 @@
 # Vulkan 底座在 Android 链接系统 loader，开发机通过已安装 Vulkan SDK 验证；着色器由宿主 glslc 构建。
 # Link Android's system loader, verify on hosts with an installed Vulkan SDK; compile the synthetic shader using host glslc.
-add_library(dm_android_vk STATIC vk_host.c vk_memory.c vk_compute.c vk_clear.c vk_shader.c vk_draw.c vk_texture.c vk_texture_mips.c vk_sampler.c vk_shader_reflect.c)
+add_library(dm_android_vk STATIC vk_host.c vk_memory.c vk_compute.c vk_clear.c vk_shader.c vk_draw.c vk_indexed.c vk_texture.c vk_texture_mips.c vk_sampler.c vk_shader_reflect.c)
 target_link_libraries(dm_android_vk PUBLIC dm_android_tex)
 target_link_libraries(dm_android_vk PRIVATE dm_nso_dependencies)   # 复用已固定的 MbedTLS SHA-256 | reuse pinned MbedTLS SHA-256
 target_include_directories(dm_android_vk PRIVATE ${dm_mbedtls_SOURCE_DIR}/include)
@@ -24,6 +24,15 @@ add_custom_command(OUTPUT ${vertex}
 add_custom_command(OUTPUT ${fragment}
     COMMAND ${DM_GLSLC} --target-env=vulkan1.1 -O ${CMAKE_CURRENT_SOURCE_DIR}/pixels.frag -o ${fragment}
     DEPENDS pixels.frag VERBATIM)
+set(indexed_vert ${CMAKE_CURRENT_BINARY_DIR}/indexed.vert.spv)
+add_custom_command(OUTPUT ${indexed_vert}
+    COMMAND ${DM_GLSLC} --target-env=vulkan1.1 -O ${CMAKE_CURRENT_SOURCE_DIR}/indexed.vert -o ${indexed_vert}
+    DEPENDS indexed.vert VERBATIM)
+set(indexed_frag ${CMAKE_CURRENT_BINARY_DIR}/indexed.frag.spv)
+add_custom_command(OUTPUT ${indexed_frag}
+    COMMAND ${DM_GLSLC} --target-env=vulkan1.1 -O ${CMAKE_CURRENT_SOURCE_DIR}/indexed.frag -o ${indexed_frag}
+    DEPENDS indexed.frag VERBATIM)
+add_custom_target(dm_vk_indexed_shaders DEPENDS ${indexed_vert} ${indexed_frag})
 add_custom_target(dm_vk_shaders DEPENDS ${pattern} ${vertex} ${fragment})
 # #13 采样绘制片段着色器（自有合成着色器） | #13 sampled-draw fragment shader (owned synthetic shader)
 set(sample_frag ${CMAKE_CURRENT_BINARY_DIR}/sample2d.frag.spv)
@@ -43,6 +52,42 @@ add_custom_command(OUTPUT ${image_spv}
     COMMAND ${DM_GLSLC} --target-env=vulkan1.1 -O ${CMAKE_CURRENT_SOURCE_DIR}/../tests/fixtures/image.comp -o ${image_spv}
     DEPENDS ../tests/fixtures/image.comp VERBATIM)
 add_custom_target(dm_vk_reflect_image_fixture DEPENDS ${image_spv})
+add_executable(dm_vulkan_indexed_test ../tests/vulkan_indexed.c)
+target_link_libraries(dm_vulkan_indexed_test PRIVATE dm_android_vk)
+target_compile_options(dm_vulkan_indexed_test PRIVATE -Wall -Wextra -Werror)
+add_dependencies(dm_vulkan_indexed_test dm_vk_indexed_shaders)
+if(ANDROID)
+    target_link_options(dm_vulkan_indexed_test PRIVATE "-Wl,-z,max-page-size=16384")
+else()
+    add_test(NAME vulkan_indexed COMMAND dm_vulkan_indexed_test ${indexed_vert} ${indexed_frag})
+    set_tests_properties(vulkan_indexed PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77)
+    if(APPLE AND DM_MOLTENVK_ICD)
+        set_tests_properties(vulkan_indexed PROPERTIES ENVIRONMENT "VK_DRIVER_FILES=${DM_MOLTENVK_ICD}")
+    endif()
+endif()
+
+add_executable(dm_vulkan_indexed_fail_test ../tests/vulkan_indexed_fail.c vk_indexed.c vk_memory.c vk_host.c vk_shader.c)
+target_link_libraries(dm_vulkan_indexed_fail_test PRIVATE dm_android_vk)
+target_compile_options(dm_vulkan_indexed_fail_test PRIVATE -Wall -Wextra -Werror)
+foreach(symbol vkGetPhysicalDeviceFormatProperties vkCreateBuffer vkGetBufferMemoryRequirements vkAllocateMemory
+    vkBindBufferMemory vkMapMemory vkFlushMappedMemoryRanges vkInvalidateMappedMemoryRanges vkCreateImage
+    vkGetImageMemoryRequirements vkBindImageMemory vkCreateImageView vkCreateRenderPass vkCreateFramebuffer
+    vkCreateShaderModule vkDestroyShaderModule vkCreatePipelineLayout vkDestroyPipelineLayout vkCreateGraphicsPipelines
+    vkDestroyPipeline vkDestroyFramebuffer vkDestroyRenderPass vkDestroyImageView vkDestroyImage vkDestroyBuffer
+    vkUnmapMemory vkFreeMemory vkAllocateCommandBuffers vkBeginCommandBuffer vkEndCommandBuffer vkCreateFence
+    vkQueueSubmit vkWaitForFences vkDeviceWaitIdle vkDestroyFence vkFreeCommandBuffers vkCmdBeginRenderPass
+    vkCmdBindPipeline vkCmdBindVertexBuffers vkCmdBindIndexBuffer vkCmdDrawIndexed vkCmdEndRenderPass
+    vkCmdCopyImageToBuffer vkCmdPipelineBarrier)
+    target_compile_definitions(dm_vulkan_indexed_fail_test PRIVATE ${symbol}=dm_test_${symbol})
+endforeach()
+add_dependencies(dm_vulkan_indexed_fail_test dm_vk_indexed_shaders)
+if(ANDROID)
+    target_link_options(dm_vulkan_indexed_fail_test PRIVATE "-Wl,-z,max-page-size=16384")
+else()
+    add_test(NAME vulkan_indexed_fail COMMAND dm_vulkan_indexed_fail_test ${indexed_vert} ${indexed_frag})
+    set_tests_properties(vulkan_indexed_fail PROPERTIES TIMEOUT 60)
+endif()
+
 add_executable(dm_vulkan_test ../tests/vulkan.c)
 target_link_libraries(dm_vulkan_test PRIVATE dm_android_vk)
 target_compile_options(dm_vulkan_test PRIVATE -Wall -Wextra -Werror)
