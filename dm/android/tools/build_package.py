@@ -5,14 +5,16 @@ Build a single importable package from already derived game data (format: docs/A
 同一个模块既当命令行工具用，也被 pack_server.py 的网页后端调用；两条路产生完全一样的包。
 
 用法:
-  build_package.py assemble <输出.zip> --game <目录> --romfs <目录> --shaders <目录> [--subgroup 64]
+  build_package.py assemble <输出.zip> --game <目录> --romfs <目录> --shaders <目录> [--overlay <目录>] [--subgroup 64]
   build_package.py inspect  <某个.zip>        只读地打印包内容与清单，不改动任何东西
 """
 import argparse
 import datetime
 import json
 import os
+import re
 import sys
+import tempfile
 import zipfile
 from pathlib import Path
 
@@ -27,6 +29,18 @@ GAME_MODULES = ("libdmguest_main.so", "libdmguest_sdk.so", "libdmguest_subsdk0.s
 GAME_LAYOUTS = tuple(f"{name}.{kind}.tsv" for name in ("main", "sdk", "subsdk0") for kind in ("fixups", "gates"))
 GAME_TARGETS = tuple(f"{name}.target" for name in ("main", "sdk", "subsdk0"))
 ROMFS_EXTENSIONS = (".data", ".psv")
+
+# Optional original touchscreen RomFS overlay (dm/ios/tools/gen_romfs_overlay.py
+# output). The package carries the whole contract, never just a marker.
+OVERLAY_ROOT = "overlay"
+OVERLAY_MARKER = "ctrl_touch"
+OVERLAY_STRINGS = "touch_strings.tsv"
+OVERLAY_DATA = "data"
+OVERLAY_BUILD_CONFIG = ".build.config"
+OVERLAY_ROOT_FILES = frozenset((OVERLAY_MARKER, OVERLAY_STRINGS, "kbd_glyphs",
+                                "features.txt", "pack.json", "pack_index.tsv",
+                                "dm_textbox_plain.tsv"))
+CHECKSUM = re.compile(r"^[0-9a-fA-F]{8}$")
 
 
 class PackageError(Exception):
@@ -67,6 +81,115 @@ def collect_romfs(directory):
     if not entries:
         raise PackageError(f"romfs data/ is empty: {data}")
     return entries
+
+
+def _overlay_strings_ok(path):
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError) as error:
+        raise PackageError(f"overlay touch_strings.tsv is unreadable: {error}")
+    if not lines:
+        raise PackageError("overlay touch_strings.tsv is empty")
+    for number, line in enumerate(lines, 1):
+        if not line:
+            continue
+        fields = line.split("\t")
+        if len(fields) != 3 or not fields[0] or not CHECKSUM.match(fields[1]) or not fields[2]:
+            raise PackageError(f"overlay touch_strings.tsv line {number} is not key<TAB>8-hex<TAB>value")
+    return len(lines)
+
+
+def collect_overlay(directory):
+    """Validate the complete optional touchscreen overlay before packaging.
+
+    The iOS generator emits ctrl_touch + touch_strings.tsv + one CASC data
+    archive under data/ (plus its .build.config). A marker alone is not an
+    overlay, and a partial tree must fail loudly rather than boot with mixed
+    old/new layouts.
+    """
+    require_directory(directory, "overlay")
+    for child in directory.iterdir():
+        if child.name == OVERLAY_DATA and child.is_dir() and not child.is_symlink():
+            continue
+        if child.is_symlink() or not child.is_file():
+            raise PackageError(f"overlay contains a non-regular or symlink entry: {child.name}")
+        if child.name not in OVERLAY_ROOT_FILES:
+            raise PackageError(f"overlay has an unsupported root entry: {child.name}")
+    marker = directory / OVERLAY_MARKER
+    strings = directory / OVERLAY_STRINGS
+    if not marker.is_file() or marker.stat().st_size == 0:
+        raise PackageError("overlay is missing non-empty ctrl_touch")
+    if not strings.is_file() or strings.stat().st_size == 0:
+        raise PackageError("overlay is missing non-empty touch_strings.tsv")
+    _overlay_strings_ok(strings)
+    data = directory / OVERLAY_DATA
+    if not data.is_dir() or data.is_symlink():
+        raise PackageError(f"overlay has no data/ directory: {directory}")
+    build = data / OVERLAY_BUILD_CONFIG
+    if not build.is_file() or build.is_symlink() or build.stat().st_size == 0:
+        raise PackageError("overlay data/.build.config is missing or empty")
+    archives = []
+    for child in data.iterdir():
+        if child.is_symlink() or not child.is_file():
+            raise PackageError(f"overlay data contains a non-regular or symlink entry: {child.name}")
+        if child.name == OVERLAY_BUILD_CONFIG:
+            continue
+        if not child.name.endswith(".data") or child.stat().st_size == 0:
+            raise PackageError(f"overlay data has an unsupported entry: {child.name}")
+        archives.append(child)
+    if len(archives) != 1:
+        raise PackageError(f"overlay data must contain exactly one non-empty .data archive, found {len(archives)}")
+    return sorted([marker, strings, build, *archives])
+
+
+def inspect_overlay_names(archive, names):
+    """Read-only validation of overlay entries already present in a zip."""
+    rels = []
+    for name in names:
+        if not name.startswith(OVERLAY_ROOT + "/"):
+            continue
+        info = archive.getinfo(name)
+        if info.is_dir():
+            continue
+        if info.external_attr >> 16 & 0o170000 == 0o120000:
+            raise PackageError(f"overlay contains a symlink: {name}")
+        rel = name[len(OVERLAY_ROOT) + 1:]
+        if not rel or rel.startswith("/") or "\\" in rel or ".." in rel.split("/") or "" in rel.split("/"):
+            raise PackageError(f"overlay entry is not a clean relative path: {name}")
+        rels.append((rel, info))
+    if not rels:
+        return 0
+    relmap = {rel: info for rel, info in rels}
+    for required in (OVERLAY_MARKER, OVERLAY_STRINGS):
+        info = relmap.get(required)
+        if info is None or info.file_size == 0:
+            raise PackageError(f"overlay is missing non-empty {required}")
+    strings = archive.read(OVERLAY_ROOT + "/" + OVERLAY_STRINGS)
+    try:
+        text = strings.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise PackageError(f"overlay touch_strings.tsv is not UTF-8: {error}")
+    lines = text.splitlines()
+    if not lines:
+        raise PackageError("overlay touch_strings.tsv is empty")
+    for number, line in enumerate(lines, 1):
+        if not line:
+            continue
+        fields = line.split("\t")
+        if len(fields) != 3 or not fields[0] or not CHECKSUM.match(fields[1]) or not fields[2]:
+            raise PackageError(f"overlay touch_strings.tsv line {number} is not key<TAB>8-hex<TAB>value")
+    build = relmap.get(OVERLAY_DATA + "/" + OVERLAY_BUILD_CONFIG)
+    if build is None or build.file_size == 0:
+        raise PackageError("overlay data/.build.config is missing or empty")
+    datas = [(rel, info) for rel, info in rels if rel.startswith(OVERLAY_DATA + "/") and rel.endswith(".data")]
+    if len(datas) != 1 or datas[0][1].file_size == 0:
+        raise PackageError(f"overlay data must contain exactly one non-empty .data archive, found {len(datas)}")
+    allowed = {OVERLAY_MARKER, OVERLAY_STRINGS, OVERLAY_DATA + "/" + OVERLAY_BUILD_CONFIG, datas[0][0]}
+    allowed.update(OVERLAY_ROOT_FILES - {OVERLAY_MARKER, OVERLAY_STRINGS})
+    for rel, _ in rels:
+        if rel not in allowed:
+            raise PackageError(f"overlay has an unsupported entry: {rel}")
+    return len(rels)
 
 
 def collect_shaders(directory):
@@ -111,10 +234,11 @@ def write_entry(archive, source, name, progress):
     return written
 
 
-def assemble(output, game, romfs, shaders, derived=None, note=None, quiet=False):
+def assemble(output, game, romfs, shaders, derived=None, note=None, quiet=False, overlay=None):
     game_files = collect_game(game)
     romfs_files = collect_romfs(romfs)
     subgroup, shader_files = collect_shaders(shaders)
+    overlay_files = collect_overlay(overlay) if overlay is not None else []
     # derived.tsv：三张游戏派生表（编年史仓库 / 经验 / 关卡亮度）的内容。壳模式的 APK 里只有空表与条数，
     # 内容全从这份文件读 —— 没有它，那三块功能会是空的（运行时打红字）。
     # derived.tsv: the content of the three game-derived tables (chronicle vault / XP / level brightness). A shell
@@ -130,11 +254,14 @@ def assemble(output, game, romfs, shaders, derived=None, note=None, quiet=False)
     total_romfs = sum(p.stat().st_size for p in romfs_files)
     total_shaders = sum(p.stat().st_size for p in shader_files)
     total_game = sum((game / n).stat().st_size for n in game_files)
+    total_overlay = sum(p.stat().st_size for p in overlay_files)
 
     if not quiet:
         print(f"模块 {len(game_files)} 个 {total_game/1048576:.1f} MiB", flush=True)
         print(f"RomFS {len(romfs_files)} 个档案 {total_romfs/1073741824:.2f} GiB", flush=True)
         print(f"着色器 {len(shader_files)} 个 {total_shaders/1048576:.1f} MiB（分组档位 {subgroup}）", flush=True)
+        if overlay_files:
+            print(f"触摸布局覆盖层 {len(overlay_files)} 个文件 {total_overlay/1048576:.1f} MiB", flush=True)
 
     manifest = {
         "format": FORMAT_VERSION,
@@ -147,10 +274,13 @@ def assemble(output, game, romfs, shaders, derived=None, note=None, quiet=False)
     if derived is not None:
         manifest["counts"]["derived"] = derived_rows
         manifest["bytes"]["derived"] = derived.stat().st_size
+    if overlay_files:
+        manifest["counts"]["overlay"] = len(overlay_files)
+        manifest["bytes"]["overlay"] = total_overlay
 
     written_bytes = 0
     manifest_bytes = (json.dumps(manifest, indent=2, ensure_ascii=False) + "\n").encode()
-    expected_bytes = len(manifest_bytes) + total_game + total_romfs + total_shaders + (derived.stat().st_size if derived is not None else 0)
+    expected_bytes = len(manifest_bytes) + total_game + total_romfs + total_shaders + total_overlay + (derived.stat().st_size if derived is not None else 0)
     last_report = [0]
 
     def progress(count):
@@ -177,6 +307,8 @@ def assemble(output, game, romfs, shaders, derived=None, note=None, quiet=False)
             write_entry(archive, path, f"romfs/data/{path.name}", progress)
         for path in shader_files:
             write_entry(archive, path, f"shaders/{path.name}", progress)
+        for path in overlay_files:
+            write_entry(archive, path, f"{OVERLAY_ROOT}/{path.relative_to(overlay).as_posix()}", progress)
         if derived is not None:
             # 放在包根，前端按 <包>/derived.tsv 找到它并设给宿主（DM_DERIVED）。
             # At the package root; the front end finds <package>/derived.tsv and hands it to the host (DM_DERIVED).
@@ -197,6 +329,7 @@ def inspect(archive_path):
         manifest = json.loads(archive.read(MANIFEST_NAME))
         if manifest.get("format") != FORMAT_VERSION:
             raise PackageError(f"unsupported package format {manifest.get('format')}; this build understands {FORMAT_VERSION}")
+        inspect_overlay_names(archive, names)
         groups = {}
         for name in names:
             top = name.split("/", 1)[0] if "/" in name else name
@@ -215,6 +348,8 @@ def main():
     assemble_parser.add_argument("--shaders", type=Path, required=True)
     assemble_parser.add_argument("--derived", type=Path, default=None,
                                  help="runtime table data (derived.tsv) produced by shell_stubs.py data")
+    assemble_parser.add_argument("--overlay", type=Path, default=None,
+                                 help="optional original touchscreen RomFS overlay directory")
     assemble_parser.add_argument("--note", default=None)
 
     inspect_parser = subparsers.add_parser("inspect", help="print a package's manifest without touching it")
@@ -223,7 +358,7 @@ def main():
     args = parser.parse_args()
     try:
         if args.command == "assemble":
-            assemble(args.output, args.game, args.romfs, args.shaders, derived=args.derived, note=args.note)
+            assemble(args.output, args.game, args.romfs, args.shaders, derived=args.derived, note=args.note, overlay=args.overlay)
         else:
             manifest, groups = inspect(args.archive)
             print(json.dumps(manifest, indent=2, ensure_ascii=False))
