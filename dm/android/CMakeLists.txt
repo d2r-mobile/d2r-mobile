@@ -580,3 +580,39 @@ else()
         add_test(NAME gate_vectors COMMAND dm_gate_vectors)
     endif()
 endif()
+
+# #163 真实 AAudio + 焦点策略的组合 owner；宿主只替换窄 AAudio 边界，Android 链接真实 libaaudio。
+# #163 composed owner of real AAudio plus the focus policy; host replaces only the narrow AAudio boundary and Android
+# links the real libaaudio.
+add_library(dm_android_app_audio_output STATIC app/audio_output.c)
+target_include_directories(dm_android_app_audio_output PUBLIC app)
+target_link_libraries(dm_android_app_audio_output PUBLIC dm_android_audio dm_android_app_audio_focus m)
+target_compile_options(dm_android_app_audio_output PRIVATE -Wall -Wextra -Werror)
+
+if(NOT ANDROID)
+    add_executable(dm_audio_output_test tests/audio_output.c)
+    target_link_libraries(dm_audio_output_test PRIVATE dm_android_app_audio_output dm_android_audio dm_android_app_audio_focus m)
+    target_compile_options(dm_audio_output_test PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME audio_output COMMAND dm_audio_output_test)
+    set_tests_properties(audio_output PROPERTIES TIMEOUT 60)
+endif()
+
+if(NOT ANDROID AND Python3_Interpreter_FOUND)
+    # #163 私有变异：真实 PCM 回调忽略音量必须让组合测试失败。
+    # #163 private mutation: ignoring the gain in the real PCM callback must fail the composition tests.
+    add_test(NAME audio_output_mutation
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/audio_output_mutation.py
+            --app ${CMAKE_CURRENT_SOURCE_DIR}/app
+            --audio ${CMAKE_CURRENT_SOURCE_DIR}/audio
+            --tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/audio_output.c
+            --cc ${CMAKE_C_COMPILER})
+    set_tests_properties(audio_output_mutation PROPERTIES TIMEOUT 120)
+endif()
+
+if(ANDROID)
+    # 仅真实 libaaudio 交叉链接检查，不打开设备。| Real libaaudio cross-link only; no device open.
+    add_executable(dm_audio_output_cross tests/audio_output_cross.c)
+    target_link_libraries(dm_audio_output_cross PRIVATE dm_android_app_audio_output dm_android_audio aaudio)
+    target_compile_options(dm_audio_output_cross PRIVATE -Wall -Wextra -Werror)
+    target_link_options(dm_audio_output_cross PRIVATE "-Wl,-z,max-page-size=16384")
+endif()
