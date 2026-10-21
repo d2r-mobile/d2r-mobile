@@ -2,9 +2,16 @@
 // TP is only an opaque key; never read Android private TLS slots or Bionic's DTV.
 #ifndef DM_ANDROID_RUNTIME_CONTEXT_CACHE_H
 #define DM_ANDROID_RUNTIME_CONTEXT_CACHE_H
-#define DM_ANDROID_CONTEXT_CACHE_BITS 8
+// Bionic 线程 TP 低 12 位相同（同页内偏移），间距约 1 MiB：哈希取页号并折叠高位；
+// 撞桶时向后线性探测 PROBES 项（数组多留 PROBES-1 项，不回绕），登记不再因碰撞永久落到慢路。
+// Bionic thread TPs share their low 12 bits (same in-page offset) and are ~1 MiB apart: hash the page number folded with
+// its high bits; on a collision probe PROBES entries forward (the array has PROBES-1 spare entries, no wrap), so registration no longer leaves a thread on the slow path for good.
+#define DM_ANDROID_CONTEXT_CACHE_BITS 10
 #define DM_ANDROID_CONTEXT_CACHE_SLOTS (1 << DM_ANDROID_CONTEXT_CACHE_BITS)
-#define DM_ANDROID_CONTEXT_CACHE_HASH_SHIFT 17
+#define DM_ANDROID_CONTEXT_CACHE_HASH_SHIFT 12
+#define DM_ANDROID_CONTEXT_CACHE_HASH_FOLD 10
+#define DM_ANDROID_CONTEXT_CACHE_PROBES 4
+#define DM_ANDROID_CONTEXT_CACHE_ENTRIES (DM_ANDROID_CONTEXT_CACHE_SLOTS + DM_ANDROID_CONTEXT_CACHE_PROBES - 1)
 #define DM_ANDROID_CONTEXT_CACHE_ENTRY_SHIFT 5
 #ifndef __ASSEMBLER__
 #include "runtime.h"
@@ -19,9 +26,10 @@ typedef struct __attribute__((aligned(32))) {
 _Static_assert(sizeof(dm_android_context_cache_entry)==32,"context cache assembly stride");
 _Static_assert(offsetof(dm_android_context_cache_entry,tp)==8,"context cache assembly TP offset");
 _Static_assert(offsetof(dm_android_context_cache_entry,context)==16,"context cache assembly pointer offset");
-extern __attribute__((visibility("hidden"))) dm_android_context_cache_entry dm_android_context_cache[DM_ANDROID_CONTEXT_CACHE_SLOTS];
+extern __attribute__((visibility("hidden"))) dm_android_context_cache_entry dm_android_context_cache[DM_ANDROID_CONTEXT_CACHE_ENTRIES];
 static inline unsigned dm_android_context_cache_bucket(uintptr_t tp) {
-    return ((tp^(tp>>DM_ANDROID_CONTEXT_CACHE_HASH_SHIFT))>>4)&(DM_ANDROID_CONTEXT_CACHE_SLOTS-1);
+    uintptr_t page=tp>>DM_ANDROID_CONTEXT_CACHE_HASH_SHIFT;
+    return (page^(page>>DM_ANDROID_CONTEXT_CACHE_HASH_FOLD))&(DM_ANDROID_CONTEXT_CACHE_SLOTS-1);
 }
 __attribute__((visibility("hidden"))) dm_android_context *dm_android_context_cache_lookup(uintptr_t tp);
 // 只能由当前线程撤销；信号处理器不可调用加锁的登记/撤销接口。

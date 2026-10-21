@@ -23,7 +23,7 @@ extern _Atomic int dm_debug_collection_enabled __attribute__((weak));
 __attribute__((visibility("hidden"))) __thread dm_android_context dm_android_context_storage;
 extern void dm_android_context_entry(void);
 
-__attribute__((visibility("hidden"))) dm_android_context_cache_entry dm_android_context_cache[DM_ANDROID_CONTEXT_CACHE_SLOTS];
+__attribute__((visibility("hidden"))) dm_android_context_cache_entry dm_android_context_cache[DM_ANDROID_CONTEXT_CACHE_ENTRIES];
 static pthread_mutex_t context_cache_lock=PTHREAD_MUTEX_INITIALIZER;
 static pthread_key_t context_cache_key;
 static int context_cache_key_ready;
@@ -48,11 +48,14 @@ __attribute__((weak,visibility("hidden"))) int dm_android_context_cache_set_spec
 
 dm_android_context *dm_android_context_cache_lookup(uintptr_t tp) {
     const dm_android_context_cache_entry *entry=&dm_android_context_cache[dm_android_context_cache_bucket(tp)];
-    uint64_t before=atomic_load_explicit(&entry->sequence,memory_order_acquire);
-    if(before&1||atomic_load_explicit(&entry->tp,memory_order_relaxed)!=tp)return NULL;
-    uintptr_t value=atomic_load_explicit(&entry->context,memory_order_relaxed);
-    atomic_thread_fence(memory_order_acquire);
-    return before==atomic_load_explicit(&entry->sequence,memory_order_relaxed)?(dm_android_context*)value:NULL;
+    for(unsigned probe=0;probe<DM_ANDROID_CONTEXT_CACHE_PROBES;probe++,entry++){
+        uint64_t before=atomic_load_explicit(&entry->sequence,memory_order_acquire);
+        if(before&1||atomic_load_explicit(&entry->tp,memory_order_relaxed)!=tp)continue;
+        uintptr_t value=atomic_load_explicit(&entry->context,memory_order_relaxed);
+        atomic_thread_fence(memory_order_acquire);
+        return before==atomic_load_explicit(&entry->sequence,memory_order_relaxed)?(dm_android_context*)value:NULL;
+    }
+    return NULL;
 }
 
 static void context_cache_write(dm_android_context_cache_entry *entry,uintptr_t tp,uintptr_t value,uint64_t sequence) {
@@ -76,9 +79,11 @@ void dm_android_context_cache_forget(uintptr_t tp,const dm_android_context *cont
     if(tp!=(uintptr_t)__builtin_thread_pointer())return;
     if(pthread_mutex_lock(&context_cache_lock))return;
     dm_android_context_cache_entry *entry=&dm_android_context_cache[dm_android_context_cache_bucket(tp)];
-    uint64_t sequence=atomic_load_explicit(&entry->sequence,memory_order_relaxed);
-    if(!(sequence&1)&&atomic_load_explicit(&entry->tp,memory_order_relaxed)==tp&&atomic_load_explicit(&entry->context,memory_order_relaxed)==(uintptr_t)context)
-        context_cache_write(entry,0,0,sequence);
+    for(unsigned probe=0;probe<DM_ANDROID_CONTEXT_CACHE_PROBES;probe++,entry++){
+        uint64_t sequence=atomic_load_explicit(&entry->sequence,memory_order_relaxed);
+        if(!(sequence&1)&&atomic_load_explicit(&entry->tp,memory_order_relaxed)==tp&&atomic_load_explicit(&entry->context,memory_order_relaxed)==(uintptr_t)context)
+            context_cache_write(entry,0,0,sequence);
+    }
     pthread_mutex_unlock(&context_cache_lock);
 }
 
@@ -89,13 +94,20 @@ static void context_cache_destroy(void *value) {
 
 static void context_cache_register(uintptr_t tp,dm_android_context *context) {
     if(pthread_mutex_lock(&context_cache_lock))return;
-    dm_android_context_cache_entry *entry=&dm_android_context_cache[dm_android_context_cache_bucket(tp)];
-    uint64_t sequence=atomic_load_explicit(&entry->sequence,memory_order_relaxed);
-    uintptr_t old_tp=atomic_load_explicit(&entry->tp,memory_order_relaxed);
-    // 非空项永不替换，包括相同TP；必须由所有者先显式撤销。
-    // Never replace an occupied entry, even for the same TP; its owner must withdraw first.
-    if((sequence&1)||old_tp){
-        context_registration_log(tp,old_tp,(sequence&1)?"busy":old_tp==tp?"already_registered":"collision",0);
+    // 非空项永不替换，包括相同TP；必须由所有者先显式撤销。探测范围内已有本TP即视为已登记，否则取第一个空闲项。
+    // Never replace an occupied entry, even for the same TP; its owner must withdraw first. An existing entry for this TP
+    // within the probe range counts as registered; otherwise take the first free entry.
+    dm_android_context_cache_entry *first=&dm_android_context_cache[dm_android_context_cache_bucket(tp)],*entry=NULL;
+    uint64_t sequence=0;uintptr_t old_tp=0;
+    for(unsigned probe=0;probe<DM_ANDROID_CONTEXT_CACHE_PROBES;probe++){
+        uint64_t s=atomic_load_explicit(&first[probe].sequence,memory_order_relaxed);
+        uintptr_t owner=atomic_load_explicit(&first[probe].tp,memory_order_relaxed);
+        if(owner==tp){context_registration_log(tp,owner,"already_registered",0);pthread_mutex_unlock(&context_cache_lock);return;}
+        if(!entry&&!(s&1)&&!owner){entry=&first[probe];sequence=s;}
+        if(!old_tp)old_tp=owner;
+    }
+    if(!entry){
+        context_registration_log(tp,old_tp,"collision",0);
         pthread_mutex_unlock(&context_cache_lock);return;
     }
     // 析构登记成功才发布；失败保持真正 TLSDESC，可在之后的 C 初始化访问重试。
@@ -116,9 +128,8 @@ dm_android_context *dm_android_context_get(void) {
     const dm_android_context_cache_entry *entry=&dm_android_context_cache[dm_android_context_cache_bucket(tp)];
     // 仅当前线程可用此快路；任意TP查询仍使用上面的序号协议。
     // This fast path is current-thread-only; arbitrary TP queries retain the sequence protocol above.
-    dm_android_context *cached=atomic_load_explicit(&entry->tp,memory_order_acquire)==tp?
-        (dm_android_context*)atomic_load_explicit(&entry->context,memory_order_relaxed):NULL;
-    if(cached)return cached;
+    for(unsigned probe=0;probe<DM_ANDROID_CONTEXT_CACHE_PROBES;probe++,entry++)
+        if(atomic_load_explicit(&entry->tp,memory_order_acquire)==tp)return (dm_android_context*)atomic_load_explicit(&entry->context,memory_order_relaxed);
     dm_android_context *context=&dm_android_context_storage;
     if(!context->cache_terminating)context_cache_register(tp,context);
     return context;
