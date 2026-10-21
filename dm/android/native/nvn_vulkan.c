@@ -1140,7 +1140,9 @@ uint64_t mtl_present(const tex_t *t, double period, const int crop[4]) {
         VkPresentTimeGOOGLE present_time={.presentID=(uint32_t)ticket};
         VkPresentTimesInfoGOOGLE present_times={.sType=VK_STRUCTURE_TYPE_PRESENT_TIMES_INFO_GOOGLE,.swapchainCount=1,.pTimes=&present_time};
         if(display_timing_enabled){
-            if(display_pacing_enabled&&period>=1./35.)present_time.desiredPresentTime=dm_frame_deadline(&display_target_ns,dm_android_clock_ns(CLOCK_MONOTONIC),(uint64_t)(period*1e9),display_refresh_ns,display_phase_ns);
+            // 60 与 30 帧都按刷新周期对齐的上屏时刻排；不限帧周期为 0，不指定。120 Hz 屏 60 帧时可去掉迟到后紧跟的 8.3 ms 补拍帧。
+            // Both 60 and 30 fps caps get refresh-aligned present times; uncapped has period 0 and requests none. At 60 fps on a 120 Hz panel this removes the 8.3 ms catch-up frame after a late one.
+            if(display_pacing_enabled&&period>0)present_time.desiredPresentTime=dm_frame_deadline(&display_target_ns,dm_android_clock_ns(CLOCK_MONOTONIC),(uint64_t)(period*1e9),display_refresh_ns,display_phase_ns);
             else display_target_ns=0;
             pi.pNext=&present_times;
         }
