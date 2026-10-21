@@ -129,6 +129,12 @@ static uint64_t query_memory(dm_host*h,uint64_t*r){
 }
 static uint64_t get_info(dm_host*h,uint64_t*r){
     uint32_t id=(uint32_t)r[1],handle=(uint32_t)r[2];uint64_t value;
+    if(id==0){
+        if(r[3])return DM_SVC_INVALID_COMBINATION;
+        if(handle!=0xffff8001u)return DM_SVC_INVALID_HANDLE;
+        if(!h->virtual_cores_configured)return DM_SVC_NOT_IMPLEMENTED;
+        r[1]=h->virtual_core_mask;return 0;
+    }
     if(!h->stack_capacity)return DM_SVC_NOT_IMPLEMENTED;
     if(id==11){
         if(handle)return DM_SVC_INVALID_HANDLE;
