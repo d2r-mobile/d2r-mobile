@@ -84,6 +84,7 @@ static int graphics_pass_matches(const graphics_pass_key *key,const VkImageView 
 }
 static void graphics_pass_end(void) {
     if(!graphics_active_frame)return;
+    ghost_flush();
     // 连续绘制共享遮挡查询；重置/报告边界先关闭通道，保证计数次序不变。
     // Consecutive draws share an occlusion query; reset/report boundaries close the pass first to preserve counter order.
     vkCmdEndQuery(command,draw_queries,graphics_active_query);post_new(5)->value=graphics_active_query;

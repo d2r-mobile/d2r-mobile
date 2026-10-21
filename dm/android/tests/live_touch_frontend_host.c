@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdatomic.h>
 typedef struct {
     dm_live_touch *live_touch;
     dm_live_touch_items *live_items;
@@ -57,10 +58,20 @@ int dm_ui_touch_active(void){return 0;}
 int dm_ui_fe_drag_ok(void){return fe_ok;}
 void dm_ui_touch(int phase,float x,float y){(void)phase;(void)x;(void)y;touches++;}
 void dm_ui_key_pulse_alone(uint64_t button,int frames){assert(button==DM_BTN_L&&frames==9);}
+static _Atomic uint64_t ghost_contact,ghost_contact_seq;
+static _Atomic int32_t ghost_pointer_id=-1;
+int dm_ui_shelf_grid(float grid[4]){(void)grid;return 0;}
+int dm_ui_stack_left(void){return 0;}
+void mtl_ui_ghost(int on,float px,float py,const float grid[4],float cx,float cy){(void)on;(void)px;(void)py;(void)grid;(void)cx;(void)cy;}
+void dm_vk_ui_ghost_request(int on,float px,float py,const float grid[4],float cx,float cy,int dim,const _Atomic uint64_t *live,uint64_t token){(void)on;(void)px;(void)py;(void)grid;(void)cx;(void)cy;(void)dim;(void)live;(void)token;}
 #include "frontend_actual.inc"
 static void tick(game_app *a,uint64_t ns){clock_ns=ns;live_touch_frontend_tick(a);}
 static void event(game_app *a,int action,float x,float y,uint64_t ns){
-    int32_t id=1;assert(dm_live_touch_event(a->live_touch,action,0,1,&id,&x,&y,667,375,0,0,667,375,ns));
+    int32_t id=1;
+    if(action==DM_LIVE_ACTION_UP||action==DM_LIVE_ACTION_CANCEL)
+        shop_ghost_contact_event(a,action,id);
+    assert(dm_live_touch_event(a->live_touch,action,0,1,&id,&x,&y,667,375,0,0,667,375,ns));
+    if(action==DM_LIVE_ACTION_DOWN)shop_ghost_contact_event(a,action,id);
 }
 int main(void){
     game_app a={0};a.live_touch=dm_live_touch_create(667,375);assert(a.live_touch);
@@ -70,6 +81,14 @@ int main(void){
     dm_live_touch_set_context(a.live_touch,1,0,1,1,1,0);
     full=1;tick(&a,900000000);assert(!map_calls);full=0;ingame=1;
     event(&a,DM_LIVE_ACTION_DOWN,260,110,1000000000);
+    uint64_t owner_token=atomic_load(&ghost_contact);
+    assert(owner_token&&ghost_pointer_id==1);
+    int32_t ids[2]={1,2};float xs[2]={260,640},ys[2]={110,350};
+    assert(dm_live_touch_event(a.live_touch,DM_LIVE_ACTION_POINTER_DOWN,1,2,ids,xs,ys,667,375,0,0,667,375,1010000000));
+    shop_ghost_contact_event(&a,DM_LIVE_ACTION_POINTER_DOWN,2);
+    shop_ghost_contact_event(&a,DM_LIVE_ACTION_POINTER_UP,2);
+    assert(dm_live_touch_event(a.live_touch,DM_LIVE_ACTION_POINTER_UP,1,2,ids,xs,ys,667,375,0,0,667,375,1020000000));
+    assert(atomic_load(&ghost_contact)==owner_token&&ghost_pointer_id==1);
     hit=2;hit_id=1;
     tick(&a,1490000000);assert(!stat_adds);
     ready=0;tick(&a,1510000000);assert(!stat_adds);

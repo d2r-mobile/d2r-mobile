@@ -306,6 +306,8 @@ static VkDescriptorBufferInfo uniform_buffer(shader_entry *s,const shader_bindin
         // 未绑定 uniform 的完整范围同为零，可共享一个不可变页，不占每 draw 的 arena 空间。
         // Unbound uniforms have the same all-zero range, so share an immutable page without per-draw arena space.
         if(!n){if(!zero.buffer){zero=buffer_create(65536);memset(zero.mapped,0,65536);immutable_buffer_bytes+=zero.capacity;}return (VkDescriptorBufferInfo){zero.buffer,0,65536};}
+        VkDescriptorBufferInfo captured;
+        if(ghost_buffer_override((uintptr_t)u->addr,n,&captured))return uniform_dynamic_split(b,captured,dynamic_offset);
         return uniform_dynamic_split(b,uniform_read_cached(u->addr,n),dynamic_offset);}
     die("Unsupported Vulkan constant slot %u",b->slot);
 }
@@ -376,7 +378,9 @@ static VkDescriptorSet bind_shader(shader_entry *s,post_op *lifetime,uint32_t *d
                 const p_bind_buf *u=uniform_ptr?&state.ubo[s->stage][slot]:&state.ssbo[s->stage][slot];uint64_t bytes=u->size?u->size:65536;vk_buffer buffer;
                 // BufferUsageFlags.Write 是位 0；图像 flags 的位号不可用于 SSBO。
                 // BufferUsageFlags.Write is bit 0; image flag bits do not apply to SSBOs.
-                if(u->addr&&!(b->flags&1))buffers[j]=forward_readonly_shader_buffer(s,b,j,slot,UINT32_MAX,uniform_ptr?2:1,u->size,u->addr,bytes,gpu_limits.minStorageBufferOffsetAlignment,shader_pipeline_stage(s),VK_ACCESS_SHADER_READ_BIT);
+                VkDescriptorBufferInfo ghost_info;
+                if(u->addr&&ghost_buffer_override((uintptr_t)u->addr,bytes,&ghost_info)) buffers[j]=ghost_info;
+                else if(u->addr&&!(b->flags&1))buffers[j]=forward_readonly_shader_buffer(s,b,j,slot,UINT32_MAX,uniform_ptr?2:1,u->size,u->addr,bytes,gpu_limits.minStorageBufferOffsetAlignment,shader_pipeline_stage(s),VK_ACCESS_SHADER_READ_BIT);
                 else{post_op *p=post_new(u->addr?0:3);p->destination=(void*)(uintptr_t)u->addr;p->size=bytes;p->output=buffer_create(bytes);if(u->addr){post_register_range(p);forward_seed(&p->output,u->addr,bytes,shader_pipeline_stage(s));}else memset(p->output.mapped,0,bytes);buffer=p->output;buffers[j]=(VkDescriptorBufferInfo){buffer.buffer,0,bytes};}w.pBufferInfo=buffers;
             }
             else if(type==VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER||type==VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER){
