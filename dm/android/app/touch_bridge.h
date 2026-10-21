@@ -91,6 +91,17 @@ int dm_touch_bridge_tick(dm_touch_bridge *bridge, int64_t time_ns);
 // Applies ACTION_CANCEL/focus-loss/pause semantics and queues a neutral state.
 int dm_touch_bridge_cancel_all(dm_touch_bridge *bridge, int64_t time_ns);
 
+// One-shot host action outlet over the adapter's existing action ownership
+// (dm_android_touch_take_action, same dm_android_touch_action type/encoding).
+// Returns 1 and fills *out when one core action was pending, 0 otherwise.
+// out == NULL returns 0 without consuming anything. This is a forward only: no
+// duplicate queue and no raw adapter handle. With a #33 game provider attached
+// the provider tick is the action consumer, so this returns 0 rather than
+// stealing its pending action. Cancels, context changes and resizes keep the
+// core's pending-action semantics (the adapter's take_action ownership is
+// unchanged; belt_request survives dm_tc_cancel_all/resize).
+int dm_touch_bridge_take_action(dm_touch_bridge *bridge, dm_android_touch_action *out);
+
 // Single diagnostic consumer. Consumes one ordered pulse (or returns the
 // current neutral/held snapshot), stores it, and returns it. All bridge calls,
 // including this one and tick, must stay on the same input/core thread.
