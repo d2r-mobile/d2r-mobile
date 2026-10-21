@@ -1,0 +1,9 @@
+#version 450
+// 负例：不是固定 uvec4 布局，必须在 GPU 前拒绝。 | Negative: not the fixed uvec4 layout; must reject before GPU.
+layout(local_size_x = 4) in;
+layout(set = 0, binding = 0, std140) uniform U { float f; } ub;
+layout(set = 0, binding = 1, std430) buffer Out { uint v[]; } outbuf;
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i < 4u) outbuf.v[i] = uint(ub.f * 255.0);
+}

@@ -1,0 +1,13 @@
+#version 450
+// #109 自有固定布局 uniform 计算着色器：单个 16 字节 std140 uvec4 输入 + 输出 storage buffer。
+// #109 owned fixed-layout uniform compute shader: one 16-byte std140 uvec4 input plus output storage buffer.
+layout(local_size_x = 4) in;
+layout(set = 0, binding = 0, std140) uniform U { uvec4 u; } ub;
+layout(set = 0, binding = 1, std430) buffer Out { uint v[]; } outbuf;
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i < 4u) {
+        uvec4 q = ub.u;
+        outbuf.v[i] = q.x * (i + 1u) + (q.y ^ (q.z + q.w * 0x9e3779b9u));
+    }
+}
