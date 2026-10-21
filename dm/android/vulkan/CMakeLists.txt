@@ -1,6 +1,6 @@
 # Vulkan 底座在 Android 链接系统 loader，开发机通过已安装 Vulkan SDK 验证；着色器由宿主 glslc 构建。
 # Link Android's system loader, verify on hosts with an installed Vulkan SDK; compile the synthetic shader using host glslc.
-add_library(dm_android_vk STATIC vk_host.c vk_memory.c vk_compute.c vk_clear.c vk_shader.c vk_draw.c vk_indexed.c vk_indexed_textured.c vk_graphics_interface.c vk_texture.c vk_texture_mips.c vk_sampler.c vk_shader_reflect.c)
+add_library(dm_android_vk STATIC vk_host.c vk_memory.c vk_compute.c vk_clear.c vk_shader.c vk_draw.c vk_indexed.c vk_indexed_textured.c vk_graphics_interface.c vk_texture.c vk_texture_mips.c vk_sampler.c vk_shader_reflect.c vk_swapchain.c)
 target_link_libraries(dm_android_vk PUBLIC dm_android_tex)
 target_link_libraries(dm_android_vk PRIVATE dm_nso_dependencies)   # 复用已固定的 MbedTLS SHA-256 | reuse pinned MbedTLS SHA-256
 target_include_directories(dm_android_vk PRIVATE ${dm_mbedtls_SOURCE_DIR}/include)
@@ -414,7 +414,7 @@ foreach(symbol vkEnumerateInstanceVersion vkEnumerateInstanceLayerProperties vkE
     vkCreateInstance vkDestroyInstance vkGetInstanceProcAddr vkEnumeratePhysicalDevices
     vkGetPhysicalDeviceQueueFamilyProperties vkEnumerateDeviceExtensionProperties
     vkGetPhysicalDeviceSurfaceSupportKHR vkGetPhysicalDeviceProperties vkGetPhysicalDeviceMemoryProperties
-    vkCreateDevice vkDestroyDevice vkGetDeviceQueue vkCreateCommandPool vkDestroyCommandPool vkDeviceWaitIdle
+    vkGetPhysicalDeviceFeatures2 vkCreateDevice vkDestroyDevice vkGetDeviceQueue vkCreateCommandPool vkDestroyCommandPool vkDeviceWaitIdle
     vkDestroySurfaceKHR)
     target_compile_definitions(dm_vulkan_present_init_test PRIVATE ${symbol}=test_${symbol})
 endforeach()
@@ -423,6 +423,28 @@ if(ANDROID)
 else()
     add_test(NAME vulkan_present_init COMMAND dm_vulkan_present_init_test)
     set_tests_properties(vulkan_present_init PROPERTIES TIMEOUT 60)
+endif()
+
+add_executable(dm_vulkan_swapchain_test ../tests/vulkan_swapchain.c vk_swapchain.c)
+target_compile_options(dm_vulkan_swapchain_test PRIVATE -Wall -Wextra -Werror)
+if(NOT ANDROID)
+    find_package(Vulkan REQUIRED)
+    target_include_directories(dm_vulkan_swapchain_test PRIVATE ${Vulkan_INCLUDE_DIRS})
+endif()
+foreach(symbol vkGetPhysicalDeviceSurfaceCapabilitiesKHR vkGetPhysicalDeviceSurfaceFormatsKHR
+    vkGetPhysicalDeviceSurfacePresentModesKHR vkGetPhysicalDeviceFormatProperties vkCreateSwapchainKHR
+    vkGetSwapchainImagesKHR vkDestroySwapchainKHR vkCreateRenderPass vkDestroyRenderPass vkCreateImageView
+    vkDestroyImageView vkCreateFramebuffer vkDestroyFramebuffer vkAllocateCommandBuffers vkFreeCommandBuffers
+    vkBeginCommandBuffer vkCmdBeginRenderPass vkCmdEndRenderPass vkEndCommandBuffer vkCreateSemaphore
+    vkDestroySemaphore vkCreateFence vkDestroyFence vkWaitForFences vkResetFences vkQueueWaitIdle
+    vkDeviceWaitIdle vkAcquireNextImageKHR vkQueueSubmit vkQueuePresentKHR)
+    target_compile_definitions(dm_vulkan_swapchain_test PRIVATE ${symbol}=test_${symbol})
+endforeach()
+if(ANDROID)
+    target_link_options(dm_vulkan_swapchain_test PRIVATE "-Wl,-z,max-page-size=16384")
+else()
+    add_test(NAME vulkan_swapchain COMMAND dm_vulkan_swapchain_test)
+    set_tests_properties(vulkan_swapchain PROPERTIES TIMEOUT 60)
 endif()
 option(DM_VK_SANITIZE_THREAD "Build the fake-loader validation test with ThreadSanitizer" OFF)
 if(DM_VK_SANITIZE_THREAD)
