@@ -379,6 +379,55 @@ Host tests drive distinct real bridge invalid cases, aggregate reasons against
 the unchanged total, verify ownership/output and valid retry after cancel/reused
 IDs, and retain the existing HID/action/portal tests.
 
+## Touch/gamepad source arbitration (#150)
+
+This is a new Android-side policy, not an upstream-configurable setting. The
+owned module is `app/input_source.c/h`; it consumes the accepted
+`dm_touch_bridge` (real adapter/core cancels and neutral reads) and a real
+`dm_android_pad` for the gamepad snapshot. It does not extract Android
+MotionEvents, publish guest HID, or choose a UI layout. A later UI can use the
+reported `dm_input_layout` (`TOUCH_HUD`/`CONTROLLER`), but no native/UI
+integration is claimed in this slice.
+
+The policy is explicit and bounded:
+
+- Device ids are `0..DM_INPUT_MAX_DEVICE_ID` (15); generation `0` is invalid.
+  A connection or a neutral sample never takes ownership from touch and never
+  cancels it. A generation change clears the old gamepad state and rejects old
+  samples; it does not cancel touch.
+- Gamepad buttons are active when nonzero. Axes use
+  `DM_INPUT_GAMEPAD_DEADZONE` (8000 of the `dm_pad_sample` axis range); all
+  axes inside that band and no buttons is neutral. Active gamepad input may
+  take ownership; a disconnected or stale-id/generation sample is rejected.
+- A valid touch `DOWN`/`POINTER_DOWN` may take ownership back from gamepad.
+  Late `MOVE`/`UP` while gamepad owns the source are rejected. When both sources
+  have a valid claim in the same logical frame, call order is the tie order:
+  the last accepted input wins; the samples are never OR-ed and held state is
+  cleared on the switch.
+- Any source switch cancels the old touch stream through
+  `dm_touch_bridge_cancel_all`, consumes its neutral snapshot, clears the old
+  `dm_android_pad` state and queues one neutral `dm_npad_state` boundary. The
+  first `dm_input_arbiter_read` after the switch returns that boundary; the
+  next returns the selected source's coherent state.
+- Focus loss, pause and queue replacement invalidate both sources, publish the
+  same neutral boundary and set `requires_fresh`. Returning focus/pause does not
+  restore held buttons/axes; the next valid active input must claim a source.
+  A neutral gamepad sample does not clear the fresh-input requirement.
+
+Tests link the real bridge/adapter and exercise held touch -> gamepad -> touch
+using the same pointer id, stale/late events, reused ids with a new generation,
+disconnect, focus/pause/queue invalidation and repeated lifecycle events.
+Private compiled copies omitting the cancel/clear, neutral boundary or
+generation check are required to fail; the normal source is restored unchanged.
+
+Known boundary blocker: the existing public bridge cannot clear an
+unconsumed `dm_tc_state::belt_request` (the core's `cancel_all` leaves
+`belt_request` intact), and the bridge exposes no request-ownership reset. This
+slice therefore does not claim to clear belt request ownership; it records that
+precise remaining blocker instead of inventing a core or bridge API. Portal
+request state is not manipulated here either. Full request-ownership clearing
+must be owned by a later bridge/core slice with its existing public contract.
+
 ## What remains unknown
 
 - Whether every source-backed Apple gesture has an exact game-visible equivalent
