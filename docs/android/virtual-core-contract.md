@@ -191,8 +191,13 @@ until resolved or explicitly chosen by the owner:
    `cpu::NumVirtualCores` and a process ideal core, but the SDK's actual values
    are not established by this inventory. Do not hardcode four cores merely
    because the reference has a bounded range.
-3. **Main callsite arguments.** `0x1355e0` is a direct reference; the exact
-   core and mask arguments, and whether the path executes, are unknown.
+3. **Main callsite arguments.** Read-only slices of the recorded `nnMain`
+   callsites now prove that the mask is the GetInfo ID 0 result forwarded
+   uncut, the core is `-1` (`DontCare`), and the thread argument is the current
+   `ThreadType*` whose 32-bit handle field is loaded from an OS boot-parameter
+   value. The exact numeric mask and handle, and whether the path executes,
+   remain **U**; see
+   [`virtual-core-callsite-arguments.md`](virtual-core-callsite-arguments.md).
 4. **`DontCare`/`NoUpdate` post-validation behavior.** Acceptance rules are
    public; exact selection/update behavior in the target kernel is not proven.
 5. **Result mapping.** Public names are known (`ResultInvalidHandle`,
@@ -327,7 +332,9 @@ The SVC `0x0f` slice is intentionally narrower than the public reference:
   `ResultInvalidCoreId` (`0xe201`).
 - `IdealCoreDontCare`, `IdealCoreUseProcessValue` and `IdealCoreNoUpdate`
   (`-1`/`-2`/`-3`) remain unsupported (`0x4201`); no guessed special-value
-  behavior is added.
+  behavior is added. The recorded `nnMain` call uses `-1`, so this
+  subset does not cover that callsite; see
+  [`virtual-core-callsite-arguments.md`](virtual-core-callsite-arguments.md).
 - A successful call stores per-thread virtual core/mask state under the host
   mutex. CreateThread initializes that state from its validated core and the
   host mask. State is freed with the existing guest-thread object lifecycle;
