@@ -219,8 +219,21 @@ explains that they were kept as red stubs so a real call cannot pass silently.
   available to cite, and no HLE reference exists in the tree.
 - **Unsupported behaviour**: a call must produce an explicit "semantics unestablished (G0.4)" red diagnostic and no GPU
   work — not a no-op that looks like success.
-- **Owned tests now**: assert the diagnostic; assert pixels unchanged across repeated calls; assert that a command
-  recorded and then finalized leaves no dangling texture/view pointer.
+- **Owned tests now (phase A, offline)**: `dm/gfx/tests/t_issue56_downsample.c` takes the entry address through
+  `nvnBootstrapLoader` → `nvnDeviceGetProcAddress` exactly as the game does, checks the slot still routes to
+  `nvn_unimpl_entry`, and calls it through the production thunk with an owned `NVNcommandBuffer`, two owned
+  `NVNtexture`s and two owned `NVNtextureView`s filled with sentinel bytes. 17 checks: the diagnostic names this exact
+  entry; 257 repeated calls emit the documented 2 lines (call 1 and call 257 — `g_unimpl_seen` is `uint8_t`); all five
+  owned objects (command buffer, src/dst textures, src/dst views) are byte-identical afterwards, so there is no
+  recording or resource mutation. Any `open`/`dup`/`dup2` failure aborts before the entry is called, so a diagnostic
+  proof is never reported from an uncaptured run.
+  Run: `make -C dm/gfx/tests t_issue56_downsample && ./t_issue56_downsample`; result 17 checks / 0 failures.
+- **Android build boundary**: `hle_nvn.c` includes `mach/*` and `TargetConditionals.h` and the test links Metal/Mach-O
+  host symbols, so neither the Apple host stub nor this test can be built or linked by the Android/NDK build. Phase A is
+  Apple-host-only evidence; there is no runnable Android equivalent in this tree. The wiring under test is still the
+  production `nvn_slots.tsv` / `nvn_thunks.S` / `nvn_entry.S` path.
+- **Still blocked (phase B)**: no pixel oracle and no sampling-kernel, size-relation, format-conversion, aliasing or
+  ordering claim. The #13 resource/format prerequisites for a semantic implementation remain unmet.
 
 ## What remains blocked (and what would unblock it)
 

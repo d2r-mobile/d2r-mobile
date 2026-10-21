@@ -10,6 +10,9 @@ FW=-framework Metal -framework Foundation -framework QuartzCore -framework Image
 # Host crash.c is linked in as well: the write-protect unit tests go through the same page-fault hook as production
 t_nvn: t_nvn.c ../nvn/hle_nvn.c ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_nvn.c ../../host/crash.c $(GFX) $(FW)
+t_issue56_downsample: t_issue56_downsample.c ../nvn/hle_nvn.c ../../host/crash.c $(GFX) $(GFX_H)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_issue56_downsample.c ../../host/crash.c $(GFX) $(FW)
+
 t_dirty_slots: t_dirty_slots.c ../nvn/nvn_dirty.c ../../host/crash.c ../nvn/nvn_dirty.h
 	clang $(CFLAGS) -o $@ t_dirty_slots.c ../../host/crash.c ../nvn/nvn_dirty.c
 t_dirty_race: t_dirty_race.c ../nvn/nvn_dirty.c ../../host/crash.c ../nvn/nvn_dirty.h
