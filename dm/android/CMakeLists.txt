@@ -145,6 +145,12 @@ target_include_directories(dm_live_touch_portal_test PRIVATE native ../ios/Sourc
 target_compile_options(dm_live_touch_portal_test PRIVATE -Wall -Wextra -Werror)
 add_test(NAME live_touch_portal COMMAND dm_live_touch_portal_test)
 set_tests_properties(live_touch_portal PROPERTIES TIMEOUT 30)
+# Physical controller vs touchscreen layout routing (real input_ready classifier).
+add_executable(dm_padmode_route_test tests/padmode_route_test.c)
+target_include_directories(dm_padmode_route_test PRIVATE native)
+target_compile_options(dm_padmode_route_test PRIVATE -Wall -Wextra -Werror)
+add_test(NAME padmode_route COMMAND dm_padmode_route_test)
+set_tests_properties(padmode_route PROPERTIES TIMEOUT 30)
 add_executable(dm_live_touch_items_test tests/live_touch_items_test.c native/live_touch.c native/live_touch_items.c)
 target_link_libraries(dm_live_touch_items_test PRIVATE dm_android_touch_core m)
 target_include_directories(dm_live_touch_items_test PRIVATE native ../ios/Sources ../host)
