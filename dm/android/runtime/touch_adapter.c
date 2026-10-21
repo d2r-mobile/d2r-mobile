@@ -331,6 +331,18 @@ int dm_android_touch_cancel_all(dm_android_touch *touch, int64_t time_ns) {
     return 1;
 }
 
+int dm_android_touch_retire_requests(dm_android_touch *touch, int64_t time_ns) {
+    if (!touch || !dm_android_touch_cancel_all(touch, time_ns)) return 0;
+    /* Upstream dm_tc_cancel_all intentionally preserves belt_request. This
+       Android-owned source boundary explicitly retires that unread request,
+       without changing the shared core. Portal pending is already dropped by
+       the core cancel; clear it explicitly for a single ownership statement. */
+    touch->state.belt_request = 0;
+    touch->portal_request_pending = 0;
+    memset(&touch->portal_request, 0, sizeof touch->portal_request);
+    return 1;
+}
+
 int dm_android_touch_focus_lost(dm_android_touch *touch, int64_t time_ns) {
     if (!touch || !accept_time(touch, time_ns, NULL)) return 0;
     release_all(touch);

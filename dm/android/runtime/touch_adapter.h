@@ -223,6 +223,11 @@ int dm_android_touch_cancel(dm_android_touch *touch, int32_t pointer_id, int64_t
 // ACTION_CANCEL for the whole gesture stream, focus loss or pause. Clears all
 // pointer ownership, pending pulses, deferred presses, queue state and axes.
 int dm_android_touch_cancel_all(dm_android_touch *touch, int64_t time_ns);
+// Explicit Android source retirement: performs cancel_all, then clears the
+// core's intentionally-retained belt_request and any unread portal request.
+// Host contexts (belt rows/open, portal binding/scene, game availability) stay.
+// Old portal epochs remain invalid after the cancel; a new gesture can request.
+int dm_android_touch_retire_requests(dm_android_touch *touch, int64_t time_ns);
 int dm_android_touch_focus_lost(dm_android_touch *touch, int64_t time_ns);
 int dm_android_touch_pause(dm_android_touch *touch, int64_t time_ns);
 int dm_android_touch_resume(dm_android_touch *touch, int64_t time_ns);
