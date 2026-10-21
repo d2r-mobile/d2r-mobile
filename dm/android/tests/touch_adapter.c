@@ -463,6 +463,103 @@ static void cancel_and_resize_neutralize_owned_gestures(fixture *f) {
     s = read_pad(f); CHECK(s.buttons == 0);
 }
 
+/* Port of upstream t_touch_controls.c:belt_single_double through the Android
+   adapter. A belt cell sends no key while held and exactly one key on release;
+   two quick taps queued before the first read are two distinct edges, never a
+   merged press; the second skill set's belt pulse carries no ZL (ZL + belt =
+   feed the mercenary in the original game). Column mapping is part of the
+   expectation, not read back from the adapter. */
+static void belt_tap_release_and_double_tap(fixture *f) {
+    dm_npad_state s;
+    float bx = f->layout.target[DM_TC_BELT2].x, by = f->layout.target[DM_TC_BELT2].y;
+    uint64_t k = f->layout.target[DM_TC_BELT2].button;
+    CHECK(k == DM_BTN_UP);
+    CHECK(f->layout.target[DM_TC_BELT3].button == DM_BTN_DOWN);
+    CHECK(dm_android_touch_down(f->touch, 40, bx, by, 16000000000));
+    s = read_pad(f); CHECK(s.buttons == 0);   /* no key while the belt is held */
+    CHECK(dm_android_touch_up(f->touch, 40, 16080000000));
+    s = read_pad(f); CHECK(s.buttons == k);   /* drinks on release */
+    s = read_pad(f); CHECK(s.buttons == 0);
+    /* Two taps before either pulse is consumed: two rising edges with a neutral
+       read between them. A same-button merge yields one edge and fails. */
+    CHECK(dm_android_touch_down(f->touch, 41, bx, by, 16100000000));
+    CHECK(dm_android_touch_up(f->touch, 41, 16108000000));
+    CHECK(dm_android_touch_down(f->touch, 42, bx, by, 16110000000));
+    CHECK(dm_android_touch_up(f->touch, 42, 16118000000));
+    int edges = 0;
+    uint64_t prev = 0;
+    for (int i = 0; i < 6; ++i) {
+        s = read_pad(f);
+        CHECK(!(s.buttons & DM_BTN_ZL));
+        if ((s.buttons & k) && !(prev & k)) ++edges;
+        prev = s.buttons & k;
+    }
+    CHECK(edges == 2);
+    /* Second skill set: the belt pulse must not carry ZL. */
+    tap(f, 43, f->layout.swap.x, f->layout.swap.y, 16200000000);
+    s = read_pad(f); CHECK(s.buttons == 0);
+    CHECK(dm_android_touch_down(f->touch, 44, bx, by, 16210000000));
+    s = read_pad(f); CHECK(s.buttons == 0);
+    CHECK(dm_android_touch_up(f->touch, 44, 16218000000));
+    s = read_pad(f); CHECK(s.buttons == k);
+    s = read_pad(f); CHECK(s.buttons == 0);
+    tap(f, 45, f->layout.target[DM_TC_BELT3].x, f->layout.target[DM_TC_BELT3].y, 16300000000);
+    s = read_pad(f); CHECK(s.buttons == DM_BTN_DOWN);
+    s = read_pad(f); CHECK(s.buttons == 0);
+}
+
+/* Port of upstream t_touch_controls.c:held_skill2_vs_belt through the adapter:
+   one pointer holds a second-set skill while a second pointer taps the belt.
+   Expected timeline, computed from the rule: ZL and the skill key drop at the
+   belt release; the belt key comes only after a full DM_TC_ZL_LEAD_S with no
+   ZL and no skill key; then ZL returns first and the held skill key returns a
+   full lead later. A port that keeps ZL during the belt pulse (feeds the
+   mercenary), keeps the skill key alone (casts the first set), or drops the
+   held finger fails. */
+static void held_second_set_skill_vs_belt(fixture *f) {
+    dm_npad_state s;
+    float kx = f->layout.target[DM_TC_SKILL1].x, ky = f->layout.target[DM_TC_SKILL1].y;
+    float bx = f->layout.target[DM_TC_BELT1].x, by = f->layout.target[DM_TC_BELT1].y;
+    uint64_t bkey = f->layout.target[DM_TC_BELT1].button;
+    int64_t belt_up = 15215000000;
+    int64_t belt_t = 0, zl_back_t = 0, key_back_t = 0;
+    int bad_zl = 0, bad_key = 0, gap_neutral = 1;
+    tap(f, 50, f->layout.swap.x, f->layout.swap.y, 15000000000);
+    s = read_pad(f); CHECK(s.buttons == 0);
+    CHECK(dm_android_touch_down(f->touch, 51, kx, ky, 15010000000));
+    for (int i = 1; i <= 20; ++i)
+        CHECK(dm_android_touch_tick(f->touch, 15010000000 + (int64_t)i * 10000000));
+    s = read_pad(f);
+    CHECK((s.buttons & DM_BTN_ZL) && (s.buttons & DM_BTN_B));   /* held second-set skill: ZL + key */
+    CHECK(dm_android_touch_down(f->touch, 52, bx, by, 15210000000));   /* belt press sends nothing */
+    s = read_pad(f); CHECK(s.buttons == (DM_BTN_ZL | DM_BTN_B));
+    CHECK(dm_android_touch_up(f->touch, 52, belt_up));
+    s = read_pad(f); CHECK(s.buttons == 0);   /* ZL and skill released before the belt key */
+    for (int i = 0; i < 60; ++i) {
+        int64_t t = 15220000000 + (int64_t)i * 10000000;
+        CHECK(dm_android_touch_tick(f->touch, t));
+        s = read_pad(f);
+        if (!belt_t) {
+            if (s.buttons & bkey) {
+                belt_t = t;
+                if (s.buttons & DM_BTN_ZL) bad_zl = 1;
+                if (s.buttons & DM_BTN_B) bad_key = 1;
+            } else if (s.buttons != 0) gap_neutral = 0;
+        } else {
+            if (!zl_back_t && (s.buttons & DM_BTN_ZL)) { zl_back_t = t; if (s.buttons & DM_BTN_B) bad_key = 1; }
+            if (!key_back_t && (s.buttons & DM_BTN_B)) { key_back_t = t; if (!(s.buttons & DM_BTN_ZL)) bad_zl = 1; }
+        }
+    }
+    CHECK(belt_t == 15390000000);
+    CHECK(bad_zl == 0 && bad_key == 0 && gap_neutral);
+    CHECK(belt_t - belt_up >= 170000000);   /* ZL led a full 0.17 s before the belt key */
+    CHECK(zl_back_t > belt_t && zl_back_t - belt_t <= 20000000);   /* ZL back immediately after the drink */
+    CHECK(key_back_t > zl_back_t);
+    CHECK(key_back_t - zl_back_t >= 150000000 && key_back_t - zl_back_t <= 180000000);   /* full lead for the skill key */
+    CHECK(dm_android_touch_up(f->touch, 51, 15820000000));
+    s = read_pad(f); CHECK(s.buttons == 0);
+}
+
 int main(void) {
     CASE(two_ids_live);
     CASE(ids_are_not_slots);
@@ -490,6 +587,8 @@ int main(void) {
     CASE(multi_finger_movement_and_skill_group);
     CASE(joystick_cancel_resume_uses_cancel_time);
     CASE(cancel_and_resize_neutralize_owned_gestures);
+    CASE(belt_tap_release_and_double_tap);
+    CASE(held_second_set_skill_vs_belt);
     printf("PASS %d/%d cases; %d/%d checks\n", cases, cases, checks, checks);
     return 0;
 }
