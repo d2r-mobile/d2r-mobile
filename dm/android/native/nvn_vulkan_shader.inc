@@ -113,6 +113,15 @@ static shader_entry *shader_load_by_key(const char *key,int stats,int fatal) {
     }
     void *code=fatal?read_shader_file(key,"spv",&bytes):read_shader_file_opt(key,"spv",&bytes);
     if(!code){free(meta);pthread_mutex_unlock(&graphics_object_lock);return NULL;}
+#ifdef __ANDROID__
+    // 只有实际采用该 capability 的模块才要求功能已启用；未使用路径不因
+    // 无关 feature 失败，不支持时在加载该模块处准确拒绝。
+    // Only modules that actually use this capability require it to be enabled;
+    // unrelated shaders do not fail, and unsupported modules are rejected here.
+    if(dm_nvn_spirv_uses_shader_draw_parameters(code,bytes)&&
+       !dm_vk_driver_require_shader_draw_parameters(&vk_api,1))
+        die("Vulkan shader %s requires shaderDrawParameters: %s",key,dm_vk_driver_error(&vk_api));
+#endif
     shader_entry *s=calloc(1,sizeof *s);if(!s)die("Vulkan shader allocation");strcpy(s->key,key);s->stage=meta[2];s->set=meta[3];s->count=meta[4];s->c1_size=meta[5];s->bindings=(void*)(meta+7);s->c1=(uint8_t*)s->bindings+s->count*40;memcpy(s->attributes,s->c1+s->c1_size,128);
     VkShaderModuleCreateInfo mi={.sType=VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,.codeSize=bytes,.pCode=code};VK_CHECK(vkCreateShaderModule(device,&mi,NULL,&s->module));free(code);
     // 反射与 shader 同寿命；只预计算布局和索引，不缓存动态资源地址或工作区指针。
