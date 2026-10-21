@@ -573,7 +573,8 @@ static int input_ready(int fd,int events,void*data){
         if(AInputQueue_preDispatchEvent(s->input,event))continue;int handled=0;
         if(AInputEvent_getType(event)==AINPUT_EVENT_TYPE_KEY&&AKeyEvent_getKeyCode(event)==AKEYCODE_BACK){
             if(AKeyEvent_getAction(event)==AKEY_EVENT_ACTION_UP)ANativeActivity_finish(a);handled=1;
-        }else if(AInputEvent_getType(event)==AINPUT_EVENT_TYPE_MOTION){
+        }else if(AInputEvent_getType(event)==AINPUT_EVENT_TYPE_MOTION&&
+                 (AInputEvent_getSource(event)&AINPUT_SOURCE_TOUCHSCREEN)==AINPUT_SOURCE_TOUCHSCREEN){
             handle_motion(s,event);handled=1;
         }
         AInputQueue_finishEvent(s->input,event,handled);

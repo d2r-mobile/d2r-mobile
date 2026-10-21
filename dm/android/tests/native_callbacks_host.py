@@ -20,7 +20,8 @@ from pathlib import Path
 FUNCTIONS = ["wsi_report_now", "wsi_report_progress", "wsi_report_snapshot", "wsi_report_fail",
              "host_stop",
              "window_ready", "window_resized", "window_destroyed",
-             "pause_app", "resume_app", "draw_diagnostic", "frame_timer", "input_timer"]
+             "pause_app", "resume_app", "draw_diagnostic", "frame_timer", "input_timer",
+             "motion_action", "handle_motion", "input_ready"]
 
 
 def extract_function(text: str, name: str) -> str:
@@ -77,6 +78,7 @@ PRELUDE = r'''
 #include "present_policy.h"
 #include "diagnostic_scene.h"
 #include "input_policy.h"
+#include "touch_bridge.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <stdint.h>
@@ -92,6 +94,36 @@ typedef int VkResult;
 #define WINDOW_FORMAT_RGBA_8888 1
 #define ALOOPER_EVENT_ERROR 1
 #define ALOOPER_EVENT_HANGUP 2
+#define AINPUT_EVENT_TYPE_KEY 1
+#define AINPUT_EVENT_TYPE_MOTION 2
+#define AINPUT_SOURCE_TOUCHSCREEN 0x00001002
+#define AINPUT_SOURCE_JOYSTICK 0x01000010
+#define AINPUT_SOURCE_MOUSE 0x00002002
+#define AINPUT_SOURCE_UNKNOWN 0
+#define AKEY_EVENT_ACTION_DOWN 0
+#define AKEY_EVENT_ACTION_UP 1
+#define AKEYCODE_BACK 4
+#define AMOTION_EVENT_ACTION_MASK 0xff
+#define AMOTION_EVENT_ACTION_DOWN 0
+#define AMOTION_EVENT_ACTION_MOVE 2
+#define AMOTION_EVENT_ACTION_UP 1
+#define AMOTION_EVENT_ACTION_CANCEL 3
+#define AMOTION_EVENT_ACTION_POINTER_DOWN 5
+#define AMOTION_EVENT_ACTION_POINTER_UP 6
+#define AMOTION_EVENT_ACTION_POINTER_INDEX_MASK 0xff00
+#define AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT 8
+typedef struct AInputEvent {
+    int type, source, keycode, action;
+    int64_t time_ns;
+    uint32_t pointer_count;
+    int32_t ids[DM_TOUCH_MAX_POINTS];
+    float xs[DM_TOUCH_MAX_POINTS], ys[DM_TOUCH_MAX_POINTS];
+} AInputEvent;
+typedef struct AInputQueue {
+    AInputEvent event;
+    int has_event, predispatch;
+    int finish_calls, last_handled, pre_calls;
+} AInputQueue;
 typedef struct { int width, height, refs; } ANativeWindow;
 typedef struct { void *instance; } ANativeActivity;
 typedef struct { void *bits; int width, height, stride, format; } ANativeWindow_Buffer;
@@ -120,7 +152,8 @@ typedef struct {
     int frame_fd;
     int wsi_last_logged;
     int touch_allowed;
-    void *touch;
+    dm_touch_bridge *touch;
+    AInputQueue *input;
     float density;
     dm_input_policy gate;
     dm_touch_hud_frame hud_frame;
@@ -160,8 +193,50 @@ static int dm_touch_hud_frame_begin(dm_touch_hud_frame *f, int a, int b, int c, 
 static int dm_touch_hud_frame_timer_ready(const dm_touch_hud_frame *f, int ready) {
     (void)f; return ready;
 }
-static int dm_touch_bridge_tick(void *touch, int64_t now) { (void)touch; (void)now; return 0; }
-static void touch_consume(app_state *s, const char *why) { (void)s; (void)why; }
+int dm_touch_bridge_tick(dm_touch_bridge *touch, int64_t now) { (void)touch; (void)now; return 0; }
+static int touch_consume_calls, input_bridge_calls, activity_finish_calls;
+static int input_bridge_last_action, input_bridge_last_count;
+static void touch_consume(app_state *s, const char *why) { (void)s; (void)why; touch_consume_calls++; }
+int dm_touch_bridge_event(dm_touch_bridge *touch, const dm_touch_event *event) {
+    (void)touch;
+    input_bridge_calls++;
+    input_bridge_last_action = event->action;
+    input_bridge_last_count = (int)event->pointer_count;
+    return 1;
+}
+static void ANativeActivity_finish(ANativeActivity *activity) { (void)activity; activity_finish_calls++; }
+static int32_t AInputEvent_getType(const AInputEvent *event) { return event->type; }
+static int32_t AInputEvent_getSource(const AInputEvent *event) { return event->source; }
+static int32_t AKeyEvent_getAction(const AInputEvent *event) { return event->action; }
+static int32_t AKeyEvent_getKeyCode(const AInputEvent *event) { return event->keycode; }
+static int32_t AMotionEvent_getAction(const AInputEvent *event) { return event->action; }
+static int64_t AMotionEvent_getEventTime(const AInputEvent *event) { return event->time_ns; }
+static size_t AMotionEvent_getPointerCount(const AInputEvent *event) { return event->pointer_count; }
+static int32_t AMotionEvent_getPointerId(const AInputEvent *event, size_t index) {
+    return index < event->pointer_count ? event->ids[index] : -1;
+}
+static float AMotionEvent_getX(const AInputEvent *event, size_t index) {
+    return index < event->pointer_count ? event->xs[index] : 0.0f;
+}
+static float AMotionEvent_getY(const AInputEvent *event, size_t index) {
+    return index < event->pointer_count ? event->ys[index] : 0.0f;
+}
+static int32_t AInputQueue_getEvent(AInputQueue *queue, AInputEvent **event) {
+    if (!queue->has_event) return -1;
+    queue->has_event = 0;
+    *event = &queue->event;
+    return 0;
+}
+static int32_t AInputQueue_preDispatchEvent(AInputQueue *queue, AInputEvent *event) {
+    (void)event;
+    queue->pre_calls++;
+    return queue->predispatch;
+}
+static void AInputQueue_finishEvent(AInputQueue *queue, AInputEvent *event, int32_t handled) {
+    (void)event;
+    queue->finish_calls++;
+    queue->last_handled = handled;
+}
 void dm_input_policy_set_timer(dm_input_policy *gate, int enabled) { (void)gate; (void)enabled; }
 static void stop_input_timer(app_state *s) { (void)s; }
 static void dm_touch_hud_frame_composed(dm_touch_hud_frame *f, int ok) { (void)f; (void)ok; }
@@ -222,7 +297,116 @@ static void opened_observed(void *ctx, uint32_t w, uint32_t h) {
 
 
 MAIN = r'''
+static int input_cases(void) {
+    app_state s;
+    memset(&s, 0, sizeof s);
+    s.touch = (dm_touch_bridge *)(uintptr_t)1;
+    s.touch_allowed = 1;
+    ANativeActivity activity = {&s};
+    s.activity = &activity;
+    AInputQueue queue;
+    memset(&queue, 0, sizeof queue);
+    s.input = &queue;
+    touch_consume_calls = input_bridge_calls = activity_finish_calls = 0;
+
+    queue.has_event = 1;
+    queue.event.type = AINPUT_EVENT_TYPE_MOTION;
+    queue.event.source = AINPUT_SOURCE_TOUCHSCREEN | AINPUT_SOURCE_MOUSE;
+    queue.event.action = AMOTION_EVENT_ACTION_DOWN;
+    queue.event.time_ns = 1;
+    queue.event.pointer_count = 1;
+    queue.event.ids[0] = 7;
+    queue.event.xs[0] = 100;
+    queue.event.ys[0] = 120;
+    CHECK(input_ready(0, 0, &activity) == 1);
+    CHECK(queue.finish_calls == 1 && queue.last_handled == 1);
+    CHECK(input_bridge_calls == 1 && touch_consume_calls == 1);
+    CHECK(input_bridge_last_action == DM_TOUCH_ACTION_DOWN && input_bridge_last_count == 1);
+
+    queue.finish_calls = queue.last_handled = 0;
+    queue.has_event = 1;
+    queue.event.action = AMOTION_EVENT_ACTION_MOVE;
+    CHECK(input_ready(0, 0, &activity) == 1);
+    CHECK(queue.finish_calls == 1 && queue.last_handled == 1);
+    CHECK(input_bridge_calls == 2 && touch_consume_calls == 2);
+    CHECK(input_bridge_last_action == DM_TOUCH_ACTION_MOVE);
+
+    queue.finish_calls = queue.last_handled = 0;
+    queue.has_event = 1;
+    queue.event.action = AMOTION_EVENT_ACTION_UP;
+    CHECK(input_ready(0, 0, &activity) == 1);
+    CHECK(queue.finish_calls == 1 && queue.last_handled == 1);
+    CHECK(input_bridge_calls == 3 && touch_consume_calls == 3);
+    CHECK(input_bridge_last_action == DM_TOUCH_ACTION_UP);
+
+    /* Non-touch MotionEvents are not translated, do not call the bridge and
+       are finished as unhandled. */
+    const int rejected_sources[] = {AINPUT_SOURCE_JOYSTICK, AINPUT_SOURCE_MOUSE,
+                                    AINPUT_SOURCE_UNKNOWN};
+    for (size_t i = 0; i < sizeof rejected_sources / sizeof rejected_sources[0]; i++) {
+        int bridge_before = input_bridge_calls, consume_before = touch_consume_calls;
+        dm_touch_bridge *touch_before = s.touch;
+        queue.finish_calls = queue.last_handled = 0;
+        queue.has_event = 1;
+        queue.event.action = AMOTION_EVENT_ACTION_DOWN;
+        queue.event.source = rejected_sources[i];
+        CHECK(input_ready(0, 0, &activity) == 1);
+        CHECK(queue.finish_calls == 1 && queue.last_handled == 0);
+        CHECK(input_bridge_calls == bridge_before);
+        CHECK(touch_consume_calls == consume_before);
+        CHECK(s.touch == touch_before);
+    }
+
+    /* preDispatch consumes the event without finishEvent. */
+    queue.finish_calls = queue.pre_calls = queue.last_handled = 0;
+    queue.has_event = 1;
+    queue.predispatch = 1;
+    queue.event.source = AINPUT_SOURCE_TOUCHSCREEN;
+    CHECK(input_ready(0, 0, &activity) == 1);
+    CHECK(queue.pre_calls == 1 && queue.finish_calls == 0);
+
+    queue.predispatch = 0;
+    queue.finish_calls = queue.last_handled = 0;
+    queue.has_event = 1;
+    queue.event.type = AINPUT_EVENT_TYPE_KEY;
+    queue.event.action = AKEY_EVENT_ACTION_UP;
+    queue.event.keycode = AKEYCODE_BACK;
+    queue.event.source = 0;
+    int finish_before = activity_finish_calls;
+    CHECK(input_ready(0, 0, &activity) == 1);
+    CHECK(queue.finish_calls == 1 && queue.last_handled == 1);
+    CHECK(activity_finish_calls == finish_before + 1);
+
+    queue.finish_calls = queue.last_handled = 0;
+    queue.has_event = 1;
+    queue.event.action = AKEY_EVENT_ACTION_DOWN;
+    finish_before = activity_finish_calls;
+    CHECK(input_ready(0, 0, &activity) == 1);
+    CHECK(queue.finish_calls == 1 && queue.last_handled == 1);
+    CHECK(activity_finish_calls == finish_before);
+
+    queue.finish_calls = queue.last_handled = 0;
+    queue.has_event = 1;
+    queue.event.keycode = 999;
+    CHECK(input_ready(0, 0, &activity) == 1);
+    CHECK(queue.finish_calls == 1 && queue.last_handled == 0);
+
+    /* Lifecycle gate suppresses bridge mutation but preserves touch handling. */
+    s.touch_allowed = 0;
+    queue.finish_calls = queue.last_handled = 0;
+    queue.has_event = 1;
+    queue.event.type = AINPUT_EVENT_TYPE_MOTION;
+    queue.event.source = AINPUT_SOURCE_TOUCHSCREEN;
+    queue.event.action = AMOTION_EVENT_ACTION_DOWN;
+    int bridge_before = input_bridge_calls, consume_before = touch_consume_calls;
+    CHECK(input_ready(0, 0, &activity) == 1);
+    CHECK(queue.finish_calls == 1 && queue.last_handled == 1);
+    CHECK(input_bridge_calls == bridge_before && touch_consume_calls == consume_before);
+    return 0;
+}
+
 int main(void) {
+    if (input_cases()) return 1;
     app_state s;
     memset(&s, 0, sizeof s);
     s.frame_fd = -1;
@@ -475,7 +659,9 @@ def compile_and_run(cc: str, app: Path, source: str, work: Path, label: str,
     exe = work / label
     c_file.write_text(source, encoding="utf-8")
     compile_command = [cc, "-std=gnu11", "-g", "-fsanitize=address,undefined",
-                       f"-I{app}", str(c_file),
+                       f"-I{app}", f"-I{app.parent / 'runtime'}",
+                       f"-I{app.parent / 'ios' / 'Sources'}", f"-I{app.parent / 'host'}",
+                       str(c_file),
                        str(app / "wsi_bridge.c"), str(app / "wsi_diagnostic.c"),
                        str(app / "wsi_report.c"),
                        str(app / "lifecycle.c"), "-o", str(exe)]
@@ -533,6 +719,10 @@ def main() -> int:
          'if(!dm_wsi_bridge_owns_window(&s->wsi_bridge,window)){LOG("wsi stale window destroy ignored");return;}\n        stop_frame_timer(s);',
          'stop_frame_timer(s);\n        if(!dm_wsi_bridge_owns_window(&s->wsi_bridge,window)){LOG("wsi stale window destroy ignored");return;}',
          "s.frame_fd"),
+        ("omit-source-guard",
+         "&&\n                 (AInputEvent_getSource(event)&AINPUT_SOURCE_TOUCHSCREEN)==AINPUT_SOURCE_TOUCHSCREEN",
+         "",
+         "queue.last_handled == 0"),
     ]
     with tempfile.TemporaryDirectory() as td:
         work = Path(td)
