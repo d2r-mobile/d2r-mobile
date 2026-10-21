@@ -42,6 +42,41 @@ extern "C" {
 
 typedef struct dm_android_touch dm_android_touch;
 
+// One core-produced action after a gesture. The bridge/provider layer must
+// acknowledge real external consumption; no success is implied here.
+enum dm_android_touch_action_kind {
+    DM_ANDROID_ACTION_WORLD_TAP = 1,
+    DM_ANDROID_ACTION_IDENTIFY,
+    DM_ANDROID_ACTION_USE,
+    DM_ANDROID_ACTION_LONG_PRESS,
+    DM_ANDROID_ACTION_STACK_TAKE,
+    DM_ANDROID_ACTION_TAB_TAP,
+    DM_ANDROID_ACTION_SHOP_DROP,
+    DM_ANDROID_ACTION_UI_CLICK,
+    DM_ANDROID_ACTION_DIFFICULTY,
+    DM_ANDROID_ACTION_BELT
+};
+
+typedef struct dm_android_touch_action {
+    uint32_t kind;
+    float x, y;
+    uint64_t sequence;
+} dm_android_touch_action;
+
+// Game context is supplied by the provider bridge. availability=0 gates all
+// new touch events and publishes a neutral sample; context changes cancel
+// deferred/queued actions when the navigation mode or scene epoch changes.
+int dm_android_touch_set_game_available(dm_android_touch *touch, int available);
+int dm_android_touch_set_game_context(dm_android_touch *touch, int navigation_mode,
+                                      uint32_t panel_bits, uint64_t scene_epoch,
+                                      uint64_t world_epoch, uint64_t ui_identity,
+                                      uint64_t object_generation);
+int dm_android_touch_pointer_hit(dm_android_touch *touch, int32_t pointer_id, int kind);
+int dm_android_touch_pointer_release(dm_android_touch *touch, int32_t pointer_id,
+                                     int drop_kind);
+// Consume at most one core action sequence that has not been returned before.
+int dm_android_touch_take_action(dm_android_touch *touch, dm_android_touch_action *out);
+
 dm_android_touch *dm_android_touch_create(dm_android_pad *pad, float width_pt, float height_pt);
 void dm_android_touch_destroy(dm_android_touch *touch);
 

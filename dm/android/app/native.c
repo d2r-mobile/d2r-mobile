@@ -300,6 +300,7 @@ static void input_created(ANativeActivity*a,AInputQueue*queue){app_state*s=a->in
         s->density=activity_density(a);
         s->touch=dm_touch_bridge_create(667,375,s->density);
         if(!s->touch){LOG("touch bridge recreate failed");return;}
+        LOG("touch game provider unavailable: production scene/hit/action disabled");
         s->touch_width_pt=667;s->touch_height_pt=375;
         if(s->window)touch_resize_window(s,s->window);
     }

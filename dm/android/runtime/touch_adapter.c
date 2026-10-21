@@ -20,6 +20,21 @@ struct dm_android_touch {
     int pulse_head;
     int pulse_count;
     int release_waiting;
+    int game_available;
+    int game_scene_epoch_set;
+    uint64_t game_scene_epoch;
+    uint64_t game_world_epoch;
+    uint64_t game_ui_identity;
+    uint64_t game_object_generation;
+    uint32_t game_panel_bits;
+    uint64_t seen_world_tap;
+    uint64_t seen_ident;
+    uint64_t seen_use;
+    uint64_t seen_long_press;
+    uint64_t seen_stack_take;
+    uint64_t seen_tab_tap;
+    uint64_t seen_shop_drop;
+    uint64_t seen_mouse_click;
 };
 
 static int accept_time(dm_android_touch *touch, int64_t time_ns, double *now_s) {
@@ -99,12 +114,25 @@ static void publish(dm_android_touch *touch) {
     }
 }
 
+static void action_baseline(dm_android_touch *touch) {
+    dm_tc_state *s = &touch->state;
+    touch->seen_world_tap = s->world_tap_seq;
+    touch->seen_ident = s->ident_seq;
+    touch->seen_use = s->use_seq;
+    touch->seen_long_press = s->long_press_seq;
+    touch->seen_stack_take = s->stack_take_seq;
+    touch->seen_tab_tap = s->tab_tap_seq;
+    touch->seen_shop_drop = s->shop_drop_seq;
+    touch->seen_mouse_click = s->mouse_click_seq;
+}
+
 static void release_all(dm_android_touch *touch) {
     memset(touch->pointer_id, 0, sizeof touch->pointer_id);
     memset(touch->used, 0, sizeof touch->used);
     touch->pulse_head = touch->pulse_count = 0;
     touch->release_waiting = 0;
     dm_tc_cancel_all(&touch->state);
+    action_baseline(touch);
     dm_android_pad_clear_edges(touch->pad);
 }
 
@@ -115,6 +143,8 @@ dm_android_touch *dm_android_touch_create(dm_android_pad *pad, float width_pt, f
     if (!touch) return NULL;
     touch->pad = pad;
     dm_tc_init(&touch->state, width_pt, height_pt);
+    touch->game_available = 1;
+    action_baseline(touch);
     memset(touch->pointer_id, -1, sizeof touch->pointer_id);
     publish(touch);
     return touch;
@@ -133,7 +163,8 @@ void dm_android_touch_destroy(dm_android_touch *touch) {
 
 int dm_android_touch_down(dm_android_touch *touch, int32_t pointer_id,
                           float x_pt, float y_pt, int64_t time_ns) {
-    if (!touch || touch->suspended || pointer_id < 0 || !isfinite(x_pt) || !isfinite(y_pt))
+    if (!touch || touch->suspended || !touch->game_available || pointer_id < 0 ||
+        !isfinite(x_pt) || !isfinite(y_pt))
         return 0;
     if (pending_full(touch)) return 0;   /* bounded backpressure: no partial mutation */
     if (find_pointer(touch, pointer_id) >= 0) return 0;   /* duplicate down: keep the first owner */
@@ -151,8 +182,8 @@ int dm_android_touch_down(dm_android_touch *touch, int32_t pointer_id,
 
 int dm_android_touch_move(dm_android_touch *touch, int32_t pointer_id,
                           float x_pt, float y_pt, int64_t time_ns) {
-    if (!touch || touch->suspended || pointer_id < 0 || !isfinite(x_pt) || !isfinite(y_pt))
-        return 0;
+    if (!touch || touch->suspended || !touch->game_available || pointer_id < 0 ||
+        !isfinite(x_pt) || !isfinite(y_pt)) return 0;
     if (pending_full(touch)) return 0;
     int slot = find_pointer(touch, pointer_id);
     if (slot < 0) return 0;
@@ -164,7 +195,7 @@ int dm_android_touch_move(dm_android_touch *touch, int32_t pointer_id,
 }
 
 int dm_android_touch_up(dm_android_touch *touch, int32_t pointer_id, int64_t time_ns) {
-    if (!touch || touch->suspended || pointer_id < 0) return 0;
+    if (!touch || touch->suspended || !touch->game_available || pointer_id < 0) return 0;
     if (pending_full(touch)) return 0;   /* leave the pointer intact for retry after read */
     int slot = find_pointer(touch, pointer_id);
     if (slot < 0) return 0;
@@ -235,6 +266,137 @@ int dm_android_touch_resize(dm_android_touch *touch, float width_pt, float heigh
     dm_tc_resize(&touch->state, width_pt, height_pt);
     publish(touch);
     return 1;
+}
+
+int dm_android_touch_set_game_available(dm_android_touch *touch, int available) {
+    if (!touch) return 0;
+    available = available != 0;
+    if (touch->game_available == available) return 1;
+    touch->game_available = available;
+    if (!available) release_all(touch);
+    publish(touch);
+    return 1;
+}
+
+int dm_android_touch_set_game_context(dm_android_touch *touch, int navigation_mode,
+                                      uint32_t panel_bits, uint64_t scene_epoch,
+                                      uint64_t world_epoch, uint64_t ui_identity,
+                                      uint64_t object_generation) {
+    if (!touch || scene_epoch == 0) return 0;
+    navigation_mode = navigation_mode != 0;
+    int changed = navigation_mode != touch->state.navigation_mode ||
+                  (touch->game_scene_epoch_set &&
+                   (panel_bits != touch->game_panel_bits ||
+                    scene_epoch != touch->game_scene_epoch ||
+                    world_epoch != touch->game_world_epoch ||
+                    ui_identity != touch->game_ui_identity ||
+                    object_generation != touch->game_object_generation));
+    if (changed) release_all(touch);
+    dm_tc_set_panel_state((int)panel_bits);
+    if (navigation_mode != touch->state.navigation_mode)
+        dm_tc_set_navigation_mode(&touch->state, navigation_mode);
+    touch->game_panel_bits = panel_bits;
+    touch->game_scene_epoch = scene_epoch;
+    touch->game_world_epoch = world_epoch;
+    touch->game_ui_identity = ui_identity;
+    touch->game_object_generation = object_generation;
+    touch->game_scene_epoch_set = 1;
+    publish(touch);
+    return 1;
+}
+
+int dm_android_touch_pointer_hit(dm_android_touch *touch, int32_t pointer_id, int kind) {
+    if (!touch || pointer_id < 0 || kind < 0 || kind > 11) return 0;
+    int slot = find_pointer(touch, pointer_id);
+    if (slot < 0) return 0;
+    dm_tc_pointer_item(&touch->state, kind);
+    return 1;
+}
+
+int dm_android_touch_pointer_release(dm_android_touch *touch, int32_t pointer_id,
+                                     int drop_kind) {
+    if (!touch || pointer_id < 0 || drop_kind < 0 || drop_kind > 8) return 0;
+    int slot = find_pointer(touch, pointer_id);
+    if (slot < 0) return 0;
+    dm_tc_pointer_release(&touch->state, drop_kind);
+    return 1;
+}
+
+int dm_android_touch_take_action(dm_android_touch *touch, dm_android_touch_action *out) {
+    if (!touch || !out) return 0;
+    dm_tc_state *s = &touch->state;
+    memset(out, 0, sizeof(*out));
+    if (s->world_tap_seq != touch->seen_world_tap) {
+        touch->seen_world_tap = s->world_tap_seq;
+        out->kind = DM_ANDROID_ACTION_WORLD_TAP;
+        out->x = s->world_tap_x; out->y = s->world_tap_y;
+        out->sequence = s->world_tap_seq;
+        return 1;
+    }
+    if (s->ident_seq != touch->seen_ident) {
+        touch->seen_ident = s->ident_seq;
+        out->kind = DM_ANDROID_ACTION_IDENTIFY;
+        out->x = s->pointer_x; out->y = s->pointer_y;
+        out->sequence = s->ident_seq;
+        return 1;
+    }
+    if (s->use_seq != touch->seen_use) {
+        touch->seen_use = s->use_seq;
+        out->kind = DM_ANDROID_ACTION_USE;
+        out->x = s->pointer_x; out->y = s->pointer_y;
+        out->sequence = s->use_seq;
+        return 1;
+    }
+    if (s->long_press_seq != touch->seen_long_press) {
+        touch->seen_long_press = s->long_press_seq;
+        out->kind = DM_ANDROID_ACTION_LONG_PRESS;
+        out->x = s->pointer_x; out->y = s->pointer_y;
+        out->sequence = s->long_press_seq;
+        return 1;
+    }
+    if (s->stack_take_seq != touch->seen_stack_take) {
+        touch->seen_stack_take = s->stack_take_seq;
+        out->kind = DM_ANDROID_ACTION_STACK_TAKE;
+        out->x = s->pointer_x; out->y = s->pointer_y;
+        out->sequence = s->stack_take_seq;
+        return 1;
+    }
+    if (s->tab_tap_seq != touch->seen_tab_tap) {
+        touch->seen_tab_tap = s->tab_tap_seq;
+        out->kind = DM_ANDROID_ACTION_TAB_TAP;
+        out->x = s->pointer_x; out->y = s->pointer_y;
+        out->sequence = s->tab_tap_seq;
+        return 1;
+    }
+    if (s->shop_drop_seq != touch->seen_shop_drop) {
+        touch->seen_shop_drop = s->shop_drop_seq;
+        out->kind = DM_ANDROID_ACTION_SHOP_DROP;
+        out->x = s->pointer_x; out->y = s->pointer_y;
+        out->sequence = s->shop_drop_seq;
+        return 1;
+    }
+    if (s->mouse_click_seq != touch->seen_mouse_click) {
+        touch->seen_mouse_click = s->mouse_click_seq;
+        out->kind = DM_ANDROID_ACTION_UI_CLICK;
+        out->x = s->mouse_click_x; out->y = s->mouse_click_y;
+        out->sequence = s->mouse_click_seq;
+        return 1;
+    }
+    if (s->diff_request) {
+        out->kind = DM_ANDROID_ACTION_DIFFICULTY;
+        out->x = (float)s->diff_request;
+        out->sequence = (uint64_t)s->diff_request;
+        s->diff_request = 0;
+        return 1;
+    }
+    if (s->belt_request) {
+        out->kind = DM_ANDROID_ACTION_BELT;
+        out->x = (float)s->belt_request;
+        out->sequence = (uint64_t)s->belt_request;
+        s->belt_request = 0;
+        return 1;
+    }
+    return 0;
 }
 
 int dm_android_touch_tick(dm_android_touch *touch, int64_t time_ns) {
