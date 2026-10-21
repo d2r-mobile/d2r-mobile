@@ -72,6 +72,15 @@ static int host_resume(void*ctx){(void)ctx;return 0;}
 static int host_surface_acquire(void*ctx,void*surface){
     (void)ctx;
     if(!surface)return 1;
+    // 在 acquire 之前协商 RGBA_8888：0 宽高沿用 Surface 基础尺寸，不改视图几何；失败则不 acquire，引用不会泄漏。
+    // Negotiate RGBA_8888 before acquire: zero width/height keep the Surface base size, so view geometry is untouched;
+    // on failure nothing is acquired, so no reference can leak.
+    int32_t format_result=ANativeWindow_setBuffersGeometry((ANativeWindow*)surface,0,0,WINDOW_FORMAT_RGBA_8888);
+    if(format_result<0){
+        LOG("surface format negotiation failed: RGBA_8888 request result=%d; surface not acquired",(int)format_result);
+        return 1;
+    }
+    LOG("surface format negotiated: RGBA_8888 result=%d",(int)format_result);
     ANativeWindow_acquire((ANativeWindow*)surface);
     return 0;
 }

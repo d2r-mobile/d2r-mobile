@@ -16,6 +16,8 @@ Drawing is bounded by the existing lifecycle controller. `dm_diag_scene_ready()`
 
 `app/present_policy.c` is the presentation seam: it requires `WINDOW_FORMAT_RGBA_8888`, `stride >= width`, a capacity covering exactly `width*height*4` bytes and 64-bit size arithmetic. It clears only the visible row area, copies a centred crop (cropping the source when the window is smaller) and never reads or writes stride padding. A rejected copy writes zero destination bytes. Asset-copy, Vulkan-create, draw and window-lock failures are logged with their actual code; the readback buffer is freed on every path and the Vulkan context is destroyed only by stop/low-memory.
 
+The Surface format is negotiated once per acquisition: `host_surface_acquire` calls `ANativeWindow_setBuffersGeometry(window, 0, 0, WINDOW_FORMAT_RGBA_8888)` before it takes its reference. Zero width/height keep the Surface base dimensions, so view geometry and input mapping are unchanged; the call's negative result fails the acquisition before any reference exists, so nothing leaks, and the locked-buffer format/stride checks stay strict rather than reinterpreting an RGB565 buffer.
+
 Tests added with the integration:
 
 | Test | What it verifies independently |
