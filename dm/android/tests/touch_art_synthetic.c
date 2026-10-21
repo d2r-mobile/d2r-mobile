@@ -26,6 +26,7 @@ static const struct { uint32_t id; int atlas, frame; } rows[] = {
     {101, 1, 4},
     {102, 1, 4},
     {103, 0, 99}, // deliberately outside the atlas: must be unknown
+    {357, 0, 1},  // synthetic native general action (weapon switch family)
 };
 
 #include "../../ios/tools/native_art/implementation.c.inc"

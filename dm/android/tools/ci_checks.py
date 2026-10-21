@@ -129,7 +129,8 @@ def main():
                                     ("PackageArchive.java", "PackageArchiveTest", "数据包导入"),
                                     ("TouchVisibility.java", "TouchVisibilityTest", "触控显隐"),
                                     ("TouchOverlayGeometry.java", "TouchOverlayGeometryTest", "触控叠层坐标"),
-                                    ("TouchGlyph.java", "TouchGlyphTest", "技能图标图集")):
+                                    ("TouchGlyph.java", "TouchGlyphTest", "技能图标图集"),
+                                    ("TouchSocketColor.java", "TouchSocketColorTest", "触控槽颜色")):
             if not (JAVAC.exists() and JAVA.exists()):
                 skipped.append("%s（%s）：没有项目 JDK（%s）" % (label, test, JAVAC))
                 continue
