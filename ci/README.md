@@ -27,6 +27,16 @@ bash ci/tests/test-elf-pages.sh
 are not required. Builds use the repository's existing CMake files without
 modifying runtime or root CMake.
 
+The required Java job also runs the accepted #189 hotplug regressions from the
+current checkout: the real `android.jar` Java listener control, the actual JNI
+start/stop fixture with private mutants, and the actual NativeActivity callback
+harness. Its private negative controls include a copied native source with the
+wrong loader receiver and a malformed compile copy; either must fail the same
+required command. `DM_HOTPLUG_NATIVE_SOURCE` is a test-only override used to
+run that command against a private source copy; its default is the current
+checkout's `dm/android/app/native.c`. This is host/cross-build evidence only,
+not physical hotplug or device acceptance.
+
 Action commits are recorded in `ci/actions.lock`.
 
 ## Runner and tool facts
