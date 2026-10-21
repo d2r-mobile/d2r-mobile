@@ -219,6 +219,11 @@ int dm_android_touch_cancel(dm_android_touch *touch, int32_t pointer_id, int64_t
     if (f->active && f->target >= 0 && f->target < DM_TC_COUNT) {
         canceled_mask = touch->state.layout.target[f->target].button;
     }
+    /* ACTION_CANCEL's own timestamp starts the 0.35 s stick-resume window;
+       the core records it from last_time_s, which only begin/move/end/tick
+       otherwise advance. Without this, a finger held still between the last
+       move and the cancel loses a valid resume (or keeps a stale one). */
+    touch->state.last_time_s = now_s;
     dm_tc_cancel_finger(&touch->state, slot);
     touch->used[slot] = 0;
     touch->pointer_id[slot] = -1;

@@ -365,6 +365,104 @@ static void full_pointer_table(fixture *f) {
     CHECK(dm_android_touch_cancel_all(f->touch, 11200000000));
 }
 
+/* Port of upstream t_touch_controls.c:joystick_plus_skills through the Android
+   MotionEvent adapter: one movement pointer plus five button pointers, each
+   with its own opaque ID, consumed as one pad snapshot. Releasing one skill
+   must drop only that button; the stick keeps its axes until its own pointer
+   ends. A port that keyed input by slot, collapsed owners, or cleared the
+   stick on any button release fails here. */
+static void multi_finger_movement_and_skill_group(fixture *f) {
+    dm_npad_state s;
+    uint64_t group = DM_BTN_A | DM_BTN_B | DM_BTN_X | DM_BTN_Y | DM_BTN_R;
+    CHECK(dm_android_touch_down(f->touch, 10, 90, 275, 12000000000));
+    CHECK(dm_android_touch_move(f->touch, 10, 150, 275, 12010000000));
+    CHECK(dm_android_touch_down(f->touch, 11, f->layout.target[DM_TC_MAIN].x,
+                                f->layout.target[DM_TC_MAIN].y, 12020000000));
+    CHECK(dm_android_touch_down(f->touch, 12, f->layout.target[DM_TC_SKILL1].x,
+                                f->layout.target[DM_TC_SKILL1].y, 12030000000));
+    CHECK(dm_android_touch_down(f->touch, 13, f->layout.target[DM_TC_SKILL2].x,
+                                f->layout.target[DM_TC_SKILL2].y, 12040000000));
+    CHECK(dm_android_touch_down(f->touch, 14, f->layout.target[DM_TC_SKILL3].x,
+                                f->layout.target[DM_TC_SKILL3].y, 12050000000));
+    CHECK(dm_android_touch_down(f->touch, 15, f->layout.target[DM_TC_SKILL4].x,
+                                f->layout.target[DM_TC_SKILL4].y, 12060000000));
+    CHECK(dm_android_touch_tick(f->touch, 12200000000));   /* past every skill's settle window */
+    s = read_pad(f);
+    CHECK(s.buttons == group && s.lx == DM_STICK_MAX && s.ly == 0 && s.rx == 0 && s.ry == 0);
+    CHECK(dm_android_touch_up(f->touch, 13, 12300000000));   /* held past the pulse minimum */
+    s = read_pad(f);
+    CHECK(s.buttons == (group & ~DM_BTN_X) && s.lx == DM_STICK_MAX && s.ly == 0);
+    CHECK(dm_android_touch_up(f->touch, 10, 12400000000));   /* stick ends, skills stay held */
+    s = read_pad(f);
+    CHECK(s.buttons == (group & ~DM_BTN_X) && s.lx == 0 && s.ly == 0);
+    CHECK(dm_android_touch_up(f->touch, 11, 12500000000));
+    CHECK(dm_android_touch_up(f->touch, 12, 12510000000));
+    CHECK(dm_android_touch_up(f->touch, 14, 12520000000));
+    CHECK(dm_android_touch_up(f->touch, 15, 12530000000));
+    s = read_pad(f);
+    CHECK(s.buttons == 0 && s.lx == 0 && s.ly == 0 && s.rx == 0 && s.ry == 0);
+}
+
+/* Port of upstream t_touch_controls.c:joystick_deadzone cancel/resume,
+   including the timing source: ACTION_CANCEL's own timestamp is the start of
+   the 0.35 s resume window, not the timestamp of the last core event. The
+   stick is held still for 0.9 s (no move) and then cancelled, so an adapter
+   that leaves core last_time_s at the last move rejects a valid resume at
+   0.2 s and starts a fresh stick at the new point instead (axes 0, then the
+   opposite direction). */
+static void joystick_cancel_resume_uses_cancel_time(fixture *f) {
+    dm_npad_state s;
+    CHECK(dm_android_touch_down(f->touch, 30, 90, 275, 70000000000));
+    CHECK(dm_android_touch_move(f->touch, 30, 260, 160, 70100000000));
+    s = read_pad(f); CHECK(s.lx > 0 && s.ly > 0);
+    CHECK(dm_android_touch_cancel(f->touch, 30, 71000000000));   /* 0.9 s after the last move */
+    s = read_pad(f); CHECK(s.lx == 0 && s.ly == 0 && s.buttons == 0);
+    CHECK(dm_android_touch_down(f->touch, 31, 236, 128, 71200000000));   /* 0.2 s after cancel, outside the start zone */
+    s = read_pad(f); CHECK(s.lx > 0 && s.ly > 0);   /* resumed: old touch point, not a fresh zero */
+    CHECK(dm_android_touch_move(f->touch, 31, 150, 275, 71300000000));   /* 60 pt right of the old touch point */
+    s = read_pad(f); CHECK(s.lx == DM_STICK_MAX && s.ly == 0);
+    CHECK(dm_android_touch_cancel(f->touch, 31, 71400000000));
+    (void)read_pad(f);
+    CHECK(dm_android_touch_down(f->touch, 32, 236, 128, 71800000000));   /* 0.4 s after cancel: window closed */
+    s = read_pad(f); CHECK(s.lx == 0 && s.ly == 0);
+    CHECK(dm_android_touch_up(f->touch, 32, 71810000000));
+}
+
+/* Port of upstream t_touch_controls.c:cancel_and_resize through the adapter:
+   one pointer's ACTION_CANCEL releases only what it owns, a short skill tap
+   already queued survives an unrelated cancel, and a resize neutralizes every
+   owner, drops the unread pulse and invalidates the old pointer table. */
+static void cancel_and_resize_neutralize_owned_gestures(fixture *f) {
+    dm_npad_state s;
+    dm_tc_layout wide;
+    CHECK(dm_android_touch_down(f->touch, 20, 90, 275, 13000000000));
+    CHECK(dm_android_touch_move(f->touch, 20, 150, 275, 13010000000));
+    CHECK(dm_android_touch_down(f->touch, 21, f->layout.target[DM_TC_MAIN].x,
+                                f->layout.target[DM_TC_MAIN].y, 13020000000));
+    tap(f, 22, f->layout.target[DM_TC_SKILL1].x, f->layout.target[DM_TC_SKILL1].y, 13030000000);
+    CHECK(dm_android_touch_cancel(f->touch, 20, 13040000000));   /* cancel the stick only */
+    s = read_pad(f); CHECK(s.buttons == (DM_BTN_A | DM_BTN_B) && s.lx == 0 && s.ly == 0);
+    CHECK(dm_android_touch_down(f->touch, 23, f->layout.target[DM_TC_SKILL2].x,
+                                f->layout.target[DM_TC_SKILL2].y, 13050000000));
+    CHECK(dm_android_touch_cancel(f->touch, 23, 13060000000));   /* before settle: no cast, no pulse */
+    s = read_pad(f); CHECK(s.buttons == DM_BTN_A);
+    CHECK(dm_android_touch_tick(f->touch, 13200000000));
+    s = read_pad(f); CHECK(s.buttons == DM_BTN_A);   /* cancelled skill never surfaces later */
+    tap(f, 24, f->layout.target[DM_TC_SKILL1].x, f->layout.target[DM_TC_SKILL1].y, 13210000000);
+    CHECK(dm_android_touch_resize(f->touch, 812, 375, 13220000000));   /* unread pulse queued */
+    s = read_pad(f); CHECK(s.buttons == 0 && s.lx == 0 && s.ly == 0 && s.rx == 0 && s.ry == 0);
+    CHECK(dm_android_touch_tick(f->touch, 13500000000));
+    s = read_pad(f); CHECK(s.buttons == 0);   /* dropped, not delivered late */
+    CHECK(!dm_android_touch_move(f->touch, 21, 200, 200, 13510000000));
+    CHECK(!dm_android_touch_up(f->touch, 21, 13520000000));
+    dm_tc_layout_make(&wide, 812, 375);
+    CHECK(dm_android_touch_down(f->touch, 25, wide.target[DM_TC_MAIN].x,
+                                wide.target[DM_TC_MAIN].y, 13530000000));
+    s = read_pad(f); CHECK(s.buttons == DM_BTN_A);
+    CHECK(dm_android_touch_up(f->touch, 25, 13531000000));
+    s = read_pad(f); CHECK(s.buttons == 0);
+}
+
 int main(void) {
     CASE(two_ids_live);
     CASE(ids_are_not_slots);
@@ -389,6 +487,9 @@ int main(void) {
     CASE(second_set_zl_and_deferred);
     CASE(cancel_clears_deferred);
     CASE(full_pointer_table);
+    CASE(multi_finger_movement_and_skill_group);
+    CASE(joystick_cancel_resume_uses_cancel_time);
+    CASE(cancel_and_resize_neutralize_owned_gestures);
     printf("PASS %d/%d cases; %d/%d checks\n", cases, cases, checks, checks);
     return 0;
 }
