@@ -892,3 +892,13 @@ if(NOT ANDROID)
         set_tests_properties(native_audio PROPERTIES TIMEOUT 180)
     endif()
 endif()
+
+# #223 host drawing-switch handoff: two queued submits must not share state,
+# and the one-shot force-full request must be consumed once.
+if(NOT ANDROID)
+    add_executable(dm_nvn_host_latch_test tests/nvn_host_latch.c)
+    target_include_directories(dm_nvn_host_latch_test PRIVATE native)
+    target_compile_options(dm_nvn_host_latch_test PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME nvn_host_latch COMMAND dm_nvn_host_latch_test)
+    set_tests_properties(nvn_host_latch PROPERTIES TIMEOUT 30)
+endif()

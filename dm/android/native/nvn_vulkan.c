@@ -17,6 +17,8 @@
 #include "gpu_driver.h"
 static dm_vk_driver vk_api;
 #endif
+#include "nvn_vulkan_host.inc"
+static dm_nvn_host_state g_host_state = {.frz_req = -1, .frz_applied = -1};
 #include <vulkan/vulkan.h>
 #include <stdatomic.h>
 #include <errno.h>
@@ -1045,14 +1047,33 @@ void mtl_present_wait(uint64_t ticket) {
 }
 void mtl_present_flush(void) { mtl_finish(); }
 void mtl_present_test_stall(uint64_t ns) { (void)ns; }
-int mtl_display_hz(void) {
+double mtl_display_refresh(void) {
 #ifdef __ANDROID__
-    // 有真实 surface 且前端已查询屏幕才报告刷新率；无窗口/未链接前端的 fixture 仍为0。
-    // Report the queried refresh rate only with a real surface and frontend; headless or frontend-free fixtures remain zero.
+    // 前端在真实窗口存在时查询到的显示能力；未链接/无窗口一律0，不猜刷新率。
+    // Frontend-queried display capability only with a real window; zero when
+    // unlinked/headless, never an invented refresh rate.
     extern int dm_android_display_hz(void) __attribute__((weak));
-    if(surface&&dm_android_display_hz)return dm_android_display_hz();
+    if(surface&&dm_android_display_hz)return (double)dm_android_display_hz();
 #endif
     return 0;
+}
+int mtl_display_hz(void) { return (int)(mtl_display_refresh()+0.5); }
+void mtl_world_frozen(int on) { dm_nvn_host_state_frozen(&g_host_state,on); }
+void mtl_rt_force_full(int n) { dm_nvn_host_state_force_full(&g_host_state,n); }
+uint64_t mtl_host_latch(void) { return dm_nvn_host_state_latch(&g_host_state); }
+void mtl_host_apply(uint64_t value) {
+    int frz, force;
+    dm_nvn_host_state_apply(&g_host_state, value, &frz, &force);
+    // 本后端始终全画；冻结/外推尚未实现，明确拒绝冻结请求，不伪装成已跳过世界。
+    // This backend always draws full frames. Freeze/extrapolation are not
+    // implemented, so report and reject freeze requests instead of pretending
+    // that world draws were skipped. Force-full is already the actual behaviour.
+    if (frz > 0) {
+        static _Atomic int reported;
+        if (!atomic_exchange(&reported, 1))
+            LOG("[vulkan] world-freeze request is unsupported; keeping full draws");
+    }
+    (void)force;
 }
 int mtl_has_window(void) { return surface != VK_NULL_HANDLE; }
 int mtl_link_active(void) { return 0; }
