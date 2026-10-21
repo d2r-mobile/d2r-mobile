@@ -44,10 +44,21 @@ static void texture_diag_unsupported(unsigned format) {
 }
 // 只在真实采样绑定处记录，区分缺映射、未绑定、格式/视图/布局，不触碰资源字节。
 // Record only at real sampled binds, distinguishing missing/unbound/format/view/layout without resource bytes.
-static void texture_diag_bind(const texture_descriptor *descriptor, unsigned handle, uint32_t type, int slot, int stage) {
-    if (!texture_diag_state_reserve(&texture_diag)) return;
+static void texture_diag_bind(const texture_descriptor *descriptor, unsigned handle, uint32_t type, int slot, int stage, const char *shader) {
     unsigned texture_id = texture_diag_texture_id(handle);
     unsigned format = descriptor->valid ? (unsigned)descriptor->texture.d.format : 0;
+    texture_diag_key key;
+    memset(&key, 0, sizeof key);
+    snprintf(key.shader, sizeof key.shader, "%s", shader ? shader : "");
+    key.stage = (unsigned)stage;
+    key.slot = (unsigned)slot;
+    key.type = type;
+    key.texture_id = texture_id;
+    key.format = format;
+    key.view_set = descriptor->valid && descriptor->view.set_format;
+    key.view_format = descriptor->valid && descriptor->view.set_format ? (unsigned)descriptor->view.format : 0;
+    key.flags = descriptor->valid ? descriptor->texture.d.flags : 0;
+    if (!texture_diag_state_observe(&texture_diag, &key)) return;
     VkFormat vf = vk_format((int)format);
     int sampled = 0;
     if (vf != VK_FORMAT_UNDEFINED) {
@@ -61,14 +72,14 @@ static void texture_diag_bind(const texture_descriptor *descriptor, unsigned han
                                           descriptor->valid ? descriptor->texture.d.flags : 0);
     texture_diag_count(kind);
     if (descriptor->valid) {
-        LOG("[vulkan-tex-diag] n=%u kind=%s id=%u stage=%d slot=%d type=%#x format=%#x view=%#x size=%ux%u levels=%u layers=%u flags=%#x",
-            texture_diag.used, texture_diag_name(kind), texture_id, stage, slot, (unsigned)type,
+        LOG("[vulkan-tex-diag] n=%u kind=%s shader=%s id=%u stage=%d slot=%d type=%#x format=%#x view=%#x size=%ux%u levels=%u layers=%u flags=%#x",
+            texture_diag.used, texture_diag_name(kind), key.shader, texture_id, stage, slot, (unsigned)type,
             format, descriptor->view.set_format ? (unsigned)descriptor->view.format : 0,
             descriptor->texture.d.width, descriptor->texture.d.height, descriptor->texture.d.levels,
             descriptor->texture.L.layers, descriptor->texture.d.flags);
     } else {
-        LOG("[vulkan-tex-diag] n=%u kind=%s id=%u stage=%d slot=%d type=%#x (1x1 stand-in, whole quad samples zero)",
-            texture_diag.used, texture_diag_name(kind), texture_id, stage, slot, (unsigned)type);
+        LOG("[vulkan-tex-diag] n=%u kind=%s shader=%s id=%u stage=%d slot=%d type=%#x (1x1 stand-in, whole quad samples zero)",
+            texture_diag.used, texture_diag_name(kind), key.shader, texture_id, stage, slot, (unsigned)type);
     }
 }
 // 报告点先处理 token；同一 token 不重开已用完的窗口，采到实际行后只汇总一次。
@@ -78,10 +89,10 @@ static void texture_diag_report(uint64_t ticket, const char *token) {
     texture_diag_state_tick(&texture_diag, token);
     if (!texture_diag.used || texture_diag.summarized) return;
     texture_diag.summarized = 1;
-    LOG("[vulkan-tex-diag] frame=%llu token=%s lines=%u ok=%u unbound=%u missing=%u unsupported=%u unsampled=%u view=%u depth=%u linear=%u",
-        (unsigned long long)ticket, texture_diag.token, texture_diag.used, texture_diag.ok, texture_diag.unbound,
-        texture_diag.missing, texture_diag.unsupported, texture_diag.unsampled, texture_diag.view_format,
-        texture_diag.depth, texture_diag.linear);
+    LOG("[vulkan-tex-diag] frame=%llu token=%s lines=%u duplicates=%u ok=%u unbound=%u missing=%u unsupported=%u unsampled=%u view=%u depth=%u linear=%u",
+        (unsigned long long)ticket, texture_diag.token, texture_diag.used, texture_diag.duplicates,
+        texture_diag.ok, texture_diag.unbound, texture_diag.missing, texture_diag.unsupported,
+        texture_diag.unsampled, texture_diag.view_format, texture_diag.depth, texture_diag.linear);
 }
 
 static VkImageView image_view_get(image_entry *e,VkImageViewType type,VkImageSubresourceRange range) {
