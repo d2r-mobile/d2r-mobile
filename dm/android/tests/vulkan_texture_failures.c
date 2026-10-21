@@ -21,18 +21,20 @@ static VkResult step(void) { return ++call == fail_at ? VK_ERROR_OUT_OF_HOST_MEM
 enum { M_UPLOAD, M_UPDATE, M_READ };
 static int mode = M_UPLOAD;
 static int deny_transfer_src;
+static int deny_srgb;   // 让 sRGB 格式的能力查询报不支持 | report sRGB formats as unsupported
 static const VkImageUsageFlags image_usage =
     VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
 static const VkImage row_image = HANDLE(VkImage, 12);
 
 VKAPI_ATTR void VKAPI_CALL vkGetPhysicalDeviceFormatProperties(VkPhysicalDevice device,VkFormat format,VkFormatProperties *out) {
-    (void)device; CHECK(format==VK_FORMAT_R8G8B8A8_UNORM); memset(out,0,sizeof *out);
+    (void)device; CHECK(format==VK_FORMAT_R8G8B8A8_UNORM||format==VK_FORMAT_R8G8B8A8_SRGB); memset(out,0,sizeof *out);
+    if (format==VK_FORMAT_R8G8B8A8_SRGB&&deny_srgb) return;
     out->optimalTilingFeatures=VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT|VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
     if (!deny_transfer_src) out->optimalTilingFeatures|=VK_FORMAT_FEATURE_TRANSFER_SRC_BIT;
 }
 VKAPI_ATTR VkResult VKAPI_CALL vkGetPhysicalDeviceImageFormatProperties(VkPhysicalDevice device,VkFormat format,VkImageType type,
     VkImageTiling tiling,VkImageUsageFlags usage,VkImageCreateFlags flags,VkImageFormatProperties *out) {
-    (void)device; CHECK(format==VK_FORMAT_R8G8B8A8_UNORM&&type==VK_IMAGE_TYPE_2D&&tiling==VK_IMAGE_TILING_OPTIMAL);
+    (void)device; CHECK((format==VK_FORMAT_R8G8B8A8_UNORM||format==VK_FORMAT_R8G8B8A8_SRGB)&&type==VK_IMAGE_TYPE_2D&&tiling==VK_IMAGE_TILING_OPTIMAL);
     // 能力查询必须与创建用同一整掩码（含 TRANSFER_SRC）。 | The capability query must use the same full mask as creation (TRANSFER_SRC included).
     CHECK(usage==image_usage&&!flags); FAIL_POINT();
     *out=(VkImageFormatProperties){.maxExtent={16384,16384,1},.maxMipLevels=15,.maxArrayLayers=2048,
@@ -213,6 +215,17 @@ int main(void) {
       CHECK(!memcmp(&out,&before,sizeof out));balanced(); }
     deny_transfer_src=0;
     puts("PASS: capability without TRANSFER_SRC is refused truthfully");
+
+    // 2b. sRGB 能力门：设备报 sRGB 格式缺所需特性时，0x38 上传必须如实拒绝，不建任何资源。
+    // 2b. sRGB capability gate: when the device reports the sRGB format without the required features, a 0x38 upload
+    //     must be refused truthfully and allocate nothing.
+    deny_srgb=1;call=flushed=barriers=copies=0;fail_at=0;
+    { nvn_texdesc srgb=desc;srgb.format=0x38;
+      dm_vk_texture out;memset(&out,0x5a,sizeof out);dm_vk_texture before=out;
+      CHECK(dm_vk_texture_upload(&vk,&srgb,source,sizeof source,&out)==VK_ERROR_FORMAT_NOT_SUPPORTED);
+      CHECK(!memcmp(&out,&before,sizeof out));balanced(); }
+    deny_srgb=0;
+    puts("PASS: sRGB refused truthfully when the format lacks sampled/transfer support");
 
     // 3. 行更新：逐个失败点必须返回错误且资源平衡；成功时拷贝/屏障计数正确。
     // 3. Row update: every failure point returns an error with balanced resources; success checks copy/barrier counts.

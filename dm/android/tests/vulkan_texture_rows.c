@@ -146,7 +146,9 @@ int main(void) {
     uint8_t tiny[8];
     EXPECT(dm_vk_texture_read_rows(&vk, &texture, 0, 0, &region, 0, tiny, sizeof tiny) != VK_SUCCESS);    // 目的容量不足
     EXPECT(dm_vk_texture_read_rows(&vk, &texture, 0, 0, &region, 15, rows, 48 * H) != VK_SUCCESS);        // 读行距 < 紧排
-    dm_vk_texture other_format = texture; other_format.format = VK_FORMAT_R8G8B8A8_SRGB;
+    // 行操作接受 UNORM 与 sRGB 两种 4 字节语义，其他格式仍必须拒绝：用同宽的 UINT 当反例。
+    // Row operations accept both 4-byte semantics (UNORM, sRGB); any other format must still be refused: same-width UINT is the counterexample.
+    dm_vk_texture other_format = texture; other_format.format = VK_FORMAT_R8G8B8A8_UINT;
     EXPECT(dm_vk_texture_update_rows(&vk, &other_format, 0, 0, &region, one, sizeof one, 16) == VK_ERROR_FORMAT_NOT_SUPPORTED);
     EXPECT(dm_vk_texture_read_rows(&vk, &other_format, 0, 0, &region, 0, rows, 48 * H) == VK_ERROR_FORMAT_NOT_SUPPORTED);
     // 失败之后内容不变：整帧仍应是 A/C/B。 | Contents unchanged after failures: the frame still shows A/C/B.

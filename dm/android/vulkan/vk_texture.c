@@ -10,8 +10,21 @@ static uint32_t mip(uint32_t size, uint32_t level) {
     return value ? value : 1;
 }
 
+// NVNformat → VkFormat：本层只承诺两种 4 字节 RGBA8 语义（0x25 UNORM、0x38 sRGB），其余一律按不支持拒绝，
+// 不做猜测映射。两者存储布局相同（块线性、bpb 4），差别只在采样/附件读取时的 sRGB 解码。
+// NVNformat -> VkFormat: this layer only promises the two 4-byte RGBA8 semantics (0x25 UNORM, 0x38 sRGB) and refuses
+// everything else as unsupported rather than guessing a mapping. Both share the storage layout (block-linear, bpb 4);
+// they differ only in the sRGB decode applied when sampled or read as an attachment.
+static int map_format(int nvn_format, VkFormat *out) {
+    switch (nvn_format) {
+        case 0x25: if (out) *out = VK_FORMAT_R8G8B8A8_UNORM; return 1;
+        case 0x38: if (out) *out = VK_FORMAT_R8G8B8A8_SRGB; return 1;
+        default: return 0;
+    }
+}
+
 static int descriptor_valid(const nvn_texdesc *d) {
-    if ((d->target != 1 && d->target != 4) || d->format != 0x25 || d->flags || d->stride ||
+    if ((d->target != 1 && d->target != 4) || d->flags || d->stride ||
         d->samples < 0 || d->samples > 1 || d->pkg_block_h < 0 || d->pkg_block_h > 6 ||
         !d->width || d->width > 16384 || !d->height || d->height > 16384 ||
         !d->depth || d->depth > 2048 || (d->target == 1 && d->depth != 1) || !d->levels) return 0;
@@ -32,12 +45,14 @@ VkResult dm_vk_texture_upload(dm_vk *vk, const nvn_texdesc *desc,
     if (!vk || !desc || !source || !out || !vk->device || !descriptor_valid(desc))
         return VK_ERROR_INITIALIZATION_FAILED;
     nvn_texdesc d = *desc;
+    VkFormat format;
+    if (!map_format(d.format, &format)) return VK_ERROR_FORMAT_NOT_SUPPORTED;
     uint32_t layers = d.depth;
     const VkPhysicalDeviceLimits *limits = &vk->properties.limits;
     if (d.width > limits->maxImageDimension2D || d.height > limits->maxImageDimension2D ||
         layers > limits->maxImageArrayLayers) return VK_ERROR_FORMAT_NOT_SUPPORTED;
     VkFormatProperties features;
-    vkGetPhysicalDeviceFormatProperties(vk->physical, VK_FORMAT_R8G8B8A8_UNORM, &features);
+    vkGetPhysicalDeviceFormatProperties(vk->physical, format, &features);
     VkFormatFeatureFlags needed = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT |
         VK_FORMAT_FEATURE_TRANSFER_SRC_BIT;
     if ((features.optimalTilingFeatures & needed) != needed) return VK_ERROR_FORMAT_NOT_SUPPORTED;
@@ -49,7 +64,7 @@ VkResult dm_vk_texture_upload(dm_vk *vk, const nvn_texdesc *desc,
     VkImageUsageFlags usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT |
         VK_IMAGE_USAGE_SAMPLED_BIT;
     VkImageFormatProperties supported;
-    VkResult result = vkGetPhysicalDeviceImageFormatProperties(vk->physical, VK_FORMAT_R8G8B8A8_UNORM,
+    VkResult result = vkGetPhysicalDeviceImageFormatProperties(vk->physical, format,
         VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL, usage, 0, &supported);
     if (result != VK_SUCCESS) return result;
     if (d.width > supported.maxExtent.width || d.height > supported.maxExtent.height ||
@@ -75,7 +90,7 @@ VkResult dm_vk_texture_upload(dm_vk *vk, const nvn_texdesc *desc,
     uint32_t count = d.levels * layers;
     VkBufferImageCopy *copies = calloc(count, sizeof *copies);
     if (!copies) return VK_ERROR_OUT_OF_HOST_MEMORY;
-    dm_vk_texture texture = {.format = VK_FORMAT_R8G8B8A8_UNORM,
+    dm_vk_texture texture = {.format = format,
         .view_type = d.target == 1 ? VK_IMAGE_VIEW_TYPE_2D : VK_IMAGE_VIEW_TYPE_2D_ARRAY,
         .width = d.width, .height = d.height, .levels = d.levels, .layers = layers};
     dm_vk_buffer staging = {0};
@@ -179,7 +194,11 @@ static VkResult row_layout(const dm_vk_region *region, uint32_t row_bytes, size_
 VkResult dm_vk_texture_update_rows(dm_vk *vk, dm_vk_texture *texture, uint32_t level, uint32_t layer,
     const dm_vk_region *region, const void *source, size_t source_size, uint32_t row_bytes) {
     if (!vk || !vk->device || !texture || !texture->image || !source) return VK_ERROR_INITIALIZATION_FAILED;
-    if (texture->format != VK_FORMAT_R8G8B8A8_UNORM) return VK_ERROR_FORMAT_NOT_SUPPORTED;
+    // 行操作按原始字节搬运，不做 sRGB 编解码，因此两种 4 字节 RGBA8 语义都接受；采样端的解码差异由使用方承担。
+    // Row operations move raw bytes with no sRGB encode/decode, so both 4-byte RGBA8 semantics are accepted; the
+    // decode difference belongs to the sampling side.
+    if (texture->format != VK_FORMAT_R8G8B8A8_UNORM && texture->format != VK_FORMAT_R8G8B8A8_SRGB)
+        return VK_ERROR_FORMAT_NOT_SUPPORTED;
     if (!region_within(texture, level, layer, region)) return VK_ERROR_INITIALIZATION_FAILED;
     size_t stride, extent;
     VkResult result = row_layout(region, row_bytes, &stride, &extent);
@@ -228,7 +247,11 @@ VkResult dm_vk_texture_update_rows(dm_vk *vk, dm_vk_texture *texture, uint32_t l
 VkResult dm_vk_texture_read_rows(dm_vk *vk, const dm_vk_texture *texture, uint32_t level, uint32_t layer,
     const dm_vk_region *region, uint32_t row_bytes, void *dest, size_t dest_size) {
     if (!vk || !vk->device || !texture || !texture->image || !dest) return VK_ERROR_INITIALIZATION_FAILED;
-    if (texture->format != VK_FORMAT_R8G8B8A8_UNORM) return VK_ERROR_FORMAT_NOT_SUPPORTED;
+    // 行操作按原始字节搬运，不做 sRGB 编解码，因此两种 4 字节 RGBA8 语义都接受；采样端的解码差异由使用方承担。
+    // Row operations move raw bytes with no sRGB encode/decode, so both 4-byte RGBA8 semantics are accepted; the
+    // decode difference belongs to the sampling side.
+    if (texture->format != VK_FORMAT_R8G8B8A8_UNORM && texture->format != VK_FORMAT_R8G8B8A8_SRGB)
+        return VK_ERROR_FORMAT_NOT_SUPPORTED;
     if (!region_within(texture, level, layer, region)) return VK_ERROR_INITIALIZATION_FAILED;
     size_t stride, extent;
     VkResult result = row_layout(region, row_bytes, &stride, &extent);
