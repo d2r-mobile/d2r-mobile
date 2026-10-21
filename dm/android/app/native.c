@@ -9,6 +9,7 @@
 #include "lifecycle.h"
 #include "present_policy.h"
 #include "input_source.h"
+#include "gamepad_events.h"
 #include "touch_hud.h"
 #include "touch_hud_overlay.h"
 #include "view_policy.h"
@@ -35,7 +36,7 @@
 #include <time.h>
 #include <unistd.h>
 #define LOG(...) __android_log_print(ANDROID_LOG_INFO,"D2R-Diagnostic",__VA_ARGS__)
-typedef struct{dm_vk vk;AInputQueue*input;dm_app_lifecycle*lifecycle;ANativeActivity*activity;ANativeWindow*window;dm_input_arbiter*arbiter;dm_view_policy view;dm_input_policy gate;ALooper*looper;int timer_fd;int resumed,focused,touch_allowed;float density,touch_width_pt,touch_height_pt,touch_density;uint64_t last_touch_buttons;int32_t last_touch_lx,last_touch_ly,last_touch_rx,last_touch_ry;int64_t last_touch_log_ns;dm_android_touch_observation hud_obs;dm_touch_hud_frame hud_frame;int hud_obs_valid;dm_wsi wsi;dm_wsi_bridge wsi_bridge;dm_wsi_report report;dm_vk wsi_vk;dm_vk_swapchain wsi_chain;int wsi_chain_live;int frame_fd;int wsi_last_logged;char vertex[4096],fragment[4096];}app_state;
+typedef struct{dm_vk vk;AInputQueue*input;dm_app_lifecycle*lifecycle;ANativeActivity*activity;ANativeWindow*window;dm_input_arbiter*arbiter;dm_view_policy view;dm_input_policy gate;ALooper*looper;int timer_fd;int resumed,focused,touch_allowed;float density,touch_width_pt,touch_height_pt,touch_density;uint64_t last_touch_buttons;int32_t last_touch_lx,last_touch_ly,last_touch_rx,last_touch_ry;int64_t last_touch_log_ns;dm_android_touch_observation hud_obs;dm_touch_hud_frame hud_frame;int hud_obs_valid;dm_gamepad_context gamepad_context;dm_npad_state gamepad_state;uint32_t gamepad_id,gamepad_generation;int gamepad_admitted;int64_t gamepad_after_ns;dm_wsi wsi;dm_wsi_bridge wsi_bridge;dm_wsi_report report;dm_vk wsi_vk;dm_vk_swapchain wsi_chain;int wsi_chain_live;int frame_fd;int wsi_last_logged;char vertex[4096],fragment[4096];}app_state;
 static int64_t monotonic_ns(void){
     struct timespec ts;
     if(clock_gettime(CLOCK_MONOTONIC,&ts))return -1;
@@ -292,12 +293,42 @@ static void touch_consume(app_state*s,const char*reason){
         s->last_touch_rx=state.rx;s->last_touch_ry=state.ry;
     }
 }
+/* A lifecycle reset is the only admission reset. There is no platform
+   hotplug callback in this slice, so a device does not silently replace an
+   already admitted one. Clear the caller-owned converter and its prior sample
+   together with the arbiter's gamepad contribution. */
+static void gamepad_rearm(app_state*s){
+    if(!s)return;
+    if(s->gamepad_admitted&&s->arbiter)
+        (void)dm_input_arbiter_disconnect(s->arbiter,s->gamepad_id,s->gamepad_generation);
+    s->gamepad_admitted=0;
+    dm_gamepad_context_init(&s->gamepad_context);
+    memset(&s->gamepad_state,0,sizeof(s->gamepad_state));
+    int64_t now=monotonic_ns();
+    s->gamepad_after_ns=now>0?now:0;
+}
 static void touch_cancel(app_state*s,const char*reason,int64_t now){
     if(!s||!s->arbiter)return;
     (void)now;
     if(!dm_input_arbiter_queue_changed(s->arbiter))
         LOG("touch cancel rejected: %s",reason);
+    gamepad_rearm(s);
     touch_consume(s,reason);
+}
+static uint32_t gamepad_next_generation(app_state*s){
+    s->gamepad_generation++;
+    if(!s->gamepad_generation)s->gamepad_generation=1;
+    return s->gamepad_generation;
+}
+static int gamepad_source(int32_t source){
+    return dm_gamepad_source_is_gamepad(source);
+}
+static void gamepad_sample_from_state(const dm_npad_state*state,dm_pad_sample*sample){
+    memset(sample,0,sizeof(*sample));
+    sample->buttons=state->buttons;
+    sample->lx=state->lx;sample->ly=state->ly;
+    sample->rx=state->rx;sample->ry=state->ry;
+    sample->connected=1;
 }
 static void touch_resize_window(app_state*s,ANativeWindow*window){
     if(!s||!s->arbiter||!window)return;
@@ -311,6 +342,7 @@ static void touch_resize_window(app_state*s,ANativeWindow*window){
         LOG("touch resize rejected: %.1fx%.1f pt",width_pt,height_pt);return;
     }
     s->touch_width_pt=width_pt;s->touch_height_pt=height_pt;s->touch_density=s->density;
+    gamepad_rearm(s);
     touch_consume(s,"resize");
 }
 // 诊断读回目标尺寸；窗口缓冲尺寸与它无关（居中裁剪由 app/present_policy.c 决定）。
@@ -566,9 +598,63 @@ static void handle_motion(app_state*s,AInputEvent*event){
         translated.points[i].x_px=AMotionEvent_getX(event,(size_t)i);
         translated.points[i].y_px=AMotionEvent_getY(event,(size_t)i);
     }
+    dm_input_source before=dm_input_arbiter_source(s->arbiter);
     if(!dm_input_arbiter_touch(s->arbiter,&translated))
         LOG("touch event rejected action=%d count=%u",action,count);
+    else if(before==DM_INPUT_SOURCE_GAMEPAD&&
+            dm_input_arbiter_source(s->arbiter)==DM_INPUT_SOURCE_TOUCH){
+        /* A valid touch takeover retires the old controller contribution and
+           prior sample. Admission/id/generation stay intact, but a neutral
+           MotionEvent cannot republish a canceled button. A rejected touch
+           event never reaches this branch. */
+        if(s->gamepad_admitted){
+            dm_gamepad_context_init(&s->gamepad_context);
+            memset(&s->gamepad_state,0,sizeof(s->gamepad_state));
+        }
+    }
     touch_consume(s,"event");
+}
+/* Android getters report device IDs as non-negative int32 values. The arbiter
+   stores one caller-owned scalar id; real IDs are not a 0..15 table. Reject
+   the getter's negative sentinel before the uint32 API boundary. */
+static void handle_gamepad(app_state*s,AInputEvent*event){
+    if(!s||!s->arbiter)return;
+    if(!s->touch_allowed){LOG("gamepad event ignored while inactive");return;}
+    int32_t raw_id=AInputEvent_getDeviceId(event);
+    if(raw_id<0){LOG("gamepad event rejected: negative device id");return;}
+    uint32_t id=(uint32_t)raw_id;
+    int32_t type=AInputEvent_getType(event);
+    int64_t event_time;
+    if(type==AINPUT_EVENT_TYPE_KEY)event_time=AKeyEvent_getEventTime(event);
+    else if(type==AINPUT_EVENT_TYPE_MOTION)event_time=AMotionEvent_getEventTime(event);
+    else return;
+    if(event_time<0||event_time<s->gamepad_after_ns){
+        LOG("gamepad event rejected: stale time");
+        return;
+    }
+    if(s->gamepad_admitted&&id!=s->gamepad_id){
+        LOG("gamepad event rejected: another device while one is admitted");
+        return;
+    }
+    dm_gamepad_context next_context=s->gamepad_context;
+    dm_npad_state next_state=s->gamepad_state;
+    if(!dm_gamepad_event_apply(&next_context,event,&next_state))return;
+    dm_pad_sample sample;
+    gamepad_sample_from_state(&next_state,&sample);
+    if(!s->gamepad_admitted){
+        uint32_t generation=gamepad_next_generation(s);
+        if(!dm_input_arbiter_connect(s->arbiter,id,generation))return;
+        if(!dm_input_arbiter_gamepad(s->arbiter,id,generation,&sample)){
+            (void)dm_input_arbiter_disconnect(s->arbiter,id,generation);
+            return;
+        }
+        s->gamepad_id=id;s->gamepad_generation=generation;s->gamepad_admitted=1;
+    }else if(!dm_input_arbiter_gamepad(s->arbiter,id,s->gamepad_generation,&sample)){
+        return;
+    }
+    s->gamepad_context=next_context;
+    s->gamepad_state=next_state;
+    touch_consume(s,"gamepad");
 }
 static int input_ready(int fd,int events,void*data){
     (void)fd;(void)events;ANativeActivity*a=data;app_state*s=a->instance;if(!s||!s->input)return 0;
@@ -579,6 +665,8 @@ static int input_ready(int fd,int events,void*data){
         }else if(AInputEvent_getType(event)==AINPUT_EVENT_TYPE_MOTION&&
                  (AInputEvent_getSource(event)&AINPUT_SOURCE_TOUCHSCREEN)==AINPUT_SOURCE_TOUCHSCREEN){
             handle_motion(s,event);handled=1;
+        }else if(gamepad_source(AInputEvent_getSource(event))){
+            handle_gamepad(s,event);handled=1;
         }
         AInputQueue_finishEvent(s->input,event,handled);
     }return 1;
@@ -589,6 +677,7 @@ static void input_created(ANativeActivity*a,AInputQueue*queue){app_state*s=a->in
         AInputQueue_detachLooper(s->input);s->input=NULL;update_touch_state(s);
         if(s->arbiter&&!dm_input_arbiter_queue_changed(s->arbiter))
             LOG("arbiter queue-change invalidation rejected");
+        gamepad_rearm(s);
         LOG("input queue replaced; arbiter retained");
     }
     if(!s->arbiter){
@@ -610,6 +699,7 @@ static void input_destroyed(ANativeActivity*a,AInputQueue*queue){app_state*s=a->
     AInputQueue_detachLooper(queue);s->input=NULL;update_touch_state(s);
     if(s->arbiter&&!dm_input_arbiter_queue_changed(s->arbiter))
         LOG("arbiter queue-loss invalidation rejected");
+    gamepad_rearm(s);
     touch_consume(s,"queue_lost");
 }
 static void window_ready(ANativeActivity*a,ANativeWindow*window){
@@ -733,6 +823,7 @@ static void destroy(ANativeActivity*a){app_state*s=a->instance;if(s){
         wsi_report_snapshot(s,"destroy");
     }
     if(s->input){AInputQueue_detachLooper(s->input);s->input=NULL;}
+    gamepad_rearm(s);
     if(s->arbiter){dm_npad_state neutral;dm_input_arbiter_destroy(s->arbiter,&neutral);s->arbiter=NULL;
         LOG("input arbiter destroyed buttons=%llu",(unsigned long long)neutral.buttons);}
     if(s->lifecycle){
@@ -750,6 +841,7 @@ static void low_memory(ANativeActivity*a){app_state*s=a->instance;if(s&&s->vk.de
 static void pause_app(ANativeActivity*a){app_state*s=a->instance;if(!s||!s->lifecycle)return;
     s->resumed=0;update_touch_state(s);
     if(s->arbiter&&!dm_input_arbiter_pause(s->arbiter,1))LOG("arbiter pause invalidation rejected");
+    gamepad_rearm(s);
     if(s->wsi.enabled){dm_wsi_pause(&s->wsi);stop_frame_timer(s);
         dm_wsi_report_event(&s->report,DM_WSI_EVENT_PAUSE);wsi_report_snapshot(s,"pause");}
     touch_consume(s,"pause");
@@ -772,6 +864,7 @@ static void resume_app(ANativeActivity*a){app_state*s=a->instance;if(!s||!s->lif
 static void focus_changed(ANativeActivity*a,int focused){app_state*s=a->instance;if(!s)return;
     s->focused=focused?1:0;
     if(s->arbiter&&!dm_input_arbiter_focus(s->arbiter,focused?1:0))LOG("arbiter focus invalidation rejected");
+    if(!focused)gamepad_rearm(s);
     update_touch_state(s);
     if(!focused)touch_consume(s,"focus_lost");
 }
@@ -787,6 +880,7 @@ static void configuration_changed(ANativeActivity*a){app_state*s=a->instance;if(
         if(!dm_input_arbiter_set_geometry(s->arbiter,width,height,density,now))
             LOG("arbiter density update rejected");
         else { s->touch_width_pt=width; s->touch_height_pt=height; s->touch_density=density; }
+        gamepad_rearm(s);
     }
     update_touch_state(s);
 }

@@ -447,7 +447,7 @@ integration is claimed in this slice.
 
 The policy is explicit and bounded:
 
-- Device ids are `0..DM_INPUT_MAX_DEVICE_ID` (15); generation `0` is invalid.
+- Device ids are non-negative Android scalars up to `INT32_MAX`; generation `0` is invalid. No 0..15 remapping registry exists.
   A connection or a neutral sample never takes ownership from touch and never
   cancels it. A generation change clears the old gamepad state and rejects old
   samples; it does not cancel touch.
