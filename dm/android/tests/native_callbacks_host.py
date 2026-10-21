@@ -21,6 +21,8 @@ FUNCTIONS = ["wsi_report_now", "wsi_report_progress", "wsi_report_snapshot", "ws
              "host_stop",
              "touch_refresh_hud", "touch_consume",
              "gamepad_rearm", "gamepad_next_generation", "gamepad_source", "gamepad_sample_from_state",
+             "controller_hotplug_acquire_owner", "controller_hotplug_release_owner",
+             "controller_hotplug_dispatch",
              "touch_cancel", "touch_resize_window",
              "window_ready", "window_resized", "window_destroyed",
              "pause_app", "resume_app", "focus_changed", "configuration_changed",
@@ -123,6 +125,7 @@ typedef int VkResult;
 #define AMOTION_EVENT_ACTION_POINTER_UP 6
 #define AMOTION_EVENT_ACTION_POINTER_INDEX_MASK 0xff00
 #define AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT 8
+enum { dm_controller_added = 0, dm_controller_removed = 1, dm_controller_changed = 2 };
 typedef struct AInputEvent {
     int type, source, keycode, action;
     int device_id;
@@ -182,6 +185,7 @@ typedef struct {
     uint32_t gamepad_id, gamepad_generation;
     int gamepad_admitted;
     int64_t gamepad_after_ns;
+    uint64_t controller_session;
     uint64_t last_touch_buttons;
     int32_t last_touch_lx, last_touch_ly, last_touch_rx, last_touch_ry;
     int64_t last_touch_log_ns;
@@ -189,6 +193,7 @@ typedef struct {
     dm_vk vk;
     char vertex[8], fragment[8];
 } app_state;
+static app_state *g_controller_app;
 
 static int touch_resize_calls, bad_touch_reads, update_calls, stop_calls, start_calls;
 static int lock_calls, frame_calls, fail_open, fail_close, fail_start, frame_status = DM_WSI_OK;
@@ -789,8 +794,77 @@ static int gamepad_cases(void) {
     return 0;
 }
 
+static int controller_hotplug_cases(void) {
+    app_state s;
+    memset(&s, 0, sizeof s);
+    s.density = 1.0f;
+    s.touch_allowed = 1;
+    s.arbiter = dm_input_arbiter_create(667, 375, 1.0f);
+    CHECK(s.arbiter != NULL);
+    AInputQueue q;
+    memset(&q, 0, sizeof q);
+    s.input = &q;
+    app_state b;
+    memset(&b, 0, sizeof b);
+    g_controller_app = NULL;
+    CHECK(controller_hotplug_acquire_owner(&s));
+    CHECK(!controller_hotplug_acquire_owner(&b));
+    CHECK(g_controller_app == &s);
+    controller_hotplug_release_owner(&b);
+    CHECK(g_controller_app == &s);
+    s.controller_session = 77;
+
+    queue_gamepad_key(&q, AKEY_EVENT_ACTION_DOWN, AKEYCODE_BUTTON_A, 42, 1);
+    CHECK(input_ready(0, 0, &(ANativeActivity){&s, 1.0f}) == 1);
+    CHECK(dm_input_arbiter_source(s.arbiter) == DM_INPUT_SOURCE_GAMEPAD);
+
+    /* Added is inert, wrong-id removal is inert. */
+    controller_hotplug_dispatch(&s, 77, 0, 42);
+    CHECK(dm_input_arbiter_source(s.arbiter) == DM_INPUT_SOURCE_GAMEPAD);
+    controller_hotplug_dispatch(&s, 77, 1, 43);
+    CHECK(dm_input_arbiter_source(s.arbiter) == DM_INPUT_SOURCE_GAMEPAD);
+    CHECK(s.gamepad_admitted && s.gamepad_id == 42);
+
+    /* Matching removal retires the admitted controller and publishes neutral. */
+    controller_hotplug_dispatch(&s, 77, 1, 42);
+    CHECK(!s.gamepad_admitted);
+    CHECK(dm_input_arbiter_source(s.arbiter) == DM_INPUT_SOURCE_NONE);
+    dm_npad_state state;
+    CHECK(dm_input_arbiter_read(s.arbiter, &state) && state.attributes == 0);
+
+    /* Add alone cannot admit or steal; a genuinely new device can after
+       removal, and stale session/late change cannot affect it. */
+    controller_hotplug_dispatch(&s, 77, 0, 55);
+    CHECK(!s.gamepad_admitted);
+    CHECK(dm_input_arbiter_source(s.arbiter) == DM_INPUT_SOURCE_NONE);
+    queue_gamepad_key(&q, AKEY_EVENT_ACTION_DOWN, AKEYCODE_BUTTON_B, 55, 1000000001);
+    CHECK(input_ready(0, 0, &(ANativeActivity){&s, 1.0f}) == 1);
+    CHECK(dm_input_arbiter_source(s.arbiter) == DM_INPUT_SOURCE_GAMEPAD);
+    CHECK(s.gamepad_admitted && s.gamepad_id == 55);
+    controller_hotplug_dispatch(&s, 76, 1, 55);
+    CHECK(dm_input_arbiter_source(s.arbiter) == DM_INPUT_SOURCE_GAMEPAD);
+    CHECK(s.gamepad_admitted && s.gamepad_id == 55);
+
+    /* Matching change retires; a late old-session removal stays inert. */
+    controller_hotplug_dispatch(&s, 77, 2, 55);
+    CHECK(!s.gamepad_admitted);
+    CHECK(dm_input_arbiter_source(s.arbiter) == DM_INPUT_SOURCE_NONE);
+    controller_hotplug_dispatch(&s, 0, 1, 55);
+    CHECK(dm_input_arbiter_source(s.arbiter) == DM_INPUT_SOURCE_NONE);
+    controller_hotplug_release_owner(&s);
+    CHECK(g_controller_app == NULL);
+    CHECK(controller_hotplug_acquire_owner(&b));
+    controller_hotplug_release_owner(&b);
+    CHECK(g_controller_app == NULL);
+
+    dm_npad_state neutral;
+    dm_input_arbiter_destroy(s.arbiter, &neutral);
+    return 0;
+}
+
 int main(void) {
     if (gamepad_cases()) return 1;
+    if (controller_hotplug_cases()) return 1;
     if (input_cases()) return 1;
     app_state s;
     memset(&s, 0, sizeof s);
@@ -1137,6 +1211,14 @@ def main() -> int:
          "if(before==DM_INPUT_SOURCE_GAMEPAD&&\n            dm_input_arbiter_source(s->arbiter)==DM_INPUT_SOURCE_TOUCH){",
          "if(0){",
          "dm_input_arbiter_source(s.arbiter) == DM_INPUT_SOURCE_TOUCH"),
+        ("omit-hotplug-id-match",
+         "if(!s->gamepad_admitted||device_id<0||(uint32_t)device_id!=s->gamepad_id)return;",
+         "if(0)return;",
+         "dm_input_arbiter_source(s.arbiter) == DM_INPUT_SOURCE_GAMEPAD"),
+        ("omit-owner-busy",
+         "if(g_controller_app&&g_controller_app!=s)return 0;",
+         "if(0)return 0;",
+         "!controller_hotplug_acquire_owner(&b)"),
     ]
     with tempfile.TemporaryDirectory() as td:
         work = Path(td)
