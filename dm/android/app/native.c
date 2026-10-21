@@ -145,14 +145,27 @@ static void touch_consume(app_state*s,const char*reason){
     if(changed||s->last_touch_log_ns==0||
        (now>=0&&now-s->last_touch_log_ns>=250000000LL)){
         const dm_touch_diag*diag=dm_touch_bridge_diag(s->touch);
-        LOG("touch %s buttons=%llu lx=%d ly=%d rx=%d ry=%d diag_reads=%llu invalid=%llu rejected=%llu drained=%llu up_retries=%llu cancel_fallbacks=%llu",
+        const char*first=diag?dm_touch_invalid_reason_name(diag->first_invalid_reason):"none";
+        const char*last=diag?dm_touch_invalid_reason_name(diag->last_invalid_reason):"none";
+        const uint64_t*rc=diag?diag->invalid_reason:NULL;
+        LOG("touch %s buttons=%llu lx=%d ly=%d rx=%d ry=%d diag_reads=%llu invalid=%llu rejected=%llu drained=%llu up_retries=%llu cancel_fallbacks=%llu invalid_first=%s invalid_last=%s reasons[time=%llu action=%llu count=%llu index=%llu id=%llu coord=%llu dup=%llu unknown=%llu owned=%llu capacity=%llu]",
             reason,(unsigned long long)state.buttons,state.lx,state.ly,state.rx,state.ry,
             (unsigned long long)(diag?diag->diagnostic_reads:0),
             (unsigned long long)(diag?diag->invalid_events:0),
             (unsigned long long)(diag?diag->rejected_events:0),
             (unsigned long long)(diag?diag->drained_pulses:0),
             (unsigned long long)(diag?diag->up_retries:0),
-            (unsigned long long)(diag?diag->cancel_fallbacks:0));
+            (unsigned long long)(diag?diag->cancel_fallbacks:0),first,last,
+            (unsigned long long)(rc?rc[DM_TOUCH_INVALID_TIME_NEGATIVE]:0),
+            (unsigned long long)(rc?rc[DM_TOUCH_INVALID_ACTION_RANGE]:0),
+            (unsigned long long)(rc?rc[DM_TOUCH_INVALID_COUNT_RANGE]:0),
+            (unsigned long long)(rc?rc[DM_TOUCH_INVALID_ACTION_INDEX]:0),
+            (unsigned long long)(rc?rc[DM_TOUCH_INVALID_POINT_ID_NEGATIVE]:0),
+            (unsigned long long)(rc?rc[DM_TOUCH_INVALID_COORDINATE_NONFINITE]:0),
+            (unsigned long long)(rc?rc[DM_TOUCH_INVALID_DUPLICATE_ID]:0),
+            (unsigned long long)(rc?rc[DM_TOUCH_INVALID_UNKNOWN_POINTER]:0),
+            (unsigned long long)(rc?rc[DM_TOUCH_INVALID_POINTER_ALREADY_OWNED]:0),
+            (unsigned long long)(rc?rc[DM_TOUCH_INVALID_POINTER_CAPACITY]:0));
         s->last_touch_log_ns=now;
         s->last_touch_buttons=state.buttons;
         s->last_touch_lx=state.lx;s->last_touch_ly=state.ly;

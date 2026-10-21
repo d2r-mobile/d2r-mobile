@@ -71,53 +71,82 @@ static dm_npad_state consume(dm_touch_bridge *bridge) {
     return state;
 }
 
-static int valid_event(const dm_touch_bridge *bridge, const dm_touch_event *event) {
-    if (!bridge || !event) return 0;
-    if (event->time_ns < 0) return 0;
+static dm_touch_invalid_reason validate_event(const dm_touch_bridge *bridge, const dm_touch_event *event) {
+    if (!bridge || !event) return DM_TOUCH_INVALID_NONE;   /* not counted by event() */
+    if (event->time_ns < 0) return DM_TOUCH_INVALID_TIME_NEGATIVE;
     if (event->action < DM_TOUCH_ACTION_DOWN ||
-        event->action > DM_TOUCH_ACTION_POINTER_UP) return 0;
+        event->action > DM_TOUCH_ACTION_POINTER_UP) return DM_TOUCH_INVALID_ACTION_RANGE;
     if (event->action == DM_TOUCH_ACTION_CANCEL) {
         /* A platform CANCEL may have no usable coordinates/pointers; it still
            must release all ownership and queued pulses. */
-        return event->pointer_count <= DM_TOUCH_MAX_POINTS;
+        return event->pointer_count <= DM_TOUCH_MAX_POINTS ? DM_TOUCH_INVALID_NONE
+                                                            : DM_TOUCH_INVALID_COUNT_RANGE;
     }
-    if (event->pointer_count == 0 || event->pointer_count > DM_TOUCH_MAX_POINTS) return 0;
+    if (event->pointer_count == 0 || event->pointer_count > DM_TOUCH_MAX_POINTS)
+        return DM_TOUCH_INVALID_COUNT_RANGE;
     if (event->action != DM_TOUCH_ACTION_MOVE) {
         if (event->action_index < 0 ||
-            (uint32_t)event->action_index >= event->pointer_count) return 0;
+            (uint32_t)event->action_index >= event->pointer_count)
+            return DM_TOUCH_INVALID_ACTION_INDEX;
     }
     for (uint32_t i = 0; i < event->pointer_count; i++) {
         const dm_touch_point *point = &event->points[i];
-        if (point->id < 0 || !isfinite(point->x_px) || !isfinite(point->y_px)) return 0;
+        if (point->id < 0) return DM_TOUCH_INVALID_POINT_ID_NEGATIVE;
+        if (!isfinite(point->x_px) || !isfinite(point->y_px))
+            return DM_TOUCH_INVALID_COORDINATE_NONFINITE;
         for (uint32_t j = 0; j < i; j++) {
-            if (event->points[j].id == point->id) return 0;
+            if (event->points[j].id == point->id) return DM_TOUCH_INVALID_DUPLICATE_ID;
         }
     }
     if (event->action == DM_TOUCH_ACTION_MOVE) {
         for (uint32_t i = 0; i < event->pointer_count; i++) {
-            if (active_index(bridge, event->points[i].id) < 0) return 0;
+            if (active_index(bridge, event->points[i].id) < 0)
+                return DM_TOUCH_INVALID_UNKNOWN_POINTER;
         }
     } else if (event->action == DM_TOUCH_ACTION_DOWN ||
                event->action == DM_TOUCH_ACTION_POINTER_DOWN) {
-        if (bridge->active_count >= DM_TOUCH_MAX_POINTS) return 0;
+        if (bridge->active_count >= DM_TOUCH_MAX_POINTS)
+            return DM_TOUCH_INVALID_POINTER_CAPACITY;
         int32_t id = event->points[event->action_index].id;
-        if (active_index(bridge, id) >= 0) return 0;
+        if (active_index(bridge, id) >= 0)
+            return DM_TOUCH_INVALID_POINTER_ALREADY_OWNED;
         /* Every other pointer in the Android frame must already be owned; this
            rejects a malformed DOWN stream instead of leaving hidden pointers. */
         for (uint32_t i = 0; i < event->pointer_count; i++) {
             if ((int32_t)i == event->action_index) continue;
-            if (active_index(bridge, event->points[i].id) < 0) return 0;
+            if (active_index(bridge, event->points[i].id) < 0)
+                return DM_TOUCH_INVALID_UNKNOWN_POINTER;
         }
     } else if (event->action == DM_TOUCH_ACTION_UP ||
                event->action == DM_TOUCH_ACTION_POINTER_UP) {
         int32_t id = event->points[event->action_index].id;
-        if (active_index(bridge, id) < 0) return 0;
+        if (active_index(bridge, id) < 0)
+            return DM_TOUCH_INVALID_UNKNOWN_POINTER;
         for (uint32_t i = 0; i < event->pointer_count; i++) {
             if ((int32_t)i == event->action_index) continue;
-            if (active_index(bridge, event->points[i].id) < 0) return 0;
+            if (active_index(bridge, event->points[i].id) < 0)
+                return DM_TOUCH_INVALID_UNKNOWN_POINTER;
         }
     }
-    return 1;
+    return DM_TOUCH_INVALID_NONE;
+}
+
+const char *dm_touch_invalid_reason_name(dm_touch_invalid_reason reason) {
+    switch (reason) {
+    case DM_TOUCH_INVALID_NONE: return "none";
+    case DM_TOUCH_INVALID_TIME_NEGATIVE: return "time_negative";
+    case DM_TOUCH_INVALID_ACTION_RANGE: return "action_range";
+    case DM_TOUCH_INVALID_COUNT_RANGE: return "count_range";
+    case DM_TOUCH_INVALID_ACTION_INDEX: return "action_index";
+    case DM_TOUCH_INVALID_POINT_ID_NEGATIVE: return "point_id_negative";
+    case DM_TOUCH_INVALID_COORDINATE_NONFINITE: return "coordinate_nonfinite";
+    case DM_TOUCH_INVALID_DUPLICATE_ID: return "duplicate_id";
+    case DM_TOUCH_INVALID_UNKNOWN_POINTER: return "unknown_pointer";
+    case DM_TOUCH_INVALID_POINTER_ALREADY_OWNED: return "pointer_already_owned";
+    case DM_TOUCH_INVALID_POINTER_CAPACITY: return "pointer_capacity";
+    case DM_TOUCH_INVALID_COUNT: return "count";
+    }
+    return "unknown";
 }
 
 static int apply_down(dm_touch_bridge *bridge, const dm_touch_point *point, int64_t time_ns) {
@@ -308,8 +337,12 @@ int dm_touch_bridge_event(dm_touch_bridge *bridge, const dm_touch_event *event) 
         }
     }
     sync_game_epoch(bridge);
-    if (!valid_event(bridge, event)) {
+    dm_touch_invalid_reason invalid = validate_event(bridge, event);
+    if (invalid != DM_TOUCH_INVALID_NONE) {
+        if (bridge->diag.invalid_events == 0) bridge->diag.first_invalid_reason = invalid;
         bridge->diag.invalid_events++;
+        bridge->diag.invalid_reason[invalid]++;
+        bridge->diag.last_invalid_reason = invalid;
         return 0;
     }
     bridge->last_time_ns = event->time_ns;
