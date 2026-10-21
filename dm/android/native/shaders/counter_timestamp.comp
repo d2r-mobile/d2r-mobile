@@ -1,0 +1,40 @@
+#version 450
+// 用32位整数精确转换设备时间戳，不启用64位能力。
+// Convert device timestamps exactly with 32-bit limbs, without 64-bit features.
+layout(local_size_x=1,local_size_y=1,local_size_z=1) in;
+layout(set=0,binding=0,std430) readonly buffer RawTimestamp { uvec2 raw[]; } source;
+layout(set=0,binding=1,std430) writeonly buffer CounterReport { uvec4 report[]; } destination;
+layout(push_constant) uniform Parameters { uint multiplier; uint right_shift; uint valid_bits; uint reserved; } parameters;
+void main() {
+    // CPU先验证参数：有效位1..64，右移0..95及结果无溢出。
+    // CPU validates bits 1..64, shift 0..95, and absence of result overflow.
+    uvec2 tick=source.raw[0];
+    if(parameters.valid_bits<32u){tick.x&=(1u<<parameters.valid_bits)-1u;tick.y=0u;}
+    else if(parameters.valid_bits==32u)tick.y=0u;
+    else if(parameters.valid_bits<64u)tick.y&=(1u<<(parameters.valid_bits-32u))-1u;
+    uint hi0,lo0,hi1,lo1;
+    umulExtended(tick.x,parameters.multiplier,hi0,lo0);
+    umulExtended(tick.y,parameters.multiplier,hi1,lo1);
+    uint middle=hi0+lo1;
+    uint product[3]=uint[3](lo0,middle,hi1+uint(middle<hi0));
+    uint quotient[3]=uint[3](0u,0u,0u);
+    uint remainder=0u;
+    // 基数65536长除，中间值最大40959999。
+    // Base-65536 division has intermediates at most 40959999.
+    for(int digit=5;digit>=0;--digit){
+        uint part=(product[digit/2]>>uint((digit%2)*16))&65535u;
+        uint value=remainder*65536u+part;
+        quotient[digit/2]|=(value/625u)<<uint((digit%2)*16);
+        remainder=value%625u;
+    }
+    uint words=parameters.right_shift/32u,bits=parameters.right_shift%32u;
+    uvec2 stamp=uvec2(0u);
+    for(uint i=0u;i<2u;i++){
+        uint index=words+i;
+        if(index<3u){
+            stamp[i]=quotient[index]>>bits;
+            if(bits!=0u&&index+1u<3u)stamp[i]|=quotient[index+1u]<<(32u-bits);
+        }
+    }
+    destination.report[0]=uvec4(stamp,stamp);
+}
