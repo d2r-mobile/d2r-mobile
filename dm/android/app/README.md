@@ -50,6 +50,10 @@ Tests added with the integration:
 
 Android acceptance is not claimed: host tests and the ARM64 build do not establish Adreno behaviour, pixels on a device, frame rate or full touch acceptance.
 
+Bounded evidence lines (#147) are emitted only in this explicit mode: one configuration line when a swapchain is created (mode, requested versus actual extent, format, present mode, image count, maintenance capability, with unknown values printed as `unknown`), at most one progress line per second while real progress exists (queued presents, suboptimal, rebuild requests, surface loss, errors, pause/resume/stop counts), and a final snapshot on pause, window loss, stop or a terminal error. The reported rate is queued-present throughput and is explicitly not display FPS, frame pacing, latency or vsync. Reporting rides on the existing frame/lifecycle callbacks, so it adds no timer and no wakeup while paused, windowless or failed.
+
+Failures are named, not collapsed: every open records an attempt with the real requested extent, so a failed open reports its stage, the original `VkResult` when one exists (`code=unknown` when the failure is a missing capability rather than a Vulkan call), and the `unsupported` or `error` category; an earlier successful negotiation is cleared and marked stale instead of being reported as current. Retries are counted as explicit attempts after a failure. Lifecycle counters describe real transitions only: a duplicate pause callback, or the stop that both teardown and the lifecycle host stop perform, is counted once, and each terminal transition owes exactly one final snapshot.
+
 ## Lifecycle ownership
 
 `app/lifecycle.c` is the production NativeActivity lifecycle controller. Its

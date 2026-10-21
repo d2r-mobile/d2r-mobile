@@ -34,6 +34,9 @@ static dm_wsi_status drain_close(dm_wsi *wsi) {
 
 static dm_wsi_status open_window(dm_wsi *wsi) {
     if (!wsi->ops.open) return fail(wsi, DM_WSI_ERROR);
+    // 真实打开边界：记录一次尝试与请求尺寸；redraw 快路径不会到这里。
+    // The real open boundary: record one attempt with the requested size; the redraw fast path never reaches it.
+    if (wsi->on_open) wsi->on_open(wsi->on_open_ctx, wsi->width, wsi->height);
     const int result = wsi->ops.open(wsi->ops.ctx, wsi->window, wsi->width, wsi->height);
     if (result == 0) {
         wsi->open = 1;
@@ -168,4 +171,10 @@ dm_wsi_status dm_wsi_stop(dm_wsi *wsi) {
     wsi->awaiting_surface = 0;
     wsi->needs_rebuild = 0;
     return (wsi->last = DM_WSI_OK);
+}
+
+void dm_wsi_set_open_observer(dm_wsi *wsi, dm_wsi_open_observer observer, void *ctx) {
+    if (!wsi) return;
+    wsi->on_open = observer;
+    wsi->on_open_ctx = observer ? ctx : NULL;
 }
