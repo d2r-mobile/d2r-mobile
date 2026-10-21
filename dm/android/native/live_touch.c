@@ -1,5 +1,6 @@
 #include "live_touch.h"
 #include "../../ios/Sources/dm_touch_controls.h"
+#include "../../host/dm_input.h"
 #include "touch_pointer_map.h"
 
 #include <math.h>
@@ -16,6 +17,19 @@ struct dm_live_touch {
     int portal_request;
     int have_context;
     uint64_t scene_epoch, world_epoch, ui_identity, object_generation;
+    dm_tg_snapshot skill_snapshot;
+    int skill_snapshot_valid;
+    uint64_t skill_scene_epoch, skill_world_epoch;
+    int skill_bind_active;
+    uint64_t skill_bind_request, skill_bind_key, skill_bind_scene_epoch, skill_bind_world_epoch;
+    struct {
+        int active;
+        int pointer_slot;
+        int32_t pointer_id;
+        uint64_t key;
+        int skill_set;
+        float x0, y0, x, y;
+    } skill_bind[DM_TC_MAX_TOUCH];
 };
 
 static double now_s(dm_live_touch *touch, int64_t time_ns) {
@@ -41,10 +55,60 @@ static float point_y(const dm_live_touch *touch, float y_px, float top, float he
 
 static void sync_pointers(dm_live_touch *touch) {
     for (int i = 0; i < DM_TC_MAX_TOUCH; ++i) {
-        if (touch->pointers.platform[i] >= 0 && !touch->state.finger[i].active) {
+        if (touch->pointers.platform[i] >= 0 && !touch->state.finger[i].active &&
+            !touch->skill_bind[i].active) {
             touch->pointers.platform[i] = -1;
         }
     }
+}
+
+static void clear_skill_bind(dm_live_touch *touch, int release_pointers) {
+    if (!touch) return;
+    for (int i = 0; i < DM_TC_MAX_TOUCH; ++i) {
+        if (!touch->skill_bind[i].active) continue;
+        if (release_pointers && touch->skill_bind[i].pointer_id >= 0)
+            dm_touch_pointer_release(&touch->pointers, touch->skill_bind[i].pointer_id);
+        memset(&touch->skill_bind[i], 0, sizeof touch->skill_bind[i]);
+    }
+    touch->skill_bind_request = 0;
+    touch->skill_bind_key = 0;
+    touch->skill_bind_scene_epoch = 0;
+    touch->skill_bind_world_epoch = 0;
+}
+
+// Exact empty-slot probe. This is the original dm_ta_current_set empty path:
+// all snapshot/identity/freshness/bank checks are kept, the same mapping slot is
+// selected (normal or alt for the ZL set), and only the original UINT32_MAX raw
+// id is empty. Unknown values and absent art are never reported empty.
+static int skill_slot_empty(const dm_live_touch *touch, uint64_t button,
+                            uint64_t now_ns, uint64_t scene_epoch, uint64_t world_epoch) {
+    if (!touch || !touch->skill_snapshot_valid) return 0;
+    if (touch->skill_scene_epoch != scene_epoch || touch->skill_world_epoch != world_epoch) return 0;
+    const dm_tg_snapshot *s = &touch->skill_snapshot;
+    if (!s->supported || !s->valid || !s->ready ||
+        s->source != DM_TG_SOURCE_NATIVE_GETTER ||
+        s->identity_scope != DM_TG_IDENTITY_NATIVE ||
+        !s->captured_ns || now_ns < s->captured_ns ||
+        now_ns - s->captured_ns > DM_TG_MAX_AGE_NS ||
+        (s->selected_bank != 0 && s->selected_bank != 16)) return 0;
+    if (s->scene_epoch != scene_epoch || s->world_epoch != world_epoch) return 0;
+    uint32_t logical = 0;
+    switch (button) {
+        case DM_BTN_A: logical = 0x2000; break;
+        case DM_BTN_B: logical = 0x1000; break;
+        case DM_BTN_X: logical = 0x8000; break;
+        case DM_BTN_Y: logical = 0x4000; break;
+        case DM_BTN_R: logical = 0x200; break;
+        default: return 0;
+    }
+    int slot = -1;
+    for (int i = 0; i < DM_TG_FACETS; ++i) {
+        if (s->mapping[i].logical != logical) continue;
+        if (slot >= 0) return 0;
+        slot = (int)(touch->state.skill_set ? s->mapping[i].alt : s->mapping[i].normal);
+    }
+    if (slot < 0 || slot >= (touch->state.skill_set ? 12 : 6)) return 0;
+    return s->raw_skill_id[slot] == UINT32_MAX;
 }
 
 // The original core marks a bottom belt cell directly; an upper-row press is
@@ -106,6 +170,7 @@ void dm_live_touch_resize(dm_live_touch *touch, float width_pt, float height_pt)
     if (!touch || !isfinite(width_pt) || !isfinite(height_pt) || width_pt <= 0 || height_pt <= 0) return;
     if (touch->width == width_pt && touch->height == height_pt) return;
     dm_tc_resize(&touch->state, width_pt, height_pt);
+    clear_skill_bind(touch, 1);
     touch->state.belt_request = 0;
     touch->state.diff_request = 0;
     touch->portal_request = 0;
@@ -225,6 +290,48 @@ int dm_live_touch_consume_portal_request(dm_live_touch *touch,
     return 1;
 }
 
+void dm_live_touch_set_skill_snapshot(dm_live_touch *touch,
+                                      const dm_tg_snapshot *snapshot,
+                                      uint64_t scene_epoch, uint64_t world_epoch) {
+    if (!touch) return;
+    int changed = !snapshot || !touch->skill_snapshot_valid ||
+                  touch->skill_scene_epoch != scene_epoch ||
+                  touch->skill_world_epoch != world_epoch;
+    if (changed) clear_skill_bind(touch, 1);
+    touch->skill_snapshot_valid = snapshot != NULL;
+    if (snapshot) touch->skill_snapshot = *snapshot;
+    else memset(&touch->skill_snapshot, 0, sizeof touch->skill_snapshot);
+    touch->skill_scene_epoch = scene_epoch;
+    touch->skill_world_epoch = world_epoch;
+}
+
+void dm_live_touch_set_skill_bind_active(dm_live_touch *touch, int active) {
+    if (!touch) return;
+    active = !!active;
+    if (active && !touch->skill_bind_active) clear_skill_bind(touch, 1);
+    touch->skill_bind_active = active;
+}
+
+int dm_live_touch_consume_skill_bind_request(dm_live_touch *touch,
+                                             uint64_t scene_epoch, uint64_t world_epoch,
+                                             const dm_live_touch_skill_bind_actions *actions) {
+    if (!touch) return 0;
+    if (!touch->skill_bind_request) return 0;
+    uint64_t key = touch->skill_bind_key;
+    touch->skill_bind_request = 0;
+    touch->skill_bind_key = 0;
+    if (!actions || !actions->begin_bind || !key ||
+        !touch->have_context || touch->scene_epoch != scene_epoch ||
+        touch->world_epoch != world_epoch ||
+        touch->skill_bind_scene_epoch != scene_epoch ||
+        touch->skill_bind_world_epoch != world_epoch) return 0;
+    uint64_t button = key & ~(uint64_t)DM_BTN_ZL;
+    if (!skill_slot_empty(touch, button, (uint64_t)touch->last_ns,
+                          scene_epoch, world_epoch)) return 0;
+    actions->begin_bind(actions->context, key);
+    return 1;
+}
+
 void dm_live_touch_set_mode(dm_live_touch *touch, int navigation, uint32_t mask) {
     if (!touch) return;
     navigation = !!navigation;
@@ -233,6 +340,7 @@ void dm_live_touch_set_mode(dm_live_touch *touch, int navigation, uint32_t mask)
     if (navigation != touch->state.navigation_mode) dm_tc_set_navigation_mode(&touch->state, navigation);
     if (mask != touch->state.enabled_targets) dm_tc_enable_targets(&touch->state, mask);
     if (changed) {
+        clear_skill_bind(touch, 1);
         touch->state.diff_request = 0;
         touch->portal_request = 0;
         touch->belt_fingers = 0;
@@ -284,9 +392,31 @@ int dm_live_touch_event(dm_live_touch *touch, int action, int action_index,
         int32_t id = ids[action_index];
         int slot = dm_touch_pointer_acquire(&touch->pointers, id);
         if (slot < 0) return 0;
-        dm_tc_begin_at(&touch->state, slot,
-                       point_x(touch, x_px[action_index], picture_left, picture_width),
-                       point_y(touch, y_px[action_index], picture_top, picture_height), t);
+        float px = point_x(touch, x_px[action_index], picture_left, picture_width);
+        float py = point_y(touch, y_px[action_index], picture_top, picture_height);
+        // Empty skill slot: the original front end consumes this finger before
+        // the gesture layer and binds only if it is a tap. Unknown/stale data
+        // never enters this branch.
+        int target = dm_tc_hit(&touch->state.layout, px, py);
+        if (!touch->state.navigation_mode && !touch->skill_bind_active &&
+            touch->have_context && target >= DM_TC_MAIN && target <= DM_TC_SKILL4 &&
+            (touch->state.enabled_targets & (1u << target))) {
+            const dm_tc_target *t = &touch->state.layout.target[target];
+            uint64_t key = t->button | (touch->state.skill_set ? (uint64_t)DM_BTN_ZL : 0);
+            if (key && skill_slot_empty(touch, t->button, (uint64_t)time_ns,
+                                        touch->scene_epoch, touch->world_epoch)) {
+                touch->skill_bind[slot].active = 1;
+                touch->skill_bind[slot].pointer_slot = slot;
+                touch->skill_bind[slot].pointer_id = id;
+                touch->skill_bind[slot].key = key;
+                touch->skill_bind[slot].skill_set = touch->state.skill_set;
+                touch->skill_bind[slot].x0 = touch->skill_bind[slot].x = px;
+                touch->skill_bind[slot].y0 = touch->skill_bind[slot].y = py;
+                touch->portal_request = 0;
+                return 1;
+            }
+        }
+        dm_tc_begin_at(&touch->state, slot, px, py, t);
         if (!touch->state.finger[slot].active) {
             dm_touch_pointer_release(&touch->pointers, id);
             return 0;
@@ -315,6 +445,12 @@ int dm_live_touch_event(dm_live_touch *touch, int action, int action_index,
         for (int i = 0; i < pointer_count; ++i) {
             int slot = dm_touch_pointer_slot(&touch->pointers, ids[i]);
             if (slot < 0) continue;
+            if (touch->skill_bind[slot].active) {
+                touch->skill_bind[slot].x = point_x(touch, x_px[i], picture_left, picture_width);
+                touch->skill_bind[slot].y = point_y(touch, y_px[i], picture_top, picture_height);
+                changed = 1;
+                continue;
+            }
             dm_tc_move_at(&touch->state, slot,
                           point_x(touch, x_px[i], picture_left, picture_width),
                           point_y(touch, y_px[i], picture_top, picture_height), t);
@@ -328,10 +464,30 @@ int dm_live_touch_event(dm_live_touch *touch, int action, int action_index,
         int32_t id = ids[action_index];
         int slot = dm_touch_pointer_slot(&touch->pointers, id);
         if (slot < 0) return 0;
-        touch->belt_fingers &= ~(1u << slot);
-        dm_tc_end_at(&touch->state, slot, t);
-        dm_touch_pointer_release(&touch->pointers, id);
-        changed = 1;
+        if (touch->skill_bind[slot].active) {
+            float px = point_x(touch, x_px[action_index], picture_left, picture_width);
+            float py = point_y(touch, y_px[action_index], picture_top, picture_height);
+            uint64_t key = touch->skill_bind[slot].key;
+            float dx = px - touch->skill_bind[slot].x0;
+            float dy = py - touch->skill_bind[slot].y0;
+            int tap = dx * dx + dy * dy <= 14.0f * 14.0f;
+            if (tap && key && touch->state.skill_set == touch->skill_bind[slot].skill_set &&
+                skill_slot_empty(touch, key & ~(uint64_t)DM_BTN_ZL, (uint64_t)time_ns,
+                                 touch->scene_epoch, touch->world_epoch)) {
+                touch->skill_bind_request = 1;
+                touch->skill_bind_key = key;
+                touch->skill_bind_scene_epoch = touch->scene_epoch;
+                touch->skill_bind_world_epoch = touch->world_epoch;
+            }
+            memset(&touch->skill_bind[slot], 0, sizeof touch->skill_bind[slot]);
+            dm_touch_pointer_release(&touch->pointers, id);
+            changed = 1;
+        } else {
+            touch->belt_fingers &= ~(1u << slot);
+            dm_tc_end_at(&touch->state, slot, t);
+            dm_touch_pointer_release(&touch->pointers, id);
+            changed = 1;
+        }
     } else {
         return 0;
     }
@@ -343,6 +499,7 @@ int dm_live_touch_event(dm_live_touch *touch, int action, int action_index,
 int dm_live_touch_cancel_all(dm_live_touch *touch, int64_t time_ns) {
     if (!touch || time_ns < 0) return 0;
     (void)now_s(touch, time_ns);
+    clear_skill_bind(touch, 0);
     dm_tc_cancel_all(&touch->state);
     dm_touch_pointer_clear(&touch->pointers);
     touch->state.belt_request = 0;
