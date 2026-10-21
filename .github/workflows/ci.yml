@@ -1,0 +1,101 @@
+name: game-free-ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci-metadata:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Owned metadata and failure checks
+        run: |
+          bash ci/tests/test-ndk-stub.sh
+          bash ci/tests/test-ci-failures.sh
+          bash ci/tests/test-elf-pages.sh
+
+  host-x86_64:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Cache pinned host dependencies
+        uses: actions/cache@0c907a75c2c80ebcb7f088228285e798b750cf8f # v4.2.1
+        with:
+          path: ${{ runner.temp }}/dm-ci/fetchcontent-x86_64
+          key: host-x86_64-${{ github.sha }}-${{ hashFiles('dm/android/dependencies.cmake','dm/android/CMakeLists.txt','dm/android/vulkan/CMakeLists.txt') }}
+      - name: Host build and CTest (x86_64)
+        env:
+          DM_CI_WORK: ${{ runner.temp }}/dm-ci
+        run: bash ci/scripts/ci.sh host
+      - name: Upload sanitized evidence
+        if: always()
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        with:
+          name: ci-host-x86_64
+          path: |
+            ${{ runner.temp }}/dm-ci/artifacts/manifest.json
+            ${{ runner.temp }}/dm-ci/artifacts/host-ctest.log
+          if-no-files-found: warn
+
+  host-arm64:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Cache pinned host dependencies
+        uses: actions/cache@0c907a75c2c80ebcb7f088228285e798b750cf8f # v4.2.1
+        with:
+          path: ${{ runner.temp }}/dm-ci/fetchcontent-aarch64
+          key: host-arm64-${{ github.sha }}-${{ hashFiles('dm/android/dependencies.cmake','dm/android/CMakeLists.txt','dm/android/vulkan/CMakeLists.txt') }}
+      - name: Host build and CTest (native arm64)
+        env:
+          DM_CI_WORK: ${{ runner.temp }}/dm-ci
+        run: bash ci/scripts/ci.sh host
+      - name: Upload sanitized evidence
+        if: always()
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        with:
+          name: ci-host-arm64
+          path: |
+            ${{ runner.temp }}/dm-ci/artifacts/manifest.json
+            ${{ runner.temp }}/dm-ci/artifacts/host-ctest.log
+          if-no-files-found: warn
+
+  android-arm64-cross:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Cache pinned Android NDK r29
+        uses: actions/cache@0c907a75c2c80ebcb7f088228285e798b750cf8f # v4.2.1
+        with:
+          path: ${{ runner.temp }}/dm-ci/android-ndk-r29
+          key: ndk-r29-linux-87e2bb7e9be5d6a1c6cdf5ec40dd4e0c6d07c30b
+      - name: Cross-build Android ARM64/API29
+        env:
+          DM_CI_WORK: ${{ runner.temp }}/dm-ci
+        run: |
+          ndk=$(bash ci/scripts/ndk-r29.sh)
+          export ANDROID_NDK_HOME="$ndk"
+          bash ci/scripts/ci.sh android
+      - name: Upload sanitized evidence
+        if: always()
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        with:
+          name: ci-android-arm64-cross
+          path: |
+            ${{ runner.temp }}/dm-ci/artifacts/manifest.json
+            ${{ runner.temp }}/dm-ci/artifacts/android-build.log
+            ${{ runner.temp }}/dm-ci/artifacts/elf-pages.json
+          if-no-files-found: warn
