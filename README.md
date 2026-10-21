@@ -24,7 +24,7 @@ Performance readings are from iPhone 17 Pro Max. Battery life is estimated from 
 
 ## Build it with one sentence
 
-Have your game files ready, then tell Claude Code or Codex:
+Have your own game files ready, then tell Claude Code or Codex:
 
 ```
 Use the d2r-mobile skill from https://github.com/d2r-mobile/d2r-mobile to build D2R Mobile for my iPhone. My game files are in <path>.
