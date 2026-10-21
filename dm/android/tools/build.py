@@ -190,7 +190,10 @@ def main():
     run([sys.executable, ROOT / "tools/make_probe.py", build / "probe", BIN])
     if not args.no_turnip:
         run([sys.executable, ROOT / "tools/build_gpu_driver.py", "--output", build / "gpu-driver"])
-        run([sys.executable, ROOT / "tools/build_gpu_fixtures.py", "--output", build / "gpu-fixtures"])
+        # GameActivity uses the real host; legacy diagnostic Activity alone
+        # needs the standalone GPU probe executables.
+        if not args.game_run:
+            run([sys.executable, ROOT / "tools/build_gpu_fixtures.py", "--output", build / "gpu-fixtures"])
     compiler = BIN / "aarch64-linux-android29-clang"
     common = [compiler, "-O1", "-g", "-Wall", "-Wextra", "-I", ROOT / "native", "-I", build, ROOT / "native/runtime.c", ROOT / "native/probe.c", entry]
     if not args.no_turnip:
@@ -210,6 +213,11 @@ def main():
                   ROOT / "native/game_modules.c", ROOT / "native/gpu_driver.c",
                   ROOT / "native/host_posix.c", ROOT / "tests/host_posix_test.c",
                   ROOT.parent / "ios/Sources/dm_touch_controls.c", "-landroid", "-llog", "-ldl", "-lm", "-o", build / "libdmandroid.so"])
+    if args.game_run:
+        run([compiler, "-O2", "-fPIE", "-pie", "-Wl,-z,max-page-size=16384",
+             "-I", ROOT / "native",
+             ROOT / "native/driver_check.c", ROOT / "native/gpu_driver.c",
+             "-landroid", "-llog", "-ldl", "-o", build / "libdmdrivercheck.so"])
     assets = build / "assets"
     assets.mkdir(exist_ok=True)
     licenses = assets / "licenses"
@@ -298,7 +306,9 @@ def main():
     run([TOOLS / "build-tools/aapt2", "link", "--manifest", manifest,
          "-I", TOOLS / "platform/android.jar", "-A", assets, "-o", unsigned, build / "resources.zip"])
     with zipfile.ZipFile(unsigned, "a", compression=zipfile.ZIP_STORED) as z:
-        if args.game_run: z.write(dex / "classes.dex", "classes.dex")
+        if args.game_run:
+            z.write(dex / "classes.dex", "classes.dex")
+            z.write(build / "libdmdrivercheck.so", "lib/arm64-v8a/libdmdrivercheck.so")
         z.write(build / "libdmandroid.so", "lib/arm64-v8a/libdmandroid.so")
         z.write(build / "probe/libdmguest_probe.so", "lib/arm64-v8a/libdmguest_probe.so")
         for library in sorted((build / "gpu-driver").glob("*.so")):

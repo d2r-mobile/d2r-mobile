@@ -81,6 +81,17 @@ jar=$(resolve_jar) || fail "required Java compile needs the real android.jar"
 log_line "javac=$javac"
 log_line "android.jar=$jar"
 
+if "$javac" --release 8 -d "$work/java/driver" \
+    "$root/dm/android/java/org/d2r/android/port/SaveArchive.java" \
+    "$root/dm/android/java/org/d2r/android/port/DriverArchive.java" \
+    "$root/dm/android/tests/DriverArchiveTest.java" >> "$log" 2>&1 \
+    && "$(dirname "$javac")/java" -cp "$work/java/driver" org.d2r.android.port.DriverArchiveTest >> "$log" 2>&1; then
+    log_line "PASS driver ZIP validation and failed-import preservation"
+else
+    fail "driver archive regression"
+fi
+
+
 app_java=$root/dm/android/app/java
 stubs=$root/dm/android/tests/java-stubs
 
