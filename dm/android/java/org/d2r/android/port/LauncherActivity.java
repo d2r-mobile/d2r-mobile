@@ -326,16 +326,21 @@ public final class LauncherActivity extends Activity {
     }
 
     private String importLabel() {
-        return packageSummary.isEmpty()
-                ? text("dmAndroidLaunchImport") + "：" + text("dmAndroidLaunchNotSet")
-                : String.format(text("dmAndroidLaunchImported"), packageSummary);
+        LauncherState.ImportView view = LauncherState.importView(packageReady(), packageSummary);
+        if (!view.installed) return text("dmAndroidLaunchImport") + "：" + text("dmAndroidLaunchNotSet");
+        if (view.summary.isEmpty()) return text("dmAndroidLaunchInstalled");
+        return String.format(text("dmAndroidLaunchImported"), view.summary);
     }
 
     // 启动界面自己的状态文件：只放界面显示需要的东西（导入摘要、所选驱动），native 不读它。
     // The launcher's own state file: display-only data (import summary, chosen driver), never read by native.
     private void writeState() {
         StringBuilder content = new StringBuilder("# 仅供界面显示 | display only\n");
-        if (!packageSummary.isEmpty()) content.append("package_summary=").append(packageSummary).append('\n');
+        // 选择驱动等只改状态文件里的其他键时，不能把上一次导入的摘要抹掉。
+        // Selecting a driver rewrites this display-only file for another key; never erase the prior summary.
+        String summary = LauncherState.retainedSummary(packageSummary,
+                LaunchSettings.read(stateFile(), "package_summary"));
+        if (!summary.isEmpty()) content.append("package_summary=").append(summary).append('\n');
         content.append("driver=").append(DRIVER_STATES[driverIndex]).append('\n');
         write(stateFile(), content.toString());
     }
@@ -369,6 +374,11 @@ public final class LauncherActivity extends Activity {
         // The debug overlay defaults to off: only an explicit 1 in the config means on (the user asked for it to be
         // off globally by default).
         if (overlaySwitch != null) overlaySwitch.setChecked("1".equals(LaunchSettings.read(configFile(), "debug_overlay")));
+        // 摘要只用于显示；是否可用由下面的真实安装检查决定。丢失摘要也不能把已安装包误报为未导入。
+        // The summary is display-only; readiness comes from the actual install check below. A missing summary must
+        // not make an installed package look unimported.
+        String summary = LaunchSettings.read(stateFile(), "package_summary");
+        packageSummary = summary == null ? "" : summary.trim();
         String preset = LaunchSettings.read(configFile(), "resolution");
         resolutionIndex = 0;
         if (preset != null) for (int i = 0; i < RESOLUTION_PRESETS.length; i++) if (RESOLUTION_PRESETS[i].equals(preset)) resolutionIndex = i;
@@ -417,6 +427,13 @@ public final class LauncherActivity extends Activity {
         overlaySwitch.setTextColor(PARCHMENT);
         overlaySwitch.setTextSize(19);
         overlaySwitch.setGravity(Gravity.END);
+        // 开关本身立即写盘。此前只在下一次“启动游戏”时写，先打开文件选择器（驱动/数据包/存档）会走 onResume ->
+        // refreshFromDisk，把还没保存的开关状态覆盖回去，表现为“开了但进游戏没有浮层”。
+        // Persist the switch itself immediately. It used to be written only on the next "start game", so opening a
+        // file picker (driver/package/save) went through onResume -> refreshFromDisk and overwrote the unsaved value,
+        // making the toggle appear ineffective in game.
+        overlaySwitch.setOnCheckedChangeListener((button, checked) ->
+                LaunchSettings.write(configFile(), "debug_overlay", checked ? "1" : "0"));
         column.addView(overlaySwitch);
 
         profileItem = item(profileLabel(), 19, PARCHMENT, false, true);

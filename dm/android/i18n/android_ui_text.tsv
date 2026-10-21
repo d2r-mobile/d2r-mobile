@@ -42,6 +42,7 @@ dmAndroidLaunchNotSet	未设置	Not set	Android 启动界面
 dmAndroidLaunchStart	启动游戏	Start game	Android 启动界面
 dmAndroidLaunchImport	导入数据包	Import package	Android 启动界面
 dmAndroidLaunchImported	已导入：%s	Imported: %s	Android 启动界面
+dmAndroidLaunchInstalled	已安装（可启动）	Installed (ready)	Android 启动界面
 dmAndroidLaunchImporting	正在导入 %d%%	Importing %d%%	Android 启动界面
 dmAndroidLaunchImportSummary	%d 个资源、%d 个着色器	%d assets, %d shaders	Android 启动界面
 dmAndroidLaunchImportFailed	导入失败：%s	Import failed: %s	Android 启动界面

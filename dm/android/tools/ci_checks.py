@@ -119,6 +119,27 @@ def main():
                         ("-std=c11", "-O3", "-Wall", "-Wextra", "-Werror", "-I", ROOT / "native",
                          "-DDM_LAUNCH_SETTINGS_TEST_WRAP_ENV", "-Wl,--wrap=setenv", "-Wl,--wrap=unsetenv"))
 
+        # #308 Android native debug overlay strings: actual dm_ui lookup + printf
+        # path with the generated bilingual Android table. The old missing-lookup
+        # path returned the key and cannot pass the value assertions.
+        android_ui = workspace / "android-ui-text"
+        android_ui.mkdir()
+        generated = run([sys.executable, ROOT / "tools/strings.py", android_ui])
+        if generated.returncode != 0:
+            report("Android 调试浮层文字（生成）", False, (generated.stdout or "").strip()[-400:])
+        else:
+            android_flags = ["-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-D__ANDROID__",
+                             "-I", ROOT / "native", "-I", REPO / "dm/host", "-I", android_ui]
+            # On macOS the real TargetConditionals.h already defines the Apple
+            # macros; the compat header is only needed on Linux CI.
+            if sys.platform != "darwin":
+                android_flags += ["-I", ROOT / "native/compat"]
+            compile_and_run("Android 调试浮层文字", [
+                                ROOT / "native/android_ui_text.c",
+                                ROOT / "tests/android_ui_text_test.c",
+                                REPO / "dm/host/dm_i18n.c"], workspace / "android_ui_text_test",
+                            tuple(android_flags))
+
         # 存档的压缩/解压/原子替换、数据包导入的规则与验收都是纯 Java（不碰 Android API），用项目 JDK 在宿主机上跑。
         # 数据包这一支是补上来的：导入曾经只检查"每个类别至少一个文件"，一个残缺的包能通过并让游戏开不了机。
         # Save archive (zip/unzip/atomic swap) and package import (its rules and acceptance check) are both plain
@@ -127,6 +148,8 @@ def main():
         # unable to start.
         for source, test, label in (("SaveArchive.java", "SaveArchiveTest", "存档包"),
                                     ("PackageArchive.java", "PackageArchiveTest", "数据包导入"),
+                                    ("LauncherState.java", "LauncherStateTest", "启动界面状态"),
+                                    ("LaunchSettings.java", "LaunchSettingsTest", "启动设置持久化"),
                                     ("TouchVisibility.java", "TouchVisibilityTest", "触控显隐"),
                                     ("TouchOverlayGeometry.java", "TouchOverlayGeometryTest", "触控叠层坐标"),
                                     ("TouchGlyph.java", "TouchGlyphTest", "技能图标图集"),
