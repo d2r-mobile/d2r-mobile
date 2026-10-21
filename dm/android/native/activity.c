@@ -43,7 +43,7 @@ static void *render(void *arg) {
     app_state *s = arg;
     char report[2048];
     s->runtime_ok = dm_android_runtime_selftest(report, sizeof report) == 0; log_line(report);
-    copy_asset(s->activity, "probe.fixups.tsv"); copy_asset(s->activity, "probe.gates.tsv");
+    copy_asset(s->activity, "probe.fixups.tsv"); copy_asset(s->activity, "probe.gates.tsv"); copy_asset(s->activity, "probe.target");
     // 当前库路径由 dladdr 取得，支持包管理器实际安装目录。
     // Resolve the installed library directory through dladdr.
     extern int dm_android_app_probe(ANativeActivity *, char *, size_t);

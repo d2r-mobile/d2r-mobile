@@ -1,6 +1,7 @@
 // 使用公开编译器 TLS 支持，不依赖 Bionic 私有 pthread 槽布局。
 // Use compiler-supported TLS without relying on Bionic's private pthread slot layout.
 #include "runtime.h"
+#include "target_guard.h"
 #include "runtime_context_cache.h"
 #include <dlfcn.h>
 #include <errno.h>
@@ -138,6 +139,7 @@ int64_t dm_android_slot_offset(unsigned slot) {
 
 int dm_android_load(dm_android_module *m, const char *library, const char *layout, char *error, size_t cap) {
     memset(m, 0, sizeof *m);
+    if (dm_android_target_validate(layout, error, cap)) return -1;   // before dlopen/mapping or guest entry
     FILE *f = fopen(layout, "r");
     if (!f) { snprintf(error, cap, "layout: %s", strerror(errno)); return -1; }
     char line[256], key[40]; unsigned long long value;

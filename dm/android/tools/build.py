@@ -213,13 +213,14 @@ def main():
     # Keep diagnostic GLSL shaders separate from the game's offline Maxwell fullshader cache.
     if (build / "gpu-test-shaders").is_dir():
         shutil.copytree(build / "gpu-test-shaders", assets / "gpu-test-shaders", dirs_exist_ok=True)
-    for name in ["probe.fixups.tsv", "probe.gates.tsv"]:
+    for name in ["probe.fixups.tsv", "probe.gates.tsv", "probe.target"]:
         shutil.copyfile(build / "probe" / name, assets / name)
     if args.game_source:
         run([sys.executable, ROOT / "tools/guest_elf.py", args.game_source, args.game_source, "main", "sdk", "subsdk0"])
         for name in ["main", "sdk", "subsdk0"]:
             shutil.copyfile(args.game_source / (name + ".fixups.tsv"), assets / (name + ".fixups.tsv"))
             if args.game_run: shutil.copyfile(args.game_source / (name + ".gates.tsv"), assets / (name + ".gates.tsv"))
+            shutil.copyfile(args.game_source / (name + ".target"), assets / (name + ".target"))
     else:
         for name in ["main", "sdk", "subsdk0"]:
             (assets / (name + ".fixups.tsv")).unlink(missing_ok=True)
