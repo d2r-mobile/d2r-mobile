@@ -7,9 +7,19 @@
 #pragma once
 #include "dm.h"
 typedef struct { const char *name; void *fn; } hle_ent;
+#ifdef __ANDROID__
+// Android 用 ELF 节登记；条目对齐到指针大小，允许连续遍历。
+#define DM_HLE_SECTION "dm_hle"
+#define DM_FORCE_SECTION "dm_force"
+#define DM_HLE_RETAIN retain,
+#else
+#define DM_HLE_SECTION "__DATA,swhle"
+#define DM_FORCE_SECTION "__DATA,swforce"
+#define DM_HLE_RETAIN
+#endif
 #define HLE(mangled, ret, cname, ...)                                                             \
     static ret cname(__VA_ARGS__);                                                                \
-    __attribute__((used, section("__DATA,swhle"))) static const hle_ent hle_ent_##cname = {mangled, (void *)cname}; \
+    __attribute__((used, DM_HLE_RETAIN section(DM_HLE_SECTION), aligned(sizeof(void *)))) static const hle_ent hle_ent_##cname = {mangled, (void *)cname}; \
     static ret cname(__VA_ARGS__)
 
 typedef uint32_t Result;   // nn::Result：w0，0 = 成功 | nn::Result: w0, 0 = success
@@ -39,7 +49,7 @@ void guest_clock_freeze_for(int reason, int on);   // 按原因冻结（1 后台
 typedef struct { const char *name; void *fn; const char *why; } hle_force_ent;
 #define HLE_FORCE(mangled, why, ret, cname, ...)                                                   \
     static ret cname(__VA_ARGS__);                                                                \
-    __attribute__((used, section("__DATA,swforce"))) static const hle_force_ent hle_force_##cname = {mangled, (void *)cname, why}; \
+    __attribute__((used, DM_HLE_RETAIN section(DM_FORCE_SECTION), aligned(sizeof(void *)))) static const hle_force_ent hle_force_##cname = {mangled, (void *)cname, why}; \
     static ret cname(__VA_ARGS__)
 
 // 运行模式（0 掌机 / 1 主机）：hle_oe.c 持有，hid 的手柄样式跟它走；前端可在运行中切换

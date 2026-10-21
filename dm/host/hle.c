@@ -1,8 +1,12 @@
 // 导入解析（已实现接宿主、其余接记名桩）与宿主门分派。
 // Import resolution (implemented ones go to the host, the rest go to named stubs) and host gate dispatch.
 #include "dm.h"
+#ifdef __ANDROID__
+#include "../android/native/host_sections.h"
+#else
 #include <mach-o/getsect.h>
 #include <mach-o/ldsyms.h>
+#endif
 #include <dlfcn.h>
 #include <time.h>
 
@@ -28,7 +32,11 @@ static uint64_t g_cache[MAX_MOD][8192];
 
 uint64_t resolve_import(module_t *m, const char *name, int weak) {
     static const hle_ent *sec; static unsigned long secsz;
+#ifdef __ANDROID__
+    if (!sec) sec = (const hle_ent *)dm_android_host_section(0, &secsz);
+#else
     if (!sec) sec = (const hle_ent *)getsectiondata(&_mh_execute_header, "__DATA", "swhle", &secsz);
+#endif
     for (unsigned i = 0; i < secsz / sizeof(hle_ent); i++)
         if (!strcmp(sec[i].name, name)) {
             if (g_flag.imports) { Dl_info di; dladdr(sec[i].fn, &di); LOG("import %s -> %s", name, di.dli_sname); }
