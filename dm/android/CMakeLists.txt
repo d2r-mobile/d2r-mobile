@@ -1018,6 +1018,12 @@ if(NOT ANDROID)
     add_test(NAME ui_trace COMMAND dm_ui_trace_test)
     set_tests_properties(ui_trace PROPERTIES TIMEOUT 10)
 
+    add_executable(dm_live_owner_timer_test tests/live_owner_timer_test.c)
+    target_include_directories(dm_live_owner_timer_test PRIVATE native)
+    target_compile_options(dm_live_owner_timer_test PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME live_owner_timer COMMAND dm_live_owner_timer_test)
+    set_tests_properties(live_owner_timer PROPERTIES TIMEOUT 10)
+
     add_executable(dm_fe_selection_test tests/fe_selection_test.c)
     target_include_directories(dm_fe_selection_test PRIVATE ../host)
     target_compile_options(dm_fe_selection_test PRIVATE -Wall -Wextra -Werror)
