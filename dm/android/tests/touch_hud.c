@@ -155,6 +155,14 @@ int main(int argc, char **argv)
     dm_touch_hud_geometry g[DM_TC_COUNT];
     dm_touch_hud_joy_geometry joy;
     CHECK(dm_touch_hud_build_geometry(&s, g, &joy));
+    {
+        dm_touch_hud_vertex *vertices = calloc(DM_TOUCH_HUD_VERTEX_CAP, sizeof(*vertices));
+        uint32_t vertex_count = 0;
+        CHECK(vertices != NULL);
+        CHECK(dm_touch_hud_build_vertices(&s, 0, vertices, DM_TOUCH_HUD_VERTEX_CAP, &vertex_count));
+        CHECK(vertex_count > 6 && vertex_count <= DM_TOUCH_HUD_VERTEX_CAP);
+        free(vertices);
+    }
     for (int i = 0; i < DM_TC_COUNT; i++) {
         CHECK(dm_tc_hit(&layout, g[i].center_x_pt, g[i].center_y_pt) == i);
         CHECK(g[i].radius_px > 0 && g[i].radius_px == g[i].radius_pt * 2.0f);

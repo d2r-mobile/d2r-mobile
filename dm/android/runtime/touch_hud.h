@@ -41,6 +41,18 @@ typedef struct {
 } dm_touch_hud_geometry;
 
 typedef struct {
+    float x, y;
+    float r, g, b, a;
+} dm_touch_hud_vertex;
+
+// Build the accepted HUD geometry into a caller buffer without any Vulkan
+// object/allocation. Returns 0 on invalid snapshot/overlay or insufficient cap;
+// the existing offscreen renderer uses the same builder.
+int dm_touch_hud_build_vertices(const dm_touch_hud_snapshot *snapshot, int overlay,
+                                dm_touch_hud_vertex *out, uint32_t capacity,
+                                uint32_t *out_count);
+
+typedef struct {
     float center_x_pt, center_y_pt, radius_pt;
     float center_x_px, center_y_px, radius_px;
 } dm_touch_hud_joy_geometry;

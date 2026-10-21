@@ -9,6 +9,7 @@ typedef struct {
     VkFormat format;
     VkColorSpaceKHR color_space;
     VkExtent2D extent;
+    VkClearColorValue clear;         // clear value retained for HUD render-pass load
     VkPresentModeKHR present_mode;
     uint32_t image_count;
     VkImage *images;                 // driver-owned; only this module references them

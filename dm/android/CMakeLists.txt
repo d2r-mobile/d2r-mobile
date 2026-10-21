@@ -457,6 +457,56 @@ if(DM_ANDROID_VULKAN)
     target_include_directories(dm_android_touch_hud PUBLIC runtime ../ios/Sources vulkan)
     target_link_libraries(dm_android_touch_hud PUBLIC dm_android_vk dm_android_touch_core)
     target_compile_options(dm_android_touch_hud PRIVATE -Wall -Wextra -Werror)
+    # #199 owned HUD→swapchain presenter; clear-only chain API remains default.
+    add_library(dm_android_touch_hud_swapchain STATIC runtime/touch_hud_swapchain.c)
+    target_include_directories(dm_android_touch_hud_swapchain PUBLIC runtime vulkan)
+    target_link_libraries(dm_android_touch_hud_swapchain PUBLIC dm_android_touch_hud dm_android_vk)
+    target_compile_options(dm_android_touch_hud_swapchain PRIVATE -Wall -Wextra -Werror)
+    add_executable(dm_touch_hud_swapchain_test tests/touch_hud_swapchain.c vulkan/vk_swapchain.c runtime/touch_hud_swapchain.c runtime/touch_hud.c)
+    target_include_directories(dm_touch_hud_swapchain_test PRIVATE runtime ../ios/Sources vulkan)
+    target_compile_options(dm_touch_hud_swapchain_test PRIVATE -Wall -Wextra -Werror)
+    target_compile_definitions(dm_touch_hud_swapchain_test PRIVATE
+        DM_TOUCH_HUD_GEOMETRY_ONLY DM_TOUCH_HUD_TEST_CALLOC=hud_test_calloc)
+    target_link_libraries(dm_touch_hud_swapchain_test PRIVATE dm_android_touch_core m)
+    foreach(symbol vkGetPhysicalDeviceSurfaceCapabilitiesKHR vkGetPhysicalDeviceSurfaceFormatsKHR
+        vkGetPhysicalDeviceSurfacePresentModesKHR vkGetPhysicalDeviceFormatProperties vkCreateSwapchainKHR
+        vkGetSwapchainImagesKHR vkDestroySwapchainKHR vkCreateRenderPass vkDestroyRenderPass vkCreateImageView
+        vkDestroyImageView vkCreateFramebuffer vkDestroyFramebuffer vkAllocateCommandBuffers vkFreeCommandBuffers
+        vkBeginCommandBuffer vkCmdBeginRenderPass vkCmdEndRenderPass vkEndCommandBuffer vkCreateSemaphore
+        vkDestroySemaphore vkCreateFence vkDestroyFence vkWaitForFences vkResetFences vkQueueWaitIdle
+        vkDeviceWaitIdle vkAcquireNextImageKHR vkQueueSubmit vkQueuePresentKHR
+        vkCreatePipelineLayout vkDestroyPipelineLayout vkCreateGraphicsPipelines vkDestroyPipeline
+        vkDestroyShaderModule vkCmdBindPipeline vkCmdBindVertexBuffers vkCmdSetViewport vkCmdSetScissor
+        vkCmdPushConstants vkCmdDraw)
+        target_compile_definitions(dm_touch_hud_swapchain_test PRIVATE ${symbol}=test_${symbol})
+    endforeach()
+    if(NOT ANDROID)
+        find_package(Vulkan REQUIRED)
+        target_include_directories(dm_touch_hud_swapchain_test PRIVATE ${Vulkan_INCLUDE_DIRS})
+    endif()
+    # Private mutation control: no actual draw must fail the same checks.
+    add_executable(dm_touch_hud_swapchain_mutant_test tests/touch_hud_swapchain.c vulkan/vk_swapchain.c runtime/touch_hud_swapchain.c runtime/touch_hud.c)
+    target_include_directories(dm_touch_hud_swapchain_mutant_test PRIVATE runtime ../ios/Sources vulkan)
+    target_compile_options(dm_touch_hud_swapchain_mutant_test PRIVATE -Wall -Wextra -Werror)
+    target_compile_definitions(dm_touch_hud_swapchain_mutant_test PRIVATE
+        DM_TOUCH_HUD_GEOMETRY_ONLY DM_TOUCH_HUD_TEST_CALLOC=hud_test_calloc
+        vkCmdDraw=mutant_vkCmdDraw DM_HUD_TEST_MUTANT_NO_DRAW)
+    target_link_libraries(dm_touch_hud_swapchain_mutant_test PRIVATE dm_android_touch_core m)
+    foreach(symbol vkGetPhysicalDeviceSurfaceCapabilitiesKHR vkGetPhysicalDeviceSurfaceFormatsKHR
+        vkGetPhysicalDeviceSurfacePresentModesKHR vkGetPhysicalDeviceFormatProperties vkCreateSwapchainKHR
+        vkGetSwapchainImagesKHR vkDestroySwapchainKHR vkCreateRenderPass vkDestroyRenderPass vkCreateImageView
+        vkDestroyImageView vkCreateFramebuffer vkDestroyFramebuffer vkAllocateCommandBuffers vkFreeCommandBuffers
+        vkBeginCommandBuffer vkCmdBeginRenderPass vkCmdEndRenderPass vkEndCommandBuffer vkCreateSemaphore
+        vkDestroySemaphore vkCreateFence vkDestroyFence vkWaitForFences vkResetFences vkQueueWaitIdle
+        vkDeviceWaitIdle vkAcquireNextImageKHR vkQueueSubmit vkQueuePresentKHR
+        vkCreatePipelineLayout vkDestroyPipelineLayout vkCreateGraphicsPipelines vkDestroyPipeline
+        vkDestroyShaderModule vkCmdBindPipeline vkCmdBindVertexBuffers vkCmdSetViewport vkCmdSetScissor
+        vkCmdPushConstants)
+        target_compile_definitions(dm_touch_hud_swapchain_mutant_test PRIVATE ${symbol}=test_${symbol})
+    endforeach()
+    if(NOT ANDROID)
+        target_include_directories(dm_touch_hud_swapchain_mutant_test PRIVATE ${Vulkan_INCLUDE_DIRS})
+    endif()
     add_executable(dm_touch_hud_test tests/touch_hud.c)
     target_link_libraries(dm_touch_hud_test PRIVATE dm_android_touch_hud)
     target_compile_options(dm_touch_hud_test PRIVATE -Wall -Wextra -Werror)
@@ -488,7 +538,10 @@ if(DM_ANDROID_VULKAN)
         target_link_options(dm_touch_hud_test PRIVATE "-Wl,-z,max-page-size=16384")
         target_link_options(dm_touch_hud_live_test PRIVATE "-Wl,-z,max-page-size=16384")
         target_link_options(dm_touch_hud_mock_test PRIVATE "-Wl,-z,max-page-size=16384")
+        target_link_options(dm_touch_hud_swapchain_test PRIVATE "-Wl,-z,max-page-size=16384")
     else()
+        add_test(NAME touch_hud_swapchain COMMAND dm_touch_hud_swapchain_test)
+        set_tests_properties(touch_hud_swapchain PROPERTIES TIMEOUT 60)
         add_test(NAME touch_hud_offscreen COMMAND dm_touch_hud_test
             ${dm_hud_vert} ${dm_hud_frag} ${CMAKE_CURRENT_BINARY_DIR}/touch-hud-artifacts)
         set_tests_properties(touch_hud_offscreen PROPERTIES TIMEOUT 90 SKIP_RETURN_CODE 77)

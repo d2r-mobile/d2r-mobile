@@ -453,7 +453,10 @@ foreach(symbol vkGetPhysicalDeviceSurfaceCapabilitiesKHR vkGetPhysicalDeviceSurf
     vkDestroyImageView vkCreateFramebuffer vkDestroyFramebuffer vkAllocateCommandBuffers vkFreeCommandBuffers
     vkBeginCommandBuffer vkCmdBeginRenderPass vkCmdEndRenderPass vkEndCommandBuffer vkCreateSemaphore
     vkDestroySemaphore vkCreateFence vkDestroyFence vkWaitForFences vkResetFences vkQueueWaitIdle
-    vkDeviceWaitIdle vkAcquireNextImageKHR vkQueueSubmit vkQueuePresentKHR)
+    vkDeviceWaitIdle vkAcquireNextImageKHR vkQueueSubmit vkQueuePresentKHR
+    vkCreatePipelineLayout vkDestroyPipelineLayout vkCreateGraphicsPipelines vkDestroyPipeline
+    vkDestroyShaderModule vkCmdBindPipeline vkCmdBindVertexBuffers vkCmdSetViewport vkCmdSetScissor
+    vkCmdPushConstants vkCmdDraw)
     target_compile_definitions(dm_vulkan_swapchain_test PRIVATE ${symbol}=test_${symbol})
 endforeach()
 if(ANDROID)
