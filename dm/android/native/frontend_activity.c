@@ -474,6 +474,7 @@ static void live_touch_publish_visual(game_app *s) {
     if (!s || !s->live_provider_available || !s->live_geometry.valid) return;
     dm_live_touch_visual v;
     if (!dm_live_touch_visual_snapshot(s->live_touch, &v)) return;
+    v.frontend = dm_uiscreen_ingame() ? 0 : 1;
     uint64_t signature = dm_live_touch_visual_signature(&v, &s->live_geometry);
     dm_hud_info hud; memset(&hud, 0, sizeof hud); dm_hud_get(&hud);
     const uint64_t hud_parts[] = {(uint64_t)(hud.valid ? hud.players : 0), (uint64_t)hud.belt[0],
@@ -742,6 +743,7 @@ __attribute__((visibility("default"))) jint Java_org_d2r_android_port_D2RActivit
     out[6]=v.joy_x;out[7]=v.joy_y;out[8]=v.joy_radius;
     out[84]=v.joy_origin_x;out[85]=v.joy_origin_y;out[86]=v.joy_active;
     out[87]=v.joy_rest_x;out[88]=v.joy_rest_y;
+    out[89]=(float)(dm_uiscreen_ingame()?0:1);
     out[9]=v.swap_x;out[10]=v.swap_y;out[11]=v.swap_radius;
     out[12]=v.diff_x;out[13]=v.diff_y;out[14]=v.diff_radius;
     out[15]=(float)v.skill_set;out[16]=(float)v.diff_open;out[17]=(float)v.enabled_targets;

@@ -101,6 +101,7 @@ final class D2RTouchOverlay extends View {
         catch (UnsatisfiedLinkError error) { return; }
         if (ok == 0 || !TouchOverlayGeometry.valid(values)) return;
         float[] v = values;
+        if (TouchOverlayGeometry.frontend(v)) return; // original front-end pages have no combat controls
         int mask = (int)v[17];
         int skillSet = (int)v[15];
         int players = (int)v[18];

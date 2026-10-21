@@ -77,6 +77,9 @@ int main(void) {
     sig_b.enabled_targets = 0;
     CHECK(dm_live_touch_visual_signature(&sig_a, &sig_g) !=
           dm_live_touch_visual_signature(&sig_b, &sig_g));
+    sig_b.enabled_targets = 1; sig_b.frontend = 1;
+    CHECK(dm_live_touch_visual_signature(&sig_a, &sig_g) !=
+          dm_live_touch_visual_signature(&sig_b, &sig_g));
 
     // Destroyed owner cannot expose a snapshot (caller must drop the pointer).
     dm_live_touch_destroy(t);
