@@ -325,6 +325,36 @@ Mutants that restore dirty-gated external composition or pre-post
 acknowledgement fail the CPU test. Android ARM64 cross-builds the diagnostic
 shared library, CPU seam and live seam test.
 
+## Diagnostic APK provenance (#131)
+
+`dm/android/app/build.sh` writes `<final>.apk.provenance.json` only after the
+existing `apksigner verify` and `zipalign -c` checks succeed. The sidecar binds
+the final signed APK's actual byte size/SHA-256 and selected owned entries
+(native ARM64 library, synthetic fixture, owned shaders), the source commit and
+honest clean/dirty state, and build-cache-derived ABI/API/build-type plus the
+build-tools directory name. Unknown cache values are written as `unknown`; test
+evidence defaults to `unknown` and is never invented. It never records absolute
+personal paths, keystore/signing material, game assets or user text. The write
+is atomic and the build removes any previous sidecar before generating the new
+one, so a failed provenance step cannot leave a complete-looking sidecar.
+
+`dm/android/app/provenance.py verify` checks the APK size/SHA-256, each
+recorded entry digest, and the required v1 provenance identity/consistency
+fields: full source commit and matching short form, boolean dirty plus matching
+state, `diagnostic_only` exactly true, required APK/build types and an explicit
+`test_evidence` schema (unknown uses a null reference; passed/failed requires a
+reference). Missing, wrong-type, contradictory or non-object sidecars are
+rejected. This is schema/consistency validation, not authentication of source
+or test assertions. Offline tests use owned temporary zip fixtures for
+clean/dirty source, modified APK/entry, missing/malformed inputs, required-field
+mutations, unknown cache fields and duplicate entries; they do not execute the
+APK packaging script or access a keystore. A real owned replacement-failure test
+points the CLI at a directory target and verifies the temporary sidecar is
+removed; validation failures leave an existing known sidecar untouched. The
+diagnostic APK is not a playable build and no device/game acceptance is claimed.
+The real `build.sh` provenance integration was not executed in this round
+because the task forbids packaging and keystore access.
+
 ## Invalid touch reason diagnostics (#128)
 
 The bridge's existing `dm_touch_diag::invalid_events` total is unchanged. A
