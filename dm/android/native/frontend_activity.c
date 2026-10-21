@@ -8,6 +8,7 @@
 #include "../../host/dm_i18n.h"
 #include "../../host/dm_hud.h"
 #include "debug_stats.h"
+#include "game_output.h"
 #include "touch_pointer_map.h"
 #include "performance_hint.h"
 #include "launch_settings.h"
@@ -317,15 +318,35 @@ void *front_metal_layer(void) {if(!application)return NULL;pthread_mutex_lock(&a
 // DM_3D_SCALE_DYN scales the internal 3D ratio back down when frames drop.
 uint64_t front_game_res(int docked) {
     unsigned w=1600,h=900;const char *e=getenv("DM_GAME_RES");
-    if(e&&*e&&sscanf(e,"%ux%u",&w,&h)!=2){LOG("[android] DM_GAME_RES 解析失败，用默认 1600x900：%s",e);w=1600;h=900;}
+    static unsigned phone_w, phone_h;
+    int phone_aspect=0;
+    int have_env=e&&*e;
+    if(have_env&&sscanf(e,"%ux%u",&w,&h)!=2){LOG("[android] DM_GAME_RES 解析失败，用默认 1600x900：%s",e);w=1600;h=900;}
+    // 没有显式 DM_GAME_RES 时跟随窗口的横向比例：720 级高度、宽度按实际手机比例，最多 1920。
+    // 16:9 或更窄/无效窗口继续走原 16:9 常数；显式 DM_GAME_RES 保留为兼容/高分辨率入口。
+    // Without an explicit DM_GAME_RES, follow the landscape surface aspect: 720-level height, width
+    // proportional to the phone, capped at 1920. A 16:9/narrower/invalid surface keeps the original
+    // constants; explicit DM_GAME_RES remains the compatibility/high-resolution entry.
+    if(!have_env&&!phone_w){
+        int sw=0,sh=0;
+        if(application){pthread_mutex_lock(&application->lock);ANativeWindow *win=application->window;if(win){sw=ANativeWindow_getWidth(win);sh=ANativeWindow_getHeight(win);}pthread_mutex_unlock(&application->lock);}
+        // 先按有符号值拒绝负/零/过小尺寸，绝不把负值转成巨大的 unsigned。
+        // Reject negative/zero/undersized signed dimensions before any unsigned conversion.
+        if(sw>=320&&sh>=240&&sw>sh&&dm_game_output_phone((unsigned)sw,(unsigned)sh,&phone_w,&phone_h)){w=phone_w;h=phone_h;}
+    } else if(!have_env&&phone_w){w=phone_w;h=phone_h;}
+    // 手机比例对主机/掌机两档都给同一张 720 级画面；不能再按 0.8 缩一遍，否则掌机档又回到 16:9 高度。
+    // The phone-aspect path gives both docked and handheld profiles the same 720-level picture; the
+    // legacy 0.8 handheld scale must not shrink it back to a 16:9 height.
+    phone_aspect = !have_env && phone_w != 0;
+
     static int reported;
     // 前三次都记：分辨率必须在启动时定下来（游戏按启动时的参数位建窗口贴图），而如果第一次被问发生在启动
     // 设置生效之前，只看第一行会看不出这件事 —— 出问题时需要能直接看到"当时读到的是什么"。
     // Log the first three calls: the resolution must be decided at startup (the game builds its window texture from
     // the startup parameter slot), and if the first ask happens before the launch settings take effect, only the
     // first line would hide that — when it goes wrong this shows what was actually read at that moment.
-    if(reported<3){reported++;LOG("[android] 出图档位=%s DM_GAME_RES=%s → 主机档 %ux%u / 掌机档 %ux%u (第%d次)",docked?"主机":"掌机",e&&*e?e:"(未设)",w,h,(w*4/5+3)/4*4,h*4/5,reported);}
-    return docked?((uint64_t)h<<32)|w:((uint64_t)(h*4/5)<<32)|(((w*4/5)+3)/4*4);
+    if(reported<3){reported++;unsigned hw=phone_aspect?w:(((w*4/5)+3)/4*4),hh=phone_aspect?h:h*4/5;LOG("[android] 出图档位=%s DM_GAME_RES=%s → 主机档 %ux%u / 掌机档 %ux%u (第%d次)",docked?"主机":"掌机",e&&*e?e:"(未设)",w,h,hw,hh,reported);}
+    return docked||phone_aspect?((uint64_t)h<<32)|w:((uint64_t)(h*4/5)<<32)|(((w*4/5)+3)/4*4);
 }
 static int text_input_request(const char *title,const char *sub,const char *guide,const char *initial,int max,char *out,int cap) {
     if(!application||!out||cap<=0)return -1;ANativeActivity *a=application->activity;JNIEnv *env=NULL;int attached=0;
