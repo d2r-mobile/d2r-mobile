@@ -336,6 +336,57 @@ else()
     set_tests_properties(vulkan_reflect_sampled_fail PROPERTIES TIMEOUT 60)
 endif()
 
+# #109 fixed-layout uniform fixture: one 16-byte std140 uvec4 + output storage buffer
+set(uniform_spv ${CMAKE_CURRENT_BINARY_DIR}/uniform.spv)
+add_custom_command(OUTPUT ${uniform_spv}
+    COMMAND ${DM_GLSLC} --target-env=vulkan1.1 -O ${CMAKE_CURRENT_SOURCE_DIR}/../tests/fixtures/uniform.comp -o ${uniform_spv}
+    DEPENDS ../tests/fixtures/uniform.comp VERBATIM)
+set(uniform_bad_spv ${CMAKE_CURRENT_BINARY_DIR}/uniform_bad.spv)
+add_custom_command(OUTPUT ${uniform_bad_spv}
+    COMMAND ${DM_GLSLC} --target-env=vulkan1.1 -O ${CMAKE_CURRENT_SOURCE_DIR}/../tests/fixtures/uniform_bad.comp -o ${uniform_bad_spv}
+    DEPENDS ../tests/fixtures/uniform_bad.comp VERBATIM)
+set(uniform_array_spv ${CMAKE_CURRENT_BINARY_DIR}/uniform_array.spv)
+add_custom_command(OUTPUT ${uniform_array_spv}
+    COMMAND ${DM_GLSLC} --target-env=vulkan1.1 -O ${CMAKE_CURRENT_SOURCE_DIR}/../tests/fixtures/uniform_array.comp -o ${uniform_array_spv}
+    DEPENDS ../tests/fixtures/uniform_array.comp VERBATIM)
+add_custom_target(dm_vk_uniform_fixture DEPENDS ${uniform_spv} ${uniform_bad_spv} ${uniform_array_spv})
+add_executable(dm_vulkan_reflect_uniform_test ../tests/vulkan_reflect_uniform.c)
+target_link_libraries(dm_vulkan_reflect_uniform_test PRIVATE dm_android_vk)
+target_compile_options(dm_vulkan_reflect_uniform_test PRIVATE -Wall -Wextra -Werror)
+add_dependencies(dm_vulkan_reflect_uniform_test dm_vk_uniform_fixture)
+if(ANDROID)
+    target_link_options(dm_vulkan_reflect_uniform_test PRIVATE "-Wl,-z,max-page-size=16384")
+else()
+    add_test(NAME vulkan_reflect_uniform COMMAND dm_vulkan_reflect_uniform_test ${uniform_spv}
+        ${CMAKE_CURRENT_SOURCE_DIR}/../tests/fixtures/uniform.res.json ${uniform_bad_spv} ${uniform_array_spv})
+    set_tests_properties(vulkan_reflect_uniform PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77)
+    if(APPLE AND DM_MOLTENVK_ICD)
+        set_tests_properties(vulkan_reflect_uniform PROPERTIES ENVIRONMENT "VK_DRIVER_FILES=${DM_MOLTENVK_ICD}")
+    endif()
+endif()
+
+add_executable(dm_vulkan_reflect_uniform_fail_test ../tests/vulkan_reflect_uniform_fail.c vk_shader_reflect.c vk_memory.c vk_host.c)
+target_link_libraries(dm_vulkan_reflect_uniform_fail_test PRIVATE dm_android_vk)
+target_include_directories(dm_vulkan_reflect_uniform_fail_test PRIVATE ${dm_mbedtls_SOURCE_DIR}/include)
+target_compile_options(dm_vulkan_reflect_uniform_fail_test PRIVATE -Wall -Wextra -Werror)
+foreach(symbol vkCreateBuffer vkGetBufferMemoryRequirements vkAllocateMemory vkBindBufferMemory vkMapMemory
+    vkFlushMappedMemoryRanges vkInvalidateMappedMemoryRanges vkCreateShaderModule vkDestroyShaderModule
+    vkCreateDescriptorSetLayout vkDestroyDescriptorSetLayout vkCreatePipelineLayout vkDestroyPipelineLayout
+    vkCreateComputePipelines vkDestroyPipeline vkCreateDescriptorPool vkDestroyDescriptorPool vkAllocateDescriptorSets
+    vkUpdateDescriptorSets vkAllocateCommandBuffers vkBeginCommandBuffer vkEndCommandBuffer vkCreateFence
+    vkQueueSubmit vkWaitForFences vkDeviceWaitIdle vkDestroyFence vkFreeCommandBuffers vkDestroyBuffer
+    vkUnmapMemory vkFreeMemory vkCmdBindPipeline vkCmdBindDescriptorSets vkCmdPushConstants vkCmdDispatch
+    vkCmdPipelineBarrier)
+    target_compile_definitions(dm_vulkan_reflect_uniform_fail_test PRIVATE ${symbol}=dm_test_${symbol})
+endforeach()
+if(ANDROID)
+    target_link_options(dm_vulkan_reflect_uniform_fail_test PRIVATE "-Wl,-z,max-page-size=16384")
+else()
+    add_test(NAME vulkan_reflect_uniform_fail COMMAND dm_vulkan_reflect_uniform_fail_test ${uniform_spv}
+        ${CMAKE_CURRENT_SOURCE_DIR}/../tests/fixtures/uniform.res.json)
+    set_tests_properties(vulkan_reflect_uniform_fail PROPERTIES TIMEOUT 60)
+endif()
+
 add_executable(dm_vulkan_reflect_test ../tests/vulkan_reflect.c)
 target_link_libraries(dm_vulkan_reflect_test PRIVATE dm_android_vk)
 target_compile_options(dm_vulkan_reflect_test PRIVATE -Wall -Wextra -Werror)

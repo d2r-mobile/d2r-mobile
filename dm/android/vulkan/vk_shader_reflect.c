@@ -45,7 +45,7 @@
 #define MAX_JSON_BYTES 65536u
 #define MAX_MODULE_BYTES (256u * 1024u)
 
-typedef struct { uint32_t id; uint32_t kind; uint32_t a, b, c, d, e; uint32_t sampled_type, depth; uint32_t members; uint32_t member_type[MAX_MEMBERS]; uint32_t offset[MAX_MEMBERS]; } type_t;
+typedef struct { uint32_t id; uint32_t kind; uint32_t a, b, c, d, e; uint32_t sampled_type, depth; uint32_t signedness; uint32_t members; uint32_t member_type[MAX_MEMBERS]; uint32_t offset[MAX_MEMBERS]; } type_t;
 typedef struct { uint32_t id; uint32_t storage; uint32_t pointee; } pointer_t;
 typedef struct { uint32_t id; uint32_t type; uint32_t storage; } var_t;
 typedef struct { uint32_t id; uint32_t dec; uint32_t a, b; } decor_t;
@@ -307,8 +307,12 @@ static int scan_module(const uint8_t *data, size_t size, module_t *m, char *why,
             type_t *t = &m->types[m->type_count++];
             memset(t, 0, sizeof *t);
             t->id = o[0]; t->kind = op;
-            if (op == OP_TYPE_INT || op == OP_TYPE_FLOAT) {
-                if (n < 2) { set_why(why, cap, "OpTypeInt/Float 操作数不足（需宽度，实际 %u）", n); return 0; }
+            if (op == OP_TYPE_INT) {
+                if (n != 3) { set_why(why, cap, "OpTypeInt 操作数个数为 %u，本解析器要求恰好 3（宽度与 Signedness）", n); return 0; }
+                if (o[2] > 1) { set_why(why, cap, "OpTypeInt Signedness=%u 非法（只接受 0 或 1）", o[2]); return 0; }
+                t->a = o[1]; t->signedness = o[2];
+            } else if (op == OP_TYPE_FLOAT) {
+                if (n != 2) { set_why(why, cap, "OpTypeFloat 操作数不足（需恰好 2 个：宽度，实际 %u）", n); return 0; }
                 t->a = o[1];
             } else if (op == OP_TYPE_VECTOR) {
                 if (n < 3) { set_why(why, cap, "OpTypeVector 操作数不足（需分量类型与数量，实际 %u）", n); return 0; }
@@ -371,13 +375,43 @@ static int build_plan(module_t *m, dm_vk_shader_plan *plan, char *why, size_t ca
     }
     if ((uint64_t)plan->local[0] * plan->local[1] * plan->local[2] > 1024) { set_why(why, cap, "LocalSize 乘积超过 1024"); return 0; }
 
-    int push_seen = 0;
+    int push_seen = 0, cbuf_seen = 0;
     for (uint32_t v = 0; v < m->var_count; v++) {
         var_t *var = &m->vars[v];
         pointer_t *ptr = find_pointer(m, var->type);
         if (!ptr) { set_why(why, cap, "变量 %%%u 的指针类型 %%%u 未定义", var->id, var->type); return 0; }
         if (ptr->storage != var->storage) { set_why(why, cap, "变量 %%%u 的存储类与指针类型不一致", var->id); return 0; }
-        if (var->storage == SC_UNIFORM) { set_why(why, cap, "不支持 Uniform 常量块（cbuf）；本子集只做 storage buffer/image + push constant"); return 0; }
+        if (var->storage == SC_UNIFORM) {
+            if (cbuf_seen) { set_why(why, cap, "出现多个 Uniform 常量块（本子集只支持一个）"); return 0; }
+            type_t *t = find_type(m, ptr->pointee);
+            if (!t || t->kind != OP_TYPE_STRUCT) { set_why(why, cap, "Uniform 变量 %%%u 指向的不是结构体", var->id); return 0; }
+            if (!find_decor(m, t->id, DEC_BLOCK)) { set_why(why, cap, "Uniform 结构体 %%%u 缺少 Block 装饰", t->id); return 0; }
+            if (t->members != 1) { set_why(why, cap, "Uniform Block %%%u 有 %u 个成员，本子集只接受单个 uvec4", t->id, t->members); return 0; }
+            type_t *mt = find_type(m, t->member_type[0]);
+            if (!mt || mt->kind != OP_TYPE_VECTOR || mt->b != 4) {
+                set_why(why, cap, "Uniform Block 成员 %u 不是 4 分量向量（本子集只接受 uvec4）", 0);
+                return 0;
+            }
+            type_t *comp = find_type(m, mt->a);
+            if (!comp || comp->kind != OP_TYPE_INT || comp->a != 32 || comp->signedness != 0) {
+                set_why(why, cap, "Uniform Block 成员 %u 的分量不是 uint32（本子集只接受 uvec4）", 0);
+                return 0;
+            }
+            decor_t *off = NULL;
+            for (uint32_t d = 0; d < m->decor_count; d++)
+                if (m->decors[d].id == t->id && m->decors[d].dec == DEC_OFFSET && m->decors[d].a == 0) { off = &m->decors[d]; break; }
+            if (!off) { set_why(why, cap, "Uniform Block 成员 0 缺少 Offset 装饰"); return 0; }
+            if (off->b != 0) { set_why(why, cap, "Uniform Block 成员 0 的 Offset=%u，本子集只接受 0", off->b); return 0; }
+            uint32_t msize = type_bytes(m, t->member_type[0], 0);
+            if (msize != 16) { set_why(why, cap, "Uniform Block 成员 0 的大小为 %u，本子集只接受 16 字节", msize); return 0; }
+            decor_t *set = find_decor(m, var->id, DEC_DESCRIPTOR_SET);
+            decor_t *bnd = find_decor(m, var->id, DEC_BINDING);
+            if (!set || !bnd) { set_why(why, cap, "Uniform 变量 %%%u 缺少 DescriptorSet 或 Binding 装饰", var->id); return 0; }
+            if (set->a != 0) { set_why(why, cap, "Uniform Block 在 set %u，本子集只接受 set 0", set->a); return 0; }
+            if (!add_binding(plan, DM_VK_REFLECT_CBUF, bnd->a, why, cap)) return 0;
+            plan->cbuf_offset = 0; plan->cbuf_size = 16; cbuf_seen = 1;
+            continue;
+        }
         if (var->storage == SC_UNIFORM_CONSTANT) {
             type_t *t = find_type(m, ptr->pointee);
             if (t && t->kind == OP_TYPE_SAMPLED_IMAGE) {
@@ -451,9 +485,23 @@ static int build_plan(module_t *m, dm_vk_shader_plan *plan, char *why, size_t ca
             continue;
         }
     }
+    if (cbuf_seen) {
+        uint32_t n_cbuf = 0, n_sbuf = 0;
+        for (uint32_t i = 0; i < plan->binding_count; i++) {
+            if (plan->bindings[i].kind == DM_VK_REFLECT_CBUF) n_cbuf++;
+            else if (plan->bindings[i].kind == DM_VK_REFLECT_SBUF) n_sbuf++;
+            else {
+                set_why(why, cap, "Uniform Block 与采样/图像/其他绑定混用，本子集只接受 storage buffer + 单个 uniform block");
+                return 0;
+            }
+        }
+        if (n_cbuf != 1 || n_sbuf != 1 || plan->binding_count != 2) {
+            set_why(why, cap, "Uniform Block 子集要求恰好一个 uniform block 和一个输出 storage buffer");
+            return 0;
+        }
+    }
     return 1;
 }
-
 static int sidecar_uint(const jnode *item, const char *key, uint32_t *out, char *why, size_t cap) {
     jnode *n = jget(item, key);
     if (!n || n->type != J_NUM || n->num > 0xffffffffu) { set_why(why, cap, "反射字段 %s 缺失或不是非负整数", key); return 0; }
@@ -467,25 +515,36 @@ static int cross_check(const jnode *root, const dm_vk_shader_plan *plan, const c
     if (strcmp(stage->str, "cs")) { set_why(why, cap, "反射 stage=%s，本消费方只接受 cs", stage->str); return 0; }
     // 任何不支持的种类出现即拒绝：不能因为消费方忽略就悄悄放行。
     // Any unsupported category is rejected: silent tolerance would let unsupported shaders through.
-    const char *unsupported[2] = {"cbufs", "images"};
-    for (int i = 0; i < 2; i++) {
+    const char *unsupported[1] = {"images"};
+    for (int i = 0; i < 1; i++) {
         jnode *a = jget(root, unsupported[i]);
-        if (a && jarray_len(a)) { set_why(why, cap, "反射声明了 %s，本子集不支持（只做 storage buffer/texture + push constant）", unsupported[i]); return 0; }
+        if (a && jarray_len(a)) { set_why(why, cap, "反射声明了 %s，本子集不支持（只做 storage buffer/texture/cbuf + push constant）", unsupported[i]); return 0; }
     }
     uint32_t want[DM_VK_REFLECT_MAX_BINDINGS], kinds[DM_VK_REFLECT_MAX_BINDINGS], n_want = 0;
-    const char *cats[2] = {"sbufs", "textures"};
-    uint32_t kind_of[2] = {DM_VK_REFLECT_SBUF, DM_VK_REFLECT_SAMPLED_IMAGE};
-    for (int c = 0; c < 2; c++) {
+    const char *cats[3] = {"sbufs", "textures", "cbufs"};
+    uint32_t kind_of[3] = {DM_VK_REFLECT_SBUF, DM_VK_REFLECT_SAMPLED_IMAGE, DM_VK_REFLECT_CBUF};
+    for (int c = 0; c < 3; c++) {
         jnode *arr = jget(root, cats[c]);
         if (!arr) continue;
         if (arr->type != J_ARR) { set_why(why, cap, "反射 %s 不是数组", cats[c]); return 0; }
         for (const jnode *it = arr->first; it; it = it->next) {
             if (it->type != J_OBJ) { set_why(why, cap, "反射 %s 元素不是对象", cats[c]); return 0; }
-            uint32_t b, cnt = 1;
+            uint32_t b;
             if (!sidecar_uint(it, "binding", &b, why, cap)) return 0;
             jnode *cn = jget(it, "count");
-            if (cn && cn->type == J_NUM) cnt = (uint32_t)cn->num;
-            if (cnt != 1) { set_why(why, cap, "反射绑定 %u 的 count=%u，本子集只支持 1", b, cnt); return 0; }
+            if (cn) {
+                if (cn->type != J_NUM) { set_why(why, cap, "反射绑定 %u 的 count 不是 JSON 整数", b); return 0; }
+                if (cn->num != 1) { set_why(why, cap, "反射绑定 %u 的 count=%llu，本子集只支持整数 1（不接受截断）", b, (unsigned long long)cn->num); return 0; }
+            }
+            if (kind_of[c] == DM_VK_REFLECT_CBUF) {
+                uint32_t off, size;
+                if (!sidecar_uint(it, "offset", &off, why, cap)) return 0;
+                if (!sidecar_uint(it, "size", &size, why, cap)) return 0;
+                if (off != plan->cbuf_offset || size != plan->cbuf_size) {
+                    set_why(why, cap, "反射 cbuf offset/size=%u/%u 与模块 %u/%u 不符", off, size, plan->cbuf_offset, plan->cbuf_size);
+                    return 0;
+                }
+            }
             if (n_want >= DM_VK_REFLECT_MAX_BINDINGS) { set_why(why, cap, "反射绑定过多"); return 0; }
             for (uint32_t k = 0; k < n_want; k++)
                 if (want[k] == b) { set_why(why, cap, "反射绑定 %u 重复", b); return 0; }
@@ -587,6 +646,7 @@ void dm_vk_reflect_free(dm_vk_shader_plan *plan) {
 // Do the plan fields still match their bytes, and do they fit the device limits for a 1D dispatch? Pure CPU.
 static int plan_fields_equal(const dm_vk_shader_plan *a, const dm_vk_shader_plan *b) {
     if (a->push_offset != b->push_offset || a->push_size != b->push_size) return 0;
+    if (a->cbuf_offset != b->cbuf_offset || a->cbuf_size != b->cbuf_size) return 0;
     if (a->binding_count != b->binding_count) return 0;
     if (memcmp(a->local, b->local, sizeof a->local)) return 0;
     if (memcmp(a->bindings, b->bindings, sizeof(dm_vk_reflect_binding) * a->binding_count)) return 0;
@@ -617,6 +677,7 @@ int dm_vk_reflect_check(const dm_vk_shader_plan *plan, const dm_vk_reflect_limit
     if (ref.local[1] != 1 || ref.local[2] != 1) { set_why(why, why_cap, "LocalSize y/z 必须为 1（本切片只执行 1D 派发）"); return 0; }
     if (!words) { set_why(why, why_cap, "派发字数不能为 0"); return 0; }
     if (limits) {
+        if (ref.cbuf_size > limits->max_uniform_range) { set_why(why, why_cap, "uniform 块 %u 字节超出 maxUniformBufferRange %llu", ref.cbuf_size, (unsigned long long)limits->max_uniform_range); return 0; }
         if (ref.local[0] > limits->max_workgroup_size[0] || ref.local[1] > limits->max_workgroup_size[1] ||
             ref.local[2] > limits->max_workgroup_size[2]) { set_why(why, why_cap, "LocalSize %u,%u,%u 超出设备 maxComputeWorkGroupSize", ref.local[0], ref.local[1], ref.local[2]); return 0; }
         uint64_t invocations = (uint64_t)ref.local[0] * ref.local[1] * ref.local[2];
@@ -655,6 +716,7 @@ VkResult dm_vk_reflect_compute_sampled(dm_vk *vk, const dm_vk_shader_plan *plan,
     limits.max_workgroup_count[2] = vk->properties.limits.maxComputeWorkGroupCount[2];
     limits.max_push_constants = vk->properties.limits.maxPushConstantsSize;
     limits.max_storage_range = vk->properties.limits.maxStorageBufferRange;
+    limits.max_uniform_range = vk->properties.limits.maxUniformBufferRange;
     char check_why[DM_VK_REFLECT_WHY] = {0};
     if (!dm_vk_reflect_check(plan, &limits, (uint32_t)words64, check_why, sizeof check_why))
         return VK_ERROR_INITIALIZATION_FAILED;
@@ -761,6 +823,138 @@ done:
     dm_vk_buffer_destroy(vk, &buffer);
     return result;
 }
+VkResult dm_vk_reflect_compute_uniform(dm_vk *vk, const dm_vk_shader_plan *plan, dm_vk_pixels *canvas,
+                                       const void *uniform_bytes, uint32_t uniform_size,
+                                       const void *push, uint32_t push_bytes) {
+    if (!vk || !vk->device || !plan || !canvas || !canvas->bytes || !uniform_bytes) return VK_ERROR_INITIALIZATION_FAILED;
+    if (!canvas->width || !canvas->height || canvas->width > 16384 || canvas->height > 16384)
+        return VK_ERROR_INITIALIZATION_FAILED;
+    uint64_t words64 = (uint64_t)canvas->width * canvas->height;
+    if (words64 > UINT32_MAX) return VK_ERROR_INITIALIZATION_FAILED;
+    dm_vk_reflect_limits limits;
+    memset(&limits, 0, sizeof limits);
+    limits.max_workgroup_size[0] = vk->properties.limits.maxComputeWorkGroupSize[0];
+    limits.max_workgroup_size[1] = vk->properties.limits.maxComputeWorkGroupSize[1];
+    limits.max_workgroup_size[2] = vk->properties.limits.maxComputeWorkGroupSize[2];
+    limits.max_invocations = vk->properties.limits.maxComputeWorkGroupInvocations;
+    limits.max_workgroup_count[0] = vk->properties.limits.maxComputeWorkGroupCount[0];
+    limits.max_workgroup_count[1] = vk->properties.limits.maxComputeWorkGroupCount[1];
+    limits.max_workgroup_count[2] = vk->properties.limits.maxComputeWorkGroupCount[2];
+    limits.max_push_constants = vk->properties.limits.maxPushConstantsSize;
+    limits.max_storage_range = vk->properties.limits.maxStorageBufferRange;
+    limits.max_uniform_range = vk->properties.limits.maxUniformBufferRange;
+    char check_why[DM_VK_REFLECT_WHY] = {0};
+    if (!dm_vk_reflect_check(plan, &limits, (uint32_t)words64, check_why, sizeof check_why))
+        return VK_ERROR_INITIALIZATION_FAILED;
+    if (plan->binding_count != 2 || plan->cbuf_size != 16) return VK_ERROR_FEATURE_NOT_PRESENT;
+    const dm_vk_reflect_binding *cbuf = NULL, *sbuf = NULL;
+    for (uint32_t i = 0; i < 2; i++) {
+        if (plan->bindings[i].set != 0 || plan->bindings[i].count != 1) return VK_ERROR_FEATURE_NOT_PRESENT;
+        if (plan->bindings[i].kind == DM_VK_REFLECT_CBUF) cbuf = &plan->bindings[i];
+        else if (plan->bindings[i].kind == DM_VK_REFLECT_SBUF) sbuf = &plan->bindings[i];
+        else return VK_ERROR_FEATURE_NOT_PRESENT;
+    }
+    if (!cbuf || !sbuf || cbuf->binding == sbuf->binding) return VK_ERROR_FEATURE_NOT_PRESENT;
+    if (uniform_size != plan->cbuf_size) return VK_ERROR_INITIALIZATION_FAILED;
+    if (push_bytes != plan->push_size || (push_bytes && !push)) return VK_ERROR_INITIALIZATION_FAILED;
+    uint64_t bytes = words64 * 4;
+    if (bytes > canvas->capacity) return VK_ERROR_INITIALIZATION_FAILED;
+
+    dm_vk_buffer output = {0}, uniform = {0};
+    VkShaderModule shader = VK_NULL_HANDLE;
+    VkDescriptorSetLayout dsl = VK_NULL_HANDLE;
+    VkPipelineLayout layout = VK_NULL_HANDLE;
+    VkPipeline pipeline = VK_NULL_HANDLE;
+    VkDescriptorPool pool = VK_NULL_HANDLE;
+    VkDescriptorSet set = VK_NULL_HANDLE;
+    VkCommandBuffer command = VK_NULL_HANDLE;
+    VkResult result;
+
+    dm_vk_buffer_info oi = {.size = bytes, .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT};
+    result = dm_vk_buffer_create(vk, &oi, &output);
+    if (result != VK_SUCCESS) goto done;
+    memset(output.mapped, 0, (size_t)bytes);
+    dm_vk_buffer_info ui = {.size = plan->cbuf_size, .usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT};
+    result = dm_vk_buffer_create(vk, &ui, &uniform);
+    if (result != VK_SUCCESS) goto done;
+    memcpy(uniform.mapped, uniform_bytes, plan->cbuf_size);
+    result = dm_vk_buffer_sync(vk, &uniform, 1);   // 非一致内存上传刷新 | upload flush when non-coherent
+    if (result != VK_SUCCESS) goto done;
+    VkShaderModuleCreateInfo smci = {.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+        .codeSize = plan->code_bytes, .pCode = (const uint32_t *)(const void *)plan->code};
+    result = vkCreateShaderModule(vk->device, &smci, NULL, &shader);
+    if (result != VK_SUCCESS) goto done;
+    VkDescriptorSetLayoutBinding lb[2] = {
+        {.binding = cbuf->binding, .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+         .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT},
+        {.binding = sbuf->binding, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+         .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT}};
+    VkDescriptorSetLayoutCreateInfo dci = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .bindingCount = 2, .pBindings = lb};
+    result = vkCreateDescriptorSetLayout(vk->device, &dci, NULL, &dsl);
+    if (result != VK_SUCCESS) goto done;
+    VkPushConstantRange range = {.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+        .offset = plan->push_offset, .size = plan->push_size};
+    VkPipelineLayoutCreateInfo lci = {.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .setLayoutCount = 1, .pSetLayouts = &dsl,
+        .pushConstantRangeCount = plan->push_size ? 1u : 0u, .pPushConstantRanges = plan->push_size ? &range : NULL};
+    result = vkCreatePipelineLayout(vk->device, &lci, NULL, &layout);
+    if (result != VK_SUCCESS) goto done;
+    VkComputePipelineCreateInfo cpi = {.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+        .layout = layout, .stage = {.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .stage = VK_SHADER_STAGE_COMPUTE_BIT, .module = shader, .pName = "main"}};
+    result = vkCreateComputePipelines(vk->device, VK_NULL_HANDLE, 1, &cpi, NULL, &pipeline);
+    if (result != VK_SUCCESS) goto done;
+    VkDescriptorPoolSize psz[2] = {{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1}};
+    VkDescriptorPoolCreateInfo pci = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .maxSets = 1, .poolSizeCount = 2, .pPoolSizes = psz};
+    result = vkCreateDescriptorPool(vk->device, &pci, NULL, &pool);
+    if (result != VK_SUCCESS) goto done;
+    VkDescriptorSetAllocateInfo ai = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+        .descriptorPool = pool, .descriptorSetCount = 1, .pSetLayouts = &dsl};
+    result = vkAllocateDescriptorSets(vk->device, &ai, &set);
+    if (result != VK_SUCCESS) goto done;
+    VkDescriptorBufferInfo ubi = {.buffer = uniform.handle, .offset = 0, .range = plan->cbuf_size};
+    VkDescriptorBufferInfo sbi = {.buffer = output.handle, .offset = 0, .range = VK_WHOLE_SIZE};
+    VkWriteDescriptorSet wds[2] = {
+        {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = set, .dstBinding = cbuf->binding,
+         .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .pBufferInfo = &ubi},
+        {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = set, .dstBinding = sbuf->binding,
+         .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .pBufferInfo = &sbi}};
+    vkUpdateDescriptorSets(vk->device, 2, wds, 0, NULL);
+    result = dm_vk_begin(vk, &command);
+    if (result != VK_SUCCESS) goto done;
+    vkCmdBindPipeline(command, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
+    vkCmdBindDescriptorSets(command, VK_PIPELINE_BIND_POINT_COMPUTE, layout, 0, 1, &set, 0, NULL);
+    if (plan->push_size) vkCmdPushConstants(command, layout, VK_SHADER_STAGE_COMPUTE_BIT, plan->push_offset, plan->push_size, push);
+    uint64_t group = (uint64_t)plan->local[0] * plan->local[1] * plan->local[2];
+    if (!group) { result = VK_ERROR_INITIALIZATION_FAILED; goto done; }
+    uint32_t groups = (uint32_t)((words64 + group - 1) / group);
+    vkCmdDispatch(command, groups, 1, 1);
+    VkBufferMemoryBarrier barrier = {.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+        .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT, .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED, .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .buffer = output.handle, .offset = 0, .size = VK_WHOLE_SIZE};
+    vkCmdPipelineBarrier(command, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT,
+        0, 0, NULL, 1, &barrier, 0, NULL);
+    result = dm_vk_submit(vk, command);
+    command = VK_NULL_HANDLE;
+    if (result != VK_SUCCESS) goto done;
+    result = dm_vk_buffer_sync(vk, &output, 0);   // 非一致内存读回失效 | readback invalidate when non-coherent
+    if (result != VK_SUCCESS) goto done;
+    memcpy(canvas->bytes, output.mapped, (size_t)bytes);
+done:
+    if (command) vkFreeCommandBuffers(vk->device, vk->pool, 1, &command);
+    if (pipeline) vkDestroyPipeline(vk->device, pipeline, NULL);
+    if (pool) vkDestroyDescriptorPool(vk->device, pool, NULL);
+    if (layout) vkDestroyPipelineLayout(vk->device, layout, NULL);
+    if (dsl) vkDestroyDescriptorSetLayout(vk->device, dsl, NULL);
+    if (shader) vkDestroyShaderModule(vk->device, shader, NULL);
+    dm_vk_buffer_destroy(vk, &uniform);
+    dm_vk_buffer_destroy(vk, &output);
+    return result;
+}
 VkResult dm_vk_reflect_compute(dm_vk *vk, const dm_vk_shader_plan *plan, dm_vk_pixels *canvas,
                                const void *push, uint32_t push_bytes) {
     if (!vk || !vk->device || !plan || !canvas || !canvas->bytes) return VK_ERROR_INITIALIZATION_FAILED;
@@ -778,6 +972,7 @@ VkResult dm_vk_reflect_compute(dm_vk *vk, const dm_vk_shader_plan *plan, dm_vk_p
     limits.max_workgroup_count[2] = vk->properties.limits.maxComputeWorkGroupCount[2];
     limits.max_push_constants = vk->properties.limits.maxPushConstantsSize;
     limits.max_storage_range = vk->properties.limits.maxStorageBufferRange;
+    limits.max_uniform_range = vk->properties.limits.maxUniformBufferRange;
     char check_why[DM_VK_REFLECT_WHY] = {0};
     if (!dm_vk_reflect_check(plan, &limits, (uint32_t)words64, check_why, sizeof check_why))
         return VK_ERROR_INITIALIZATION_FAILED;   // plan 被篡改或超设备上限：GPU 之前拒绝 | mutated plan or device limit: reject before GPU
