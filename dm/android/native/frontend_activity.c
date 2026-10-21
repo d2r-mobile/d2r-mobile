@@ -477,6 +477,10 @@ static void live_touch_sync(game_app *s) {
     dm_live_touch_set_context(s->live_touch,navigation,mask,
                               snapshot.scene_epoch,snapshot.world_epoch,
                               snapshot.ui_identity,0);
+    { dm_tg_snapshot skill_snapshot; int have_skill=dm_touch_game_snapshot(&skill_snapshot);
+      dm_live_touch_set_skill_snapshot(s->live_touch,have_skill?&skill_snapshot:NULL,
+                                       snapshot.scene_epoch,snapshot.world_epoch);
+      dm_live_touch_set_skill_bind_active(s->live_touch,dm_ui_bind_active()); }
     if(!navigation){
         int expanded=0, rows=dm_belt_rows(&expanded);
         if(!dm_live_touch_set_belt(s->live_touch,rows,expanded))
@@ -489,6 +493,11 @@ static void belt_expand_host(void *context, int on) { (void)context; dm_belt_exp
 static void belt_use_host(void *context, int col, int row) { (void)context; dm_belt_use(col, row); }
 static void request_players_host(void *context, int players) { (void)context; dm_hud_request_players(players); }
 static void request_portal_host(void *context) { (void)context; void dm_tp_request(void); dm_tp_request(); }
+static void begin_skill_bind_host(void *context, uint64_t key) {
+    (void)context;
+    dm_ui_bind_begin(key);
+    LOG("[android-touch] empty skill slot tap -> dm_ui_bind_begin key=%#llx",(unsigned long long)key);
+}
 static void live_touch_consume_belt(game_app *s) {
     if(!s->live_touch||!live_touch_mode_enabled()||!s->live_provider_available)return;
     live_touch_sync(s);
@@ -515,6 +524,14 @@ static void live_touch_consume_portal(game_app *s) {
     (void)dm_live_touch_consume_portal_request(s->live_touch,
         s->live_observation.scene_epoch,s->live_observation.world_epoch,
         s->live_observation.ui_identity,&actions);
+}
+static void live_touch_consume_skill_bind(game_app *s) {
+    if(!s->live_touch||!live_touch_mode_enabled()||!s->live_provider_available)return;
+    live_touch_sync(s);
+    if(!s->live_provider_available)return;
+    dm_live_touch_skill_bind_actions actions={s,begin_skill_bind_host};
+    (void)dm_live_touch_consume_skill_bind_request(s->live_touch,
+        s->live_observation.scene_epoch,s->live_observation.world_epoch,&actions);
 }
 static void pad_publish(game_app *s) {
     live_touch_sync(s);
@@ -550,6 +567,7 @@ static int touch_timer_tick(int fd,int events,void *data) {
     live_touch_consume_belt(s);
     live_touch_consume_difficulty(s);
     live_touch_consume_portal(s);
+    live_touch_consume_skill_bind(s);
     if(!needs)touch_timer_stop(s);
     return 1;
 }
@@ -681,6 +699,7 @@ static int input_ready(int fd,int events,void *data) {
                         live_touch_consume_belt(s);
                         live_touch_consume_difficulty(s);
                         live_touch_consume_portal(s);
+                        live_touch_consume_skill_bind(s);
                         handled=1;
                     }else handled=1;
                 }else LOG("[android-touch] pointer count %u exceeds 16; refusing the event",count);
