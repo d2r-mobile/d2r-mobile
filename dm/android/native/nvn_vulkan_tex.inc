@@ -279,6 +279,7 @@ static uint64_t image_gpu_overwrites;
 // 游戏绑定了句柄、端口却查不到登记的采样贴图次数（会退回 1x1 替身贴图）。
 // How often the game bound a handle whose sampled texture the port cannot resolve (falls back to the 1x1 stand-in).
 static uint64_t gpu_unregistered_textures;
+#include "nvn_vulkan_upload.inc"
 static void image_upload(image_entry *e) {
     const tex_t *t=&e->texture;
     int pending=t->mem && snapshot_pending((uintptr_t)t->mem,t->L.size);
@@ -300,17 +301,7 @@ static void image_upload(image_entry *e) {
     // 未跟踪 packaged 源也冻结一份快照，不能上传旧字节后把并发改写的新字节记为已上传。
     // Freeze untracked packaged sources too; never upload old bytes and then baseline a concurrent newer write.
     if(pending||(t->has_layout&&!nvn_dirty_tracked(t->mem,t->L.size))){shadow=malloc(t->L.size);if(!shadow||snapshot_read((uintptr_t)t->mem,shadow,t->L.size))die("Vulkan texture snapshot read");storage=shadow;}
-    for(unsigned layer=0;layer<t->L.layers;layer++)for(unsigned level=0;level<t->d.levels;level++){
-        int bw,bh;uint32_t bpb=nvn_fmt_bpb(t->d.format,&bw,&bh),w=dimension(t->d.width,level),h=dimension(t->d.height,level),d=t->d.target==NVN_TEXTURE_TARGET_3D?dimension(t->d.depth,level):1;
-        uint32_t pitch=(w+bw-1)/bw*bpb,rows=(h+bh-1)/bh;uint64_t bytes=(uint64_t)pitch*rows*d;
-        post_op *p=post_new(3);p->source=buffer_create(bytes);
-        if(t->d.flags & (NVN_TEXTURE_FLAGS_LINEAR|NVN_TEXTURE_FLAGS_LINEAR_RENDER_TARGET)){
-            const uint8_t *src=storage+nvn_tex_level_offset(&t->d,level)+layer*t->L.layer_size;size_t stride=t->d.stride?t->d.stride:pitch;
-            for(unsigned z=0;z<d;z++)for(unsigned y=0;y<rows;y++)memcpy((uint8_t*)p->source.mapped+(z*rows+y)*pitch,src+(z*rows+y)*stride,pitch);
-        }else if(nvn_deswizzle(&t->d,level,layer,storage,p->source.mapped,pitch))die("Vulkan texture deswizzle failed");
-        VkBufferImageCopy r={.imageSubresource={e->aspect,level,layer,1},.imageExtent={w,h,d}};
-        vkCmdCopyBufferToImage(command,p->source.buffer,e->image,VK_IMAGE_LAYOUT_GENERAL,1,&r);
-    }
+    image_upload_regions(e,storage);
     if(e->gpu_written){image_gpu_overwrites++;if(image_gpu_overwrites<=6||!(image_gpu_overwrites%64))LOG("[vulkan-upload] 覆盖 GPU 已渲染内容 serial=%llu %ux%u format=%#x bytes=%llu 第 %llu 次（客体内存里没有 GPU 那次渲染的结果）",(unsigned long long)t->serial,t->d.width,t->d.height,t->d.format,(unsigned long long)t->L.size,(unsigned long long)image_gpu_overwrites);}
     image_source_baseline(e,storage,stamp);free(shadow);e->populated=1;e->stamp=stamp;texture_uploads++;
 }

@@ -1006,7 +1006,7 @@ uint64_t mtl_present(const tex_t *t, double period, const int crop[4]) {
     if(previous_acquire&&!mtl_wait(previous_acquire,UINT64_MAX))die("Vulkan prior acquire consumer wait failed");
     uint64_t previous_acquire_ns=dm_android_clock_ns(CLOCK_MONOTONIC)-previous_start;
     dm_cpu_phase_end(DM_CPU_PHASE_WAIT_PRIOR,previous_start);
-    uint64_t ticket=++presents;graphics_probe_capture(ticket);frame_trace_present(ticket);
+    uint64_t ticket=++presents;graphics_probe_capture(ticket);frame_trace_present(ticket);texture_upload_report(ticket);
     if(!(ticket%60))LOG("[vulkan-prior-acquire] frame=%llu queued=%llu prior_consumer=%llu wait=%.3f ms scope=prior_binary_acquire_consumer current_guest_publication=async",(unsigned long long)ticket,(unsigned long long)completion_ticket,(unsigned long long)previous_acquire,previous_acquire_ns/1e6);
     if (swapchain) {
         // 前次 blit 已消费 acquire token；当前帧通过独立返回的真实票号追踪完成。
