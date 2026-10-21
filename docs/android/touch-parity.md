@@ -281,6 +281,50 @@ held pressed snapshot becomes stale only as a caller-owned value: a fresh query
 after cancel is empty. This is observation/interface evidence only; NativeActivity
 wiring, glyph resources and real device acceptance remain subsequent work.
 
+## Live diagnostic touch HUD (#121)
+
+The NativeActivity diagnostic reads the accepted bridge/adapter observation
+(`dm_touch_bridge_observe`) and converts it through
+`dm_touch_hud_snapshot_from_observation` using the current view density and
+pixel extent. Geometry comes from the accepted `dm_touch_hud_build_geometry`
+layout; no second hit-rule state machine or guessed binding is introduced.
+Motion events only mark the HUD dirty and consume the existing diagnostic HID;
+the existing 8 ms looper timer coalesces the next scene/HUD draw. No GPU work is
+queued per MotionEvent, no new thread or swapchain is added, and the timer stops
+when paused/unfocused/noSurface/error paths stop input.
+
+The window overlay is bounded CPU geometry over the diagnostic scene (transparent
+alpha, no glyph atlas). Pressed targets are shown in a diagnostic colour even
+when their game binding availability is unknown; unavailable targets stay grey.
+The live joystick uses observed origin/current, not a duplicated layout hit
+rule. Cancel/pause/focus loss/window destruction clear the observation and
+dirty state, so a later frame cannot show a stuck press; resize re-observes the
+new layout extent. Full game HUD art, bindings, cooldown/mana and device
+acceptance remain out of scope.
+
+The CPU seam lives in `runtime/touch_hud_overlay.c` and is platform-neutral; the
+NativeActivity wrapper only adapts the locked RGBA buffer. It validates
+dimensions, stride and capacity before writing, leaves row padding untouched,
+clips finite centres in double space before any integer conversion (so a finite
+1e30 joystick coordinate cannot trigger float-cast overflow), and returns 0
+without writing on invalid input. The frame orchestration seam separates
+mandatory external redraws from timer initiation: a valid HUD is composed on
+every external redraw even when dirty is clear, while dirty gates only
+unsolicited timer frames. Completion is acknowledged only after the window post
+succeeds; a failed compose or post keeps a pending retry, and permanent
+format/extent invalidity is the only suppression. Lifecycle-not-ready callbacks
+do not dispatch a frame.
+
+The host seam test drives actual bridge MotionEvents through observation,
+conversion and owned Vulkan pixels; the CPU seam test drives the same actual
+events through conversion and the production CPU frame seam, including two
+unchanged external redraws with fresh baselines, exact pressed/neutral pixel
+oracles, stride padding, alpha, density 2/3, cancel/resize, the 1e30 clipping
+regression, invalid no-write, post-failure retry, readiness and suppression.
+Mutants that restore dirty-gated external composition or pre-post
+acknowledgement fail the CPU test. Android ARM64 cross-builds the diagnostic
+shared library, CPU seam and live seam test.
+
 ## What remains unknown
 
 - Whether every source-backed Apple gesture has an exact game-visible equivalent

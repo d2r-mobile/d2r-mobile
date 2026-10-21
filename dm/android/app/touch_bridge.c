@@ -414,6 +414,12 @@ int dm_touch_bridge_cancel_all(dm_touch_bridge *bridge, int64_t time_ns) {
     return 1;
 }
 
+int dm_touch_bridge_observe(const dm_touch_bridge *bridge, float density,
+                            dm_android_touch_observation *out) {
+    if (!bridge || !out) return 0;
+    return dm_android_touch_observe(bridge->touch, density, out);
+}
+
 int dm_touch_bridge_take_action(dm_touch_bridge *bridge, dm_android_touch_action *out) {
     if (!bridge || !out) return 0;
     /* With a game provider attached its tick consumes core actions; do not let
