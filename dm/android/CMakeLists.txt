@@ -588,6 +588,33 @@ if(NOT ANDROID)
                 --app ${CMAKE_CURRENT_SOURCE_DIR}/app
                 --cc ${CMAKE_C_COMPILER})
         set_tests_properties(native_callbacks PROPERTIES TIMEOUT 120)
+        # The fixture compiles actual vk_host.h/wsi_frame_result.h. Prefer an
+        # already-resolved official Vulkan include directory; otherwise fetch
+        # only the pinned Khronos headers (types/constants), never a loader/SDK.
+        # Vulkan-OFF host CI still needs and runs these two tests.
+        set(WSI_HUD_VULKAN_INCLUDE "${Vulkan_INCLUDE_DIR}")
+        if(NOT WSI_HUD_VULKAN_INCLUDE OR NOT EXISTS "${WSI_HUD_VULKAN_INCLUDE}/vulkan/vulkan.h")
+            include(FetchContent)
+            FetchContent_Declare(dm_vulkan_headers
+                URL https://codeload.github.com/KhronosGroup/Vulkan-Headers/tar.gz/c46850864f4661461b0f6cb9922c058ffea4915e
+                URL_HASH SHA256=539ff8eaa4abf22fddbd98225c68a0c5ddb940075a4048c8b7f5d04449070a4e
+                DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+                SOURCE_SUBDIR unused)
+            FetchContent_MakeAvailable(dm_vulkan_headers)
+            set(WSI_HUD_VULKAN_INCLUDE "${dm_vulkan_headers_SOURCE_DIR}/include")
+        endif()
+        add_test(NAME wsi_hud_caller
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/wsi_hud_host.py
+                --native ${CMAKE_CURRENT_SOURCE_DIR}/app/native.c
+                --vulkan-include=${WSI_HUD_VULKAN_INCLUDE}
+                --cc ${CMAKE_C_COMPILER})
+        set_tests_properties(wsi_hud_caller PROPERTIES TIMEOUT 120)
+        add_test(NAME wsi_hud_no_record_mutant
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/wsi_hud_host.py
+                --native ${CMAKE_CURRENT_SOURCE_DIR}/app/native.c
+                --vulkan-include=${WSI_HUD_VULKAN_INCLUDE}
+                --cc ${CMAKE_C_COMPILER} --mutant)
+        set_tests_properties(wsi_hud_no_record_mutant PROPERTIES TIMEOUT 120)
         add_test(NAME native_text_jni
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/native_text_jni_host.py
                 --native ${CMAKE_CURRENT_SOURCE_DIR}/app/native.c
@@ -618,8 +645,9 @@ if(ANDROID)
     if(DM_ANDROID_VULKAN)
         add_library(dm_android_app SHARED app/native.c app/native_audio.c)
         target_compile_options(dm_android_app PRIVATE -Wall -Wextra -Werror)
-        target_link_libraries(dm_android_app PRIVATE dm_android_app_lifecycle dm_android_app_scene dm_android_app_wsi dm_android_wsi_frame dm_android_touch_bridge dm_android_input_source dm_android_gamepad_events dm_android_view_policy dm_android_input_policy dm_android_touch dm_android_runtime dm_android_artifact dm_android_vk dm_android_touch_hud dm_android_app_audio_session android log)
+        target_link_libraries(dm_android_app PRIVATE dm_android_app_lifecycle dm_android_app_scene dm_android_app_wsi dm_android_wsi_frame dm_android_touch_bridge dm_android_input_source dm_android_gamepad_events dm_android_view_policy dm_android_input_policy dm_android_touch dm_android_runtime dm_android_artifact dm_android_vk dm_android_touch_hud dm_android_touch_hud_swapchain dm_android_app_audio_session android log)
         target_link_options(dm_android_app PRIVATE "-Wl,-z,max-page-size=16384")
+        add_dependencies(dm_android_app dm_touch_hud_shaders)
         add_custom_command(TARGET dm_android_app POST_BUILD
             COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/tests/bridge_shared.sh"
                 "${CMAKE_READELF}" "${CMAKE_OBJDUMP}" "$<TARGET_FILE:dm_android_app>"
