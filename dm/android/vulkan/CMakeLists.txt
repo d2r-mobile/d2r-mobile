@@ -118,6 +118,24 @@ else()
     endif()
 endif()
 
+add_executable(dm_vulkan_texture_rows_subresource_test ../tests/vulkan_texture_rows_subresource.c vk_texture.c vk_memory.c vk_host.c)
+target_link_libraries(dm_vulkan_texture_rows_subresource_test PRIVATE dm_android_vk)
+target_compile_options(dm_vulkan_texture_rows_subresource_test PRIVATE -Wall -Wextra -Werror)
+foreach(symbol vkGetPhysicalDeviceFormatProperties vkGetPhysicalDeviceImageFormatProperties vkCreateImage
+    vkGetImageMemoryRequirements vkAllocateMemory vkBindImageMemory vkCreateBuffer vkGetBufferMemoryRequirements
+    vkBindBufferMemory vkMapMemory vkFlushMappedMemoryRanges vkInvalidateMappedMemoryRanges vkCreateImageView
+    vkAllocateCommandBuffers vkBeginCommandBuffer vkCmdPipelineBarrier vkCmdCopyBufferToImage vkCmdCopyImageToBuffer
+    vkEndCommandBuffer vkCreateFence vkQueueSubmit vkWaitForFences vkDeviceWaitIdle vkDestroyFence
+    vkFreeCommandBuffers vkDestroyImageView vkDestroyImage vkDestroyBuffer vkUnmapMemory vkFreeMemory)
+    target_compile_definitions(dm_vulkan_texture_rows_subresource_test PRIVATE ${symbol}=dm_test_${symbol})
+endforeach()
+if(ANDROID)
+    target_link_options(dm_vulkan_texture_rows_subresource_test PRIVATE "-Wl,-z,max-page-size=16384")
+else()
+    add_test(NAME vulkan_texture_rows_subresource COMMAND dm_vulkan_texture_rows_subresource_test)
+    set_tests_properties(vulkan_texture_rows_subresource PROPERTIES TIMEOUT 45)
+endif()
+
 add_executable(dm_vulkan_texture_failures_test ../tests/vulkan_texture_failures.c vk_texture.c vk_memory.c vk_host.c)
 target_link_libraries(dm_vulkan_texture_failures_test PRIVATE dm_android_vk)
 target_compile_options(dm_vulkan_texture_failures_test PRIVATE -Wall -Wextra -Werror)
