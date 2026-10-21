@@ -7,3 +7,9 @@ License: MIT; original copyright (c) 2026 jhaizhou. Reference Android implementa
 This branch imports the additive Android native, build/packing tools and Java sources from that snapshot for adaptation. It does not replace dm/host, dm/gfx/nvn, dm/ios/Sources or our existing dm/android runtime/app/tests. In particular our current game-specific touch/custom interaction remains authoritative; reference virtual gamepad controls are not the final touch implementation.
 
 Status: source import only, not linked, not tested, not admitted for execution of real SDK/game. Imported Linux-only tool paths require macOS/NDK adaptation. The imported patcher is a separate implementation whose eligibility must be reviewed; it must not silently replace or weaken our production scanner/quarantine. No game data, keys, saves, game-derived shaders or third-party driver binaries are imported. Build and device evidence will be added as it is produced.
+
+## Owned runtime evidence (2026-10-19)
+
+The shared patcher now has an explicit Android context target while retaining its Apple default and original-byte checks. Its actual emitters passed 124 owned ARM64 Unicorn executions across both targets. The imported `tests/probe.S` fixture was rewritten by that patcher, packed as an ELF library and executed with the generated native entry assembly on the Xiaomi 15 Ultra. Thread-context isolation passed four threads with 10,000 iterations each. Rewritten execution passed four threads with 1,000 iterations each, checking x18, guest TLS/TLR, test SVC/timer dispatch, host thread pointer, FP and NZCV preservation. Native executable exit status was zero.
+
+These tests use owned synthetic instructions and synthetic service returns. They do not establish real SDK/service correctness, graphics integration, game startup or playability. The full Android host/backend/APK remains under integration review.
