@@ -1,4 +1,5 @@
 #include "touch_bridge.h"
+#include "touch_game_bridge.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -7,6 +8,8 @@
 struct dm_touch_bridge {
     dm_android_pad *pad;
     dm_android_touch *touch;
+    dm_touch_game_bridge *game;
+    uint64_t game_epoch;
     float density;
     float width_pt;
     float height_pt;
@@ -44,6 +47,15 @@ static void active_remove(dm_touch_bridge *bridge, int32_t id) {
 
 static void active_clear(dm_touch_bridge *bridge) {
     bridge->active_count = 0;
+}
+
+static void sync_game_epoch(dm_touch_bridge *bridge) {
+    if (!bridge->game) return;
+    uint64_t epoch = dm_touch_game_bridge_invalidation_epoch(bridge->game);
+    if (epoch == bridge->game_epoch) return;
+    bridge->game_epoch = epoch;
+    active_clear(bridge);
+    memset(&bridge->diag.state, 0, sizeof(bridge->diag.state));
 }
 
 static dm_npad_state consume(dm_touch_bridge *bridge) {
@@ -157,11 +169,25 @@ dm_touch_bridge *dm_touch_bridge_create(float width_pt, float height_pt, float d
 
 void dm_touch_bridge_destroy(dm_touch_bridge *bridge, dm_npad_state *neutral_out) {
     if (!bridge) return;
+    if (bridge->game) dm_touch_game_bridge_destroy(bridge->game);
     (void)dm_android_touch_cancel_all(bridge->touch, bridge->last_time_ns);
     if (neutral_out) *neutral_out = consume(bridge);
     dm_android_touch_destroy(bridge->touch);
     dm_android_pad_destroy(bridge->pad);
     free(bridge);
+}
+
+int dm_touch_bridge_attach_game(dm_touch_bridge *bridge, const dm_tgp_provider *provider) {
+    if (!bridge || !provider) return 0;
+    if (bridge->game) {
+        dm_touch_game_bridge_destroy(bridge->game);
+        bridge->game = NULL;
+    }
+    active_clear(bridge);
+    memset(&bridge->diag.state, 0, sizeof(bridge->diag.state));
+    bridge->game = dm_touch_game_bridge_create(bridge->touch, provider);
+    bridge->game_epoch = bridge->game ? dm_touch_game_bridge_invalidation_epoch(bridge->game) : 0;
+    return bridge->game != NULL;
 }
 
 int dm_touch_bridge_set_density(dm_touch_bridge *bridge, float density) {
@@ -198,8 +224,17 @@ int dm_touch_bridge_resize(dm_touch_bridge *bridge, float width_pt, float height
 }
 
 int dm_touch_bridge_event(dm_touch_bridge *bridge, const dm_touch_event *event) {
+    if (!bridge || !event) return 0;
+    if (bridge->game && event->action != DM_TOUCH_ACTION_CANCEL) {
+        if (!dm_touch_game_bridge_refresh(bridge->game, (uint64_t)event->time_ns)) {
+            sync_game_epoch(bridge);
+            bridge->diag.rejected_events++;
+            return 0;
+        }
+    }
+    sync_game_epoch(bridge);
     if (!valid_event(bridge, event)) {
-        if (bridge) bridge->diag.invalid_events++;
+        bridge->diag.invalid_events++;
         return 0;
     }
     bridge->last_time_ns = event->time_ns;
@@ -212,10 +247,27 @@ int dm_touch_bridge_event(dm_touch_bridge *bridge, const dm_touch_event *event) 
             return 0;
         }
         if (!active_add(bridge, point->id)) {
+            (void)dm_android_touch_cancel(bridge->touch, point->id, event->time_ns);
+            (void)consume(bridge);
+            bridge->diag.rejected_events++;
+            return 0;
+        }
+        if (bridge->game &&
+            !dm_touch_game_bridge_pointer_down(bridge->game, point->id,
+                                               point->x_px / bridge->density,
+                                               point->y_px / bridge->density,
+                                               (uint64_t)event->time_ns)) {
+            (void)dm_android_touch_cancel(bridge->touch, point->id, event->time_ns);
+            active_remove(bridge, point->id);
+            (void)consume(bridge);
             bridge->diag.rejected_events++;
             return 0;
         }
         bridge->diag.accepted_events++;
+        if (bridge->game) {
+            (void)dm_touch_game_bridge_tick(bridge->game, (uint64_t)event->time_ns);
+            sync_game_epoch(bridge);
+        }
         return 1;
     }
     case DM_TOUCH_ACTION_MOVE:
@@ -226,16 +278,35 @@ int dm_touch_bridge_event(dm_touch_bridge *bridge, const dm_touch_event *event) 
             }
         }
         bridge->diag.accepted_events++;
+        if (bridge->game) {
+            (void)dm_touch_game_bridge_tick(bridge->game, (uint64_t)event->time_ns);
+            sync_game_epoch(bridge);
+        }
         return 1;
     case DM_TOUCH_ACTION_UP:
     case DM_TOUCH_ACTION_POINTER_UP: {
         int32_t id = event->points[event->action_index].id;
+        if (bridge->game &&
+            !dm_touch_game_bridge_pointer_release(bridge->game, id,
+                                                  event->points[event->action_index].x_px / bridge->density,
+                                                  event->points[event->action_index].y_px / bridge->density,
+                                                  (uint64_t)event->time_ns)) {
+            (void)dm_android_touch_cancel_all(bridge->touch, event->time_ns);
+            active_clear(bridge);
+            (void)consume(bridge);
+            bridge->diag.rejected_events++;
+            return 0;
+        }
         if (!apply_up(bridge, id, event->time_ns)) {
             bridge->diag.rejected_events++;
             return 0;
         }
         active_remove(bridge, id);
         bridge->diag.accepted_events++;
+        if (bridge->game) {
+            (void)dm_touch_game_bridge_tick(bridge->game, (uint64_t)event->time_ns);
+            sync_game_epoch(bridge);
+        }
         return 1;
     }
     case DM_TOUCH_ACTION_CANCEL:
@@ -251,6 +322,10 @@ int dm_touch_bridge_event(dm_touch_bridge *bridge, const dm_touch_event *event) 
 int dm_touch_bridge_tick(dm_touch_bridge *bridge, int64_t time_ns) {
     if (!bridge || time_ns < 0) return 0;
     if (!dm_android_touch_tick(bridge->touch, time_ns)) return 0;
+    if (bridge->game) {
+        (void)dm_touch_game_bridge_tick(bridge->game, (uint64_t)time_ns);
+        sync_game_epoch(bridge);
+    }
     bridge->last_time_ns = time_ns;
     return 1;
 }
