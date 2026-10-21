@@ -4,10 +4,21 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define DM_TGB_TARGETS 16
+
+typedef struct {
+    uint64_t token;
+    int32_t pointer_id;
+    int valid;
+    float x, y;
+    dm_tgp_hit hit;
+} dm_tgb_target;
+
 struct dm_touch_game_bridge {
     dm_android_touch *touch;
     dm_tgp_provider provider;
     dm_tgp_snapshot snapshot;
+    dm_tgb_target targets[DM_TGB_TARGETS];
     int available;
     int reason;
     uint64_t invalidations;
@@ -58,6 +69,55 @@ static int valid_hit(const dm_touch_game_bridge *bridge, const dm_tgp_hit *hit) 
     return object_range_contains(bridge, hit);
 }
 
+static void target_clear_all(dm_touch_game_bridge *bridge) {
+    memset(bridge->targets, 0, sizeof(bridge->targets));
+}
+
+static void target_prune(dm_touch_game_bridge *bridge) {
+    uint64_t pending = 0;
+    int has_pending = dm_android_touch_pending_use_token(bridge->touch, &pending);
+    for (int i = 0; i < DM_TGB_TARGETS; ++i) {
+        if (!bridge->targets[i].valid) continue;
+        if (has_pending && bridge->targets[i].token == pending) continue;
+        if (!dm_android_touch_token_active(bridge->touch, bridge->targets[i].token))
+            bridge->targets[i].valid = 0;
+    }
+}
+
+static dm_tgb_target *target_find(dm_touch_game_bridge *bridge, uint64_t token) {
+    for (int i = 0; i < DM_TGB_TARGETS; ++i)
+        if (bridge->targets[i].valid && bridge->targets[i].token == token)
+            return &bridge->targets[i];
+    return NULL;
+}
+
+static int target_store(dm_touch_game_bridge *bridge, uint64_t token, int32_t pointer_id,
+                        float x, float y, const dm_tgp_hit *hit) {
+    dm_tgb_target *slot = target_find(bridge, token);
+    if (!slot) {
+        for (int i = 0; i < DM_TGB_TARGETS; ++i)
+            if (!bridge->targets[i].valid) { slot = &bridge->targets[i]; break; }
+    }
+    if (!slot) return 0;
+    slot->token = token;
+    slot->pointer_id = pointer_id;
+    slot->valid = 1;
+    slot->x = x;
+    slot->y = y;
+    slot->hit = *hit;
+    return 1;
+}
+
+static int same_target(const dm_tgb_target *target, const dm_tgp_hit *hit) {
+    return hit->kind == DM_TGP_HIT_ITEM &&
+           hit->object_id == target->hit.object_id &&
+           hit->object_generation == target->hit.object_generation &&
+           hit->scene_epoch == target->hit.scene_epoch &&
+           hit->object_address == target->hit.object_address &&
+           hit->object_size == target->hit.object_size &&
+           hit->object_id != 0;
+}
+
 static void discard_pending_actions(dm_touch_game_bridge *bridge) {
     /* A core action belongs to the provider context that produced it. When the
        provider becomes unavailable or its scene/identity changes, an action
@@ -65,6 +125,7 @@ static void discard_pending_actions(dm_touch_game_bridge *bridge) {
        new scene tag. Count it as rejected; it was never acknowledged. */
     dm_android_touch_action action;
     while (dm_android_touch_take_action(bridge->touch, &action)) bridge->rejected++;
+    target_clear_all(bridge);
 }
 
 static void mark_unavailable(dm_touch_game_bridge *bridge, int reason) {
@@ -151,12 +212,21 @@ int dm_touch_game_bridge_pointer_down(dm_touch_game_bridge *bridge, int32_t poin
     if (!bridge || !isfinite(x) || !isfinite(y)) return 0;
     if (!dm_touch_game_bridge_refresh(bridge, now_ns)) return 0;
     dm_tgp_hit hit;
+    uint64_t token = 0;
     memset(&hit, 0, sizeof(hit));
+    if (!dm_android_touch_pointer_token(bridge->touch, pointer_id, &token)) return 0;
+    target_prune(bridge);
     if (!bridge->provider.hit ||
         !bridge->provider.hit(bridge->provider.context, x, y, &hit) ||
         !valid_hit(bridge, &hit)) {
         bridge->reason = DM_TGB_REASON_HIT;
         return 0;
+    }
+    if (hit.kind == DM_TGP_HIT_ITEM) {
+        if (!target_store(bridge, token, pointer_id, x, y, &hit)) {
+            bridge->reason = DM_TGB_REASON_RANGE;   /* bounded target table full */
+            return 0;
+        }
     }
     return dm_android_touch_pointer_hit(bridge->touch, pointer_id, hit.kind);
 }
@@ -206,9 +276,43 @@ int dm_touch_game_bridge_tick(dm_touch_game_bridge *bridge, uint64_t now_ns) {
     if (!dm_touch_game_bridge_refresh(bridge, now_ns)) return 0;
     dm_android_touch_action action;
     while (dm_android_touch_take_action(bridge->touch, &action)) {
+        if (action.kind == DM_ANDROID_ACTION_USE) {
+            dm_tgb_target *target = action.source_token ?
+                target_find(bridge, action.source_token) : NULL;
+            dm_tgp_hit current;
+            memset(&current, 0, sizeof(current));
+            if (!target || target->hit.object_id == 0 ||
+                target->hit.object_generation != bridge->snapshot.object_generation ||
+                target->hit.scene_epoch != bridge->snapshot.scene_epoch ||
+                !object_range_contains(bridge, &target->hit) ||
+                !bridge->provider.hit ||
+                !bridge->provider.hit(bridge->provider.context, target->x, target->y,
+                                      &current) ||
+                !valid_hit(bridge, &current) || !same_target(target, &current)) {
+                bridge->rejected++;
+                if (target) target->valid = 0;
+                continue;
+            }
+            dm_tgp_action provider_action;
+            memset(&provider_action, 0, sizeof(provider_action));
+            provider_action.kind = DM_TGP_ACTION_USE;
+            provider_action.x = action.x;
+            provider_action.y = action.y;
+            provider_action.object_id = target->hit.object_id;
+            provider_action.scene_epoch = bridge->snapshot.scene_epoch;
+            provider_action.generation = bridge->snapshot.generation;
+            target->valid = 0;
+            if (!bridge->provider.action ||
+                !bridge->provider.action(bridge->provider.context, &provider_action, now_ns)) {
+                bridge->rejected++;
+                continue;
+            }
+            bridge->acked++;
+            continue;
+        }
         /* This bounded slice has no retained, revalidated object target for
-           inventory/vendor actions. Reject them explicitly instead of sending
-           object_id=0 to a consumer. */
+           the other inventory/vendor actions. Reject them explicitly instead
+           of sending object_id=0 to a consumer. */
         if (object_action(action.kind)) {
             bridge->rejected++;
             continue;
@@ -227,6 +331,7 @@ int dm_touch_game_bridge_tick(dm_touch_game_bridge *bridge, uint64_t now_ns) {
         }
         bridge->acked++;
     }
+    target_prune(bridge);
     return 1;
 }
 

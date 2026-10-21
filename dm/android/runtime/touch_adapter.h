@@ -76,6 +76,8 @@ typedef struct dm_android_touch_action {
     uint32_t kind;
     float x, y;
     uint64_t sequence;
+    int32_t source_pointer;   /* pointer id that produced an object action; -1 otherwise */
+    uint64_t source_token;    /* immutable gesture token for that pointer; 0 if ambiguous */
 } dm_android_touch_action;
 
 // One-shot observation of an armed town-portal gesture. The fields are copied
@@ -141,6 +143,17 @@ int dm_android_touch_portal_ack(dm_android_touch *touch, uint64_t gesture_epoch,
 // core finger, 0 for NULL/negative/unknown. Used by the outer bridge to drop
 // only IDs the adapter/core canceled; it does not mutate ownership.
 int dm_android_touch_has_pointer(const dm_android_touch *touch, int32_t pointer_id);
+// Immutable per-down gesture token for an active pointer. The game bridge
+// retains object identity by token, so a later DOWN or reused pointer id cannot
+// overwrite a pending object action. Returns 0 for unknown/NULL.
+int dm_android_touch_pointer_token(const dm_android_touch *touch, int32_t pointer_id,
+                                   uint64_t *out_token);
+// 1 with the token of the single unread USE action; 0 when no USE is pending.
+// A second USE produced before the first is consumed makes both ambiguous and
+// this returns 0, so consumers reject rather than retarget either action.
+int dm_android_touch_pending_use_token(const dm_android_touch *touch,
+                                       uint64_t *out_token);
+int dm_android_touch_token_active(const dm_android_touch *touch, uint64_t token);
 int dm_android_touch_pointer_hit(dm_android_touch *touch, int32_t pointer_id, int kind);
 int dm_android_touch_pointer_release(dm_android_touch *touch, int32_t pointer_id,
                                      int drop_kind);
