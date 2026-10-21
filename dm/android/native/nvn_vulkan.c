@@ -866,7 +866,11 @@ void mtl_finish(void) { mtl_wait(mtl_last_fence(), UINT64_MAX); }
 void mtl_drain(void) { mtl_init();mtl_finish(); pthread_mutex_lock(&queue_lock); VK_CHECK(vkQueueWaitIdle(queue)); pthread_mutex_unlock(&queue_lock);pipeline_disk_stop_join(); }
 
 #include "nvn_vulkan_tex.inc"
+static int ghost_buffer_override(uintptr_t address,uint64_t size,VkDescriptorBufferInfo *out);
+static void ghost_note(const p_draw *draw,const p_draw_idx *indexed);
+static void ghost_flush(void);
 #include "nvn_vulkan_shader.inc"
+#include "nvn_vulkan_ui_ghost.inc"
 #include "nvn_vulkan_counter_gpu.inc"
 #include "nvn_vulkan_batch_resources.inc"
 #include "nvn_vulkan_probe.inc"
@@ -1197,6 +1201,4 @@ void mtl_alloc_stats(uint64_t *wait, uint64_t *grow, int *n) { *wait = *grow = 0
 uint32_t mtl_present_qos(void) { return 0; }
 int mtl_fps_target(void) { int dm_fps_setting(void); return dm_fps_setting(); }
 void mtl_mem_stat(unsigned long long frame, unsigned long long mb, int ok, unsigned long long total, unsigned long long free_size, unsigned long long max) { (void)ok; (void)total; (void)free_size; (void)max; LOG("[vulkan] frame=%llu resident=%llu MB submits=%llu allocations=%llu reuse=%llu snapshots=%llu MB pipelines=%llu/%llu", frame, mb, (unsigned long long)atomic_load(&submitted), (unsigned long long)buffer_allocations, (unsigned long long)buffer_reuses, (unsigned long long)(snapshot_bytes >> 20), (unsigned long long)pipeline_creations, (unsigned long long)pipeline_reuses); }
-void mtl_ui_ghost(int on, float px, float py, const float grid[4], float cx, float cy) { (void)on; (void)px; (void)py; (void)grid; (void)cx; (void)cy; }
-int mtl_ui_ghost_rect(float r[4]) { (void)r; return 0; }
 void dm_gfx_shot_at(long frame, const char *path) { (void)frame; dm_shot_written(path, 0); }
