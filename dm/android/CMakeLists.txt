@@ -345,7 +345,7 @@ if(DM_ANDROID_VULKAN)
         COMMAND ${DM_GLSLC} --target-env=vulkan1.1 -O ${CMAKE_CURRENT_SOURCE_DIR}/vulkan/hud.frag -o ${dm_hud_frag}
         DEPENDS vulkan/hud.frag VERBATIM)
     add_custom_target(dm_touch_hud_shaders DEPENDS ${dm_hud_vert} ${dm_hud_frag})
-    add_library(dm_android_touch_hud STATIC runtime/touch_hud.c)
+    add_library(dm_android_touch_hud STATIC runtime/touch_hud.c runtime/touch_hud_overlay.c)
     target_include_directories(dm_android_touch_hud PUBLIC runtime ../ios/Sources vulkan)
     target_link_libraries(dm_android_touch_hud PUBLIC dm_android_vk dm_android_touch_core)
     target_compile_options(dm_android_touch_hud PRIVATE -Wall -Wextra -Werror)
@@ -353,6 +353,19 @@ if(DM_ANDROID_VULKAN)
     target_link_libraries(dm_touch_hud_test PRIVATE dm_android_touch_hud)
     target_compile_options(dm_touch_hud_test PRIVATE -Wall -Wextra -Werror)
     add_dependencies(dm_touch_hud_test dm_touch_hud_shaders)
+    # #121 actual bridge event -> observation -> HUD geometry/pixels seam.
+    add_executable(dm_touch_hud_live_test tests/touch_hud_live.c)
+    target_include_directories(dm_touch_hud_live_test PRIVATE app runtime ../ios/Sources vulkan)
+    target_link_libraries(dm_touch_hud_live_test PRIVATE dm_android_touch_hud dm_android_touch_bridge dm_android_runtime m)
+    target_compile_options(dm_touch_hud_live_test PRIVATE -Wall -Wextra -Werror)
+    add_dependencies(dm_touch_hud_live_test dm_touch_hud_shaders)
+    # #121 CPU window seam: actual bridge events -> observation -> CPU overlay,
+    # scheduler coalescing/retry, stride/padding, density, cancel/resize and
+    # finite 1e30 clipping. Platform-neutral; no Vulkan or Android.
+    add_executable(dm_touch_hud_cpu_test tests/touch_hud_cpu.c)
+    target_include_directories(dm_touch_hud_cpu_test PRIVATE app runtime ../ios/Sources)
+    target_link_libraries(dm_touch_hud_cpu_test PRIVATE dm_android_touch_hud dm_android_touch_bridge dm_android_runtime m)
+    target_compile_options(dm_touch_hud_cpu_test PRIVATE -Wall -Wextra -Werror)
     # GPU-free lifecycle oracle: mocks the actual Vulkan/dm_vk calls and counts
     # real create/destroy, allocate/free, map/unmap, command and fence pairs.
     add_executable(dm_touch_hud_mock_test runtime/touch_hud.c tests/touch_hud_mock.c)
@@ -365,13 +378,18 @@ if(DM_ANDROID_VULKAN)
     target_compile_options(dm_touch_hud_mock_test PRIVATE -Wall -Wextra -Werror)
     if(ANDROID)
         target_link_options(dm_touch_hud_test PRIVATE "-Wl,-z,max-page-size=16384")
+        target_link_options(dm_touch_hud_live_test PRIVATE "-Wl,-z,max-page-size=16384")
         target_link_options(dm_touch_hud_mock_test PRIVATE "-Wl,-z,max-page-size=16384")
     else()
         add_test(NAME touch_hud_offscreen COMMAND dm_touch_hud_test
             ${dm_hud_vert} ${dm_hud_frag} ${CMAKE_CURRENT_BINARY_DIR}/touch-hud-artifacts)
         set_tests_properties(touch_hud_offscreen PROPERTIES TIMEOUT 90 SKIP_RETURN_CODE 77)
+        add_test(NAME touch_hud_live COMMAND dm_touch_hud_live_test ${dm_hud_vert} ${dm_hud_frag})
+        set_tests_properties(touch_hud_live PROPERTIES TIMEOUT 90 SKIP_RETURN_CODE 77)
         add_test(NAME touch_hud_lifecycle COMMAND dm_touch_hud_mock_test)
         set_tests_properties(touch_hud_lifecycle PROPERTIES TIMEOUT 90)
+        add_test(NAME touch_hud_cpu COMMAND dm_touch_hud_cpu_test)
+        set_tests_properties(touch_hud_cpu PROPERTIES TIMEOUT 90)
     endif()
 endif()
 
@@ -385,7 +403,7 @@ if(ANDROID)
     if(DM_ANDROID_VULKAN)
         add_library(dm_android_app SHARED app/native.c)
         target_compile_options(dm_android_app PRIVATE -Wall -Wextra -Werror)
-        target_link_libraries(dm_android_app PRIVATE dm_android_app_lifecycle dm_android_app_scene dm_android_touch_bridge dm_android_view_policy dm_android_input_policy dm_android_touch dm_android_runtime dm_android_artifact dm_android_vk android log)
+        target_link_libraries(dm_android_app PRIVATE dm_android_app_lifecycle dm_android_app_scene dm_android_touch_bridge dm_android_view_policy dm_android_input_policy dm_android_touch dm_android_runtime dm_android_artifact dm_android_vk dm_android_touch_hud android log)
         target_link_options(dm_android_app PRIVATE "-Wl,-z,max-page-size=16384")
         add_custom_command(TARGET dm_android_app POST_BUILD
             COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/tests/bridge_shared.sh"

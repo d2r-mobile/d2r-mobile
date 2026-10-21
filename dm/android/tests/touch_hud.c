@@ -197,7 +197,7 @@ int main(int argc, char **argv)
     CHECK(png_write(path, p, s.pixel_width, s.pixel_height));
 
     s.available_mask &= ~(1u << skill_i);
-    s.pressed_mask = 1u << skill_i;   // pressed must not override unavailable
+    s.pressed_mask = 0;
     CHECK(dm_touch_hud_render(&vk, &s, &px, 0, argv[1], argv[2]));
     uint32_t sx = (uint32_t)(g[skill_i].center_x_px + g[skill_i].radius_px * 0.30f);
     uint32_t sy = (uint32_t)(g[skill_i].center_y_px + g[skill_i].radius_px * 0.20f);
@@ -206,6 +206,12 @@ int main(int argc, char **argv)
     CHECK(pixel_near(p, s.pixel_width, sx, sy, expect, 0.015f));
     snprintf(path, sizeof path, "%s/touch-hud-unavailable.png", dir);
     CHECK(png_write(path, p, s.pixel_width, s.pixel_height));
+    /* Diagnostic press is visible even while binding availability is unknown. */
+    s.pressed_mask = 1u << skill_i;
+    CHECK(dm_touch_hud_render(&vk, &s, &px, 0, argv[1], argv[2]));
+    bg_at(sx, sy, s.pixel_width, s.pixel_height, bg);
+    blend(bg, PRESSED, expect);
+    CHECK(pixel_near(p, s.pixel_width, sx, sy, expect, 0.015f));
 
     CHECK(dm_touch_hud_render(&vk, &s, &px, 1, argv[1], argv[2]));
     uint32_t edge = (uint32_t)(g[main_i].center_x_px - g[main_i].radius_px);

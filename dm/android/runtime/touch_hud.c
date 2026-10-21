@@ -85,6 +85,44 @@ int dm_touch_hud_validate(const dm_touch_hud_snapshot *s)
     if (s->enabled_mask & ~((1u << DM_TC_COUNT) - 1u)) return 0;
     if (s->available_mask & ~((1u << DM_TC_COUNT) - 1u)) return 0;
     if (s->pressed_mask & ~((1u << DM_TC_COUNT) - 1u)) return 0;
+    if (s->joystick_active &&
+        (!isfinite(s->joy_origin_x_pt) || !isfinite(s->joy_origin_y_pt) ||
+         !isfinite(s->joy_current_x_pt) || !isfinite(s->joy_current_y_pt))) return 0;
+    return 1;
+}
+
+int dm_touch_hud_snapshot_from_observation(const dm_android_touch_observation *o,
+                                           uint32_t pixel_width, uint32_t pixel_height,
+                                           dm_touch_hud_snapshot *out) {
+    if (!o || !out || !pixel_width || !pixel_height) return 0;
+    if (!isfinite(o->width_pt) || !isfinite(o->height_pt) || !isfinite(o->density) ||
+        o->width_pt <= 0 || o->height_pt <= 0 || o->density <= 0) return 0;
+    double expected_w = (double)o->width_pt * (double)o->density;
+    double expected_h = (double)o->height_pt * (double)o->density;
+    if (!isfinite(expected_w) || !isfinite(expected_h)) return 0;
+    if (fabs(expected_w - (double)pixel_width) > 1.0 ||
+        fabs(expected_h - (double)pixel_height) > 1.0) return 0;
+    if ((o->enabled_mask | o->pressed_mask | o->available_mask) & ~((1u << DM_TC_COUNT) - 1u)) return 0;
+    if (o->joystick_active &&
+        (!isfinite(o->joy_origin_x) || !isfinite(o->joy_origin_y) ||
+         !isfinite(o->joy_current_x) || !isfinite(o->joy_current_y))) return 0;
+    dm_touch_hud_snapshot value = {
+        .width_pt = o->width_pt,
+        .height_pt = o->height_pt,
+        .density = o->density,
+        .pixel_width = pixel_width,
+        .pixel_height = pixel_height,
+        .available_mask = o->available_mask,
+        .enabled_mask = o->enabled_mask,
+        .pressed_mask = o->pressed_mask,
+        .joystick_active = o->joystick_active,
+        .joy_origin_x_pt = o->joy_origin_x,
+        .joy_origin_y_pt = o->joy_origin_y,
+        .joy_current_x_pt = o->joy_current_x,
+        .joy_current_y_pt = o->joy_current_y,
+    };
+    if (!dm_touch_hud_validate(&value)) return 0;
+    *out = value;
     return 1;
 }
 
@@ -141,9 +179,9 @@ static void build(batch *b, const dm_touch_hud_snapshot *s,
             line(b, s, g[i].center_x_px - 8, g[i].center_y_px, g[i].center_x_px + 8, g[i].center_y_px, 1.5f, HUD_OVERLAY);
             line(b, s, g[i].center_x_px, g[i].center_y_px - 8, g[i].center_x_px, g[i].center_y_px + 8, 1.5f, HUD_OVERLAY);
         } else {
-            int pressed = available && (s->pressed_mask & (1u << i));
+            int pressed = (s->pressed_mask & (1u << i)) != 0;
             disk(b, s, g[i].center_x_px, g[i].center_y_px, g[i].radius_px,
-                 !available ? HUD_UNAVAILABLE : pressed ? HUD_PRESSED : HUD_NORMAL);
+                 pressed ? HUD_PRESSED : available ? HUD_NORMAL : HUD_UNAVAILABLE);
         }
     }
     if (overlay) {
@@ -157,7 +195,14 @@ static void build(batch *b, const dm_touch_hud_snapshot *s,
             line(b, s, cx + r * cosf(a0), cy + r * sinf(a0), cx + r * cosf(a1), cy + r * sinf(a1), 2, c);
         }
     } else {
-        disk(b, s, joy->center_x_px, joy->center_y_px, joy->radius_px, HUD_JOY);
+        if (s->joystick_active) {
+            disk(b, s, s->joy_origin_x_pt * s->density, s->joy_origin_y_pt * s->density,
+                 joy->radius_px, HUD_JOY);
+            disk(b, s, s->joy_current_x_pt * s->density, s->joy_current_y_pt * s->density,
+                 joy->radius_px * 0.42f, HUD_PRESSED);
+        } else {
+            disk(b, s, joy->center_x_px, joy->center_y_px, joy->radius_px, HUD_JOY);
+        }
     }
 }
 
