@@ -15,13 +15,15 @@ public final class DmTextEditorJniBridgeTest {
         int calls;
         int lastEvent = -1;
         int lastUnits = -1;
+        String lastPayload;
         long lastSession;
 
         @Override
-        public void onTextEvent(long session, int event, int codeUnits) {
+        public void onTextEvent(long session, int event, String payload, int codeUnits) {
             calls++;
             lastSession = session;
             lastEvent = event;
+            lastPayload = payload;
             lastUnits = codeUnits;
         }
     }
@@ -54,16 +56,19 @@ public final class DmTextEditorJniBridgeTest {
                 (DmTextEditorView) content.getChildAt(content.getChildCount() - 1);
         DmInputConnection connection =
                 (DmInputConnection) editor.onCreateInputConnection(new EditorInfo());
-        check(connection.commitText("abc", 1), "bridge connection commit");
+        check(connection.commitText("A你😀", 1), "bridge connection commit");
         check(events.calls == 1 && events.lastSession == 42L
                 && events.lastEvent == DmTextEditorJniBridge.EVENT_COMMIT
-                && events.lastUnits == 3, "native event commit bounded");
+                && events.lastUnits == 4, "native event commit bounded");
+        check("A你😀".equals(events.lastPayload), "native event commit payload");
         check(connection.deleteSurroundingText(1, 0), "bridge connection delete");
         check(events.calls == 2 && events.lastEvent == DmTextEditorJniBridge.EVENT_DELETE
-                && events.lastUnits == 1, "native event delete bounded");
+                && events.lastUnits == 2, "native event delete bounded");
+        check("😀".equals(events.lastPayload), "native event delete payload");
         check(connection.performEditorAction(EditorInfo.IME_ACTION_DONE), "bridge submit");
         check(events.calls == 3 && events.lastEvent == DmTextEditorJniBridge.EVENT_SUBMIT
                 && events.lastUnits == 2, "native event submit bounded");
+        check("A你".equals(events.lastPayload), "native event submit payload");
         check(!bridge.isActive() && content.getChildCount() == 1, "submit retires host editor");
         check(bridge.release(), "bridge release after submit");
         check(!bridge.release(), "second release idempotent");
