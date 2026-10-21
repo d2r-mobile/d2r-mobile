@@ -33,9 +33,19 @@ int main(void) {
 
     reset_inputs(NULL, NULL, NULL, NULL);
     CHECK(gpu_snapshot_reuse_enabled() == 1);
-    CHECK(gpu_snapshot_inplace_enabled() == 1);
+    CHECK(gpu_snapshot_inplace_enabled() == 0);
     CHECK(!strcmp(gpu_snapshot_reuse_source_name(), "default"));
     CHECK(!strcmp(gpu_snapshot_inplace_source_name(), "default"));
+
+    // Independent caches: an explicit in-place override does not change reuse.
+    reset_inputs(NULL, NULL, "1", NULL);
+    CHECK(gpu_snapshot_reuse_enabled() == 1);
+    CHECK(gpu_snapshot_inplace_enabled() == 1);
+
+    // An explicit reuse override does not change the conservative in-place default.
+    reset_inputs("0", NULL, NULL, NULL);
+    CHECK(gpu_snapshot_reuse_enabled() == 0);
+    CHECK(gpu_snapshot_inplace_enabled() == 0);
 
     reset_inputs(NULL, "0", NULL, NULL);
     CHECK(gpu_snapshot_reuse_enabled() == 0);
@@ -45,13 +55,25 @@ int main(void) {
     CHECK(gpu_snapshot_inplace_enabled() == 0);
     CHECK(!strcmp(gpu_snapshot_inplace_source_name(), "property"));
 
+    reset_inputs(NULL, NULL, NULL, "1");
+    CHECK(gpu_snapshot_inplace_enabled() == 1);
+    CHECK(!strcmp(gpu_snapshot_inplace_source_name(), "property"));
+
     reset_inputs(NULL, NULL, "0", "1");
     CHECK(gpu_snapshot_inplace_enabled() == 0);
+    CHECK(!strcmp(gpu_snapshot_inplace_source_name(), "env"));
+
+    reset_inputs(NULL, NULL, "1", "0");
+    CHECK(gpu_snapshot_inplace_enabled() == 1);
     CHECK(!strcmp(gpu_snapshot_inplace_source_name(), "env"));
 
     reset_inputs(NULL, NULL, "garbage", "0");
     CHECK(gpu_snapshot_inplace_enabled() == 0);
     CHECK(!strcmp(gpu_snapshot_inplace_source_name(), "property"));
+
+    reset_inputs(NULL, NULL, NULL, "garbage");
+    CHECK(gpu_snapshot_inplace_enabled() == 0);
+    CHECK(!strcmp(gpu_snapshot_inplace_source_name(), "default"));
 
     // Read once per process: changing inputs without restart does not alter
     // either cached mode; reset simulates the next process start.
@@ -62,11 +84,13 @@ int main(void) {
     setenv("DM_VK_GPU_SNAPSHOT_INPLACE", "1", 1);
     CHECK(gpu_snapshot_reuse_enabled() == 0);
     CHECK(gpu_snapshot_inplace_enabled() == 0);
+    unsetenv("DM_VK_GPU_SNAPSHOT_REUSE");
+    unsetenv("DM_VK_GPU_SNAPSHOT_INPLACE");
     gpu_snapshot_policy_reset_for_test();
     CHECK(gpu_snapshot_reuse_enabled() == 1);
-    CHECK(gpu_snapshot_inplace_enabled() == 1);
+    CHECK(gpu_snapshot_inplace_enabled() == 0);
 
     if (failures) return 1;
-    puts("PASS gpu snapshot policy: hit/COW/inplace branch, inplace off still hit, restart cache; policy only");
+    puts("PASS gpu snapshot policy: conservative COW default, explicit inplace override, restart cache; policy only");
     return 0;
 }
