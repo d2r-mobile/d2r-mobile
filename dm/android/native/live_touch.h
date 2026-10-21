@@ -122,6 +122,8 @@ void dm_live_touch_cancel_sources(dm_live_touch *touch, int64_t time_ns,
 void dm_live_touch_tick(dm_live_touch *touch, int64_t time_ns);
 
 uint64_t dm_live_touch_buttons(const dm_live_touch *touch);
+int dm_live_touch_skill_set(const dm_live_touch *touch);
+uint64_t dm_live_touch_target_button(const dm_live_touch *touch, int target);
 int32_t dm_live_touch_lx(const dm_live_touch *touch);
 int32_t dm_live_touch_ly(const dm_live_touch *touch);
 int32_t dm_live_touch_rx(const dm_live_touch *touch);

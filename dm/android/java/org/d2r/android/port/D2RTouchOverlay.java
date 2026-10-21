@@ -1,12 +1,18 @@
 package org.d2r.android.port;
 
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
+import android.graphics.Rect;
 import android.graphics.drawable.ColorDrawable;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.PopupWindow;
+
+import java.io.IOException;
+import java.io.InputStream;
 
 /**
  * Draw-only visual layer for the actual D2R live touch core.
@@ -24,6 +30,14 @@ final class D2RTouchOverlay extends View {
     private final View decor;
     private final float[] values = new float[96];
     private final long[] state = new long[4];
+    private final int[] glyphs = new int[20];
+    private final int[] atlasInfo = new int[45];
+    private final Bitmap[] atlases = new Bitmap[TouchGlyph.ATLAS_COUNT];
+    private final Bitmap[] glyphCache = new Bitmap[TouchGlyph.ATLAS_COUNT * 128];
+    private final int[] glyphRect = new int[4];
+    private final Rect src = new Rect();
+    private final Rect dst = new Rect();
+    private boolean atlasInfoLoaded;
     private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint stroke = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint label = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -100,6 +114,10 @@ final class D2RTouchOverlay extends View {
         try { ok = activity.readLiveTouchOverlay(values, state); }
         catch (UnsatisfiedLinkError error) { return; }
         if (ok == 0 || !TouchOverlayGeometry.valid(values)) return;
+        if (!atlasInfoLoaded && activity.readLiveTouchAtlasInfo(atlasInfo) != 0) atlasInfoLoaded = true;
+        if (activity.readLiveTouchGlyphSnapshot(glyphs) == 0) {
+            for (int i = 0; i < glyphs.length; i++) glyphs[i] = i % 4 == 0 ? TouchGlyph.UNKNOWN : -1;
+        }
         float[] v = values;
         if (TouchOverlayGeometry.frontend(v)) return; // original front-end pages have no combat controls
         int mask = (int)v[17];
@@ -120,8 +138,9 @@ final class D2RTouchOverlay extends View {
             text(canvas, "MOVE", cx, cy + r + label.getTextSize() * 1.2f);
         }
 
-        // Main attack and the four skill slots are the real target centers. Android has no legal native
-        // skill glyph/render path, so slots 1..4 are explicitly unknown rather than fake icons.
+        // Main attack and the four skill slots are the real target centers. A bound skill uses the
+        // original iOS native art mapping (dm_ta_current_set) when the local generated atlas is present;
+        // empty slots draw a cross and unknown/missing assets remain an explicit "?" rather than a fake icon.
         for (int i = 0; i < 12; i++) {
             if ((mask & (1 << i)) == 0) continue;
             float cx = mx(v, v[24 + i * 3]);
@@ -130,10 +149,13 @@ final class D2RTouchOverlay extends View {
             if (r <= 0) continue;
             int bg = (i == 10) ? 0x995a4430 : 0x77101820;
             circle(canvas, cx, cy, r, bg, i == 0 ? 0xeed8c49a : 0xaad8c49a);
+            if (i <= 4) {
+                if (!navigation && drawSkillGlyph(canvas, i, cx, cy, r, state[0])) continue;
+                text(canvas, "?", cx, cy + label.getTextSize() * .36f);
+                continue;
+            }
             String s;
-            if (i == 0) s = "ATK";
-            else if (i >= 1 && i <= 4) s = "?"; // no fake skill art/cooldown
-            else if (i == 5) s = "TP";
+            if (i == 5) s = "TP";
             else if (i >= 6 && i <= 9) s = String.valueOf(i - 5);
             else if (i == 10) s = "MENU";
             else s = "MAP";
@@ -166,6 +188,75 @@ final class D2RTouchOverlay extends View {
                 }
             }
         }
+    }
+
+    private void drawPlus(Canvas canvas, float x, float y, float r) {
+        stroke.setColor(0xccd8c49a);
+        float a = r * .30f;
+        canvas.drawLine(x - a, y, x + a, y, stroke);
+        canvas.drawLine(x, y - a, x, y + a, stroke);
+    }
+
+    private Bitmap loadAtlas(int atlas) {
+        if (atlas < 0 || atlas >= TouchGlyph.ATLAS_COUNT) return null;
+        Bitmap cached = atlases[atlas];
+        if (cached != null) return cached;
+        String name = TouchGlyph.assetName(atlas);
+        if (name == null || !atlasInfoLoaded) return null;
+        InputStream in = null;
+        try {
+            in = activity.getAssets().open(name);
+            cached = BitmapFactory.decodeStream(in);
+            atlases[atlas] = cached;
+        } catch (IOException | RuntimeException error) {
+            cached = null;
+        } finally {
+            if (in != null) try { in.close(); } catch (IOException ignored) { }
+        }
+        return cached;
+    }
+
+    private Bitmap glyphBitmap(int atlas, int frame) {
+        int key = atlas * 128 + frame;
+        if (key < 0 || key >= glyphCache.length) return null;
+        Bitmap cached = glyphCache[key];
+        if (cached != null) return cached;
+        Bitmap source = loadAtlas(atlas);
+        if (source == null || frame < 0 || frame >= 128) return null;
+        if (!TouchGlyph.frameRect(atlasInfo, atlas, frame, glyphRect)) return null;
+        try {
+            cached = Bitmap.createBitmap(source, glyphRect[0], glyphRect[1],
+                                         glyphRect[2], glyphRect[3]);
+            glyphCache[key] = cached;
+        } catch (IllegalArgumentException | OutOfMemoryError error) {
+            cached = null;
+        }
+        return cached;
+    }
+
+    private boolean drawSkillGlyph(Canvas canvas, int target, float cx, float cy,
+                                   float r, long buttons) {
+        int base = target * 4;
+        if (base < 0 || base + 3 >= glyphs.length) return false;
+        int status = glyphs[base];
+        if (status == TouchGlyph.EMPTY) {
+            drawPlus(canvas, cx, cy, r);
+            return true;
+        }
+        if (status != TouchGlyph.GLYPH) return false;
+        int atlas = glyphs[base + 1];
+        int frame = (buttons & TouchGlyph.button(target)) != 0 ? glyphs[base + 3] : glyphs[base + 2];
+        if (!TouchGlyph.validAtlasInfo(atlasInfo) ||
+            !TouchGlyph.frameRect(atlasInfo, atlas, frame, glyphRect)) return false;
+        Bitmap glyph = glyphBitmap(atlas, frame);
+        if (glyph == null) return false;
+        src.set(glyphRect[0], glyphRect[1], glyphRect[0] + glyphRect[2],
+                glyphRect[1] + glyphRect[3]);
+        float size = r * 1.28f;
+        dst.set(Math.round(cx - size * .5f), Math.round(cy - size * .5f),
+                Math.round(cx + size * .5f), Math.round(cy + size * .5f));
+        canvas.drawBitmap(glyph, src, dst, null);
+        return true;
     }
 
     private void circle(Canvas canvas, float x, float y, float r, int bg, int line) {

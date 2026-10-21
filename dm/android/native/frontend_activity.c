@@ -16,6 +16,7 @@
 #include "touch_pointer_map.h"
 #include "live_touch.h"
 #include "live_touch_items.h"
+#include "live_touch_glyph.h"
 #include "live_touch_geometry.h"
 #include "live_touch_provider.h"
 #include "live_touch_readiness.h"
@@ -477,6 +478,7 @@ static void live_touch_notify_readiness(game_app *s, int available) {
 static void live_touch_set_available(game_app *s, int available) {
     if (!dm_live_touch_readiness_update(&s->live_readiness, available)) return;
     s->live_provider_available = available;
+    if (!available) dm_live_touch_glyph_invalidate();
     LOG("[android-touch] live readiness %s", available ? "ready" : "unavailable");
     live_touch_notify_readiness(s, available);
 }
@@ -525,9 +527,15 @@ static void live_touch_notify_visual(game_app *s) {
     if (klass) (*env)->DeleteLocalRef(env, klass);
 }
 static void live_touch_publish_visual(game_app *s) {
-    if (!s || !s->live_provider_available || !s->live_geometry.valid) return;
+    if (!s || !s->live_provider_available || !s->live_geometry.valid) {
+        dm_live_touch_glyph_invalidate();
+        return;
+    }
     dm_live_touch_visual v;
-    if (!dm_live_touch_visual_snapshot(s->live_touch, &v)) return;
+    if (!dm_live_touch_visual_snapshot(s->live_touch, &v)) {
+        dm_live_touch_glyph_invalidate();
+        return;
+    }
     v.frontend = dm_uiscreen_ingame() ? 0 : 1;
     uint64_t signature = dm_live_touch_visual_signature(&v, &s->live_geometry);
     dm_hud_info hud; memset(&hud, 0, sizeof hud); dm_hud_get(&hud);
@@ -535,6 +543,10 @@ static void live_touch_publish_visual(game_app *s) {
         (uint64_t)hud.belt[1], (uint64_t)hud.belt[2], (uint64_t)hud.belt[3]};
     for (unsigned i = 0; i < sizeof hud_parts / sizeof *hud_parts; i++)
         signature = (signature ^ hud_parts[i]) * 1099511628211ull;
+    { dm_tg_snapshot glyph_snapshot; int have = dm_touch_game_snapshot(&glyph_snapshot);
+      dm_live_touch_glyph_publish(s->live_touch, have ? &glyph_snapshot : NULL, now_ns());
+      uint64_t glyph = dm_live_touch_glyph_signature(NULL, NULL, 0);
+      signature = (signature ^ glyph) * 1099511628211ull; }
     if (signature == s->live_visual_signature) return;
     s->live_visual_signature = signature;
     live_touch_notify_visual(s);
@@ -851,6 +863,30 @@ __attribute__((visibility("default"))) jint Java_org_d2r_android_port_D2RActivit
     jlong state_out[4]={(jlong)v.buttons,(jlong)dm_live_touch_lx(s->live_touch),(jlong)dm_live_touch_ly(s->live_touch),0};
     (*env)->SetFloatArrayRegion(env,values,0,96,out);(*env)->SetLongArrayRegion(env,state,0,4,state_out);return 1;
 }
+// Read-only skill glyph indices for the draw-only overlay. The array layout is
+// 5 records of (status, atlas, normal_frame, pressed_frame). It calls the same
+// original dm_ta_current_set mapping and never mutates input or binding state.
+__attribute__((visibility("default"))) jint Java_org_d2r_android_port_D2RActivity_getLiveTouchGlyphSnapshot(JNIEnv *env,jclass klass,jintArray out) {
+    (void)klass;game_app *s=application;
+    if(!s||!s->live_touch||!s->live_provider_available||!out)return 0;
+    if((*env)->GetArrayLength(env,out)<20)return 0;
+    dm_live_touch_glyph glyphs[5];
+    // UI thread copies the owner-published immutable records only. It never
+    // reads the mutable touch/layout/group fields or invokes the core resolver.
+    if(!dm_live_touch_skill_glyphs(NULL,NULL,0,glyphs))return 0;
+    jint values[20];
+    for(int i=0;i<5;i++){values[i*4]=glyphs[i].status;values[i*4+1]=glyphs[i].atlas;values[i*4+2]=glyphs[i].normal_frame;values[i*4+3]=glyphs[i].pressed_frame;}
+    (*env)->SetIntArrayRegion(env,out,0,20,values);return 1;
+}
+// Nine atlas records of (width, height, frame_width, pitch, frame_count).
+// All zero entries mean the default build has no generated native art.
+__attribute__((visibility("default"))) jint Java_org_d2r_android_port_D2RActivity_getLiveTouchAtlasInfo(JNIEnv *env,jclass klass,jintArray out) {
+    (void)klass;
+    if(!out||(*env)->GetArrayLength(env,out)<45)return 0;
+    jint values[45]={0};
+    for(int i=0;i<DM_TA_ATLASES;i++){const dm_ta_atlas *a=&dm_ta_atlases[i];values[i*5]=a->width;values[i*5+1]=a->height;values[i*5+2]=a->frame_width;values[i*5+3]=a->pitch;values[i*5+4]=a->count;}
+    (*env)->SetIntArrayRegion(env,out,0,45,values);return 1;
+}
 static int32_t stick_value(float value) {if(value>1)value=1;if(value<-1)value=-1;return value>-.15f&&value<.15f?0:(int32_t)(value*DM_STICK_MAX);}
 static uint64_t pad_key(int key) {
     switch(key){case AKEYCODE_DPAD_UP:return DM_BTN_UP;case AKEYCODE_DPAD_DOWN:return DM_BTN_DOWN;case AKEYCODE_DPAD_LEFT:return DM_BTN_LEFT;case AKEYCODE_DPAD_RIGHT:return DM_BTN_RIGHT;
@@ -1158,7 +1194,7 @@ static void focus_changed(ANativeActivity *a,int focused) {game_app *s=a->instan
     live_touch_cancel_sources_all(s);touch_timer_stop(s);dm_touch_pointer_clear(&s->touch_map);dm_touch_set(NULL,0);
     pad_publish(s);
 }
-static void destroyed(ANativeActivity *a) {game_app *s=a->instance;atomic_store(&s->debug_stop,1);dm_live_touch_readiness_destroy(&s->live_readiness);s->live_provider_available=0;live_touch_cancel_sources_all(s);touch_timer_stop(s);dm_touch_pointer_clear(&s->touch_map);
+static void destroyed(ANativeActivity *a) {game_app *s=a->instance;atomic_store(&s->debug_stop,1);dm_live_touch_readiness_destroy(&s->live_readiness);s->live_provider_available=0;dm_live_touch_glyph_invalidate();live_touch_cancel_sources_all(s);touch_timer_stop(s);dm_touch_pointer_clear(&s->touch_map);
     // 请存盘只做一次：正常退出时 window_destroyed 一定先跑过（安卓在 Activity 停止时必然先销毁窗口），而且那时
     // 图形还没挂起、游戏跑得动，提交等得到。走到这里图形已经挂起，再请一次根本等不到提交，只会白等 3 秒再打一条
     // 假的红色报警（真机上正常退出就是这样多出一条红字）。所以只有窗口还在（window_destroyed 没跑过）时才在这里请。
