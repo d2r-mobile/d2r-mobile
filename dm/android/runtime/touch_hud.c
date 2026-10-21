@@ -8,7 +8,7 @@
 #define SEGMENTS 28
 #define BG_A (-1.0f)
 
-typedef struct { float x, y, r, g, b, a; } vertex;
+typedef dm_touch_hud_vertex vertex;
 typedef struct { vertex v[DM_TOUCH_HUD_VERTEX_CAP]; uint32_t n; } batch;
 
 static const float HUD_NORMAL[4] = {0.15f, 0.65f, 0.95f, 0.55f};
@@ -206,6 +206,25 @@ static void build(batch *b, const dm_touch_hud_snapshot *s,
     }
 }
 
+int dm_touch_hud_build_vertices(const dm_touch_hud_snapshot *s, int overlay,
+                                dm_touch_hud_vertex *out, uint32_t capacity,
+                                uint32_t *out_count)
+{
+    if (!s || !out || !out_count || !dm_touch_hud_validate(s)) return 0;
+    dm_touch_hud_geometry g[DM_TC_COUNT];
+    dm_touch_hud_joy_geometry joy;
+    if (!dm_touch_hud_build_geometry(s, g, &joy)) return 0;
+    batch *b = calloc(1, sizeof(*b));
+    if (!b) return 0;
+    build(b, s, g, &joy, overlay);
+    if (b->n > capacity) { free(b); return 0; }
+    memcpy(out, b->v, (size_t)b->n * sizeof(*out));
+    *out_count = b->n;
+    free(b);
+    return 1;
+}
+
+#ifndef DM_TOUCH_HUD_GEOMETRY_ONLY
 int dm_touch_hud_render(dm_vk *vk, const dm_touch_hud_snapshot *s, dm_vk_pixels *out,
                         int overlay, const char *vert, const char *frag)
 {
@@ -388,3 +407,4 @@ done:
     free(b);
     return result == VK_SUCCESS ? 1 : 0;
 }
+#endif
