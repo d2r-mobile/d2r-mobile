@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "generated_entry.h"
 
 #define CHECK(c) do { if (!(c)) { fprintf(stderr, "FAIL line %d: %s\n", __LINE__, #c); exit(1); } } while (0)
 static void put32(uint8_t *p, uint32_t v) { for (unsigned b = 0; b < 4; b++) p[b] = (uint8_t)(v >> (b * 8)); }
@@ -40,7 +41,7 @@ static dm_nso_image fixture(int defined) {
 static void parse(dm_nso_image *image, uint64_t base, dm_module *m) {
     CHECK(dm_module_parse(image, base, m) == DM_MODULE_OK);
 }
-int main(void) {
+int DM_NO_UBSAN_FUNCTION main(void) {
     dm_nso_image images[2] = {fixture(0),fixture(1)};
     dm_module m[2]; parse(&images[0], 0x100000000ull, &m[0]); parse(&images[1], 0x200000000ull, &m[1]);
     dm_link_plan p = {0};

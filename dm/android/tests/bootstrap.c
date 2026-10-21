@@ -26,7 +26,14 @@ static void main_bootstrap(void){
     uint64_t r[31]={[1]=handle};CHECK(!dm_host_svc(h,0x25,r)&&r[1]==id);
     CHECK(dm_guest_register_current_thread(44,&handle)==EALREADY);
     CHECK(dm_guest_bootstrap_main(h,&gates,&handle)==EALREADY&&dm_guest_current()==c);
+    // ARM64 implements StartThread/ExitThread and rejects this external main
+    // handle with BAD_STATE; non-ARM hosts intentionally expose both as
+    // NOT_IMPLEMENTED, so the platform-correct expectation differs.
+#if defined(__aarch64__)
     CHECK(call(h,9,handle)==DM_SVC_BAD_STATE&&call(h,0x0a,0)==DM_SVC_BAD_STATE);
+#else
+    CHECK(call(h,9,handle)==DM_SVC_NOT_IMPLEMENTED&&call(h,0x0a,0)==DM_SVC_NOT_IMPLEMENTED);
+#endif
     CHECK(wait_thread(h,handle,0)==0xea01);CHECK(dm_host_destroy(h)==EBUSY);
     CHECK(!dm_guest_detach());CHECK(!wait_thread(h,handle,0));CHECK(!call(h,0x16,handle));
     native_thread native={.host=h};pthread_t thread;CHECK(!pthread_create(&thread,NULL,destructor_thread,&native));

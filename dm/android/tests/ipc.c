@@ -3,6 +3,7 @@
 #include "../runtime/host.h"
 #include "../runtime/ipc.h"
 #include "../runtime/lm.h"
+#include "../runtime/lm_wire.h"
 #include "../runtime/sm.h"
 #include "../runtime/internal.h"
 #include <errno.h>
@@ -108,7 +109,7 @@ static uint32_t build(uint32_t command, const void *payload, size_t size, uint32
     put32(tls + 20, 0);
     put32(tls + 24, command);
     put32(tls + 28, token);
-    memcpy(tls + 32, payload, size);
+    if (size) memcpy(tls + 32, payload, size);
     return words;
 }
 static void expect_reply(uint32_t token, const void *payload, size_t size) {
@@ -318,7 +319,49 @@ static void domain_tests(void) {
 }
 
 static uint8_t log_rest[DM_IPC_BUFFER_SIZE - 48u];
+#define WIRE_ADDRESS_LIMIT (1ull << 39)
+// Linux x86_64 ASAN's application LowMem ends at 0x7fff7fff; its shadow gap
+// starts at 0x8fff7000 and extends far above. Hints at 0x1_00000000 or higher
+// can therefore be mapped but still fault on the first instrumented access.
+// Use only bounded, non-fixed hints inside LowMem on that target. macOS has a
+// different layout and accepts the 4 GiB hint range, so keep it separate.
+static uint8_t *wire_page(unsigned slot) {
+#if defined(__linux__) && defined(__x86_64__)
+    const uintptr_t hints[] = {
+        0x10000000ull + (uintptr_t)slot * 0x1000000ull,
+        0x20000000ull + (uintptr_t)slot * 0x1000000ull,
+        0x40000000ull + (uintptr_t)slot * 0x1000000ull,
+    };
+    const uintptr_t low_max = 0x80000000ull;
+#else
+    const uintptr_t hints[] = {
+        0x100000000ull + (uintptr_t)slot * 0x10000ull,
+        0x100010000ull + (uintptr_t)slot * 0x10000ull,
+    };
+    const uintptr_t low_max = WIRE_ADDRESS_LIMIT;
+#endif
+    for (unsigned h = 0; h < sizeof hints / sizeof hints[0]; h++) {
+        for (unsigned retry = 0; retry < 4; retry++) {
+            uintptr_t hint = hints[h] + (uintptr_t)retry * 0x1000ull;
+            uint8_t *p = mmap((void *)hint, 4096, PROT_READ | PROT_WRITE,
+                              MAP_PRIVATE | MAP_ANON, -1, 0);
+            if (p == MAP_FAILED) continue;
+            uintptr_t address = (uintptr_t)p;
+#if defined(__linux__) && defined(__x86_64__)
+            if (address >= hint && address < low_max &&
+                low_max - address >= 4096) return p;
+#else
+            if (address >= hint && address - hint < 0x40000000ull &&
+                address < low_max && low_max - address >= 4096) return p;
+#endif
+            CHECK(munmap(p, 4096) == 0);
+        }
+    }
+    return NULL;
+}
 static void build_log(uint32_t child, uint32_t token, uintptr_t pointer, uint32_t length) {
+    CHECK(pointer != 0 && pointer < WIRE_ADDRESS_LIMIT);
+    CHECK(length != 0 && (uint64_t)length <= WIRE_ADDRESS_LIMIT - pointer);
     memset(tls, 0x5a, DM_IPC_BUFFER_SIZE);
     put32(tls, 0x00110006u); put32(tls + 4, 12u);
     memset(tls + 8, 0, 8);                         // null static descriptor
@@ -334,6 +377,10 @@ static void build_log(uint32_t child, uint32_t token, uintptr_t pointer, uint32_
     put32(tls + 48, 0x49434653u); put32(tls + 52, 1u);
     put32(tls + 56, 0u); put32(tls + 60, 0u);
     memset(tls + 64, 0x3c, 12);                    // ignored trailing padding
+    dm_lm_wire_log_request decoded;
+    CHECK(dm_lm_wire_decode_log_request(tls, 76u, &decoded) == DM_LM_WIRE_OK);
+    CHECK(decoded.pointer == pointer && decoded.length == length &&
+          decoded.object_id == child && decoded.token == token);
     memcpy(log_rest, tls + 48, sizeof log_rest);   // bytes beyond the 48-byte reply
 }
 static void expect_log_reply(uint32_t token) {
@@ -356,8 +403,8 @@ static uint32_t log_session(uint32_t token, uint32_t *root, uint32_t *child) {
     return h;
 }
 static void log_tests(uint8_t *base, uint8_t *ro) {
-    // 低 VA 的真实映射由调用方在 attach 前登记；pin/复制必须走真实宿主路径。
-    // Caller registers the low-VA mapping before attach; pin/copy uses real host paths.
+    // 真实映射由调用方在 attach 前登记；pin/复制必须走真实宿主路径。
+    // Caller registers the real mapping before attach; pin/copy uses real host paths.
     CHECK(base != NULL && ro != NULL);
     uint8_t original[DM_LM_PACKET_MAX];
     for (unsigned i = 0; i < sizeof original; i++) base[i] = original[i] = (uint8_t)(i * 7u + 3u);
@@ -1210,18 +1257,18 @@ int main(void) {
         CHECK(dm_guest_detach() == 0);
         CHECK(dm_host_destroy(host) == 0);
     }
-    // J. 独立的低 VA 宿主：真实 SVC Log、pin/复制、队列与关闭清理。
-    // J. Independent low-VA host: real SVC Log, pin/copy, queue and close cleanup.
+    // J. 独立的宿主：真实 SVC Log、pin/复制、队列与关闭清理。
+    // J. Independent host: real SVC Log, pin/copy, queue and close cleanup.
+    // ASAN 在 x86_64 保留 shadow gap；使用真实匿名映射而不是固定 VA。
+    // ASAN reserves an x86_64 shadow gap; use real anonymous mappings, not fixed VAs.
     {
         host = dm_host_create_process_layout(64 * UNIT, 16 * UNIT, 32 * UNIT);
         CHECK(host);
-        uint8_t *log_base = mmap((void *)0x400000000ull, 4096, PROT_READ | PROT_WRITE,
-                                 MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1, 0);
-        CHECK(log_base != MAP_FAILED);
+        uint8_t *log_base = wire_page(0);
+        CHECK(log_base != NULL);
         CHECK(dm_host_register_writable(host, log_base, 4096) == 0);
-        uint8_t *readonly_base = mmap((void *)0x600000000ull, 4096, PROT_READ | PROT_WRITE,
-                                      MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1, 0);
-        CHECK(readonly_base != MAP_FAILED);
+        uint8_t *readonly_base = wire_page(1);
+        CHECK(readonly_base != NULL);
         memset(readonly_base, 0x99, 4096);
         CHECK(mprotect(readonly_base, 4096, PROT_READ) == 0);
         CHECK(dm_host_register_executable(host, readonly_base, 4096) == 0);
@@ -1242,9 +1289,8 @@ int main(void) {
         // Second host has an independent queue; same numeric ids do not leak into primary.
         host = dm_host_create_process_layout(64 * UNIT, 16 * UNIT, 32 * UNIT);
         CHECK(host);
-        uint8_t *other_base = mmap((void *)0x500000000ull, 4096, PROT_READ | PROT_WRITE,
-                                   MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1, 0);
-        CHECK(other_base != MAP_FAILED);
+        uint8_t *other_base = wire_page(2);
+        CHECK(other_base != NULL);
         CHECK(dm_host_register_writable(host, other_base, 4096) == 0);
         CHECK(dm_guest_attach(host, &gates) == 0);
         tls = (uint8_t *)dm_guest_current()->slots[DM_SLOT_TLS];

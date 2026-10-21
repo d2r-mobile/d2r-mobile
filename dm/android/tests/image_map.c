@@ -7,6 +7,7 @@
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
+#include "generated_entry.h"
 
 #define CHECK(c) do { if (!(c)) { fprintf(stderr, "FAIL line %d: %s\n", __LINE__, #c); exit(1); } } while (0)
 static void protected_fault(int signal_number) { (void)signal_number; _exit(77); }
@@ -31,7 +32,7 @@ void unimpl_c(void) { abort(); }
 static uintptr_t expected_return;
 static int calls;
 
-static void rejects_execution_when_data_protected(uint8_t *data) {
+static void DM_NO_UBSAN_FUNCTION rejects_execution_when_data_protected(uint8_t *data) {
     // Given：RW 数据页中放入独立 ret 指令。 | Given: a standalone ret instruction in an RW data page.
     *(uint32_t *)data = 0xd65f03c0;
     __builtin___clear_cache((char *)data, (char *)data + 4);
@@ -55,7 +56,7 @@ uint64_t gate_dispatch(uint64_t return_address, uint64_t *registers) {
     return registers[0];
 }
 
-static void calls_host_when_arm64_image_entered(dm_image_mapping *mapping) {
+static void DM_NO_UBSAN_FUNCTION calls_host_when_arm64_image_entered(dm_image_mapping *mapping) {
     // Given：原生 ARM64 小程序，x1 为宿主门；输入 x0=41。
     // Given: a native ARM64 program with the host gate in x1 and x0=41.
     typedef uint64_t (*entry_fn)(uint64_t, void (*)(void));
