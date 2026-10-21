@@ -871,8 +871,8 @@ static void rt_comp_tick(rt_decl *d, uint64_t period_ns);
 // completes, so waiting for fence f means waiting until "f is translated and the GPU is done"; by the time the game reclaims command memory or rewrites objects by fence, the translation thread has long finished reading them.
 // Present tickets become this queue's job numbers: acquire first waits for that job to run, then waits on the present thread ticket it was swapped for. Setting the frame number is queued too: replay resets bloom sampling and other state by frame number,
 // which must not be changed by the game thread in the middle of translation. DM_NVN_SYNC=1: jobs run in place on the calling thread (the same execution function), as the control and measurement baseline.
-enum { XJ_SUBMIT, XJ_PRESENT, XJ_FRAME };
-typedef struct { int kind, n; uint64_t *h; const tex_t *tex; double period; int crop[4]; uint64_t frame, sub, host; } xjob;   // host：入队时锁存的宿主画法开关 | host: host drawing switches latched at enqueue
+enum { XJ_SUBMIT, XJ_PRESENT, XJ_FRAME, XJ_HINT_BEGIN };
+typedef struct { int kind, n; uint64_t *h; const tex_t *tex; double period; int crop[4]; uint64_t frame, sub, host; const void *hint_window; int hint_index; uint64_t hint_period; } xjob;   // host：入队时锁存的宿主画法开关 | host: host drawing switches latched at enqueue
 #define XQ 32
 #define XTK 1024
 static xjob g_xq[XQ]; static uint64_t g_xq_in, g_xq_done;   // 入队任务数 / 已执行任务数（任务号从 1 计） | Jobs enqueued / jobs executed (job numbers start at 1)
@@ -904,7 +904,18 @@ static void x_submit(const uint64_t *h, int n, uint64_t sub, uint64_t host) {
 }
 static void x_run(const xjob *j, uint64_t job) {
     if (j->kind == XJ_SUBMIT) { x_submit(j->h, j->n, j->sub, j->host); free(j->h); }
-    else if (j->kind == XJ_PRESENT) { uint64_t tk = mtl_present(j->tex, j->period, j->crop); pthread_mutex_lock(&g_xmu); g_xtk[job % XTK].job = job; g_xtk[job % XTK].tk = tk; pthread_mutex_unlock(&g_xmu); }
+    else if (j->kind == XJ_HINT_BEGIN) {
+#ifdef __ANDROID__
+        if(dm_android_performance_frame_begin)dm_android_performance_frame_begin(j->hint_window,j->hint_index,j->hint_period);
+#endif
+    }
+    else if (j->kind == XJ_PRESENT) {
+        uint64_t tk = mtl_present(j->tex, j->period, j->crop);
+#ifdef __ANDROID__
+        if(dm_android_performance_frame_end)dm_android_performance_frame_end(j->hint_window,j->hint_index);
+#endif
+        pthread_mutex_lock(&g_xmu); g_xtk[job % XTK].job = job; g_xtk[job % XTK].tk = tk; pthread_mutex_unlock(&g_xmu);
+    }
     else {
         mtl_set_frame(j->frame);
         // 翻译线程与游戏主线程同级：时间约束（实时）线程，周期 = 出图周期，计算量按本线程每帧 CPU 的 p90 自动声明（同取图处的主线程；确定性时钟下不声明）
@@ -1090,6 +1101,13 @@ NVN(nvnWindowAcquireTexture, NVNwindowAcquireTextureResult, NVNwindow *w, NVNsyn
     uint64_t tk = *idx < 4 ? o->ticket[*idx] : 0;
     if (tk) { uint64_t w0 = now_ns(), rt = x_present_ticket(tk); if (rt) mtl_present_wait(rt); g_pq_wait_ns += now_ns() - w0; }   // tk 是翻译队列的出图任务号 | tk is the translation queue's present job number
     if (s) { ((sync_t *)s)->fenced = 1; ((sync_t *)s)->fence = x_fence(); }   // 交换链贴图在此前的提交完成后可用 | The swapchain texture becomes available once the commits before this point have completed
+#ifdef __ANDROID__
+    // 两个提示边界都在翻译队列执行；不跨线程配对，也不包含 acquire 的节拍等待。
+    // Execute both hint boundaries on the translation queue, after acquire pacing waits.
+    if(dm_android_performance_frame_begin&&*idx>=0&&*idx<o->ntex&&*idx<4){
+        xjob j={XJ_HINT_BEGIN};j.hint_window=w;j.hint_index=*idx;j.hint_period=present_period(o);x_push(&j);
+    }
+#endif
     return NVN_WINDOW_ACQUIRE_TEXTURE_RESULT_SUCCESS;
 }
 
@@ -1338,6 +1356,7 @@ NVN(nvnQueuePresentTexture, void, NVNqueue *q, NVNwindow *w, int idx) {
     uint64_t t0 = dm_diagnostics_enabled() ? now_ns() : 0;
     if (idx >= 0 && idx < o->ntex && idx < 4) {   // 只入队，立即返回；ticket 存翻译队列的任务号 | Enqueue only and return at once; ticket holds the translation queue's job number
         xjob j = {XJ_PRESENT, 0, NULL, snap_tex(o->tex[idx]), present_period(o) / 1e9}; memcpy(j.crop, o->crop, sizeof j.crop);
+        j.hint_window=w;j.hint_index=idx;
         o->ticket[idx] = x_push(&j); }
     gfx_leave();
     uint64_t f = g_frame;
