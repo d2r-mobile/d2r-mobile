@@ -58,11 +58,13 @@ public final class D2RActivity extends NativeActivity {
     // Same-process flag: is the game activity still alive. The launcher uses it to decide whether to step aside (see
     // LauncherActivity.stepAsideForRunningGame). One process hosts one guest, so it also means "this session is live".
     static volatile boolean hostRunning;
+    static volatile boolean debugCollectionEnabled;
     private static native void onTextResult(long request, String text, boolean accepted);
     private static native void onTouchPad(long buttons, int leftX, int leftY, int rightX, int rightY);
     private static native void setOverlayEnabled(boolean enabled);
     private static native void setQualityPreset(int preset);
     private static native void setMenuOpen(boolean open);
+    private static native void setVirtualControllerEnabled(boolean enabled);
     private static native void setSkipSaveOnExit(boolean skip);
 
     // 存档导入/导出的文件选择器请求码（与文本输入等其它结果回调区分开）。
@@ -79,9 +81,10 @@ public final class D2RActivity extends NativeActivity {
     // easy to hit by accident and would quit the whole run. So back opens this menu instead: frame rate display /
     // on-screen controls / quality / exit game. Press back again (or tap outside) to close it.
     private PopupWindow menuPopup;
-    private TextView menuOverlayRow, menuControlsRow, menuQualityRow;
+    private TextView menuOverlayRow, menuControlsRow, menuQualityRow, menuVirtualControllerRow;
     private boolean overlayEnabled = true;
     private boolean controlsEnabled = true;
+    private boolean virtualController;
     private int qualityPreset;                                  // 0 自动 / 1 高质量（当前 host 只支持这两档） | 0 auto / 1 high (the current host supports only these two)
     private static final int[] QUALITY_LEVELS = {-1, 0};   // native 约定：-1 自动、0 高；平衡/性能的比例控制器尚未接入 | native contract: -1 auto, 0 high; the fixed balanced/performance controller is not wired yet
     private static final String[] QUALITY_KEYS = {"dmAndroidMenuQualityAuto", "dmAndroidMenuQualityHigh"};
@@ -106,7 +109,7 @@ public final class D2RActivity extends NativeActivity {
         // Logged to logcat (same tag as the project's other Java diagnostics) so a failure can be told apart as
         // "never called" versus "called but nothing showed".
         boolean showing = menuPopup != null && menuPopup.isShowing();
-        Log.i("D2RAndroid", "[menu] back pressed, showing=" + showing);
+        if (debugCollectionEnabled) Log.i("D2RAndroid", "[menu] back pressed, showing=" + showing);
         if (showing) hideMenu(); else showMenu();
     }
 
@@ -115,14 +118,14 @@ public final class D2RActivity extends NativeActivity {
         updateMenuLabels();
         setMenuOpen(true);
         menuPopup.showAtLocation(getWindow().getDecorView(), Gravity.END | Gravity.CENTER_VERTICAL, 0, 0);
-        Log.i("D2RAndroid", "[menu] shown isShowing=" + menuPopup.isShowing()
+        if (debugCollectionEnabled) Log.i("D2RAndroid", "[menu] shown isShowing=" + menuPopup.isShowing()
                 + " width=" + menuPopup.getWidth() + " height=" + menuPopup.getHeight());
     }
 
     private void hideMenu() {
         if (menuPopup != null && menuPopup.isShowing()) menuPopup.dismiss();
         setMenuOpen(false);   // 菜单收起就放开输入，免得菜单关掉后手柄还按不动 | releasing the input block on close
-        Log.i("D2RAndroid", "[menu] hidden");
+        if (debugCollectionEnabled) Log.i("D2RAndroid", "[menu] hidden");
     }
 
     private TextView menuRow() {
@@ -154,29 +157,28 @@ public final class D2RActivity extends NativeActivity {
         menuControlsRow = menuRow();
         menuControlsRow.setOnClickListener(v -> { controlsEnabled = !controlsEnabled; updateTouchVisibility(); updateMenuLabels(); });
         column.addView(menuControlsRow);
+        menuVirtualControllerRow = menuRow();
+        menuVirtualControllerRow.setOnClickListener(v -> {
+            virtualController = !virtualController;
+            setVirtualControllerEnabled(virtualController);
+            getPreferences(MODE_PRIVATE).edit().putBoolean("virtual_controller", virtualController).apply();
+            updateTouchVisibility(); updateMenuLabels();
+        });
+        column.addView(menuVirtualControllerRow);
         menuQualityRow = menuRow();
         menuQualityRow.setOnClickListener(v -> { qualityPreset = (qualityPreset + 1) % QUALITY_KEYS.length; setQualityPreset(QUALITY_LEVELS[qualityPreset]); updateMenuLabels(); });
         column.addView(menuQualityRow);
-        // 存档导入 / 导出：走系统的文件选择器，导出到玩家选的位置（下载目录等），导入也是玩家选文件。
-        // Save import/export goes through the system file picker: export writes to wherever the player picks
-        // (Downloads and so on), import reads a file the player picks.
-        TextView exportRow = menuRow();
-        exportRow.setText(text("dmAndroidSaveExport"));
-        exportRow.setOnClickListener(v -> { hideMenu(); startSaveExport(); });
-        column.addView(exportRow);
-        TextView importRow = menuRow();
-        importRow.setText(text("dmAndroidSaveImport"));
-        importRow.setOnClickListener(v -> confirmImportSave());
-        column.addView(importRow);
         TextView exitRow = menuRow();
         exitRow.setTextColor(GOLD);
         exitRow.setText(text("dmAndroidMenuExit"));
         // 退出走 finish()：与按返回键退出同一条路（先请游戏存盘、再释放窗口、再结束进程）。
         // Exit goes through finish(): the same path the back key used to take (ask the game to save, release the
         // window, then end the process).
-        exitRow.setOnClickListener(v -> { Log.i("D2RAndroid", "[menu] exit row tapped"); hideMenu(); finish(); });
+        exitRow.setOnClickListener(v -> { if (debugCollectionEnabled) Log.i("D2RAndroid", "[menu] exit row tapped"); hideMenu(); finish(); });
         column.addView(exitRow);
-        menuPopup = new PopupWindow(column, LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT, true);
+        android.widget.ScrollView menuScroll = new android.widget.ScrollView(this);
+        menuScroll.addView(column);
+        menuPopup = new PopupWindow(menuScroll, LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT, true);
         // 透明背景 + 可点外面：点菜单以外的地方就收起；焦点交给菜单，这样返回键先被菜单吃掉。
         // Transparent background plus outside-touchable: tapping elsewhere closes it, and giving the popup focus is
         // what lets it consume the back key first.
@@ -190,6 +192,7 @@ public final class D2RActivity extends NativeActivity {
         String on = text("dmAndroidMenuOn"), off = text("dmAndroidMenuOff");
         menuOverlayRow.setText(text("dmAndroidMenuOverlay") + "：" + (overlayEnabled ? on : off));
         menuControlsRow.setText(text("dmAndroidMenuControls") + "：" + (controlsEnabled ? on : off));
+        menuVirtualControllerRow.setText(text("dmAndroidMenuVirtualController") + "：" + (virtualController ? on : off));
         menuQualityRow.setText(text("dmAndroidMenuQuality") + "：" + text(QUALITY_KEYS[qualityPreset]));
     }
 
@@ -363,7 +366,7 @@ public final class D2RActivity extends NativeActivity {
                 attributes.preferredDisplayModeId = selected;
                 attributes.preferredRefreshRate = requested;
                 getWindow().setAttributes(attributes);
-                Log.i("D2RAndroid", "[android-display-preference] requested=" + requested +
+                if (debugCollectionEnabled) Log.i("D2RAndroid", "[android-display-preference] requested=" + requested +
                     " modeId=" + selected + " previousMode=" + (current == null ? 0 : current.getModeId()) +
                     " physical=" + (current == null ? "unknown" : current.getPhysicalWidth() + "x" + current.getPhysicalHeight()) +
                     " window preference only; actual refresh requires observation");
@@ -378,6 +381,7 @@ public final class D2RActivity extends NativeActivity {
         // 标记与活动的「创建 / 销毁」这一对绑定，语义就是"这个进程里还住着一个游戏活动"。
         // The flag is paired with activity creation/destruction: it means "a game activity still lives in this process".
         hostRunning = true;
+        debugCollectionEnabled = "1".equals(LaunchSettings.read(configFile(), "debug_collection"));
         // 菜单里「帧率显示」的当前值：与 native 启动时读的是同一个键，**缺省关闭**（只有明确写 1 才是开）。
         // The menu's "frame rate display" starts from the same key native reads at startup; **off by default**
         // (only an explicit 1 means on).
@@ -409,6 +413,7 @@ public final class D2RActivity extends NativeActivity {
         getWindow().getDecorView().post(() -> setDebugOverlay(overlayEnabled));
         // 粘性广播：注册即回调一次当前值，之后只在系统电量变化时推送，不产生轮询开销。
         // Sticky broadcast: registering delivers the current value once, then only on system battery changes; no polling.
+        if (debugCollectionEnabled) {
         batteryReceiver = new BroadcastReceiver() {
             @Override public void onReceive(Context context, Intent intent) {
                 batteryVoltageMv = intent.getIntExtra(BatteryManager.EXTRA_VOLTAGE, -1);
@@ -419,6 +424,7 @@ public final class D2RActivity extends NativeActivity {
             }
         };
         registerReceiver(batteryReceiver, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+        }
         // 设备监听只在变化时回调，所以要先用一次扫描拿到"启动时就已接入"的手柄。
         // The listener only fires on change, so scan once to catch a controller already connected at launch.
         InputManager inputManager = (InputManager) getSystemService(Context.INPUT_SERVICE);
@@ -426,19 +432,21 @@ public final class D2RActivity extends NativeActivity {
         refreshPhysicalController();
         touchControls = new TouchControls(this, (buttons, x, y) -> onTouchPad(buttons, x, y, 0, 0));
         touchOverlay = new D2RTouchOverlay(this);
+        virtualController = getPreferences(MODE_PRIVATE).getBoolean("virtual_controller", false);
+        if (virtualController) setVirtualControllerEnabled(true);
     }
 
     private void updateTouchVisibility() {
         if (touchControls == null) return;
         boolean live = liveTouchReady();
         boolean value = TouchVisibility.visible(controlsEnabled, activityResumed, hasWindowFocus(),
-            textDialog != null, physicalController, live, isFinishing() || isDestroyed());
+            textDialog != null, physicalController, virtualController, isFinishing() || isDestroyed());
         boolean liveOverlay = TouchVisibility.liveOverlay(controlsEnabled, activityResumed, hasWindowFocus(),
-            textDialog != null, physicalController, live, isFinishing() || isDestroyed());
+            textDialog != null, physicalController, live && !virtualController, isFinishing() || isDestroyed());
         // 诊断构建：每次求值都打印。只打「状态翻转」时，恒为 false 的情况一行日志都不会留下，正是最难查的那种。
         // Diagnostic build: log every evaluation. Logging only transitions leaves the always-false case with no line at
         // all, which is exactly the case that is hardest to diagnose.
-        Log.i("D2RAndroid", "[touch] evaluate=" + value + " visual=" + liveOverlay + " (enabled=" + controlsEnabled +
+        if (debugCollectionEnabled) Log.i("D2RAndroid", "[touch] evaluate=" + value + " visual=" + liveOverlay + " (enabled=" + controlsEnabled +
             " resumed=" + activityResumed + " focus=" + hasWindowFocus() + " dialog=" + (textDialog != null) +
             " gamepad=" + physicalController + " live=" + live + ")");
         touchVisible = value;
@@ -480,9 +488,7 @@ public final class D2RActivity extends NativeActivity {
     private native int getLiveTouchGlyphSnapshot(int[] glyphs);
     private native int getLiveTouchAtlasInfo(int[] info);
 
-    // NativeActivity 的真实 AInputQueue 已接上原 D2R 手势核心时，旧的 Switch 按钮层让位；未接上则保留明确 fallback。
-    // When NativeActivity's real AInputQueue is connected to the original D2R gesture core, the legacy Switch-button
-    // overlay yields; if it is not connected, keep the explicit fallback usable.
+    // Readiness controls only the D2R overlay; the legacy pad requires explicit virtual-controller mode.
     private boolean liveTouchReady() {
         try { return isLiveTouchReady(); }
         catch (UnsatisfiedLinkError error) { return false; }
@@ -515,7 +521,7 @@ public final class D2RActivity extends NativeActivity {
             // gamepad=true here. Require all mask bits instead.
             if ((sources & InputDevice.SOURCE_GAMEPAD) != InputDevice.SOURCE_GAMEPAD &&
                 (sources & InputDevice.SOURCE_JOYSTICK) != InputDevice.SOURCE_JOYSTICK) continue;
-            Log.i("D2RAndroid", "[touch] device " + id + " '" + device.getName() + "' sources=0x" +
+            if (debugCollectionEnabled) Log.i("D2RAndroid", "[touch] device " + id + " '" + device.getName() + "' sources=0x" +
                 Integer.toHexString(sources) + " ranges=" + device.getMotionRanges().size());
             for (InputDevice.MotionRange range : device.getMotionRanges()) {
                 int axis = range.getAxis();
@@ -573,7 +579,8 @@ public final class D2RActivity extends NativeActivity {
             if (!visible) debugPopup.dismiss();
             else if (!debugPopup.isShowing()) {
                 int padding = (int)(8 * getResources().getDisplayMetrics().density);
-                debugPopup.showAtLocation(getWindow().getDecorView(), Gravity.TOP | Gravity.LEFT, padding, padding);
+                int top = (int)(64 * getResources().getDisplayMetrics().density);
+                debugPopup.showAtLocation(getWindow().getDecorView(), Gravity.TOP | Gravity.LEFT, padding, top);
             }
         });
     }

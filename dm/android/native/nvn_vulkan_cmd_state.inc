@@ -16,7 +16,7 @@ typedef struct graphics_command_state {
 } graphics_command_state;
 static graphics_command_state graphics_commands;
 static uint64_t graphics_command_emitted,graphics_command_reused;
-static void graphics_command_reset(void) {memset(&graphics_commands,0,sizeof graphics_commands);}
+static void graphics_command_reset(void) {memset(&graphics_commands,0,sizeof graphics_commands);compute_command_reset();}
 static void graphics_command_apply(VkPipeline pipeline,VkPipelineLayout layout,const VkDescriptorSet sets[2],
     const uint32_t *dynamic_offsets,unsigned dynamic_count,
     const VkViewport *viewport,const VkRect2D *scissor,const float blend[4],nvn_vk_depth_bias bias,const VkStencilOpState faces[2]) {

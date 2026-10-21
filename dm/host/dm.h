@@ -8,8 +8,16 @@
 #include <string.h>
 
 #define MAX_MOD 8
-#define LOG(...) do { fprintf(stderr, "[dm] " __VA_ARGS__); fputc('\n', stderr); } while (0)
-#define die(...) do { LOG("FATAL " __VA_ARGS__); abort(); } while (0)
+#ifdef __ANDROID__
+#include <stdatomic.h>
+extern _Atomic int dm_debug_collection_enabled;
+static inline int dm_diagnostics_enabled(void) { return atomic_load_explicit(&dm_debug_collection_enabled, memory_order_relaxed); }
+#else
+static inline int dm_diagnostics_enabled(void) { return 1; }
+#endif
+#define LOG_ALWAYS(...) do { fprintf(stderr, "[dm] " __VA_ARGS__); fputc('\n', stderr); } while (0)
+#define LOG(...) do { if (dm_diagnostics_enabled()) LOG_ALWAYS(__VA_ARGS__); } while (0)
+#define die(...) do { LOG_ALWAYS("FATAL " __VA_ARGS__); abort(); } while (0)
 
 typedef struct { uint32_t st_name; uint8_t st_info, st_other; uint16_t st_shndx; uint64_t st_value, st_size; } Elf64_Sym;
 typedef struct { int64_t d_tag; union { uint64_t d_val, d_ptr; } d_un; } Elf64_Dyn;

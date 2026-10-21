@@ -6,6 +6,7 @@
 typedef struct cached_image_view { VkImageViewType type; VkImageSubresourceRange range; VkImageView view; struct cached_image_view *next; } cached_image_view;
 typedef struct image_entry {
     uint64_t serial; tex_t texture; VkImage image; VkImageView view; VkDeviceMemory memory;
+    uint64_t release_ticket,allocation_bytes,initial_upload_epoch;
     VkFormat format; VkImageType image_type; VkImageAspectFlags aspect; uint64_t stamp; int populated;
     uint64_t source_stamp,source_hash,source_seen;int source_valid,source_tracked;
     VkPipelineStageFlags last_stage;VkAccessFlags last_access;int gpu_written;
@@ -18,6 +19,8 @@ typedef struct { int valid; tex_t texture; view_t view; uint64_t revision; } tex
 typedef struct { int valid; samp_par parameters; VkSampler sampler; uint64_t revision; } sampler_descriptor;
 static uint64_t texture_descriptor_revision, sampler_descriptor_revision;
 static image_entry *image_list,*image_index[4096];
+static image_entry *image_retired;
+static uint64_t image_retired_bytes,image_deferred_releases,image_prologue_uploads;
 static texture_descriptor *texture_descriptors;
 static sampler_descriptor *sampler_descriptors;
 static int texture_capacity, sampler_capacity;
@@ -56,6 +59,7 @@ static void texture_flat_report(uint64_t ticket) {
 static frame_trace_state frame_trace;
 #define FRAME_TRACE_LOG(fmt, ...) LOG("[vulkan-frame-trace] frame=%llu n=%u " fmt, (unsigned long long)frame_trace.frame, frame_trace.seen, ##__VA_ARGS__)
 static void frame_trace_present(uint64_t ticket) {
+    if (!dm_diagnostics_enabled()) return;
     if (!(ticket % 60)) {
         char token[FRAME_TRACE_TOKEN_MAX] = {0};
 #ifdef __ANDROID__
@@ -194,6 +198,7 @@ static VkFormat vk_format(int format) {
 // 按真正的读写风险同步；连续只读与通道内同附件写入不加全局屏障。
 // Synchronize actual read/write hazards; avoid global barriers for consecutive reads or same-pass attachment writes.
 static void image_access(image_entry *e,VkPipelineStageFlags stage,VkAccessFlags access) {
+    e->initial_upload_epoch=0;
     VkAccessFlags writes=VK_ACCESS_SHADER_WRITE_BIT|VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT|VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT|VK_ACCESS_TRANSFER_WRITE_BIT|VK_ACCESS_HOST_WRITE_BIT|VK_ACCESS_MEMORY_WRITE_BIT;
     if(graphics_image_is_attachment(e)&&stage==e->last_stage&&access==e->last_access&&(access&(VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT|VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT)))return;
     if(e->last_access&&((e->last_access|access)&writes)){
@@ -206,7 +211,7 @@ static uint32_t dimension(uint32_t v, unsigned level) { v >>= level; return v ? 
 static image_entry *image_find(uint64_t serial) {
     for(image_entry *e=image_index[serial&4095];e;e=e->hash_next)if(e->serial==serial)return e;return NULL;
 }
-static void image_allocate(image_entry *e,VkImageUsageFlags usage) {
+static void image_allocate(image_entry *e,VkImageUsageFlags usage,VkCommandBuffer initial_command) {
     const tex_t *t=&e->texture;e->usage=usage;
     int is3d=t->d.target==NVN_TEXTURE_TARGET_3D,is1d=t->d.target==NVN_TEXTURE_TARGET_1D||t->d.target==NVN_TEXTURE_TARGET_1D_ARRAY;
     VkImageType image_type=is3d?VK_IMAGE_TYPE_3D:is1d?VK_IMAGE_TYPE_1D:VK_IMAGE_TYPE_2D;
@@ -215,20 +220,21 @@ static void image_allocate(image_entry *e,VkImageUsageFlags usage) {
     if(t->d.target==NVN_TEXTURE_TARGET_CUBEMAP||t->d.target==NVN_TEXTURE_TARGET_CUBEMAP_ARRAY)ci.flags=VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;
     VK_CHECK(vkCreateImage(device,&ci,NULL,&e->image));VkMemoryRequirements req;vkGetImageMemoryRequirements(device,e->image,&req);
     uint32_t type=UINT32_MAX;for(uint32_t i=0;i<memory_properties.memoryTypeCount;i++)if((req.memoryTypeBits & (1u<<i)) && (memory_properties.memoryTypes[i].propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)){type=i;break;}
-    if(type==UINT32_MAX)die("No Vulkan image memory");
-    VkMemoryAllocateInfo mi={.sType=VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,.allocationSize=req.size,.memoryTypeIndex=type};
-    VK_CHECK(vkAllocateMemory(device,&mi,NULL,&e->memory));VK_CHECK(vkBindImageMemory(device,e->image,e->memory,0));
+    if(type==UINT32_MAX)die("No Vulkan image memory");VkMemoryAllocateInfo mi={.sType=VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,.allocationSize=req.size,.memoryTypeIndex=type};
+    VK_CHECK(vkAllocateMemory(device,&mi,NULL,&e->memory));VK_CHECK(vkBindImageMemory(device,e->image,e->memory,0));e->allocation_bytes=req.size;
     VkImageViewType view= is3d?VK_IMAGE_VIEW_TYPE_3D:is1d?(t->L.layers>1?VK_IMAGE_VIEW_TYPE_1D_ARRAY:VK_IMAGE_VIEW_TYPE_1D):(t->L.layers>1?VK_IMAGE_VIEW_TYPE_2D_ARRAY:VK_IMAGE_VIEW_TYPE_2D);
     if(ci.flags) view=t->d.target==NVN_TEXTURE_TARGET_CUBEMAP?VK_IMAGE_VIEW_TYPE_CUBE:VK_IMAGE_VIEW_TYPE_CUBE_ARRAY;
     VkImageViewCreateInfo vi={.sType=VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,.image=e->image,.viewType=view,.format=e->format,.subresourceRange={e->aspect,0,t->d.levels,0,t->L.layers}};
     VK_CHECK(vkCreateImageView(device,&vi,NULL,&e->view));
     VkImageMemoryBarrier b={.sType=VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,.oldLayout=VK_IMAGE_LAYOUT_UNDEFINED,.newLayout=VK_IMAGE_LAYOUT_GENERAL,.dstAccessMask=VK_ACCESS_MEMORY_READ_BIT|VK_ACCESS_MEMORY_WRITE_BIT,.srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,.image=e->image,.subresourceRange=vi.subresourceRange};
-    vkCmdPipelineBarrier(command,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,0,0,NULL,0,NULL,1,&b);
+    vkCmdPipelineBarrier(initial_command,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,0,0,NULL,0,NULL,1,&b);
 }
 static image_entry *image_get(const tex_t *t) {
     unsigned bucket=t->serial&4095;for(image_entry *e=image_index[bucket];e;e=e->hash_next)if(e->serial==t->serial)return e;
     if(t->d.target==NVN_TEXTURE_TARGET_BUFFER||t->d.samples>1)die("Vulkan texture target/samples pending: %d/%d",t->d.target,t->d.samples);
-    image_entry *e=calloc(1,sizeof *e);if(!e)die("Vulkan texture allocation");e->serial=t->serial;e->texture=*t;e->format=vk_format(t->d.format);graphics_pass_end();
+    image_entry *e=calloc(1,sizeof *e);if(!e)die("Vulkan texture allocation");e->serial=t->serial;e->texture=*t;e->format=vk_format(t->d.format);
+    VkCommandBuffer initial_command=command;
+    if(upload_prologue_enabled){initial_command=async_upload_command();e->initial_upload_epoch=upload_epoch;}else graphics_pass_end();
     if(e->format==VK_FORMAT_UNDEFINED){texture_diag_unsupported((unsigned)t->d.format);die("Unknown Vulkan NVN format %#x",t->d.format);}
     e->aspect=VK_IMAGE_ASPECT_COLOR_BIT;
     if(t->d.format>=0x31&&t->d.format<=0x36){e->aspect=0;if(t->d.format!=0x31)e->aspect|=VK_IMAGE_ASPECT_DEPTH_BIT;if(t->d.format==0x31||t->d.format==0x35||t->d.format==0x36)e->aspect|=VK_IMAGE_ASPECT_STENCIL_BIT;}
@@ -237,7 +243,7 @@ static image_entry *image_get(const tex_t *t) {
     if(fp.optimalTilingFeatures&VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT)usage|=VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
     if(fp.optimalTilingFeatures&VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT)usage|=VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
     if((fp.optimalTilingFeatures&VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT)&&(!narrow_image_candidate||(t->d.flags&NVN_TEXTURE_FLAGS_IMAGE)))usage|=VK_IMAGE_USAGE_STORAGE_BIT;
-    image_allocate(e,usage);
+    image_allocate(e,usage,initial_command);
     if((fp.optimalTilingFeatures&VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT)&&!(usage&VK_IMAGE_USAGE_STORAGE_BIT))narrow_image_count++;
     e->next=image_list;image_list=e;e->hash_next=image_index[bucket];image_index[bucket]=e;return e;
 }
@@ -246,7 +252,7 @@ static void image_require_storage(image_entry *e) {
     VkFormatProperties fp;vkGetPhysicalDeviceFormatProperties(physical,e->format,&fp);
     if(!(fp.optimalTilingFeatures&VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT)||e->aspect!=VK_IMAGE_ASPECT_COLOR_BIT)die("Vulkan storage image format unsupported");
     graphics_pass_end();image_access(e,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_TRANSFER_READ_BIT);
-    image_entry upgraded={.texture=e->texture,.format=e->format,.aspect=e->aspect};image_allocate(&upgraded,e->usage|VK_IMAGE_USAGE_STORAGE_BIT);
+    image_entry upgraded={.texture=e->texture,.format=e->format,.aspect=e->aspect};image_allocate(&upgraded,e->usage|VK_IMAGE_USAGE_STORAGE_BIT,command);
     if(e->populated)for(unsigned mip=0;mip<e->texture.d.levels;mip++){
         VkImageCopy copy={.srcSubresource={e->aspect,mip,0,e->texture.L.layers},.dstSubresource={e->aspect,mip,0,e->texture.L.layers},
             .extent={dimension(e->texture.d.width,mip),e->image_type==VK_IMAGE_TYPE_1D?1:dimension(e->texture.d.height,mip),e->image_type==VK_IMAGE_TYPE_3D?dimension(e->texture.d.depth,mip):1}};
@@ -255,6 +261,7 @@ static void image_require_storage(image_entry *e) {
     // Earlier descriptors/framebuffers may still be in flight; retire once, reclaim only after texture release drains the GPU.
     e->retired_image=e->image;e->retired_view=e->view;e->retired_memory=e->memory;e->retired_views=e->views;
     e->image=upgraded.image;e->view=upgraded.view;e->memory=upgraded.memory;e->usage=upgraded.usage;e->views=NULL;
+    e->allocation_bytes+=upgraded.allocation_bytes;
     e->last_stage=VK_PIPELINE_STAGE_TRANSFER_BIT;e->last_access=VK_ACCESS_TRANSFER_WRITE_BIT;
     storage_promotion_count++;
     LOG("[vulkan-render-policy] storage promotion serial=%llu",(unsigned long long)e->serial);
@@ -323,13 +330,18 @@ static void image_upload(image_entry *e) {
     if((e->aspect & VK_IMAGE_ASPECT_STENCIL_BIT) && (e->aspect & VK_IMAGE_ASPECT_DEPTH_BIT))die("Vulkan combined depth/stencil CPU upload pending");
     // 与原后端一样先保护再取代数和读取，减少并发写入漏记的窗口。
     // Like the original backend, protect before taking the generation/reading to avoid a window for untracked concurrent writes.
-    graphics_pass_end();nvn_dirty_protect(t->mem,t->L.size);uint64_t stamp=nvn_dirty_now();image_access(e,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_TRANSFER_WRITE_BIT);uint8_t *shadow=NULL;const uint8_t *storage=t->mem;
+    // Only a new image never used in this chunk may move ahead of recorded draws.
+    int prologue=upload_prologue_enabled&&e->initial_upload_epoch==upload_epoch&&!e->populated&&!pending;
+    if(!prologue){graphics_pass_end();image_access(e,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_TRANSFER_WRITE_BIT);}
+    nvn_dirty_protect(t->mem,t->L.size);uint64_t stamp=nvn_dirty_now();uint8_t *shadow=NULL;const uint8_t *storage=t->mem;
     // 上传必须看到同批前面的复制，不提前发布客体内存。
     // Uploads must see preceding copies in the batch without publishing guest memory early.
     // 未跟踪 packaged 源也冻结一份快照，不能上传旧字节后把并发改写的新字节记为已上传。
     // Freeze untracked packaged sources too; never upload old bytes and then baseline a concurrent newer write.
     if(pending||(t->has_layout&&!nvn_dirty_tracked(t->mem,t->L.size))){shadow=malloc(t->L.size);if(!shadow||snapshot_read((uintptr_t)t->mem,shadow,t->L.size))die("Vulkan texture snapshot read");storage=shadow;}
-    image_upload_regions(e,storage);
+    image_upload_regions(e,storage,prologue?async_upload_command():command);
+    image_prologue_uploads+=prologue;
+    e->initial_upload_epoch=0;
     if(e->gpu_written){image_gpu_overwrites++;if(image_gpu_overwrites<=6||!(image_gpu_overwrites%64))LOG("[vulkan-upload] 覆盖 GPU 已渲染内容 serial=%llu %ux%u format=%#x bytes=%llu 第 %llu 次（客体内存里没有 GPU 那次渲染的结果）",(unsigned long long)t->serial,t->d.width,t->d.height,t->d.format,(unsigned long long)t->L.size,(unsigned long long)image_gpu_overwrites);}
     image_source_baseline(e,storage,stamp);free(shadow);e->populated=1;e->stamp=stamp;texture_uploads++;
 }
@@ -471,13 +483,35 @@ void mtl_reg_samp(int id,const samp_par *p) {
 // The depth-compare alias shares the original's lifetime: releasing the serial also releases the alias serial.
 static void image_release_serial(uint64_t serial);
 void mtl_tex_release(tex_t *t) {
-    if(!device)return;mtl_finish();pthread_mutex_lock(&queue_lock);image_release_serial(t->serial);image_release_serial(texture_shadow_alias_serial(t->serial));pthread_mutex_unlock(&queue_lock);
+    if(!device)return;
+    int defer=defer_texture_release_enabled;
+    if(!defer)mtl_finish();
+    pthread_mutex_lock(&queue_lock);
+    // Keep memory pressure bounded; waiting releases the lock needed by completion.
+    if(defer&&image_retired_bytes>=(256ull<<20)){pthread_mutex_unlock(&queue_lock);mtl_finish();pthread_mutex_lock(&queue_lock);}
+    image_release_serial(t->serial);image_release_serial(texture_shadow_alias_serial(t->serial));
+    image_retire_completed(atomic_load(&completed));pthread_mutex_unlock(&queue_lock);
+}
+static void image_destroy(image_entry *e) {
+    graphics_cache_forget_image(e);
+    while(e->views){cached_image_view *v=e->views;e->views=v->next;vkDestroyImageView(device,v->view,NULL);free(v);}
+    vkDestroyImageView(device,e->view,NULL);vkDestroyImage(device,e->image,NULL);vkFreeMemory(device,e->memory,NULL);
+    while(e->retired_views){cached_image_view *v=e->retired_views;e->retired_views=v->next;vkDestroyImageView(device,v->view,NULL);free(v);}
+    if(e->retired_image){vkDestroyImageView(device,e->retired_view,NULL);vkDestroyImage(device,e->retired_image,NULL);vkFreeMemory(device,e->retired_memory,NULL);}
+    free(e);
+}
+static void image_retire_completed(uint64_t ticket) {
+    image_entry **link=&image_retired;
+    while(*link){image_entry *e=*link;if(e->release_ticket>ticket){link=&e->next;continue;}
+        *link=e->next;image_retired_bytes-=e->allocation_bytes;image_destroy(e);}
 }
 static void image_release_serial(uint64_t serial) {
     image_entry **link=&image_list;while(*link&&(*link)->serial!=serial)link=&(*link)->next;
-    if(*link){image_entry *e=*link;graphics_cache_forget_image(e);*link=e->next;image_entry **hash=&image_index[e->serial&4095];while(*hash&&*hash!=e)hash=&(*hash)->hash_next;if(!*hash)die("Vulkan image index corruption");*hash=e->hash_next;while(e->views){cached_image_view *v=e->views;e->views=v->next;vkDestroyImageView(device,v->view,NULL);free(v);}vkDestroyImageView(device,e->view,NULL);vkDestroyImage(device,e->image,NULL);vkFreeMemory(device,e->memory,NULL);
-        while(e->retired_views){cached_image_view *v=e->retired_views;e->retired_views=v->next;vkDestroyImageView(device,v->view,NULL);free(v);}
-        if(e->retired_image){vkDestroyImageView(device,e->retired_view,NULL);vkDestroyImage(device,e->retired_image,NULL);vkFreeMemory(device,e->retired_memory,NULL);}free(e);}
+    if(*link){image_entry *e=*link;*link=e->next;image_entry **hash=&image_index[e->serial&4095];while(*hash&&*hash!=e)hash=&(*hash)->hash_next;if(!*hash)die("Vulkan image index corruption");*hash=e->hash_next;
+        // queue_lock excludes recording; the latest submitted fence covers every prior image use.
+        e->release_ticket=atomic_load(&submitted);e->next=image_retired;image_retired=e;image_retired_bytes+=e->allocation_bytes;
+        if(e->release_ticket>atomic_load(&completed))image_deferred_releases++;
+    }
 }
 void mtl_read_texels(const tex_t *t,unsigned level,unsigned layer,const NVNcopyRegion *r,uint8_t *dst,size_t row,size_t img) {
     if(r->width<=0||r->height<=0||r->depth<=0)return;mtl_sub_begin();dependencies_prepare_texture(t);image_entry *e=image_get(t);image_upload(e);

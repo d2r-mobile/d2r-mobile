@@ -10,6 +10,7 @@
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdatomic.h>
 #include <string.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
@@ -17,6 +18,37 @@
 #include <sys/xattr.h>
 #include <sys/uio.h>
 #include <unistd.h>
+
+_Atomic int dm_debug_collection_enabled;
+void dm_android_diagnostics_configure(int enabled) {
+    dm_debug_collection_enabled = enabled != 0;
+    if (enabled) return;
+    // Startup only, before guest threads cache optional diagnostic settings.
+    static const char *const prefixes[] = {
+        "DM_TEST_", "DM_PROBE", "DM_VK_PROBE", "DM_TICKS", "DM_INFLATE_"
+    };
+    static const char *const names[] = {
+        "DM_SAMPLE", "DM_SOAK", "DM_STATE", "DM_C2S_REPLAY", "DM_C2S_LOG",
+        "DM_POSCHK", "DM_TICK_HOLD", "DM_PANEL_FREEZE", "DM_HID_RECEIPT_LOG",
+        "DM_PERF_FILE", "DM_UIMSG", "DM_NVN_LOG", "DM_NVN_TSV", "DM_NVN_SHOT_UI",
+        "DM_VK_CAPTURE", "DM_VK_TRACE", "DM_VK_CPU_PHASES", "DM_NVN_PROF", "DM_SLOWFRAME",
+        "DM_THR", "DM_SVC", "DM_FS", "DM_DBG", "DM_IMPORTS", "DM_BOOTPROF", "DM_KEYS", "DM_MOVIE"
+    };
+    extern char **environ;
+    for (char **entry = environ; *entry;) {
+        int remove = 0;
+        size_t length = strcspn(*entry, "=");
+        for (size_t i = 0; i < sizeof prefixes / sizeof *prefixes; i++)
+            if (!strncmp(*entry, prefixes[i], strlen(prefixes[i]))) remove = 1;
+        for (size_t i = 0; i < sizeof names / sizeof *names; i++)
+            if (strlen(names[i]) == length && !strncmp(*entry, names[i], length)) remove = 1;
+        if (!remove) { entry++; continue; }
+        char *name = strndup(*entry, length);
+        if (!name || unsetenv(name)) abort();
+        free(name);
+        entry = environ;
+    }
+}
 
 uint64_t dm_android_clock_ns(clockid_t clock) {
     struct timespec t;
@@ -74,6 +106,10 @@ void dm_android_current_thread_read_stats(dm_android_read_stats *out) {
 }
 int dm_android_read_memory(uintptr_t address, void *destination, size_t size) {
     struct iovec local = {destination, size}, remote = {(void *)address, size};
+    if (!dm_debug_collection_enabled) {
+        ssize_t n = process_vm_readv(getpid(), &local, 1, &remote, 1, 0);
+        return n >= 0 && (size_t)n == size ? 0 : -1;
+    }
     // 两次真实 wall 读取；保留进入 syscall 前与 syscall 返回后的 errno，不更改安全读取结果。
     // Take two actual wall readings; preserve errno before/after the syscall without changing the safe-read result.
     struct timespec before, after; int incoming_errno = errno;

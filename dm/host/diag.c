@@ -446,7 +446,11 @@ void probe_install(void) {
     const char *ui = getenv("DM_UIMSG");
     if (ui && strcmp(ui, "1") && !(g_uifp = fopen(ui, "w"))) die("DM_UIMSG 打不开 %s", ui);
     g_ui_print = ui != NULL;
-    if (ui || g_flag.bootprof) {                     // UI 总线：改写器离线插的观测门（r6 起的产物都带；零运行时改代码） | UI bus: observation gate inserted offline by the rewriter (present in all build outputs since r6; zero runtime code modification)
+    int observe_ui = ui != NULL || g_flag.bootprof;
+#ifdef __ANDROID__
+    observe_ui = 1;
+#endif
+    if (observe_ui) {                               // UI 总线也驱动触控与 HUD，关闭诊断仍须订阅。 | The UI bus also drives touch and HUD; subscribe with diagnostics off.
         if (!gate_obs_present(OBS_UIMSG)) LOG("【红】产物没有 UI 观测门 OBS_UIMSG（需 r6 起的产物）：DM_UIMSG / 启动分段 ④–⑥ 无输出");
         else gate_obs_set(OBS_UIMSG, uimsg_print);
     }
@@ -841,6 +845,7 @@ static void hud_tick(uint64_t G) {        // 每拍：受控玩家等级 / 本�
                 u = next;
             }
         h.valid = 1;
+        h.player_identity = player; h.game_identity = G;
     }
     module_t *main = main_mod(); uint32_t pl = 0;
     if (main) { void *obj = players_obj(main); if (obj && tk_rd((uint64_t)obj + 0xc, &pl, 4)) h.players = (int)pl; }
@@ -1521,6 +1526,7 @@ char g_lf_panel[48];
 static int g_loadscreen_seen;
 int dm_loadscreen_up(void);
 void dm_longframe_note(const char *what) {
+    if (!dm_diagnostics_enabled()) return;
     static const char *path; static int init; static unsigned n;
     if (!init) { init = 1; const char *e = getenv("DM_PERF_FILE"); path = e ? (strcmp(e, "0") ? e : NULL) : (TARGET_OS_IPHONE ? "perf.txt" : NULL); }
     dm_hud_info h; dm_hud_get(&h); char ctx[160];
@@ -1532,9 +1538,10 @@ void dm_longframe_note(const char *what) {
     fprintf(fp, "长帧\t%s\t%s；%s\n", ts, what, ctx); fclose(fp);
 }
 void dm_perf_present(double iv) {   // 出图线程每帧调一次（滞后 8 帧的实际上屏间隔 ms；−1 = 被系统丢弃，0 = 无读数） | Called once per frame by the present thread (the actual present interval in ms, lagging by 8 frames; −1 = dropped by the system, 0 = no reading)
+    dm_3d_scale_feed(iv);
+    if (!dm_diagnostics_enabled()) return;
     static const char *path; static int init; static unsigned c16, c25, c33, disc; static double sum; static uint64_t t0, f0, cpu0, tstart;
     if (!init) { init = 1; const char *e = getenv("DM_PERF_FILE"); path = e ? (strcmp(e, "0") ? e : NULL) : (TARGET_OS_IPHONE ? "perf.txt" : NULL); t0 = tstart = now_ns(); f0 = dm_nvn_frame_count(); cpu0 = dm_nvn_sub_cpu_ns(); }
-    dm_3d_scale_feed(iv);   // 动态 3D 比例的控制器吃同一份上屏间隔（hle_oe.c） | The dynamic 3D scale controller consumes the same present intervals (hle_oe.c)
     if (!path) return;
     if (iv < 0) disc++; else if (iv > 0) { sum += iv; if (iv <= 20.8) c16++; else if (iv <= 29.2) c25++; else c33++; }
     uint64_t now = now_ns(); if (now - t0 < 10000000000ull) return;

@@ -10,4 +10,8 @@ for method in getLiveTouchGlyphSnapshot getLiveTouchAtlasInfo; do
         exit 1
     fi
 done
-printf 'PASS: NativeActivity registers skill glyph and atlas readers\n'
+if ! printf '%s\n' "$table" | grep -Fq '{"setVirtualControllerEnabled","(Z)V",(void*)Java_org_d2r_android_port_D2RActivity_setVirtualControllerEnabled}'; then
+    printf 'FAIL: NativeActivity does not register setVirtualControllerEnabled (Z)V\n' >&2
+    exit 1
+fi
+printf 'PASS: NativeActivity registers skill glyph, atlas and virtual controller methods\n'

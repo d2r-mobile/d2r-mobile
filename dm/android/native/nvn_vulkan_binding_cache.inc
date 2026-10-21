@@ -87,20 +87,24 @@ static VkDescriptorBufferInfo uniform_read_cached_read(uintptr_t address,uint32_
     entry->mapped=mapped;entry->info=info;
     return info;
 }
+static inline void descriptor_payload_word(size_t *cursor,uint64_t word) {
+    descriptor_payload[(*cursor)++]=word;
+    descriptor_payload_hash^=word;descriptor_payload_hash*=1099511628211ull;
+}
 static void descriptor_payload_build(const VkWriteDescriptorSet *writes,unsigned count) {
     size_t words=0;for(unsigned i=0;i<count;i++){VkDescriptorType type=writes[i].descriptorType;words+=2+writes[i].descriptorCount*((type==VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER||type==VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER)?1:3);}
     if(words>descriptor_payload_capacity){descriptor_payload=realloc(descriptor_payload,words*sizeof *descriptor_payload);if(!descriptor_payload)die("Vulkan descriptor payload allocation");descriptor_payload_capacity=words;}
-    size_t cursor=0;for(unsigned i=0;i<count;i++){const VkWriteDescriptorSet *w=&writes[i];descriptor_payload[cursor++]=((uint64_t)w->descriptorType<<32)|w->dstBinding;descriptor_payload[cursor++]=w->descriptorCount;
+    descriptor_payload_hash=14695981039346656037ull;
+    size_t cursor=0;for(unsigned i=0;i<count;i++){const VkWriteDescriptorSet *w=&writes[i];descriptor_payload_word(&cursor,((uint64_t)w->descriptorType<<32)|w->dstBinding);descriptor_payload_word(&cursor,w->descriptorCount);
         for(unsigned j=0;j<w->descriptorCount;j++){
-            if(descriptor_type_uniform(w->descriptorType)||w->descriptorType==VK_DESCRIPTOR_TYPE_STORAGE_BUFFER){const VkDescriptorBufferInfo *b=&w->pBufferInfo[j];descriptor_payload[cursor++]=(uintptr_t)b->buffer;descriptor_payload[cursor++]=b->offset;descriptor_payload[cursor++]=b->range;}
-            else if(w->descriptorType==VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER||w->descriptorType==VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER)descriptor_payload[cursor++]=(uintptr_t)w->pTexelBufferView[j];
-            else {const VkDescriptorImageInfo *image=&w->pImageInfo[j];descriptor_payload[cursor++]=(uintptr_t)image->sampler;descriptor_payload[cursor++]=(uintptr_t)image->imageView;descriptor_payload[cursor++]=image->imageLayout;}
+            if(descriptor_type_uniform(w->descriptorType)||w->descriptorType==VK_DESCRIPTOR_TYPE_STORAGE_BUFFER){const VkDescriptorBufferInfo *b=&w->pBufferInfo[j];descriptor_payload_word(&cursor,(uintptr_t)b->buffer);descriptor_payload_word(&cursor,b->offset);descriptor_payload_word(&cursor,b->range);}
+            else if(w->descriptorType==VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER||w->descriptorType==VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER)descriptor_payload_word(&cursor,(uintptr_t)w->pTexelBufferView[j]);
+            else {const VkDescriptorImageInfo *image=&w->pImageInfo[j];descriptor_payload_word(&cursor,(uintptr_t)image->sampler);descriptor_payload_word(&cursor,(uintptr_t)image->imageView);descriptor_payload_word(&cursor,image->imageLayout);}
         }
     }
-    descriptor_payload_words=cursor;descriptor_payload_hash=14695981039346656037ull;
+    descriptor_payload_words=cursor;
     // 显式字段编码，不把 Vulkan 结构体未定义的 padding 当作内容。
     // Encode explicit fields rather than treating unspecified Vulkan structure padding as content.
-    for(size_t i=0;i<cursor;i++){descriptor_payload_hash^=descriptor_payload[i];descriptor_payload_hash*=1099511628211ull;}
     // 64 KiB arena offset 的低位相同，末尾混合高位防止所有模型版本挤进同一个桶。
     // Arena offsets share low 64 KiB bits; mix high bits at the end so model versions do not all land in one bucket.
     descriptor_payload_hash^=descriptor_payload_hash>>33;descriptor_payload_hash*=0xff51afd7ed558ccdull;descriptor_payload_hash^=descriptor_payload_hash>>33;

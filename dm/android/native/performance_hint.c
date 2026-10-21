@@ -1,4 +1,5 @@
 #include "performance_hint.h"
+#include "../../host/dm.h"
 
 #ifdef __ANDROID__
 #include <android/log.h>
@@ -116,14 +117,14 @@ void dm_android_performance_frame_end(const void *window,int index) {
     if(valid&&work_ns&&work_ns<=INT64_MAX){session_create_locked(tid);valid=session&&bound_tid==tid;}else valid=0;
     if(valid){
         int result=api.report(session,(int64_t)work_ns);
-        if(!reported||result){fprintf(stderr,"[dm] [adpf] report bound_tid=%d caller_tid=%d work_ns=%llu result=%d\n",bound_tid,gettid(),(unsigned long long)work_ns,result);reported=1;}
+        if(!reported||result){if(dm_diagnostics_enabled()||result)fprintf(stderr,"[dm] [adpf] report bound_tid=%d caller_tid=%d work_ns=%llu result=%d\n",bound_tid,gettid(),(unsigned long long)work_ns,result);reported=1;}
         if(!result){accepted++;work_total+=work_ns;wsi_total+=wsi_ns;}else {
             skipped++;
             __android_log_print(ANDROID_LOG_INFO,"D2R","[adpf] report failed (%d) tid=%d; close hint session",result,bound_tid);
             api.close(session);session=NULL;bound_tid=0;
         }
     }else skipped++;
-    if(cycles==1||!(cycles%120))fprintf(stderr,"[dm] [adpf-cycle] cycles=%llu accepted=%llu skipped=%llu caller_tid=%d bound_tid=%d last_work_ns=%llu last_wsi_calls_ns=%llu accepted_mean_ms=%.3f excluded_wsi_mean_ms=%.3f target_ns=%lld clock=monotonic dependency_wait_included=1 worker_not_added=1\n",(unsigned long long)cycles,(unsigned long long)accepted,(unsigned long long)skipped,tid,bound_tid,(unsigned long long)(valid?work_ns:0),(unsigned long long)wsi_ns,accepted?work_total/(accepted*1e6):0,accepted?wsi_total/(accepted*1e6):0,(long long)target_ns);
+    if(dm_diagnostics_enabled()&&(cycles==1||!(cycles%120)))fprintf(stderr,"[dm] [adpf-cycle] cycles=%llu accepted=%llu skipped=%llu caller_tid=%d bound_tid=%d last_work_ns=%llu last_wsi_calls_ns=%llu accepted_mean_ms=%.3f excluded_wsi_mean_ms=%.3f target_ns=%lld clock=monotonic dependency_wait_included=1 worker_not_added=1\n",(unsigned long long)cycles,(unsigned long long)accepted,(unsigned long long)skipped,tid,bound_tid,(unsigned long long)(valid?work_ns:0),(unsigned long long)wsi_ns,accepted?work_total/(accepted*1e6):0,accepted?wsi_total/(accepted*1e6):0,(long long)target_ns);
     pthread_mutex_unlock(&hint_lock);
 }
 

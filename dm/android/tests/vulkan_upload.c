@@ -7,6 +7,7 @@
 #include "../../gfx/nvn/nvn_obj.h"
 #include "../../gfx/tex/nvn_deswizzle.h"
 typedef unsigned VkImageAspectFlags;
+typedef unsigned VkCommandBuffer;
 typedef struct { unsigned aspectMask,mipLevel,baseArrayLayer,layerCount; } TestSubresource;
 typedef struct { uint32_t width,height,depth; } TestExtent;
 typedef struct { uint64_t bufferOffset;uint32_t bufferRowLength,bufferImageHeight;TestSubresource imageSubresource;struct {int x,y,z;} imageOffset;TestExtent imageExtent; } VkBufferImageCopy;
@@ -23,7 +24,7 @@ static uint32_t dimension(uint32_t v,unsigned level){v>>=level;return v?v:1;}
 static post_op *post_new(int kind){assert(kind==3&&posts<4096);return &held[posts++];}
 static vk_buffer buffer_create(uint64_t bytes){assert(bytes&&bytes<=SIZE_MAX);void *p=malloc((size_t)bytes);assert(p);memset(p,0xa5,(size_t)bytes);return (vk_buffer){p,bytes,posts};}
 static void vkCmdCopyBufferToImage(unsigned cmd,unsigned buffer,unsigned image,unsigned layout,unsigned n,const VkBufferImageCopy *copies){
-    (void)cmd;(void)image;(void)layout;assert(buffer&&buffer<=posts&&n);calls++;
+    assert(cmd==command);(void)image;(void)layout;assert(buffer&&buffer<=posts&&n);calls++;
     vk_buffer *b=&held[buffer-1].source;const tex_t *t=&current.texture;
     for(unsigned i=0;i<n;i++){
         const VkBufferImageCopy *r=&copies[i];unsigned sub=r->imageSubresource.baseArrayLayer*t->d.levels+r->imageSubresource.mipLevel;
@@ -56,7 +57,7 @@ static unsigned run(nvn_texdesc desc,int batch){
             for(unsigned z=0;z<d;z++)for(size_t y=0;y<rows;y++)memcpy(dst+(z*rows+y)*stride,expected[sub]+(z*rows+y)*pitch,pitch);
         }else assert(nvn_swizzle(&t->d,level,layer,expected[sub],pitch,storage)==0);
     }
-    texture_upload_batch=batch;image_upload_regions(&current,storage);assert(seen==count);
+    command=batch?2:1;texture_upload_batch=batch;image_upload_regions(&current,storage,command);assert(seen==count);
     unsigned result=calls;assert(posts==calls);if(!batch)assert(calls==count);
     for(unsigned i=0;i<posts;i++)free(held[i].source.mapped);
     for(unsigned i=0;i<count;i++)free(expected[i]);free(storage);
