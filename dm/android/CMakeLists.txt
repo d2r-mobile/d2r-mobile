@@ -923,6 +923,18 @@ if(NOT ANDROID)
     add_test(NAME nvn_shader_feature_decisions COMMAND dm_nvn_shader_feature_decisions_test)
     set_tests_properties(nvn_shader_feature_decisions PROPERTIES TIMEOUT 30)
 
+    add_executable(dm_texture_flat_probe_test tests/texture_flat_probe_test.c)
+    target_include_directories(dm_texture_flat_probe_test PRIVATE native)
+    target_compile_options(dm_texture_flat_probe_test PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME texture_flat_probe COMMAND dm_texture_flat_probe_test)
+    set_tests_properties(texture_flat_probe PROPERTIES TIMEOUT 30)
+
+    add_executable(dm_texture_deswizzle_formats_test tests/texture_deswizzle_formats_test.c ../gfx/nvn/nvn_tex.c ../gfx/tex/nvn_deswizzle.c)
+    target_include_directories(dm_texture_deswizzle_formats_test PRIVATE native ../gfx/nvn ../gfx/tex)
+    target_compile_options(dm_texture_deswizzle_formats_test PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME texture_deswizzle_formats COMMAND dm_texture_deswizzle_formats_test)
+    set_tests_properties(texture_deswizzle_formats PROPERTIES TIMEOUT 30)
+
     # #253 protected heap snapshot lease; compiles the production hle_svc header.
     add_executable(dm_hle_heap_snapshot_test tests/hle_heap_snapshot.c)
     target_include_directories(dm_hle_heap_snapshot_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../host)
