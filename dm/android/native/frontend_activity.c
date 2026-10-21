@@ -64,6 +64,8 @@ typedef struct {
     int live_provider_ready;
     int live_provider_available;
     dm_live_touch_scene_observation live_observation;
+    dm_live_touch_geometry live_geometry;
+    uint64_t live_visual_signature;
     int touch_timer_fd;
     dm_touch_pointer_map touch_map;
     pthread_t debug_thread;int debug_started;_Atomic int debug_stop;
@@ -453,6 +455,33 @@ static void live_touch_set_available(game_app *s, int available) {
     LOG("[android-touch] live readiness %s", available ? "ready" : "unavailable");
     live_touch_notify_readiness(s, available);
 }
+uint64_t dm_live_touch_visual_signature(const dm_live_touch_visual *visual,
+                                        const dm_live_touch_geometry *geometry);
+static void live_touch_notify_visual(game_app *s) {
+    if (!s || !s->activity || s->live_readiness.destroyed || !s->live_touch) return;
+    ANativeActivity *a = s->activity;
+    JNIEnv *env = NULL;
+    if ((*a->vm)->GetEnv(a->vm, (void **)&env, JNI_VERSION_1_6) != JNI_OK) return;
+    jclass klass = (*env)->GetObjectClass(env, a->clazz);
+    jmethodID method = klass ? (*env)->GetMethodID(env, klass, "onLiveTouchVisualChanged", "()V") : NULL;
+    if (method && !(*env)->ExceptionCheck(env)) (*env)->CallVoidMethod(env, a->clazz, method);
+    if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+    if (klass) (*env)->DeleteLocalRef(env, klass);
+}
+static void live_touch_publish_visual(game_app *s) {
+    if (!s || !s->live_provider_available || !s->live_geometry.valid) return;
+    dm_live_touch_visual v;
+    if (!dm_live_touch_visual_snapshot(s->live_touch, &v)) return;
+    uint64_t signature = dm_live_touch_visual_signature(&v, &s->live_geometry);
+    dm_hud_info hud; memset(&hud, 0, sizeof hud); dm_hud_get(&hud);
+    const uint64_t hud_parts[] = {(uint64_t)(hud.valid ? hud.players : 0), (uint64_t)hud.belt[0],
+        (uint64_t)hud.belt[1], (uint64_t)hud.belt[2], (uint64_t)hud.belt[3]};
+    for (unsigned i = 0; i < sizeof hud_parts / sizeof *hud_parts; i++)
+        signature = (signature ^ hud_parts[i]) * 1099511628211ull;
+    if (signature == s->live_visual_signature) return;
+    s->live_visual_signature = signature;
+    live_touch_notify_visual(s);
+}
 static void live_touch_sync(game_app *s) {
     if(!s->input||!s->live_touch||!live_touch_mode_enabled()){live_touch_set_available(s,0);return;}
     if(!s->live_provider_ready){dm_live_touch_provider_init(&s->live_provider,NULL);s->live_provider_ready=1;}
@@ -496,6 +525,7 @@ static void live_touch_sync(game_app *s) {
     } else {
         (void)dm_live_touch_set_belt(s->live_touch,0,0);
     }
+    live_touch_publish_visual(s);
 }
 static void belt_expand_host(void *context, int on) { (void)context; dm_belt_expand(on); }
 static void belt_use_host(void *context, int col, int row) { (void)context; dm_belt_use(col, row); }
@@ -638,7 +668,8 @@ static void touch_timer_start(game_app *s) {
 static int live_touch_prepare(game_app *s,int w,int h,dm_live_touch_geometry *g) {
     uint64_t output=front_game_res(1);
     *g=dm_live_touch_geometry_for(w,h,(int)(uint32_t)output,(int)(uint32_t)(output>>32),dm_uiscreen_ingame());
-    if(!g->valid){if(s->live_items)dm_live_touch_items_cancel(s->live_items);dm_live_touch_cancel_all(s->live_touch,0);touch_timer_stop(s);pad_publish(s);return 0;}
+    if(!g->valid){if(s->live_items)dm_live_touch_items_cancel(s->live_items);memset(&s->live_geometry,0,sizeof s->live_geometry);dm_live_touch_cancel_all(s->live_touch,0);touch_timer_stop(s);pad_publish(s);return 0;}
+    s->live_geometry=*g;
     dm_live_touch_resize(s->live_touch,g->logical_width,g->logical_height);
     return 1;
 }
@@ -672,6 +703,29 @@ __attribute__((visibility("default"))) void Java_org_d2r_android_port_D2RActivit
 }
 __attribute__((visibility("default"))) jboolean Java_org_d2r_android_port_D2RActivity_isLiveTouchReady(JNIEnv *env,jclass klass) {
     (void)env;(void)klass;return application&&application->live_touch&&application->live_provider_available&&live_touch_mode_enabled()?JNI_TRUE:JNI_FALSE;
+}
+// Read-only visual snapshot for the draw-only Java overlay. The array layout is
+// documented in D2RTouchOverlay; no gesture state is modified here.
+__attribute__((visibility("default"))) jint Java_org_d2r_android_port_D2RActivity_getLiveTouchOverlaySnapshot(JNIEnv *env,jclass klass,jfloatArray values,jlongArray state) {
+    (void)klass;game_app *s=application;
+    if(!s||!s->live_touch||!s->live_provider_available||!s->live_geometry.valid)return 0;
+    dm_live_touch_visual v;if(!dm_live_touch_visual_snapshot(s->live_touch,&v))return 0;
+    if((*env)->GetArrayLength(env,values)<96||(*env)->GetArrayLength(env,state)<4)return 0;
+    float out[96]={0};
+    out[0]=s->live_geometry.left;out[1]=s->live_geometry.top;out[2]=s->live_geometry.width;out[3]=s->live_geometry.height;
+    out[4]=s->live_geometry.logical_width;out[5]=s->live_geometry.logical_height;
+    out[6]=v.joy_x;out[7]=v.joy_y;out[8]=v.joy_radius;
+    out[84]=v.joy_origin_x;out[85]=v.joy_origin_y;out[86]=v.joy_active;
+    out[87]=v.joy_rest_x;out[88]=v.joy_rest_y;
+    out[9]=v.swap_x;out[10]=v.swap_y;out[11]=v.swap_radius;
+    out[12]=v.diff_x;out[13]=v.diff_y;out[14]=v.diff_radius;
+    out[15]=(float)v.skill_set;out[16]=(float)v.diff_open;out[17]=(float)v.enabled_targets;
+    dm_hud_info hud;memset(&hud,0,sizeof hud);dm_hud_get(&hud);
+    out[18]=(float)(hud.valid?hud.players:0);out[19]=(float)hud.belt[0];out[20]=(float)hud.belt[1];out[21]=(float)hud.belt[2];out[22]=(float)hud.belt[3];out[23]=(float)v.navigation_mode;
+    for(int i=0;i<DM_TC_COUNT;i++){out[24+i*3]=v.target_x[i];out[25+i*3]=v.target_y[i];out[26+i*3]=v.target_r[i];}
+    for(int i=0;i<8;i++){out[60+i*3]=v.pick_x[i];out[61+i*3]=v.pick_y[i];out[62+i*3]=v.pick_r[i];}
+    jlong state_out[4]={(jlong)v.buttons,(jlong)dm_live_touch_lx(s->live_touch),(jlong)dm_live_touch_ly(s->live_touch),0};
+    (*env)->SetFloatArrayRegion(env,values,0,96,out);(*env)->SetLongArrayRegion(env,state,0,4,state_out);return 1;
 }
 static int32_t stick_value(float value) {if(value>1)value=1;if(value<-1)value=-1;return value>-.15f&&value<.15f?0:(int32_t)(value*DM_STICK_MAX);}
 static uint64_t pad_key(int key) {
@@ -927,6 +981,7 @@ __attribute__((visibility("default"))) void ANativeActivity_onCreate(ANativeActi
         {"onTextResult","(JLjava/lang/String;Z)V",(void*)Java_org_d2r_android_port_D2RActivity_onTextResult},
         {"onTouchPad","(JIIII)V",(void*)Java_org_d2r_android_port_D2RActivity_onTouchPad},
         {"isLiveTouchReady","()Z",(void*)Java_org_d2r_android_port_D2RActivity_isLiveTouchReady},
+        {"getLiveTouchOverlaySnapshot","([F[J)I",(void*)Java_org_d2r_android_port_D2RActivity_getLiveTouchOverlaySnapshot},
         {"setOverlayEnabled","(Z)V",(void*)Java_org_d2r_android_port_D2RActivity_setOverlayEnabled},
         {"setQualityPreset","(I)V",(void*)Java_org_d2r_android_port_D2RActivity_setQualityPreset},
         {"setMenuOpen","(Z)V",(void*)Java_org_d2r_android_port_D2RActivity_setMenuOpen},

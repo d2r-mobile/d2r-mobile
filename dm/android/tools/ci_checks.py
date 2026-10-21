@@ -127,7 +127,8 @@ def main():
         # unable to start.
         for source, test, label in (("SaveArchive.java", "SaveArchiveTest", "存档包"),
                                     ("PackageArchive.java", "PackageArchiveTest", "数据包导入"),
-                                    ("TouchVisibility.java", "TouchVisibilityTest", "触控显隐")):
+                                    ("TouchVisibility.java", "TouchVisibilityTest", "触控显隐"),
+                                    ("TouchOverlayGeometry.java", "TouchOverlayGeometryTest", "触控叠层坐标")):
             if not (JAVAC.exists() and JAVA.exists()):
                 skipped.append("%s（%s）：没有项目 JDK（%s）" % (label, test, JAVAC))
                 continue
