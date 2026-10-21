@@ -28,6 +28,16 @@ void dm_android_pad_publish(dm_android_pad *pad, const dm_pad_sample *sample) {
     pthread_mutex_unlock(&pad->mutex);
 }
 
+void dm_android_pad_clear_edges(dm_android_pad *pad) {
+    dm_android_pad_clear_edges_mask(pad, UINT64_MAX);
+}
+
+void dm_android_pad_clear_edges_mask(dm_android_pad *pad, uint64_t mask) {
+    pthread_mutex_lock(&pad->mutex);
+    pad->pressed &= ~mask;
+    pthread_mutex_unlock(&pad->mutex);
+}
+
 dm_npad_state dm_android_pad_read(dm_android_pad *pad) {
     pthread_mutex_lock(&pad->mutex);
     dm_npad_state state = {.sampling = (int64_t)(++pad->sampling & INT64_MAX),
