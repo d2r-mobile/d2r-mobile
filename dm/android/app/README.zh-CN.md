@@ -2,7 +2,7 @@
 
 English: [README.md](README.md)
 
-本 NativeActivity 开发 App **只打包自有合成样例**，不是可玩的 D2R。APK 中没有游戏数据或 Switch 密钥。包名 `org.d2rmobile.android.diagnostic`，仅 ARM64，最低 API 29、目标 API 35，不申请网络或共享存储权限。
+本 NativeActivity 开发 App **只打包自有合成样例**，不是可玩的 D2R。APK 中没有游戏数据或 Switch 密钥。包名 `org.d2rmobile.android.diagnostic`，仅 ARM64，最低 API 29、目标 API 35，不申请网络或共享存储权限。Activity 声明 `android:screenOrientation="sensorLandscape"`，两种横屏方向都接受、排除竖屏；原有的 `orientation|keyboardHidden|screenSize` configChanges 与真实视图／密度重算路径不变，不涉及全局旋转、`wm size`／密度或缓冲几何改动。
 
 启动时读取合成产物、重绑定宿主门、映射 RX/R/RW 页面，尝试在实际 App 进程中完成原生客体 TLS 往返；日志标签为 `D2R-Diagnostic`。窗口建立且生命周期就绪后，执行自有索引纹理场景（#117，见下），读回并复制到 Android 原生窗口。这是单帧工程诊断，不是优化后的游戏呈现器。暂停／恢复记录日志，低内存时释放 GPU 上下文，重绘时重建。不包含后台渲染循环、游戏资源导入、存档、游戏操作或音频。
 
