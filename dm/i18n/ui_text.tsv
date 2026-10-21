@@ -385,4 +385,3 @@ dmCustomTouchSwapFarHint	位于技能区左上，松手后切换	Above-left of s
 dmDoorRift	大秘境	Greater Rift	Grieta superior	Grieta mayor	Великий рифт	城里大秘境传送门头顶的名牌（dm_rift.c dm_door_label）
 dmDoorRiftTown	回城	Return to Town	Volver a la ciudad		Портал в город	秘境图里回城门头顶的名牌（dm_rift.c dm_door_label）
 dmDoorBossRush	Boss 连战	Boss Rush	Ronda de jefes		Босс-раш	城里 Boss 连战门头顶的名牌（dm_bossrush.c dm_door_label）
-dmAndroidDiagnosticName	D2R 诊断	D2R Diagnostics	D2R Diagnostics	D2R Diagnostics	D2R Diagnostics	Android 原生运行时与 Vulkan 工程诊断 App 名称（app/AndroidManifest.xml）

@@ -32,6 +32,10 @@ int main(void) {
     g_dm_lang = 0;
     CHECK(strcmp(dm_ui("dmAndroidDebugMetrics"), "dmAndroidDebugMetrics") != 0);
     CHECK(strcmp(dm_ui("dmAndroidStageGame"), "dmAndroidStageGame") != 0);
+    // Explicit group must win over the global language: Chinese while global
+    // is English, and English while global is Chinese (below).
+    CHECK(strcmp(dm_ui_group("dmAndroidStageGame", DM_LG_EN), "In game") == 0);
+    CHECK(strcmp(dm_ui_group("dmAndroidStageGame", DM_LG_ZH), "游戏中") == 0);
     format_metrics(text, sizeof text);
     CHECK(!strstr(text, "dmAndroidDebugMetrics"));
     CHECK(strstr(text, "FPS 59.9") != NULL);
@@ -65,6 +69,8 @@ int main(void) {
 
     g_dm_lang = 8;
     CHECK(strcmp(dm_ui("dmAndroidStageGame"), "游戏中") == 0);
+    CHECK(strcmp(dm_ui_group("dmAndroidStageGame", DM_LG_EN), "In game") == 0);
+    CHECK(strcmp(dm_ui_group("dmAndroidStageGame", DM_LG_ZH), "游戏中") == 0);
     format_metrics(text, sizeof text);
     CHECK(!strstr(text, "dmAndroidDebugMetrics"));
     CHECK(strstr(text, "FPS 59.9 | 帧 16.7 ms") != NULL);

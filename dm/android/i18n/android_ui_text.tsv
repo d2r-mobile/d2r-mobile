@@ -90,3 +90,4 @@ dmAndroidDriverTryBuiltin	请改选内置 Turnip 或系统驱动。此次没有�
 dmAndroidDriverDelete	删除已导入驱动…	Delete imported driver…	Android driver picker
 dmAndroidDriverDeleteConfirm	删除已导入的驱动？如果正在选用它，将切回内置 Turnip 或系统驱动。游戏数据和存档不会删除。	Delete the imported driver? If selected, it will switch to built-in Turnip or the system driver. Game data and saves are kept.	Android driver picker
 dmAndroidDriverDeleted	已删除导入驱动	Imported driver deleted	Android driver picker
+dmAndroidDiagnosticName	D2R 诊断	D2R Diagnostics	Android 原生运行时与 Vulkan 工程诊断 App 名称（app/AndroidManifest.xml）
