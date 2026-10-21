@@ -25,6 +25,8 @@ struct dm_live_touch_items {
     float release_nx, release_ny;
     int32_t quarantine[LIVE_ITEM_MAX_POINTER];
     int quarantine_count;
+    int shop_request, shop_drop_kind;
+    float shop_x, shop_y;
 };
 
 static int quarantined(const dm_live_touch_items *items, int32_t id) {
@@ -87,6 +89,7 @@ int dm_live_touch_items_set_context(dm_live_touch_items *items,
         (items->scene_epoch != scene_epoch || items->world_epoch != world_epoch ||
          items->ui_identity != ui_identity || items->navigation != !!navigation);
     if (changed) discard_pending(items);
+    if (changed) items->shop_request = 0;
     items->have_context = 1;
     items->scene_epoch = scene_epoch;
     items->world_epoch = world_epoch;
@@ -108,14 +111,23 @@ static void issue_item_query(dm_live_touch_items *items, float nx, float ny) {
     items->item_known = 0;
     items->item_kind = 0;
 }
+static void publish_item_hit(dm_live_touch_items *items){
+    dm_tc_state *core=dm_live_touch_controls(items->touch);
+    // A late item verdict must revoke a provisional scroll/slider classification.
+    if(items->slot>=0&&items->slot<DM_TC_MAX_TOUCH&&
+        (items->item_kind==1||items->item_kind==3||items->item_kind==6||
+         items->item_kind==7||items->item_kind==8||items->item_kind==10))
+        core->finger[items->slot].ui_drag=0;
+    dm_live_touch_apply_item_hit(items->touch,items->slot,items->item_kind);
+}
 
 static void poll_item_hit(dm_live_touch_items *items) {
     if (!items->active || items->pending_release || items->item_known) return;
     int result = items->host.item_result(items->host.context, items->item_seq);
     if (result < 0) return;
-    items->item_kind = normalize_item_kind(result);
+    items->item_kind = (items->host.shop_supported && (result == 7 || result == 8)) ? result : normalize_item_kind(result);
     items->item_known = 1;
-    dm_live_touch_apply_item_hit(items->touch, items->slot, items->item_kind);
+    publish_item_hit(items);
 }
 
 static void issue_drop_query(dm_live_touch_items *items, float nx, float ny, float finger_ny) {
@@ -128,17 +140,15 @@ static void issue_drop_query(dm_live_touch_items *items, float nx, float ny, flo
 
 static int normalize_item_kind(int kind) {
     switch (kind) {
-    case 0: case 1: case 2: case 3: case 6: case 11:
+    case 0: case 1: case 2: case 3: case 6: case 10: case 11:
         // 0 = an ordinary panel widget (including a skill-tree icon). It is a
         // known classification, not unknown; the core must still reach its
         // tap_move/tap_button branch. Only the explicit blocked/unsupported
         // classes below become no-click.
         return kind;
     default:
-        // 7/8/10 are real host categories for vendor/stack/blocked branches
-        // that this inventory slice does not own. Refuse them as "no click"
-        // instead of accidentally buying, selling, or taking a stack.
-        // Unknown results/timeouts are also no-click.
+        // Vendor/stack kinds require the explicit shop host boundary above.
+        // Unknown results/timeouts are no-click.
         return 6;
     }
 }
@@ -149,7 +159,7 @@ static void resolve_release(dm_live_touch_items *items, int64_t now_ns) {
     if (!items->item_known) {
         int result = items->host.item_result(items->host.context, items->item_seq);
         if (result >= 0) {
-            items->item_kind = normalize_item_kind(result);
+            items->item_kind = (items->host.shop_supported && (result == 7 || result == 8)) ? result : normalize_item_kind(result);
             items->item_known = 1;
         } else if (timeout) {
             items->item_kind = 6;
@@ -171,7 +181,17 @@ static void resolve_release(dm_live_touch_items *items, int64_t now_ns) {
             }
         }
         if (!items->drop_known) return;
-        if (items->drop_kind == 5) {
+        dm_tc_state *core = dm_live_touch_controls(items->touch);
+        dm_tc_finger *finger = &core->finger[items->slot];
+        if (finger->shop_drag && (items->item_kind == 7 || items->item_kind == 8)) {
+            items->shop_request = items->drop_kind == 5 ||
+                (items->drop_kind == 11 && items->item_kind == 8) ? items->item_kind : 0;
+            items->shop_drop_kind = items->drop_kind;
+            items->shop_x = finger->aim_origin_x/core->layout.width;
+            items->shop_y = finger->aim_origin_y/core->layout.height;
+            core->pointer_x = finger->aim_origin_x;
+            core->pointer_y = finger->aim_origin_y;
+        } else if (items->drop_kind == 5) {
             float nx, ny;
             if (items->host.drop_point(items->host.context, &nx, &ny))
                 dm_live_touch_apply_drop(items->touch, 5, clamp_norm(nx), clamp_norm(ny));
@@ -194,10 +214,14 @@ static void resolve_release(dm_live_touch_items *items, int64_t now_ns) {
                 return;
             }
         } else {
+            if (items->drop_kind == 7 && items->host.shop_supported) {
+                items->shop_request = 1; items->shop_drop_kind = 7;
+                dm_live_touch_apply_drop(items->touch, 0, 0, 0);
+            } else
             dm_live_touch_apply_drop(items->touch, items->drop_kind, 0, 0);
         }
     }
-    dm_live_touch_apply_item_hit(items->touch, items->slot, items->item_kind);
+    publish_item_hit(items);
     dm_live_touch_finish_pointer(items->touch, items->pointer_id, items->release_ns);
     discard_pending(items);
 }
@@ -317,6 +341,9 @@ void dm_live_touch_items_tick(dm_live_touch_items *items, int64_t time_ns) {
     poll_item_hit(items);
     resolve_release(items, time_ns);
 }
+int dm_live_touch_items_pointer_ready(const dm_live_touch_items *items) {
+    return items && items->active && items->item_known && !items->pending_release;
+}
 
 int dm_live_touch_items_consume(dm_live_touch_items *items,
                                 uint64_t scene_epoch, uint64_t world_epoch,
@@ -328,10 +355,16 @@ int dm_live_touch_items_consume(dm_live_touch_items *items,
     int matches = items->have_context && items->scene_epoch == scene_epoch &&
                   items->world_epoch == world_epoch && items->ui_identity == ui_identity;
     if (!matches) {
+        items->shop_request = 0;
         items->last = current;
         return 0;
     }
     int fired = 0;
+    if (items->shop_request && actions->shop_drop) {
+        actions->shop_drop(actions->context, items->shop_request, items->shop_drop_kind, items->shop_x, items->shop_y);
+        fired++;
+    }
+    items->shop_request = 0;
     if (current.item_tap_seq != items->last.item_tap_seq && actions->item_tap) {
         actions->item_tap(actions->context); fired++;
     }
@@ -360,4 +393,5 @@ int dm_live_touch_items_consume(dm_live_touch_items *items,
 void dm_live_touch_items_cancel(dm_live_touch_items *items) {
     if (!items) return;
     discard_pending(items);
+    items->shop_request = 0;
 }

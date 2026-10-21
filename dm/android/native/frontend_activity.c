@@ -11,6 +11,7 @@
 #include "../../host/dm_cursor.h"
 #include "../../host/ui_trace.h"
 #include "../../host/dm_actions.h"
+#include "../../host/dm_world.h"
 #include "debug_stats.h"
 #include "game_output.h"
 #include "touch_pointer_map.h"
@@ -74,6 +75,17 @@ typedef struct {
     dm_live_touch_geometry live_geometry;
     uint64_t live_visual_signature;
     int live_bind_state;
+    unsigned map_world_seq, tap_move_seen, world_tap_seen;
+    uint32_t selected_point;
+    double add_point_at, stat_next;
+    double labels_at;
+    double tip_until;
+    int tip_pointer_was, tip_dragged;
+    dm_live_touch_item_snapshot tip_last;
+    int ui_drag_active;
+    uint64_t frontend_scene, frontend_world, frontend_ui;
+    int fe_pointer_active, fe_pointer_id, fe_drag;
+    float fe_origin_x, fe_origin_y;
     int touch_timer_fd, touch_timer_active;
     int padmode_requested;
     int padmode_touch_swallow;
@@ -85,6 +97,7 @@ static game_app *application;
 static void touch_timer_stop(game_app *s);
 static void ui_touch_cancel(void);
 static void live_touch_cancel_sources_all(game_app *s);
+static void live_touch_frontend_tick(game_app *s);
 static void live_touch_items_ensure(game_app *s);
 void dm_padmode_request(int pad);
 int dm_padmode_current(void);
@@ -573,6 +586,8 @@ static void live_touch_sync(game_app *s) {
       dm_touch_game_set_scene(snapshot.scene==DM_LIVE_TOUCH_SCENE_GAME,
                               snapshot.scene_epoch,snapshot.world_epoch); }
     live_touch_set_available(s,1);
+    { float rect[4]; dm_live_touch_set_minimap(s->live_touch,
+        dm_ui_minimap_rect(rect)?rect:NULL,dm_ui_map_is_full()); }
     // Match tickTouchControls: item gestures need authoritative host state,
     // including a held item left over from an unsuccessful drop.
     { dm_hud_info hi; dm_hud_get(&hi);
@@ -583,6 +598,7 @@ static void live_touch_sync(game_app *s) {
     dm_tc_set_panel_state((int)snapshot.panel_bits);
     int bind_state=dm_ui_bind_active();
     int blocked=dm_ui_panel_stack_count();
+    dm_tc_set_joy_block(dm_live_touch_controls(s->live_touch),blocked<0);
     int navigation=bind_state||snapshot.scene!=DM_LIVE_TOUCH_SCENE_GAME||snapshot.panel_bits||blocked<0||atomic_load(&menu_open);
     // Android has no front-end setter; publish the same original panel stack
     // reading the iOS front end uses, so host panel layout and gesture mode
@@ -638,14 +654,22 @@ static void long_press_host(void *context) { (void)context; dm_ui_long_press(); 
 static void tab_go_host(void *context) { (void)context; dm_ui_tab_go(); }
 static void stack_take_host(void *context) { (void)context; dm_stash_take(1); }
 static void mouse_click_host(void *context, float nx, float ny) { (void)context; dm_ui_touch(0, nx, ny); dm_ui_touch(2, nx, ny); }
+static void shop_drop_host(void *context,int kind,int drop,float nx,float ny){
+    (void)context;
+    if(drop==7&&kind==1)dm_shop_sell_cursor();
+    else if(drop==11&&kind==8)dm_ui_stack_cube_at(nx,ny);
+    else if(drop==5&&dm_ui_drop_bag()){
+        if(kind==8)dm_ui_stack_take_at(nx,ny);else if(kind==7)dm_ui_shop_buy_at(nx,ny);
+    }
+}
 // Original bindTapSync: only state 2 + a skill icon becomes Y; state 0 skill
 // and stat-plus taps only move/select. Tabs/close (hit 0) keep the original
 // route, and an unknown host hit is never turned into a binding.
 static int bind_tap_host(void *context, float *nx, float *ny) {
-    (void)context;
+    game_app *s=context;
     int state = dm_ui_bind_active();
     int hit = dm_ui_bind_skill_hit(nx, ny);
-    if (!hit) return 0;
+    if (!hit) {s->selected_point=0;return 0;}
     if (state == 2 && hit == 1) return 2;
     if ((state == 0 || state == 2) && (hit == 1 || hit == 2)) return 1;
     return 0;
@@ -656,12 +680,16 @@ static void live_touch_items_ensure(game_app *s) {
     if (s->live_items) return;
     dm_live_touch_items_host host = {s, item_query_host, item_result_host, drop_query_host,
                                      drop_result_host, drop_last_host, drop_point_host,
-                                     origin_point_host};
+                                     origin_point_host, 1};
     s->live_items = dm_live_touch_items_create(s->live_touch, &host);
     if (!s->live_items) LOG("[android-touch] live item routing allocation failed");
 }
 static void live_touch_cancel_sources_all(game_app *s) {
     if (!s) return;
+    if(s->ui_drag_active||s->fe_drag)dm_ui_drag_end();
+    s->ui_drag_active=s->fe_drag=s->fe_pointer_active=0;
+    s->map_world_seq=0;s->selected_point=0;s->add_point_at=s->stat_next=0;
+    s->tip_until=-2;s->tip_pointer_was=s->tip_dragged=0;
     unsigned generation = frontend_trace_generation(1);
     frontend_trace_sync(generation);
     if (generation && g_fe_cancel_trace_count++ < 32) LOG("[ui-trace] cancel sources gen=%u reason=4", generation);
@@ -679,10 +707,116 @@ static void live_touch_consume_items(game_app *s) {
     if (!s->live_items || !s->live_touch || !live_touch_mode_enabled() || !s->live_provider_available) return;
     dm_live_touch_items_actions actions = {s, item_tap_host, identify_host, use_host,
                                            long_press_host, tab_go_host, stack_take_host,
-                                           mouse_click_host};
+                                           mouse_click_host,shop_drop_host};
     (void)dm_live_touch_items_consume(s->live_items,
         s->live_observation.scene_epoch, s->live_observation.world_epoch,
         s->live_observation.ui_identity, &actions);
+}
+// UIKit's tickTouchControls/bindTapSync hooks, on the same owner as AInputQueue.
+static void live_touch_frontend_tick(game_app *s) {
+    dm_tc_state *c=dm_live_touch_controls(s->live_touch);
+    if(!c||!s->live_provider_available)return;
+    double now=(double)now_ns()/1e9;
+    // The guest's map callback requires a loaded run; its boot-time flags are not a map.
+    if(c->navigation_mode&&dm_uiscreen_ingame()&&dm_ui_map_is_full())dm_ui_map_full(0);
+    static int labels_done;
+    const char *defaults=getenv("DM_TOUCH_DEFAULTS");
+    if(c->navigation_mode||dm_padmode_current())s->labels_at=0;
+    else if(!labels_done&&(!defaults||strcmp(defaults,"0"))){
+        if(!s->labels_at)s->labels_at=now+1.5;
+        else if(now>=s->labels_at){
+            void dm_ui_key_pulse_alone(uint64_t,int);
+            dm_ui_key_pulse_alone(DM_BTN_L,9);labels_done=1;
+        }
+    }
+    if(s->frontend_scene!=s->live_observation.scene_epoch||s->frontend_world!=s->live_observation.world_epoch||s->frontend_ui!=s->live_observation.ui_identity){
+        if(s->ui_drag_active)dm_ui_drag_end();s->ui_drag_active=0;
+        s->map_world_seq=0;s->selected_point=0;s->add_point_at=s->stat_next=0;
+        s->tip_until=-2;s->tip_pointer_was=s->tip_dragged=0;
+        dm_live_touch_item_snapshot_get(s->live_touch,&s->tip_last);
+        s->frontend_scene=s->live_observation.scene_epoch;s->frontend_world=s->live_observation.world_epoch;s->frontend_ui=s->live_observation.ui_identity;
+    }
+    if(c->world_tap_seq!=s->world_tap_seen){
+        s->world_tap_seen=c->world_tap_seq;
+        if(!c->navigation_mode){
+            float x=c->world_tap_x/c->layout.width,y=c->world_tap_y/c->layout.height;
+            dm_ui_world_tap(x,y,x,y);
+        }
+    }
+    float nx=0,ny=0;
+    int map=dm_live_touch_take_map_request(s->live_touch,&nx,&ny);
+    if(map==2){s->map_world_seq=0;dm_ui_map_full(0);}
+    else if(map==1)s->map_world_seq=dm_world_tap(nx,ny);
+    if(s->map_world_seq){int hit=dm_world_tap_result(s->map_world_seq);
+        if(hit>=0){s->map_world_seq=0;if(!hit&&!c->navigation_mode)dm_ui_map_full(1);}}
+    if(c->navigation_mode)s->map_world_seq=0;
+    dm_tc_finger *f=c->pointer_slot>=0?&c->finger[c->pointer_slot]:NULL;
+    if(f&&f->active&&f->ui_drag&&dm_live_touch_items_pointer_ready(s->live_items)){
+        if(!s->ui_drag_active){s->ui_drag_active=1;
+            dm_ui_drag_lift(DM_TC_POINTER_LIFT_PT*dm_tc_scale_for_size(c->layout.width,c->layout.height)/c->layout.height);
+            dm_ui_drag_begin(f->ui_drag,f->aim_origin_x/c->layout.width,f->aim_origin_y/c->layout.height,44/c->layout.height);}
+        dm_ui_drag_move(f->x/c->layout.width,f->y/c->layout.height);
+    }else if(s->ui_drag_active){s->ui_drag_active=0;dm_ui_drag_end();}
+    int selected_tap=c->tap_move_seq!=s->tap_move_seen;
+    if(!dm_ui_bind_active()&&selected_tap){
+        uint32_t id=dm_ui_hit_id();
+        if(id&&id==s->selected_point){
+            if(id<=4)dm_stat_add((int)id-1,1);else s->add_point_at=now+.3;
+        }
+        s->selected_point=id;
+    }
+    s->tap_move_seen=c->tap_move_seq;
+    int hit=dm_ui_bind_skill_hit(&nx,&ny);
+    if(c->navigation_mode&&!dm_ui_bind_active()&&dm_live_touch_items_pointer_ready(s->live_items)&&f&&f->active&&!f->pointer_dragged&&
+        !f->ui_drag&&now-f->start_time_s>=.5&&
+        hypotf(f->x-f->aim_origin_x,f->y-f->aim_origin_y)<=10*dm_tc_scale_for_size(c->layout.width,c->layout.height)){
+        uint32_t id=dm_ui_hit_id();
+        if(hit==2&&id>=1&&id<=4){
+            if(!f->pointer_long){f->pointer_long=1;s->stat_next=now;s->selected_point=id;
+                c->pointer_valid=1;c->pointer_x=nx*c->layout.width;c->pointer_y=ny*c->layout.height;}
+            if(now>=s->stat_next){s->stat_next=now+.15;dm_stat_add((int)id-1,1);}
+        }else if(hit==1&&!f->pointer_long)
+            dm_tc_pointer_press(c,nx*c->layout.width,ny*c->layout.height,DM_BTN_Y);
+    }
+    if(s->add_point_at&&now>=s->add_point_at){dm_points_info p;dm_points_get(&p);
+        if(p.tree_open&&p.sel_skill>=0&&!dm_cursor_pending()){
+            s->add_point_at=0;if(p.sel_block==0||p.sel_block==5)dm_skill_add_selected();
+        }else if(!p.tree_open||now>s->add_point_at+1)s->add_point_at=0;
+    }
+    if(!c->navigation_mode){s->selected_point=0;s->add_point_at=0;}
+    dm_live_touch_item_snapshot current;dm_live_touch_item_snapshot_get(s->live_touch,&current);
+    if(!c->navigation_mode||dm_padmode_current())s->tip_until=-2;
+    else if(f&&f->active){s->tip_until=-1;s->tip_dragged=f->pointer_dragged||f->ui_drag;}
+    else if(s->tip_pointer_was){
+        int item_tap=current.item_tap_seq!=s->tip_last.item_tap_seq&&!s->tip_dragged&&
+            current.use_seq==s->tip_last.use_seq&&current.ident_seq==s->tip_last.ident_seq&&
+            current.stack_take_seq==s->tip_last.stack_take_seq&&current.long_press_seq==s->tip_last.long_press_seq&&
+            current.mouse_click_seq==s->tip_last.mouse_click_seq;
+        s->tip_until=(selected_tap||item_tap)?-1:
+            now+(current.mouse_click_seq!=s->tip_last.mouse_click_seq?.05:2.8);
+    }else if(s->tip_until==-2&&dm_ui_free_cursor())s->tip_until=now+.3;
+    if(s->tip_until>0&&now>=s->tip_until&&!c->holding&&!dm_ui_bind_active()&&
+        !dm_ui_touch_active()&&!c->pulse_button&&!dm_tc_pulse_pending(c)){
+        c->pointer_valid=1;c->pointer_x=.02f*c->layout.width;c->pointer_y=.5f*c->layout.height;s->tip_until=0;
+    }
+    s->tip_pointer_was=f&&f->active;s->tip_last=current;
+}
+static void live_frontend_touch(game_app *s,int phase,int id,float nx,float ny){
+    if(phase==0){
+        if(s->fe_pointer_active)return;
+        s->fe_pointer_active=1;s->fe_pointer_id=id;s->fe_origin_x=nx;s->fe_origin_y=ny;
+    }
+    if(!s->fe_pointer_active||s->fe_pointer_id!=id)return;
+    float w=s->live_geometry.logical_width,h=s->live_geometry.logical_height;
+    float dy=fabsf(ny-s->fe_origin_y)*h,dx=fabsf(nx-s->fe_origin_x)*w;
+    if(phase==1&&!s->fe_drag&&dy>10&&dy>dx&&dm_ui_fe_drag_ok()){
+        s->fe_drag=1;dm_ui_touch(3,0,0);dm_ui_drag_begin(1,s->fe_origin_x,s->fe_origin_y,0);
+    }
+    if(s->fe_drag){
+        if(phase==1)dm_ui_drag_move(nx,ny);
+        else if(phase>=2){dm_ui_drag_end();s->fe_drag=0;}
+    }else dm_ui_touch(phase,nx,ny);
+    if(phase>=2)s->fe_pointer_active=0;
 }
 static void begin_skill_bind_host(void *context, uint64_t key) {
     (void)context;
@@ -781,6 +915,7 @@ static int touch_timer_tick(int fd,int events,void *data) {
     if(step<0)LOG("[android-touch] pulse not acknowledged by game; gesture cancelled");
     int needs=step>0||dm_live_touch_needs_work(s->live_touch);
     if(s->live_items){dm_live_touch_items_tick(s->live_items,(int64_t)now_ns());live_touch_cursor_update(s);live_touch_consume_items(s);needs=dm_live_touch_needs_work(s->live_touch);}
+    live_touch_frontend_tick(s);
     pad_publish(s);
     live_touch_consume_belt(s);
     live_touch_consume_difficulty(s);
@@ -811,6 +946,9 @@ static int live_touch_prepare(game_app *s,int w,int h,dm_live_touch_geometry *g)
     uint64_t output=front_game_res(1);
     *g=dm_live_touch_geometry_for(w,h,(int)(uint32_t)output,(int)(uint32_t)(output>>32),dm_uiscreen_ingame());
     if(!g->valid){if(s->live_items)dm_live_touch_items_cancel(s->live_items);memset(&s->live_geometry,0,sizeof s->live_geometry);dm_live_touch_cancel_all(s->live_touch,0);touch_timer_stop(s);pad_publish(s);return 0;}
+    if(s->live_geometry.valid&&(s->live_geometry.left!=g->left||s->live_geometry.top!=g->top||
+        s->live_geometry.width!=g->width||s->live_geometry.height!=g->height))
+        live_touch_cancel_sources_all(s);
     s->live_geometry=*g;
     dm_live_touch_resize(s->live_touch,g->logical_width,g->logical_height);
     return 1;
@@ -925,6 +1063,7 @@ static int live_touch_event_routed(game_app *s,int action,int action_index,int p
         live_touch_cursor_update(s);
         live_touch_consume_items(s);
     }
+    if(handled)live_touch_frontend_tick(s);
     return handled;
 }
 static int external_gamepad_source(int source) {
@@ -1053,11 +1192,13 @@ static int input_ready(int fd,int events,void *data) {
                     // mouse messages) instead of guessing menu focus with A. Only in-run touches enter the D2R gesture core.
                     if(!dm_uiscreen_ingame()){
                         unsigned at=action==AMOTION_EVENT_ACTION_MOVE?0:lifted;
+                        if(action==AMOTION_EVENT_ACTION_MOVE&&s->fe_pointer_active)
+                            for(unsigned j=0;j<count;j++)if(ids[j]==s->fe_pointer_id){at=j;break;}
                         if(at<count){float nx=(xs[at]-left)/gw,ny=(ys[at]-top)/gh;if(nx<0)nx=0;if(nx>.999f)nx=.999f;if(ny<0)ny=0;if(ny>.999f)ny=.999f;
                             int phase=(action==AMOTION_EVENT_ACTION_DOWN||action==AMOTION_EVENT_ACTION_POINTER_DOWN)?0:action==AMOTION_EVENT_ACTION_MOVE?1:(action==AMOTION_EVENT_ACTION_UP||action==AMOTION_EVENT_ACTION_POINTER_UP)?2:3;
                             int trace=ui_trace;
                             int active_before=dm_ui_touch_active();
-                            dm_ui_touch(phase,nx,ny);
+                            live_frontend_touch(s,phase,ids[at],nx,ny);
                             int active_after=dm_ui_touch_active();
                             if(trace&&action!=g_fe_last_fe_action&&atomic_fetch_add(&g_fe_ui_trace_count,1)<32)
                                 LOG("[ui-trace] fe gen=%u action=%d id=%d source=%d ingame=%d live=%d surface=%dx%d picture=%.0fx%.0f@%.0f,%.0f raw=%.1f,%.1f norm=%.4f,%.4f phase=%d reason=0 active=%d->%d",trace_gen,action,ids[at],source,dm_uiscreen_ingame(),live_on,w,h,gw,gh,left,top,xs[at],ys[at],nx,ny,phase,active_before,active_after);

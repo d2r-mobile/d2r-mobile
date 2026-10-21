@@ -21,6 +21,7 @@ typedef struct {
     int (*drop_last)(void *context);
     int (*drop_point)(void *context, float *nx, float *ny);
     int (*origin_point)(void *context, float *nx, float *ny);
+    int shop_supported;
 } dm_live_touch_items_host;
 
 typedef struct {
@@ -32,6 +33,7 @@ typedef struct {
     void (*tab_go)(void *context);
     void (*stack_take)(void *context);
     void (*mouse_click)(void *context, float nx, float ny);
+    void (*shop_drop)(void *context, int origin_kind, int drop_kind, float nx, float ny);
 } dm_live_touch_items_actions;
 
 dm_live_touch_items *dm_live_touch_items_create(dm_live_touch *touch,
@@ -56,6 +58,7 @@ int dm_live_touch_items_event(dm_live_touch_items *items,
 // Advances a held release and resolves its one-shot host answer. No action is
 // called here; consume() is the single callback boundary.
 void dm_live_touch_items_tick(dm_live_touch_items *items, int64_t time_ns);
+int dm_live_touch_items_pointer_ready(const dm_live_touch_items *items);
 // Forwards only newly produced original-core sequences. Context must still
 // match; stale sequences are discarded.
 int dm_live_touch_items_consume(dm_live_touch_items *items,
