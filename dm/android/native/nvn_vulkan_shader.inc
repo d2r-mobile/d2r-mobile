@@ -236,7 +236,8 @@ static VkSamplerAddressMode wrap_mode(unsigned wrap) {switch(wrap){case 1:return
 static texture_descriptor descriptor_texture(int id) {
     texture_descriptor d={0};pthread_mutex_lock(&descriptor_lock);if(id>=0&&id<texture_capacity)d=texture_descriptors[id];pthread_mutex_unlock(&descriptor_lock);return d;
 }
-static image_entry *descriptor_image(const texture_descriptor *d,uint32_t type,int storage,VkPipelineStageFlags stage,VkAccessFlags access) {
+static image_entry *descriptor_image(const texture_descriptor *d,uint32_t type,int storage,VkPipelineStageFlags stage,VkAccessFlags access,int flat) {
+    if(flat){image_entry *e=texture_flat_image();image_access(e,stage,access);texture_flat_overrides++;return e;}
     if(d->valid){image_entry *e=image_get(&d->texture);if(!storage||(e->texture.has_layout&&e->texture.mem))image_upload(e);if(storage)image_gpu_written(e);image_access(e,stage,access);return e;}
     // 未绑定采样资源保留零贴图；可写空槽用独立图像，防止计算输出污染后续采样。
     // Keep unbound sampled resources zero; separate writable images prevent compute output from polluting later samples.
@@ -245,7 +246,8 @@ static image_entry *descriptor_image(const texture_descriptor *d,uint32_t type,i
     if(!t->serial){t->serial=UINT64_MAX-index-(!!storage)*32;t->d=(nvn_texdesc){.target=(type&255)==4?NVN_TEXTURE_TARGET_3D:(type&255)==5?NVN_TEXTURE_TARGET_CUBEMAP:(type&256)?NVN_TEXTURE_TARGET_2D_ARRAY:NVN_TEXTURE_TARGET_2D,.width=1,.height=1,.depth=(type&255)==5?6:1,.levels=1,.format=(type&1024)?NVN_FORMAT_DEPTH32F:NVN_FORMAT_RGBA8};nvn_tex_layout(&t->d,&t->L);}
     image_entry *e=image_get(t);if(!e->populated){image_access(e,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_TRANSFER_WRITE_BIT);VkClearColorValue zero={0};VkImageSubresourceRange r={e->aspect,0,1,0,e->texture.L.layers};if(type&1024){VkClearDepthStencilValue depth={1,0};vkCmdClearDepthStencilImage(command,e->image,VK_IMAGE_LAYOUT_GENERAL,&depth,1,&r);}else vkCmdClearColorImage(command,e->image,VK_IMAGE_LAYOUT_GENERAL,&zero,1,&r);e->populated=1;}image_access(e,stage,access);return e;
 }
-static VkImageView descriptor_view(const texture_descriptor *descriptor,image_entry *e,uint32_t type,int storage) {
+static VkImageView descriptor_view(const texture_descriptor *descriptor,image_entry *e,uint32_t type,int storage,int flat) {
+    if(flat)return image_view_get(e,VK_IMAGE_VIEW_TYPE_2D,(VkImageSubresourceRange){VK_IMAGE_ASPECT_COLOR_BIT,0,1,0,1});
     view_t v=descriptor->valid?descriptor->view:(view_t){0};
     unsigned mip=v.set_levels?v.base_level:0,layers=v.set_layers?v.min_layer:0;
     if(mip>=e->texture.d.levels||layers>=e->texture.L.layers)die("Vulkan descriptor view bounds");
@@ -383,7 +385,9 @@ static VkDescriptorSet bind_shader(shader_entry *s,post_op *lifetime,uint32_t *d
                     // ImageStore 是位 2；保守保留读取权限，反射未单独标注 imageLoad。
                     // ImageStore is bit 2; conservatively retain reads because reflection does not separately flag imageLoad.
                     if(b->kind==4&&(b->flags&4))access|=VK_ACCESS_SHADER_WRITE_BIT;
-                    image_entry *e=descriptor_image(&descriptor,b->type,b->kind==4,shader_pipeline_stage(s),access);images[j].imageView=descriptor_view(&descriptor,e,b->type,b->kind==4);}
+                    unsigned flat_format=descriptor.valid?descriptor.texture.d.format:0;
+                    int flat=texture_flat_state_matches(&texture_flat,s->key,s->stage,b->binding,b->type,b->kind==4,flat_format);
+                    image_entry *e=descriptor_image(&descriptor,b->type,b->kind==4,shader_pipeline_stage(s),access,flat);images[j].imageView=descriptor_view(&descriptor,e,b->type,b->kind==4,flat);}
                 w.pImageInfo=images;
             }
         }
