@@ -90,7 +90,7 @@ dm_host *dm_host_create_arena(size_t heap,size_t stack,size_t alias,size_t arena
 int dm_host_destroy(dm_host *host) {
     if (!host) return EINVAL;
     pthread_mutex_lock(&host->mutex);
-    if (host->attached||host->alias_count||host->memory_pins||dm_host_sync_busy(host)||dm_host_ipc_busy(host)||dm_host_arbiter_waiters(host)||dm_host_mutex_waiters(host)) { pthread_mutex_unlock(&host->mutex); return EBUSY; }
+    if (host->attached||host->alias_count||host->memory_pins||dm_host_sync_busy(host)||dm_host_ipc_busy(host)||dm_host_arbiter_waiters(host)||dm_host_mutex_waiters(host)||dm_host_accounting_busy(host)) { pthread_mutex_unlock(&host->mutex); return EBUSY; }
     if (munmap(host->heap, host->reservation_size)) {
         int error = errno; pthread_mutex_unlock(&host->mutex); return error;
     }

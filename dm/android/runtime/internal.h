@@ -85,6 +85,7 @@ int dm_host_accounting_access(dm_host *host,uintptr_t address,size_t size,int pe
 int dm_host_accounting_query(dm_host *host,uintptr_t address,dm_memory_info *info);
 int dm_host_accounting_local_create(dm_host *host,dm_accounted_local **local,size_t bytes);
 void dm_host_accounting_local_release_locked(dm_host *host,dm_accounted_local *local);
+int dm_host_accounting_busy(dm_host *host);
 void dm_host_accounting_close(dm_host *host);
 int dm_host_stack_writable(dm_host *host,uintptr_t address,size_t size);
 void dm_host_accounting_reap_locked(dm_host *host);
