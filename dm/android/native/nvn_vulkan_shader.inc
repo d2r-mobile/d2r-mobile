@@ -122,6 +122,15 @@ static shader_entry *shader_load_by_key(const char *key,int stats,int fatal) {
         code, bytes, gpu_features.tessellationShader, gpu_features.multiViewport,
         gpu_features.shaderStorageImageWriteWithoutFormat,
         vk_api.shader_draw_parameters_supported && vk_api.shader_draw_parameters_prepared);
+    if (dm_nvn_shader_feature_can_skip(required, fatal)) {
+        // 可选预热失败不得杀死从未被必需使用的 shader；不创建 Vulkan module。
+        // An optional warm failure must not kill a shader that was never
+        // required; do not create a Vulkan module.
+        free(code);
+        free(meta);
+        pthread_mutex_unlock(&graphics_object_lock);
+        return NULL;
+    }
     switch (required) {
     case DM_NVN_SHADER_FEATURE_OK:
         break;

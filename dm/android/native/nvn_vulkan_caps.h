@@ -55,3 +55,9 @@ static inline dm_nvn_shader_feature_status dm_nvn_shader_feature_decision(
         return DM_NVN_SHADER_FEATURE_NEED_DRAW_PARAMETERS;
     return DM_NVN_SHADER_FEATURE_OK;
 }
+
+// Optional warm-up paths may skip an unsupported optional shader; required
+// draw/dispatch must still take the fatal rejection path downstream.
+static inline int dm_nvn_shader_feature_can_skip(dm_nvn_shader_feature_status status, int fatal) {
+    return status != DM_NVN_SHADER_FEATURE_OK && !fatal;
+}
