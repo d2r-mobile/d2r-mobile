@@ -94,7 +94,8 @@ def _overlay_strings_ok(path):
         if not line:
             continue
         fields = line.split("\t")
-        if len(fields) != 3 or not fields[0] or not CHECKSUM.match(fields[1]) or not fields[2]:
+        # An empty third field intentionally hides an original controller hint.
+        if len(fields) != 3 or not fields[0] or not CHECKSUM.match(fields[1]):
             raise PackageError(f"overlay touch_strings.tsv line {number} is not key<TAB>8-hex<TAB>value")
     return len(lines)
 
@@ -176,7 +177,8 @@ def inspect_overlay_names(archive, names):
         if not line:
             continue
         fields = line.split("\t")
-        if len(fields) != 3 or not fields[0] or not CHECKSUM.match(fields[1]) or not fields[2]:
+        # Match the generator and host reader: empty replacement is valid.
+        if len(fields) != 3 or not fields[0] or not CHECKSUM.match(fields[1]):
             raise PackageError(f"overlay touch_strings.tsv line {number} is not key<TAB>8-hex<TAB>value")
     build = relmap.get(OVERLAY_DATA + "/" + OVERLAY_BUILD_CONFIG)
     if build is None or build.file_size == 0:

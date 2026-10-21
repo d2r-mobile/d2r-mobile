@@ -191,7 +191,7 @@ int main(void) {
     // Long press: core decides the hold; host action is one-shot.
     event(&r, DM_LIVE_ACTION_DOWN, 0, 1, 21, 120, 120, 3000000000LL);
     dm_live_touch_items_tick(r.items, 3001000000LL);
-    dm_live_touch_scheduler_step(r.touch, 3600000000LL);
+    dm_live_touch_scheduler_step(r.touch, 3600000000LL, (uint64_t)(3600000000LL / 16000000), 0);
     event(&r, DM_LIVE_ACTION_UP, 0, 1, 21, 120, 120, 3610000000LL);
     dm_live_touch_items_tick(r.items, 3620000000LL);
     consume(&r);
@@ -207,9 +207,10 @@ int main(void) {
     event(&r, DM_LIVE_ACTION_UP, 0, 1, 31, 160, 100, 4060000000LL);
     dm_live_touch_items_tick(r.items, 4070000000LL);
     consume(&r);
-    dm_live_touch_scheduler_step(r.touch, 4020000000LL);
-    dm_live_touch_scheduler_step(r.touch, 4400000000LL);
-    dm_live_touch_scheduler_step(r.touch, 4700000000LL);
+    dm_live_touch_scheduler_step(r.touch, 4020000000LL, (uint64_t)(4020000000LL / 16000000), 0);
+    dm_live_touch_scheduler_step(r.touch, 4400000000LL, (uint64_t)(4400000000LL / 16000000), 0);
+    dm_live_touch_scheduler_step(r.touch, 4700000000LL, (uint64_t)(4700000000LL / 16000000), 0);
+    dm_live_touch_scheduler_step(r.touch, 4736000000LL, (uint64_t)(4736000000LL / 16000000), 0);
     CHECK(r.fake.drop_queries >= 2);
     CHECK(r.fake.item_tap == 2);
     CHECK(r.fake.drop_point_calls == 1);
@@ -229,9 +230,10 @@ int main(void) {
     event(&r, DM_LIVE_ACTION_UP, 0, 1, 32, 340, 100, 4096000000LL);
     dm_live_touch_items_tick(r.items, 4097000000LL);
     consume(&r);
-    dm_live_touch_scheduler_step(r.touch, 4092000000LL);
-    dm_live_touch_scheduler_step(r.touch, 4400000000LL);
-    dm_live_touch_scheduler_step(r.touch, 4700000000LL);
+    dm_live_touch_scheduler_step(r.touch, 4092000000LL, (uint64_t)(4092000000LL / 16000000), 0);
+    dm_live_touch_scheduler_step(r.touch, 4400000000LL, (uint64_t)(4400000000LL / 16000000), 0);
+    dm_live_touch_scheduler_step(r.touch, 4700000000LL, (uint64_t)(4700000000LL / 16000000), 0);
+    dm_live_touch_scheduler_step(r.touch, 4736000000LL, (uint64_t)(4736000000LL / 16000000), 0);
     CHECK(r.fake.origin_calls == 1);
     CHECK(dm_live_touch_pointer_position(r.touch, &px, &py, &pw, &ph) == 1);
     CHECK(fabsf(px / pw - 0.31f) < 0.01f);
