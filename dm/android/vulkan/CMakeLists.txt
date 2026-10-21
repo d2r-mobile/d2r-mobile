@@ -406,6 +406,24 @@ foreach(symbol vkEnumerateInstanceLayerProperties vkEnumerateInstanceExtensionPr
     vkCreateCommandPool vkDestroyCommandPool vkDeviceWaitIdle)
     target_compile_definitions(dm_vulkan_validation_fakeloader_test PRIVATE ${symbol}=dm_test_${symbol})
 endforeach()
+
+add_executable(dm_vulkan_present_init_test ../tests/vulkan_present_init.c vk_host.c)
+target_link_libraries(dm_vulkan_present_init_test PRIVATE dm_android_vk)
+target_compile_options(dm_vulkan_present_init_test PRIVATE -Wall -Wextra -Werror)
+foreach(symbol vkEnumerateInstanceVersion vkEnumerateInstanceLayerProperties vkEnumerateInstanceExtensionProperties
+    vkCreateInstance vkDestroyInstance vkGetInstanceProcAddr vkEnumeratePhysicalDevices
+    vkGetPhysicalDeviceQueueFamilyProperties vkEnumerateDeviceExtensionProperties
+    vkGetPhysicalDeviceSurfaceSupportKHR vkGetPhysicalDeviceProperties vkGetPhysicalDeviceMemoryProperties
+    vkCreateDevice vkDestroyDevice vkGetDeviceQueue vkCreateCommandPool vkDestroyCommandPool vkDeviceWaitIdle
+    vkDestroySurfaceKHR)
+    target_compile_definitions(dm_vulkan_present_init_test PRIVATE ${symbol}=test_${symbol})
+endforeach()
+if(ANDROID)
+    target_link_options(dm_vulkan_present_init_test PRIVATE "-Wl,-z,max-page-size=16384")
+else()
+    add_test(NAME vulkan_present_init COMMAND dm_vulkan_present_init_test)
+    set_tests_properties(vulkan_present_init PROPERTIES TIMEOUT 60)
+endif()
 option(DM_VK_SANITIZE_THREAD "Build the fake-loader validation test with ThreadSanitizer" OFF)
 if(DM_VK_SANITIZE_THREAD)
     target_compile_options(dm_vulkan_validation_fakeloader_test PRIVATE -fsanitize=thread -g)
