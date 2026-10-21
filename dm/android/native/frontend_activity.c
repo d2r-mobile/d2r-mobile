@@ -27,6 +27,7 @@
 #include <float.h>
 #include <math.h>
 #include "frontend_pad.h"
+#include "module_metadata.h"
 
 // Current host exposes resumed directly but not its declaration in dm.h; keep the
 // frontend contract local rather than editing the host header owned by H1.
@@ -212,6 +213,9 @@ static void copy_asset(ANativeActivity *a,const char *directory,const char *name
     char path[1024];snprintf(path,sizeof path,"%s/%s",directory,name);FILE *file=fopen(path,"wb");if(!file)die("Game metadata open %s",path);
     char buffer[4096];int n;while((n=AAsset_read(asset,buffer,sizeof buffer))>0)if(fwrite(buffer,1,n,file)!=(size_t)n)die("Game metadata write");fclose(file);AAsset_close(asset);
 }
+static int copy_module_asset(void *context,const char *directory,const char *name) {
+    copy_asset((ANativeActivity *)context,directory,name);return 0;
+}
 static void *boot(void *argument) {
     game_app *s=argument;pthread_mutex_lock(&s->lock);while(!s->window&&!s->stop)pthread_cond_wait(&s->ready,&s->lock);int stop=s->stop;pthread_mutex_unlock(&s->lock);if(stop)return NULL;
     char path[1024],metadata[1024],log[1024];snprintf(metadata,sizeof metadata,"%s/game",s->activity->internalDataPath);mkdir(metadata,0700);
@@ -260,7 +264,7 @@ static void *boot(void *argument) {
         else{unsetenv("DM_DERIVED");LOG("[android] 【红】数据包没有 derived.tsv：编年史仓库 / 经验条 / 动态亮度的表将是空的（用新版打包器重新生成数据包）");}
         LOG("[android] imported package in use game=%s",metadata);
     }else{
-        const char *modules[]={"main","sdk","subsdk0"};for(unsigned i=0;i<3;i++)for(unsigned j=0;j<2;j++){char name[80];snprintf(name,sizeof name,"%s.%s.tsv",modules[i],j?"gates":"fixups");copy_asset(s->activity,metadata,name);}
+        const char *modules[]={"main","sdk","subsdk0"};for(unsigned i=0;i<3;i++)if(dm_copy_module_metadata(metadata,modules[i],copy_module_asset,s->activity))die("Game metadata preparation failed for %s",modules[i]);
         snprintf(path,sizeof path,"%s/romfs",s->activity->externalDataPath);setenv("DM_ROMFS",path,1);
         snprintf(path,sizeof path,"%s/shaders",s->activity->externalDataPath);setenv("DM_VK_SHADERS",path,1);
         unsetenv("DM_GUEST_LIBDIR");
