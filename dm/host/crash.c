@@ -7,6 +7,7 @@
 #include <signal.h>
 #include <dlfcn.h>
 #include <sys/ucontext.h>
+#include "dm_ucontext.h"
 #include <unistd.h>
 #include <sys/mman.h>
 #include <libkern/OSCacheControl.h>
@@ -79,9 +80,9 @@ void crash_off(const char *tag, uint64_t a) {   // diag.c 也用 | Also used by 
 
     module_t *m = module_of((void *)a);
     Dl_info di;
-    if (m) fprintf(stderr, " %s%s%s+%#llx", tag, *tag ? "=" : "", m->name, a - (uint64_t)m->base);
+    if (m) fprintf(stderr, " %s%s%s+%#llx", tag, *tag ? "=" : "", m->name, (unsigned long long)(a - (uint64_t)m->base));
     else if (dladdr((void *)a, &di) && di.dli_sname) fprintf(stderr, " %s%s%s+%#lx", tag, *tag ? "=" : "", di.dli_sname, (unsigned long)(a - (uint64_t)di.dli_saddr));
-    else fprintf(stderr, " %s%s%#llx", tag, *tag ? "=" : "", a);
+    else fprintf(stderr, " %s%s%#llx", tag, *tag ? "=" : "", (unsigned long long)a);
 }
 // 帧指针回溯：x29 链 [fp]=上一帧 fp、[fp+8]=返回地址；只走 8 字节对齐、单调上升的帧
 // Frame pointer backtrace: x29 chain [fp]=previous frame's fp, [fp+8]=return address; only 8-byte aligned, monotonically increasing frames are walked
@@ -133,15 +134,18 @@ static void on_crash(int sig, siginfo_t *si, void *uc_) {
     ucontext_t *uc = uc_;
     if (sig == SIGTRAP && g_trap_hook && g_trap_hook(uc)) return;
     if (sig == SIGSEGV || sig == SIGBUS) {
-        int is_write = (int)((uc->uc_mcontext->__es.__esr >> 6) & 1);   // ESR 的 WnR 位 | The WnR bit of ESR
-        for (int i = 0; i < g_nfault_hook; i++) if (g_fault_hook[i](si->si_addr, is_write, uc)) return;
+        int is_write = dm_uc_is_write(uc);
+        // Unknown/truncated/malformed ESR records are not a successful write classification: skip the
+        // write-protection hooks rather than inventing a read or a handled write.
+        if (is_write >= 0)
+            for (int i = 0; i < g_nfault_hook; i++) if (g_fault_hook[i](si->si_addr, is_write, uc)) return;
     }
     fprintf(stderr, "[dm] CRASH sig=%d", sig);
-    off("addr", (uint64_t)si->si_addr); off("pc", uc->uc_mcontext->__ss.__pc); off("lr", uc->uc_mcontext->__ss.__lr);
-    fprintf(stderr, " sp=%#llx\n", uc->uc_mcontext->__ss.__sp);
-    for (int i = 0; i < 29; i++) fprintf(stderr, "x%d=%#llx%s", i, uc->uc_mcontext->__ss.__x[i], i % 6 == 5 ? "\n" : " ");
+    off("addr", (uint64_t)si->si_addr); off("pc", (uint64_t)DM_UC_PC(uc)); off("lr", (uint64_t)DM_UC_LR(uc));
+    fprintf(stderr, " sp=%#llx\n", (unsigned long long)DM_UC_SP(uc));
+    for (int i = 0; i < 29; i++) fprintf(stderr, "x%d=%#llx%s", i, (unsigned long long)DM_UC_REG(uc, i), i % 6 == 5 ? "\n" : " ");
     fprintf(stderr, "\n");
-    dm_backtrace(uc->uc_mcontext->__ss.__fp);
+    dm_backtrace((uint64_t)DM_UC_FP(uc));
     if (g_dump_hook) g_dump_hook();
     _exit(128 + sig);
 }

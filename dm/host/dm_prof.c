@@ -4,9 +4,15 @@
 #include "hle.h"
 #include <stdlib.h>
 #include <string.h>
+#ifndef __ANDROID__
 extern int thread_selfcounts(int type, void *buf, size_t nbytes);
+#endif
 int dm_ipf_on(void) { static int on = -1; if (on < 0) { const char *e = getenv("DM_PUMP_PROF"); on = e && strcmp(e, "0"); } return on; }
+#ifdef __ANDROID__
+uint64_t dm_ipf_instr(void) { return 0; }   // No libsystem_kernel thread_selfcounts on Android; profiling is unavailable, not synthesized.
+#else
 uint64_t dm_ipf_instr(void) { uint64_t c[2] = { 0, 0 }; thread_selfcounts(1, c, sizeof c); return c[0]; }
+#endif
 enum { NMOD = 48 };
 static struct { const char *name[NMOD]; uint64_t sum[NMOD], n_frames; int n; } g_t[2];
 void dm_ipf_add(int t, const char *name, uint64_t instr) {
