@@ -142,6 +142,26 @@ target_link_libraries(dm_custom_preferences_test PRIVATE dm_android_app_custom_p
 target_compile_options(dm_custom_preferences_test PRIVATE -Wall -Wextra -Werror)
 add_test(NAME custom_preferences COMMAND dm_custom_preferences_test)
 set_tests_properties(custom_preferences PROPERTIES TIMEOUT 30)
+# #167 app-private file adapter for the accepted custom-preferences transaction.
+add_library(dm_android_custom_preferences_store STATIC app/custom_preferences_store.c)
+target_include_directories(dm_android_custom_preferences_store PUBLIC app)
+target_link_libraries(dm_android_custom_preferences_store PUBLIC dm_android_app_custom_preferences)
+target_compile_options(dm_android_custom_preferences_store PRIVATE -Wall -Wextra -Werror)
+add_executable(dm_custom_preferences_store_test tests/custom_preferences_store.c)
+target_link_libraries(dm_custom_preferences_store_test PRIVATE dm_android_custom_preferences_store dm_android_app_custom_preferences)
+target_compile_options(dm_custom_preferences_store_test PRIVATE -Wall -Wextra -Werror)
+add_test(NAME custom_preferences_store COMMAND dm_custom_preferences_store_test)
+set_tests_properties(custom_preferences_store PROPERTIES TIMEOUT 60)
+# #167 test-only post-fsync/pre-rename fault hook; production library has no hook.
+add_executable(dm_custom_preferences_store_fault_test
+    tests/custom_preferences_store.c
+    app/custom_preferences_store.c
+    app/custom_preferences.c)
+target_include_directories(dm_custom_preferences_store_fault_test PRIVATE app)
+target_compile_definitions(dm_custom_preferences_store_fault_test PRIVATE DM_CP_STORE_TEST_FAULT=1)
+target_compile_options(dm_custom_preferences_store_fault_test PRIVATE -Wall -Wextra -Werror)
+add_test(NAME custom_preferences_store_fault COMMAND dm_custom_preferences_store_fault_test)
+set_tests_properties(custom_preferences_store_fault PROPERTIES TIMEOUT 60)
 add_library(dm_android_touch_bridge STATIC app/touch_bridge.c)
 target_include_directories(dm_android_touch_bridge PUBLIC app runtime)
 target_link_libraries(dm_android_touch_bridge PUBLIC dm_android_touch dm_android_touch_game)
@@ -492,6 +512,12 @@ if(NOT ANDROID)
                 --tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/custom_preferences.c
                 --cc ${CMAKE_C_COMPILER})
         set_tests_properties(custom_preferences_mutation PROPERTIES TIMEOUT 120)
+        add_test(NAME custom_preferences_store_mutation
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/custom_preferences_store_mutation.py
+                --app ${CMAKE_CURRENT_SOURCE_DIR}/app
+                --tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/custom_preferences_store.c
+                --cc ${CMAKE_C_COMPILER})
+        set_tests_properties(custom_preferences_store_mutation PROPERTIES TIMEOUT 120)
         add_test(NAME diagnostic_provenance
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_provenance.py)
         set_tests_properties(diagnostic_provenance PROPERTIES TIMEOUT 60)
