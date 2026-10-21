@@ -66,6 +66,7 @@ typedef struct {
     dm_live_touch_scene_observation live_observation;
     dm_live_touch_geometry live_geometry;
     uint64_t live_visual_signature;
+    int live_bind_state;
     int touch_timer_fd;
     dm_touch_pointer_map touch_map;
     pthread_t debug_thread;int debug_started;_Atomic int debug_stop;
@@ -76,6 +77,7 @@ static void touch_timer_stop(game_app *s);
 static void ui_touch_cancel(void);
 static void live_touch_cancel_sources_all(game_app *s);
 static void live_touch_items_ensure(game_app *s);
+static void live_touch_cursor_update(game_app *s);
 static _Atomic int display_hz;
 // 运行时可切的调试浮层（游戏内菜单的「帧率显示」）：UI 线程写，调试线程每拍读。启动初值见 debug_overlay 的读取处。
 // Runtime-togglable debug overlay (the in-game menu's "frame rate display"): the UI thread writes it, the debug
@@ -504,7 +506,8 @@ static void live_touch_sync(game_app *s) {
       dm_touch_game_set_scene(snapshot.scene==DM_LIVE_TOUCH_SCENE_GAME,
                               snapshot.scene_epoch,snapshot.world_epoch); }
     live_touch_set_available(s,1);
-    int navigation=snapshot.scene!=DM_LIVE_TOUCH_SCENE_GAME||snapshot.panel_bits||atomic_load(&menu_open);
+    int bind_state=dm_ui_bind_active();
+    int navigation=bind_state||snapshot.scene!=DM_LIVE_TOUCH_SCENE_GAME||snapshot.panel_bits||atomic_load(&menu_open);
     uint32_t mask=navigation?(dm_tc_nav_mask(1)|(1u<<DM_TC_MENU)):
         (((1u<<DM_TC_COUNT)-1)&~(1u<<DM_TC_MAP));
     dm_live_touch_set_context(s->live_touch,navigation,mask,
@@ -518,6 +521,14 @@ static void live_touch_sync(game_app *s) {
       dm_live_touch_set_skill_snapshot(s->live_touch,have_skill?&skill_snapshot:NULL,
                                        snapshot.scene_epoch,snapshot.world_epoch);
       dm_live_touch_set_skill_bind_active(s->live_touch,dm_ui_bind_active()); }
+    { if(bind_state==2 && s->live_bind_state!=2) {
+          // Original bindTapSync: move the original controller cursor into the
+          // ornamental gap before the player picks a skill, so the skill-tree
+          // tooltip does not cover the panel. Publish before any host action.
+          dm_live_touch_pointer_move(s->live_touch,0.155f,0.5f);
+          live_touch_cursor_update(s);
+      }
+      s->live_bind_state=bind_state; }
     if(!navigation){
         int expanded=0, rows=dm_belt_rows(&expanded);
         if(!dm_live_touch_set_belt(s->live_touch,rows,expanded))
@@ -545,8 +556,22 @@ static void long_press_host(void *context) { (void)context; dm_ui_long_press(); 
 static void tab_go_host(void *context) { (void)context; dm_ui_tab_go(); }
 static void stack_take_host(void *context) { (void)context; dm_stash_take(1); }
 static void mouse_click_host(void *context, float nx, float ny) { (void)context; dm_ui_touch(0, nx, ny); dm_ui_touch(2, nx, ny); }
+// Original bindTapSync: only state 2 + a skill icon becomes Y; state 0 skill
+// and stat-plus taps only move/select. Tabs/close (hit 0) keep the original
+// route, and an unknown host hit is never turned into a binding.
+static int bind_tap_host(void *context, float *nx, float *ny) {
+    (void)context;
+    int state = dm_ui_bind_active();
+    int hit = dm_ui_bind_skill_hit(nx, ny);
+    if (!hit) return 0;
+    if (state == 2 && hit == 1) return 2;
+    if ((state == 0 || state == 2) && (hit == 1 || hit == 2)) return 1;
+    return 0;
+}
 static void live_touch_items_ensure(game_app *s) {
-    if (!s->live_touch || s->live_items) return;
+    if (!s->live_touch) return;
+    dm_live_touch_set_tap_hook(s->live_touch, bind_tap_host, s);
+    if (s->live_items) return;
     dm_live_touch_items_host host = {s, item_query_host, item_result_host, drop_query_host,
                                      drop_result_host, drop_last_host, drop_point_host,
                                      origin_point_host};
