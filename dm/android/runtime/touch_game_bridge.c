@@ -58,11 +58,21 @@ static int valid_hit(const dm_touch_game_bridge *bridge, const dm_tgp_hit *hit) 
     return object_range_contains(bridge, hit);
 }
 
+static void discard_pending_actions(dm_touch_game_bridge *bridge) {
+    /* A core action belongs to the provider context that produced it. When the
+       provider becomes unavailable or its scene/identity changes, an action
+       still sitting in the adapter must not be dispatched later wearing the
+       new scene tag. Count it as rejected; it was never acknowledged. */
+    dm_android_touch_action action;
+    while (dm_android_touch_take_action(bridge->touch, &action)) bridge->rejected++;
+}
+
 static void mark_unavailable(dm_touch_game_bridge *bridge, int reason) {
     bridge->available = 0;
     bridge->reason = reason;
     bridge->invalidations++;
     (void)dm_android_touch_set_game_available(bridge->touch, 0);
+    discard_pending_actions(bridge);
 }
 
 int dm_touch_game_bridge_refresh(dm_touch_game_bridge *bridge, uint64_t now_ns) {
@@ -112,6 +122,9 @@ int dm_touch_game_bridge_refresh(dm_touch_game_bridge *bridge, uint64_t now_ns) 
          snapshot.ui_identity != bridge->last_ui_identity ||
          snapshot.object_generation != bridge->last_object_generation);
     if (context_changed) bridge->invalidations++;
+    /* First attach or any scene/identity/panel change: pending actions from
+       the previous context must not be retagged and dispatched here. */
+    if (!bridge->have_context || context_changed) discard_pending_actions(bridge);
     if (!dm_android_touch_set_game_available(bridge->touch, 1) ||
         !dm_android_touch_set_game_context(bridge->touch, navigation, panel_bits,
                                            snapshot.scene_epoch, snapshot.world_epoch,
