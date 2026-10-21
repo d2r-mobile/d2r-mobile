@@ -4,6 +4,8 @@
 // each frame, so the CPU budget can be attributed from measurement instead of estimate.
 // 只累加计数与纳秒，不改变任何行为、顺序或可见结果。
 // Only counters and nanoseconds accumulate; no behaviour, ordering or visible result changes.
+// 默认关闭逐绘制计时；启动时用 DM_VK_CPU_PHASES=1 或 debug.d2r.cpu_phases=1 开启，基本帧率与异常帧检测始终保留。
+// Per-draw timing is opt-in at startup; basic frame metrics and abnormal-frame detection remain active.
 enum {
     DM_CPU_PHASE_DRAW, DM_CPU_PHASE_BIND, DM_CPU_PHASE_UBO, DM_CPU_PHASE_DESCRIPTOR,
     DM_CPU_PHASE_LAYOUT, DM_CPU_PHASE_DEPENDENCY, DM_CPU_PHASE_RESOLVE, DM_CPU_PHASE_DESCSET,
@@ -21,13 +23,24 @@ static const char *const dm_cpu_phase_names[DM_CPU_PHASE_COUNT] = {
 // Phases may nest: draw encloses bind/dep and present_total encloses the present path; each item's own call count separates inclusive from self cost.
 static uint64_t dm_cpu_phase_ns[DM_CPU_PHASE_COUNT], dm_cpu_phase_calls[DM_CPU_PHASE_COUNT];
 static uint64_t dm_cpu_phase_frames;
-static inline uint64_t dm_cpu_phase_begin(void) { return dm_android_clock_ns(CLOCK_MONOTONIC); }
+static int dm_cpu_phase_enabled;
+static void dm_cpu_phase_configure(void) {
+    const char *value=getenv("DM_VK_CPU_PHASES");
+#ifdef __ANDROID__
+    char property[PROP_VALUE_MAX];
+    if(__system_property_get("debug.d2r.cpu_phases",property)>0)value=property;
+#endif
+    dm_cpu_phase_enabled=value&&!strcmp(value,"1");
+    LOG("[vulkan-cpu-phases] enabled=%d (startup diagnostic setting)",dm_cpu_phase_enabled);
+}
+static inline uint64_t dm_cpu_phase_begin(void) { return dm_cpu_phase_enabled?dm_android_clock_ns(CLOCK_MONOTONIC):0; }
 static inline void dm_cpu_phase_end(unsigned phase, uint64_t started) {
+    if(!dm_cpu_phase_enabled||!started)return;
     dm_cpu_phase_ns[phase] += dm_android_clock_ns(CLOCK_MONOTONIC) - started;
     dm_cpu_phase_calls[phase]++;
 }
 static void dm_cpu_phase_report(uint64_t frames) {
-    if (!frames) return;
+    if (!dm_cpu_phase_enabled||!frames) return;
     dm_cpu_phase_frames += frames;
     static uint64_t previous_ns[DM_CPU_PHASE_COUNT], previous_calls[DM_CPU_PHASE_COUNT];
     char line[768]; size_t used = 0;
@@ -136,6 +149,7 @@ static void dm_abnormal_frame(uint64_t frame, uint64_t interval_ns, uint64_t cpu
             (unsigned long long)frame_draws, (unsigned long long)frame_passes, (unsigned long long)frame_uploads,
             frame_ubo_bytes / 1024., (unsigned long long)frame_ubo_misses, (unsigned long long)frame_descriptor_misses,
             dm_abnormal_this_core_khz(), dm_abnormal_fastest_core_khz());
+    if(!dm_cpu_phase_enabled){fprintf(dm_abnormal_file,"  phase_timing=off\n");fflush(dm_abnormal_file);return;}
     // 每条都带本帧调用次数：耗时涨了要能立刻分清「活变多了」还是「每次变慢了」。
     // Every entry carries this frame's call count: when a cost rises, that tells "more work" from "slower per call" at a glance.
     char line[1024]; size_t used = 0;
