@@ -9,9 +9,12 @@
 
 static int finite_range(float v, float lo, float hi) { return isfinite(v) && v >= lo && v <= hi; }
 
-VkResult dm_vk_draw_indexed_textured_offscreen(dm_vk *vk, const dm_vk_indexed_textured_draw *draw, dm_vk_pixels *pixels) {
+static VkResult draw_indexed_textured_impl(dm_vk *vk, const dm_vk_indexed_textured_draw *draw, dm_vk_pixels *pixels,
+                                           const dm_vk_graphics_plan *plan) {
     if (!vk || !vk->device || !draw || !pixels || !draw->vertices || !draw->indices ||
-        !draw->texture_pixels || !draw->vertex_spv || !draw->fragment_spv)
+        !draw->texture_pixels)
+        return VK_ERROR_INITIALIZATION_FAILED;
+    if (!plan && (!draw->vertex_spv || !draw->fragment_spv))
         return VK_ERROR_INITIALIZATION_FAILED;
     if (draw->vertex_stride != DM_VK_INDEXED_TEXTURED_VERTEX_STRIDE ||
         draw->vertex_count < 3 || draw->vertex_count > DM_VK_INDEXED_TEXTURED_MAX_VERTICES ||
@@ -92,8 +95,17 @@ VkResult dm_vk_draw_indexed_textured_offscreen(dm_vk *vk, const dm_vk_indexed_te
     memcpy(index_buffer.mapped, draw->indices, (size_t)index_bytes);
     TRY(dm_vk_buffer_sync(vk, &vertex_buffer, 1));
     TRY(dm_vk_buffer_sync(vk, &index_buffer, 1));
-    TRY(dm_vk_shader_load(vk, draw->vertex_spv, &vertex_shader));
-    TRY(dm_vk_shader_load(vk, draw->fragment_spv, &fragment_shader));
+    if (plan) {
+        VkShaderModuleCreateInfo vsci = {.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+            .codeSize = plan->vs_code_bytes, .pCode = (const uint32_t *)(const void *)plan->vs_code};
+        VkShaderModuleCreateInfo psci = {.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+            .codeSize = plan->ps_code_bytes, .pCode = (const uint32_t *)(const void *)plan->ps_code};
+        TRY(vkCreateShaderModule(vk->device, &vsci, NULL, &vertex_shader));
+        TRY(vkCreateShaderModule(vk->device, &psci, NULL, &fragment_shader));
+    } else {
+        TRY(dm_vk_shader_load(vk, draw->vertex_spv, &vertex_shader));
+        TRY(dm_vk_shader_load(vk, draw->fragment_spv, &fragment_shader));
+    }
     TRY(dm_vk_buffer_create(vk, &rbi, &readback));
 
     VkImageCreateInfo image_info = {.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, .imageType = VK_IMAGE_TYPE_2D,
@@ -135,7 +147,8 @@ VkResult dm_vk_draw_indexed_textured_offscreen(dm_vk *vk, const dm_vk_indexed_te
     VkFramebufferCreateInfo fb = {.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO, .renderPass = render,
         .attachmentCount = 1, .pAttachments = &view, .width = pixels->width, .height = pixels->height, .layers = 1};
     TRY(vkCreateFramebuffer(vk->device, &fb, NULL, &framebuffer));
-    VkDescriptorSetLayoutBinding binding = {.binding = 0, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+    VkDescriptorSetLayoutBinding binding = {.binding = plan ? plan->sampler_binding : 0,
+        .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
         .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT};
     VkDescriptorSetLayoutCreateInfo dci = {.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
         .bindingCount = 1, .pBindings = &binding};
@@ -151,8 +164,8 @@ VkResult dm_vk_draw_indexed_textured_offscreen(dm_vk *vk, const dm_vk_indexed_te
     VkVertexInputBindingDescription vb = {.binding = 0, .stride = DM_VK_INDEXED_TEXTURED_VERTEX_STRIDE,
         .inputRate = VK_VERTEX_INPUT_RATE_VERTEX};
     VkVertexInputAttributeDescription attrs[2] = {
-        {.location = 0, .binding = 0, .format = VK_FORMAT_R32G32_SFLOAT, .offset = 0},
-        {.location = 1, .binding = 0, .format = VK_FORMAT_R32G32_SFLOAT, .offset = 8}};
+        {.location = plan ? plan->position_location : 0, .binding = 0, .format = VK_FORMAT_R32G32_SFLOAT, .offset = 0},
+        {.location = plan ? plan->uv_location : 1, .binding = 0, .format = VK_FORMAT_R32G32_SFLOAT, .offset = 8}};
     VkPipelineVertexInputStateCreateInfo input = {.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
         .vertexBindingDescriptionCount = 1, .pVertexBindingDescriptions = &vb,
         .vertexAttributeDescriptionCount = 2, .pVertexAttributeDescriptions = attrs};
@@ -185,8 +198,9 @@ VkResult dm_vk_draw_indexed_textured_offscreen(dm_vk *vk, const dm_vk_indexed_te
     TRY(vkAllocateDescriptorSets(vk->device, &ai, &set));
     VkDescriptorImageInfo dii = {.sampler = sampler.handle, .imageView = texture.view,
         .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-    VkWriteDescriptorSet wds = {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = set, .dstBinding = 0,
-        .descriptorCount = 1, .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .pImageInfo = &dii};
+    VkWriteDescriptorSet wds = {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstSet = set,
+        .dstBinding = plan ? plan->sampler_binding : 0, .descriptorCount = 1,
+        .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .pImageInfo = &dii};
     vkUpdateDescriptorSets(vk->device, 1, &wds, 0, NULL);
     TRY(dm_vk_begin(vk, &command));
     VkClearValue clear = {.color = {.float32 = {0, 0, 0, 1}}};
@@ -239,4 +253,16 @@ done:
     if (image) vkDestroyImage(vk->device, image, NULL);
     if (image_memory) vkFreeMemory(vk->device, image_memory, NULL);
     return result;
+}
+
+VkResult dm_vk_draw_indexed_textured_offscreen(dm_vk *vk, const dm_vk_indexed_textured_draw *draw, dm_vk_pixels *pixels) {
+    return draw_indexed_textured_impl(vk, draw, pixels, NULL);
+}
+
+VkResult dm_vk_draw_indexed_textured_plan_offscreen(dm_vk *vk, const dm_vk_indexed_textured_draw *draw,
+                                                     const dm_vk_graphics_plan *plan, dm_vk_pixels *pixels) {
+    char why[DM_VK_GRAPHICS_WHY] = {0};
+    if (!plan || plan->kind != DM_VK_PLAN_TEXTURED || !dm_vk_graphics_plan_check(plan, why, sizeof why))
+        return VK_ERROR_INITIALIZATION_FAILED;
+    return draw_indexed_textured_impl(vk, draw, pixels, plan);
 }
