@@ -134,12 +134,18 @@ static int pending_range_overlap(const async_batch *batch,dm_pending_kind kind,u
     if(result<0)die("Vulkan pending range query: %s",strerror(errno));
     pending_index_queries[kind]++;pending_index_nodes[kind]+=visited;pending_index_empty[kind]+=!result;return result;
 }
+static int pending_bounds_enabled=1;
 static void pending_index_report(void) {
     static uint64_t frame,queries[2],nodes[2],empty[2],registered[2];
     if(!presents||presents%60||presents==frame)return;uint64_t frames=presents-frame,retained=0;
+#ifdef __ANDROID__
+    char value[PROP_VALUE_MAX]={0};__system_property_get("debug.d2r.pending_bounds",value);
+    if(!strcmp(value,"0"))pending_bounds_enabled=0;
+    else if(!strcmp(value,"1")||!value[0])pending_bounds_enabled=1;
+#endif
     for(unsigned i=0;i<DM_VK_BATCH_SLOTS;i++)retained+=async_batches[i].pending_ranges.retained_bytes;
     double q0=pending_index_queries[0]-queries[0],q1=pending_index_queries[1]-queries[1];
-    LOG("[vulkan-pending-index] frame=%llu unknown/host_queries=%.1f/%.1f per_frame tree_nodes/query=%.2f/%.2f no_overlap=%.1f/%.1f%% inserted=%.1f/%.1f per_frame peak_batch_records=%llu retained_heap=%.1f KiB",(unsigned long long)presents,
+    LOG("[vulkan-pending-index] frame=%llu bounds=%d unknown/host_queries=%.1f/%.1f per_frame tree_nodes/query=%.2f/%.2f no_overlap=%.1f/%.1f%% inserted=%.1f/%.1f per_frame peak_batch_records=%llu retained_heap=%.1f KiB",(unsigned long long)presents,pending_bounds_enabled,
         q0/frames,q1/frames,q0?(pending_index_nodes[0]-nodes[0])/q0:0,q1?(pending_index_nodes[1]-nodes[1])/q1:0,
         q0?(pending_index_empty[0]-empty[0])*100/q0:0,q1?(pending_index_empty[1]-empty[1])*100/q1:0,
         (pending_index_registered[0]-registered[0])/(double)frames,(pending_index_registered[1]-registered[1])/(double)frames,(unsigned long long)pending_index_peak_records,retained/1024.);
@@ -205,7 +211,9 @@ static int async_unknown_chain(const post_op *copies,const post_op *posts,int ho
 #endif
 static int pending_batch_unknown(const async_batch *batch,uintptr_t address,uint64_t size) {
     if(!batch)return 0;
-    int result=pending_range_overlap(batch,DM_PENDING_UNKNOWN,address,size,DM_PENDING_ORDER_ALL)||pending_range_overlap(batch,DM_PENDING_HOST_EFFECT,address,size,DM_PENDING_ORDER_ALL);
+    int result=0;
+    if(!pending_bounds_enabled||dm_pending_ranges_may_overlap(&batch->pending_ranges,address,size))
+        result=pending_range_overlap(batch,DM_PENDING_UNKNOWN,address,size,DM_PENDING_ORDER_ALL)||pending_range_overlap(batch,DM_PENDING_HOST_EFFECT,address,size,DM_PENDING_ORDER_ALL);
 #ifdef DM_VK_REFERENCE_GATES
     const post_op *copies=batch==async_current?post_copy_first:batch->copies,*posts=batch==async_current?post_first:batch->posts;
     int host_sync=batch==async_current?pending_host_sync:batch->host_sync;
