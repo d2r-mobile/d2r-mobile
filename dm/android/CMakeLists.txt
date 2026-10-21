@@ -781,6 +781,9 @@ if(NOT ANDROID)
             FetchContent_MakeAvailable(dm_vulkan_headers)
             set(WSI_HUD_VULKAN_INCLUDE "${dm_vulkan_headers_SOURCE_DIR}/include")
         endif()
+        add_test(NAME render_policy
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/render_policy_host.py
+                ${WSI_HUD_VULKAN_INCLUDE})
         add_test(NAME wsi_hud_caller
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/wsi_hud_host.py
                 --native ${CMAKE_CURRENT_SOURCE_DIR}/app/native.c

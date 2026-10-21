@@ -100,6 +100,8 @@ static void draw_graphics_inner(const p_draw *draw,const p_draw_idx *indexed) {
     // Submit early only after the previous pass naturally ended, before binding or acquiring resource versions.
     if(!graphics_active_frame)async_chunk_boundary_locked();
     if(!fs)fs=graphics_empty_shader();
+    // Promote all writable images before either stage acquires a sampled view of the same texture.
+    shader_prepare_storage_images(vs);shader_prepare_storage_images(fs);
     post_op *const *output_scope=post_copy_tail;forward_scope_marker=output_scope;
     // 初始化列表的求值顺序在 C 里未定义；第二个集合的动态偏移接在第一个之后，必须按序调用。
     // Initializer-list evaluation order is unspecified in C; the second set's dynamic offsets follow the first,

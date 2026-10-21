@@ -109,6 +109,31 @@ static void graphics_cache_forget_image(image_entry *image) {
         }
     }
 }
+static int graphics_clear_attachment(image_entry *image,VkImageSubresourceRange range,const VkClearValue *value) {
+    if(!attachment_clear_candidate||image->image_type!=VK_IMAGE_TYPE_2D)return 0;
+    int color=range.aspectMask==VK_IMAGE_ASPECT_COLOR_BIT;
+    VkFormatProperties properties;vkGetPhysicalDeviceFormatProperties(physical,image->format,&properties);
+    if(!(properties.optimalTilingFeatures&(color?VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT:VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT)))return 0;
+    graphics_pass_end();
+    image_access(image,color?VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT:VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT|VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+                 color?VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT:VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT|VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+    VkAttachmentDescription attachment={.format=image->format,.samples=VK_SAMPLE_COUNT_1_BIT,
+        .loadOp=(range.aspectMask&(VK_IMAGE_ASPECT_COLOR_BIT|VK_IMAGE_ASPECT_DEPTH_BIT))?VK_ATTACHMENT_LOAD_OP_CLEAR:VK_ATTACHMENT_LOAD_OP_LOAD,
+        .storeOp=VK_ATTACHMENT_STORE_OP_STORE,
+        .stencilLoadOp=(range.aspectMask&VK_IMAGE_ASPECT_STENCIL_BIT)?VK_ATTACHMENT_LOAD_OP_CLEAR:VK_ATTACHMENT_LOAD_OP_LOAD,
+        .stencilStoreOp=VK_ATTACHMENT_STORE_OP_STORE,.initialLayout=VK_IMAGE_LAYOUT_GENERAL,.finalLayout=VK_IMAGE_LAYOUT_GENERAL};
+    // Preserve the uncleared depth/stencil plane and all later consumers; no lifetime-based store discard here.
+    VkAttachmentReference reference={0,VK_IMAGE_LAYOUT_GENERAL},depth={color?VK_ATTACHMENT_UNUSED:0,VK_IMAGE_LAYOUT_GENERAL};
+    graphics_pass_key key=graphics_pass_key_make(1,color,&attachment,&reference,depth);
+    graphics_pass_entry *pass=graphics_pass_get(key,&attachment,&reference,depth,1);
+    range.aspectMask=image->aspect;
+    VkImageView view=image_view_get(image,VK_IMAGE_VIEW_TYPE_2D,range);
+    graphics_frame_entry *frame=graphics_frame_get(pass,&view,&image,dimension(image->texture.d.width,range.baseMipLevel),dimension(image->texture.d.height,range.baseMipLevel));
+    VkRenderPassBeginInfo begin={.sType=VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,.renderPass=pass->pass,.framebuffer=frame->frame,
+        .renderArea={{0,0},{frame->key.width,frame->key.height}},.clearValueCount=1,.pClearValues=value};
+    vkCmdBeginRenderPass(command,&begin,VK_SUBPASS_CONTENTS_INLINE);vkCmdEndRenderPass(command);render_passes++;
+    image_gpu_written(image);attachment_clear_count++;return 1;
+}
 static int graphics_shader_writes(const shader_entry *shader) {
     for(unsigned i=0;i<shader->count;i++){const shader_binding *binding=&shader->bindings[i];if((binding->kind==2&&(binding->flags&1))||(binding->kind==4&&(binding->flags&4)))return 1;}
     return 0;
