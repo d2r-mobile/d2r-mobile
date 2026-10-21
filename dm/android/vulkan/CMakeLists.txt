@@ -260,6 +260,22 @@ else()
     endif()
 endif()
 
+# #143 一帧 WSI 结果翻译（真实 VkResult 常量）：SUBOPTIMAL 保持"已呈现"，不是错误。
+# #143 one-frame WSI result translation with real VkResult constants: SUBOPTIMAL stays "presented", never an error.
+add_library(dm_android_wsi_frame STATIC ../app/wsi_frame_result.c)
+target_include_directories(dm_android_wsi_frame PUBLIC ../app)
+target_link_libraries(dm_android_wsi_frame PUBLIC dm_android_vk)
+target_compile_options(dm_android_wsi_frame PRIVATE -Wall -Wextra -Werror)
+add_executable(dm_wsi_frame_result_test ../tests/wsi_frame_result.c)
+target_link_libraries(dm_wsi_frame_result_test PRIVATE dm_android_wsi_frame)
+target_compile_options(dm_wsi_frame_result_test PRIVATE -Wall -Wextra -Werror)
+if(ANDROID)
+    target_link_options(dm_wsi_frame_result_test PRIVATE "-Wl,-z,max-page-size=16384")
+else()
+    add_test(NAME wsi_frame_result COMMAND dm_wsi_frame_result_test)
+    set_tests_properties(wsi_frame_result PROPERTIES TIMEOUT 30)
+endif()
+
 add_executable(dm_vulkan_test ../tests/vulkan.c)
 target_link_libraries(dm_vulkan_test PRIVATE dm_android_vk)
 target_compile_options(dm_vulkan_test PRIVATE -Wall -Wextra -Werror)

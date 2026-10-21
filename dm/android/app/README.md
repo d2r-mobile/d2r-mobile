@@ -36,6 +36,20 @@ DM_CI_ALLOW_ARM_CROSS=1 bash ci/scripts/ci.sh android
 
 Unverified: no install or launch on a phone, no device `ANativeWindow_lock` format/stride behaviour, no Adreno or Android Vulkan driver validation, no swapchain, frame scheduling or game presenter. The 2026-10-17 checkpoint below belongs to the earlier fragment-coordinate pattern; the current APK has not been reinstalled or observed on any device.
 
+## Explicit WSI diagnostic mode (#143)
+
+The default renderer is unchanged: the owned indexed-textured offscreen scene copied through `ANativeWindow_lock`. Setting `DM_DIAGNOSTIC_WSI=1` or creating a `wsi-mode` marker file in the app internal data directory selects an explicitly labelled swapchain mode: `app/wsi_diagnostic.c` drives `dm_vk_create_present` plus `dm_vk_swapchain_*` (FIFO, clear-only) from an independent 16 ms looper timer, so continuous frames do not need an input queue. No path calls `ANativeWindow_lock` in this mode and the touch HUD overlay is not composed.
+
+Frames run only while resumed with a valid nonzero window; pause and window loss stop the timer and no device work happens without a window. Resize and `VK_ERROR_OUT_OF_DATE_KHR` mark a rebuild that drains, destroys and recreates the chain on the next tick; `VK_SUBOPTIMAL_KHR` presents the frame and schedules the same rebuild; `VK_ERROR_SURFACE_LOST_KHR` drains and closes the chain/device before the borrowed window is released, then waits for a replacement. Missing `VK_EXT_swapchain_maintenance1` is reported as unsupported with no CPU fallback and no rendered-success claim; teardown failures retain reachable device/window ownership and are returned as errors, so host stop reports failure instead of pretending to succeed.
+
+Tests added with the integration:
+
+| Test | What it verifies independently |
+|---|---|
+| `app_wsi_diagnostic` | The production controller: frames without any input queue, pause/resume, resize rebuild, OUT_OF_DATE rebuild, SUBOPTIMAL present-then-rebuild, SURFACE_LOST drain and replacement, stale window-lost and replacement ordering, open/unsupported failures with no fallback, and a failing teardown that retains ownership and is retryable. The default mode is a negative control: the injected boundary is never called. |
+
+Android acceptance is not claimed: host tests and the ARM64 build do not establish Adreno behaviour, pixels on a device, frame rate or full touch acceptance.
+
 ## Lifecycle ownership
 
 `app/lifecycle.c` is the production NativeActivity lifecycle controller. Its
