@@ -9,22 +9,24 @@ sdk=${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/Volumes/T2/Projects/d2r-work/tools/andr
 framework=${ANDROID_JAR:-"$sdk/platforms/android-35/android.jar"}
 javac=${JAVAC:-javac}
 java=${JAVA:-java}
+host_source=${IME_HOST_SOURCE:-$root/dm/android/app/java/org/d2rmobile/android/diagnostic/DmTextEditorHost.java}
 work=$(mktemp -d "${TMPDIR:-/tmp}/dm-ime-activity-host.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 
 [[ -f "$framework" ]] || { echo "android.jar not found: $framework" >&2; exit 2; }
+[[ -f "$host_source" ]] || { echo "IME host source not found: $host_source" >&2; exit 2; }
 mkdir -p "$work/stubs" "$work/classes" "$work/real"
 "$javac" --release 11 -cp "$framework" -d "$work/stubs" \
     $(find "$here/android" -name '*.java' -type f | sort)
 "$javac" --release 11 -cp "$work/stubs:$framework" -d "$work/classes" \
     "$root/dm/android/app/java/org/d2rmobile/android/diagnostic/DmInputConnection.java" \
     "$root/dm/android/app/java/org/d2rmobile/android/diagnostic/DmTextEditorView.java" \
-    "$root/dm/android/app/java/org/d2rmobile/android/diagnostic/DmTextEditorHost.java" \
+    "$host_source" \
     "$here/DmTextEditorHostTest.java"
 "$java" -cp "$work/stubs:$work/classes:$framework" \
     org.d2rmobile.android.diagnostic.DmTextEditorHostTest
 "$javac" --release 11 -classpath "$framework" -d "$work/real" \
     "$root/dm/android/app/java/org/d2rmobile/android/diagnostic/DmInputConnection.java" \
     "$root/dm/android/app/java/org/d2rmobile/android/diagnostic/DmTextEditorView.java" \
-    "$root/dm/android/app/java/org/d2rmobile/android/diagnostic/DmTextEditorHost.java"
+    "$host_source"
 echo "real android.jar compile: ok"

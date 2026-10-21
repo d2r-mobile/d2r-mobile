@@ -37,6 +37,14 @@ run that command against a private source copy; its default is the current
 checkout's `dm/android/app/native.c`. This is host/cross-build evidence only,
 not physical hotplug or device acceptance.
 
+The same required command now runs the accepted #192 IME View/session and
+Activity-host regressions alongside the existing connection checks: actual
+`DmTextEditorView`/`DmTextEditorHost` classes against the real Android 35 jar
+with independent narrow stubs, plus the existing View mutations. `IME_HOST_SOURCE`
+is a test-only source override for privately checking a bad focus-guard or
+cleanup copy; its default is the current checkout's `DmTextEditorHost.java`.
+This is a CI gate, not device IME or keyboard-visibility acceptance.
+
 Action commits are recorded in `ci/actions.lock`.
 
 ## Runner and tool facts
