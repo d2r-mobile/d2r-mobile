@@ -16,11 +16,16 @@ struct dm_aaudio_builder {
 };
 struct dm_aaudio_stream {
     int state;
+    dm_audio_data_callback data;
+    void *user;
 };
 
 static int g_open_calls, g_start_calls, g_close_calls;
 static int g_close_fail_count;
 static struct dm_aaudio_stream *g_stream;
+static uint64_t g_consumed;
+static int g_order_errors;
+static int64_t g_clock_ns;
 
 static dm_audio_result fx_create_builder(dm_aaudio_builder **b) {
     *b = calloc(1, sizeof **b);
@@ -34,9 +39,10 @@ static void fx_set_direction(dm_aaudio_builder *b, int32_t v) { b->direction = v
 static void fx_set_data(dm_aaudio_builder *b, dm_audio_data_callback cb, void *user) { b->data = cb; b->user = user; }
 static void fx_set_error(dm_aaudio_builder *b, dm_audio_error_callback cb, void *user) { b->error = cb; b->user = user; }
 static dm_audio_result fx_open(dm_aaudio_builder *b, dm_aaudio_stream **out) {
-    (void)b;
     struct dm_aaudio_stream *s = calloc(1, sizeof *s);
     if (!s) return -1;
+    s->data = b->data;
+    s->user = b->user;
     g_stream = s;
     g_open_calls++;
     *out = s;
@@ -70,11 +76,16 @@ static const dm_audio_api k_fixture = {
     fx_format, fx_channels, fx_rate, fx_buffer, fx_xruns,
 };
 
+static int64_t test_clock(void *user) { (void)user; return g_clock_ns; }
+
 JNIEXPORT void JNICALL Java_NativeAudioHarness_nativeFixtureReset(JNIEnv *env, jclass cls) {
     (void)env; (void)cls;
     g_open_calls = g_start_calls = g_close_calls = 0;
     g_close_fail_count = 0;
     g_stream = NULL;
+    g_consumed = 0;
+    g_order_errors = 0;
+    g_clock_ns = 0;
 }
 JNIEXPORT void JNICALL Java_NativeAudioHarness_nativeFixtureCloseFailTwice(JNIEnv *env, jclass cls) {
     (void)env; (void)cls; g_close_fail_count = 2;
@@ -126,6 +137,45 @@ JNIEXPORT jint JNICALL Java_NativeAudioHarness_nativeLastError(JNIEnv *env, jcla
 }
 JNIEXPORT jint JNICALL Java_NativeAudioHarness_nativeDestroy(JNIEnv *env, jclass cls) {
     (void)cls; return native_audio_destroy(&g_audio, env);
+}
+JNIEXPORT void JNICALL Java_NativeAudioHarness_nativeSetClock(JNIEnv *env, jclass cls, jlong ns) {
+    (void)env; (void)cls;
+    g_clock_ns = (int64_t)ns;
+    native_audio_set_clock(g_audio, test_clock, NULL);
+}
+JNIEXPORT void JNICALL Java_NativeAudioHarness_nativeAdvanceClock(JNIEnv *env, jclass cls, jlong ns) {
+    (void)env; (void)cls;
+    g_clock_ns += (int64_t)ns;
+}
+JNIEXPORT jint JNICALL Java_NativeAudioHarness_nativeConsume(JNIEnv *env, jclass cls, jint frames) {
+    (void)env; (void)cls;
+    if (!g_stream || !g_stream->data || frames <= 0) return 0;
+    int16_t pcm[64 * DM_AUDIO_CHANNELS];
+    int done = 0;
+    while (done < frames) {
+        int chunk = frames - done > 64 ? 64 : frames - done;
+        const dm_audio_callback_result rc = g_stream->data(g_stream, g_stream->user, pcm, chunk);
+        if (rc != DM_AUDIO_CALLBACK_CONTINUE) break;
+        int16_t expected[64 * DM_AUDIO_CHANNELS];
+        native_audio_reference_pcm(g_consumed, expected, chunk);
+        for (int i = 0; i < chunk * DM_AUDIO_CHANNELS; i++)
+            if (pcm[i] != expected[i]) g_order_errors++;
+        g_consumed += (uint64_t)chunk;
+        done += chunk;
+    }
+    return done;
+}
+JNIEXPORT jlong JNICALL Java_NativeAudioHarness_nativeWritten(JNIEnv *env, jclass cls) {
+    (void)env; (void)cls; return (jlong)native_audio_written_frames(g_audio);
+}
+JNIEXPORT jint JNICALL Java_NativeAudioHarness_nativePending(JNIEnv *env, jclass cls) {
+    (void)env; (void)cls; return (jint)native_audio_pending_frames(g_audio);
+}
+JNIEXPORT jlong JNICALL Java_NativeAudioHarness_nativeConsumed(JNIEnv *env, jclass cls) {
+    (void)env; (void)cls; return (jlong)g_consumed;
+}
+JNIEXPORT jint JNICALL Java_NativeAudioHarness_nativeOrderErrors(JNIEnv *env, jclass cls) {
+    (void)env; (void)cls; return g_order_errors;
 }
 JNIEXPORT jint JNICALL Java_NativeAudioHarness_nativeDestroyNoEnv(JNIEnv *env, jclass cls) {
     (void)env; (void)cls; return native_audio_destroy(&g_audio, NULL);

@@ -13,6 +13,15 @@
 #include "audio_session.h"
 
 typedef struct native_audio native_audio;
+typedef int64_t (*native_audio_clock)(void *user);
+
+// 48000Hz 诊断 PCM 的有界 backlog：约 85ms，足够吸收正常 timer 抖动，又不会无限积压。
+// Bounded 48000Hz diagnostic backlog (~85ms): absorbs normal timer jitter without unbounded growth.
+#define NATIVE_AUDIO_RATE DM_AUDIO_RATE
+#define NATIVE_AUDIO_MAX_PENDING_FRAMES 4096
+#define NATIVE_AUDIO_MAX_CATCHUP_NS ((NATIVE_AUDIO_MAX_PENDING_FRAMES * 1000000000ULL) / NATIVE_AUDIO_RATE + 1u)
+// 首次显式播放时使用的诊断队列容量；不修改全局 session 默认。
+#define NATIVE_AUDIO_QUEUE_FRAMES 4096
 
 // Stores the VM/global Activity reference and options only; no focus request and no stream. Returns 0 on success.
 int native_audio_create(JNIEnv *env, jobject activity, const dm_audio_session_options *options, native_audio **out);
@@ -38,6 +47,14 @@ int native_audio_output_state(const native_audio *audio);
 int native_audio_has_session(const native_audio *audio);
 int native_audio_last_error(const native_audio *audio);
 
+// 自有确定性 PCM 参考（生产者与测试共用）。
 // Deterministic owned PCM reference used by the producer and the focused tests.
 void native_audio_reference_pcm(uint64_t start_phase, int16_t *out, int frames);
-#define NATIVE_AUDIO_BLOCK_FRAMES 8
+
+// 仅供受控测试注入单调时钟；生产为 NULL（CLOCK_MONOTONIC）。
+// Controlled tests inject a monotonic clock; production uses NULL (CLOCK_MONOTONIC).
+void native_audio_set_clock(native_audio *audio, native_audio_clock clock, void *user);
+
+// 实际写入 session 的帧数、尚未被接受的已生成帧数（诊断/测试）。
+uint64_t native_audio_written_frames(const native_audio *audio);
+uint32_t native_audio_pending_frames(const native_audio *audio);

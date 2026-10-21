@@ -32,6 +32,13 @@ public final class NativeAudioHarness {
     private static native int nativeLastError();
     private static native int nativeDestroy();
     private static native int nativeDestroyNoEnv();
+    private static native void nativeSetClock(long ns);
+    private static native void nativeAdvanceClock(long ns);
+    private static native int nativeConsume(int frames);
+    private static native long nativeWritten();
+    private static native int nativePending();
+    private static native long nativeConsumed();
+    private static native int nativeOrderErrors();
     private static native int nativeReference(long phase, short[] out, int frames);
 
     private static int checks, failures;
@@ -54,7 +61,8 @@ public final class NativeAudioHarness {
         Context context = new Context(audio, NativeAudioHarness.class.getClassLoader());
         nativeFixtureReset();
 
-        check(nativeCreate(context, 2048) == 1, "native audio helper created");
+        check(nativeCreate(context, 8192) == 1, "native audio helper created");
+        nativeSetClock(0);
         check(nativeHasSession() == 0, "constructor creates no audio session");
         check(nativeState() != OUT_PLAYING, "constructor is idle");
         check(audio.requestCalls == 0, "constructor requests no focus");
@@ -80,8 +88,11 @@ public final class NativeAudioHarness {
         short[] pcm = new short[16];
         check(nativeReference(1, pcm, 8) == 8, "owned reference PCM available");
         check(pcm[0] == (short)((1 * 37) & 0x1fff) - 4096 || pcm[0] != 0, "owned PCM is non-trivial");
-        check(nativeTick() == 8, "timer writes one owned PCM block while PLAYING");
-        check(nativeTick() == 8, "timer keeps producing blocks");
+        check(nativeTick() == 0, "first tick establishes the pacing baseline");
+        nativeAdvanceClock(8_000_000);
+        check(nativeTick() == 384, "timer writes one 8ms/48kHz block while PLAYING");
+        nativeAdvanceClock(8_000_000);
+        check(nativeTick() == 384, "timer keeps producing 8ms blocks");
         check(nativeKey(KEY_S, 1, 0, 1) == 0, "S key up is ignored");
         check(nativeKey(KEY_S, DOWN, 1, 1) == 0, "repeat S is ignored");
         check(nativeKey(KEY_S, DOWN, 0, 1) == 1, "keyboard S claimed");
@@ -116,8 +127,10 @@ public final class NativeAudioHarness {
         check(nativeFixtureStarts() == startsBefore, "DELAYED does not transiently start");
         audio.emit(audio.lastRequest, AudioManager.AUDIOFOCUS_GAIN);
         deliver();
+        nativeTick();                       // 新的时间基线
+        nativeAdvanceClock(8_000_000);
         int gainTick = nativeTick();
-        check(gainTick == 8 && nativeState() == OUT_PLAYING,
+        check(gainTick > 0 && nativeState() == OUT_PLAYING,
                 "real GAIN after DELAYED allows production (tick=" + gainTick + " state=" + nativeState() + ")");
 
         audio.nextResult = AudioManager.AUDIOFOCUS_REQUEST_FAILED;
@@ -148,6 +161,98 @@ public final class NativeAudioHarness {
         check(nativeDestroyNoEnv() != 0, "destroy without JNIEnv refuses to report success");
         check(nativeHasSession() == 0, "no session was created");
         check(nativeDestroy() == 0, "normal cleanup after refused no-env destroy");
+
+        // 48kHz 持续供给：受控时钟 + 真实注册 data callback 消费数秒；旧 8frames/tick 供给必须不达标。
+        nativeFixtureReset();
+        check(nativeCreate(context, 2048) == 1, "pacing helper created");
+        nativeSetClock(0);
+        nativeSetFocus(1);
+        nativeResume();
+        audio.nextResult = AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
+        check(nativeKey(KEY_P, DOWN, 0, 1) == 1 && nativeState() == OUT_PLAYING, "pacing session plays");
+        nativeTick();   // 建立时间基线
+        // 精确分数时钟：1000×8,333,333ns = 8.333333s 应为 floor(399,999.984)=399999 帧；
+        // 独立 48kHz consumer 每 tick 取 399 帧（不依赖生产者返回值），silence 会以顺序错误暴露。
+        int fractionalUnderruns = 0;
+        for (int i = 0; i < 1000; i++) {
+            nativeAdvanceClock(8_333_333);
+            nativeTick();
+            if (nativeConsume(399) != 399) fractionalUnderruns++;
+        }
+        long fractionalWritten = nativeWritten();
+        check(fractionalWritten == 399_999,
+                "fractional slices accumulate exactly to 399999 frames, got " + fractionalWritten);
+        check(fractionalUnderruns == 0, "independent 48kHz consumer never underruns during fractional run");
+        check(nativeConsumed() == 399_000, "consumer demand is independent of producer return values");
+        check(nativeOrderErrors() == 0, "fractional run has no PCM gaps or duplicates");
+        check(nativePending() < 512, "bounded pending backlog");
+
+        // 有界 timer jitter run：独立 consumer 按 48kHz 需求 384 帧/tick 消费。
+        check(nativePause() == 0 && nativeDestroy() == 0, "fractional cleanup");
+        nativeFixtureReset();
+        check(nativeCreate(context, 8192) == 1, "jitter helper created");
+        nativeSetClock(0);
+        nativeSetFocus(1);
+        nativeResume();
+        audio.nextResult = AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
+        check(nativeKey(KEY_P, DOWN, 0, 1) == 1 && nativeState() == OUT_PLAYING, "jitter session plays");
+        nativeTick();
+        nativeAdvanceClock(8_333_333);
+        int prefill = nativeTick();
+        check(prefill == 399, "explicit prefill before the consumer starts, got " + prefill);
+        int[] jitter = {8_000_000, 8_000_000, 7_000_000, 9_000_000, 12_000_000, 4_000_000, 8_000_000, 8_000_000};
+        int jitterUnderruns = 0;
+        for (int i = 0; i < 1000; i++) {
+            nativeAdvanceClock(jitter[i % jitter.length]);
+            nativeTick();
+            if (nativeConsume(384) != 384) jitterUnderruns++;
+        }
+        long paced = nativeWritten();
+        check(paced >= 383_600 && paced <= 384_800,
+                "8s jittered clock supplies ~48kHz, got " + paced);
+        check(jitterUnderruns == 0, "independent 384/tick consumer never underruns under jitter");
+        check(nativeConsumed() == 384_000, "jitter consumer demand matches 48kHz cadence");
+        check(nativeOrderErrors() == 0, "jitter run has no PCM gaps or duplicates");
+
+        // partial write + 队列满：相位按实际写入推进，未写样本保留并随后续 tick 发出。
+        check(nativePause() == 0 && nativeDestroy() == 0, "jitter cleanup");
+        nativeFixtureReset();
+        check(nativeCreate(context, 32) == 1, "partial-write helper created");
+        nativeSetClock(0);
+        nativeSetFocus(1);
+        nativeResume();
+        audio.nextResult = AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
+        check(nativeKey(KEY_P, DOWN, 0, 1) == 1, "partial session plays");
+        nativeTick();
+        nativeAdvanceClock(100_000_000);            // 4800 帧需求，超过有界 4096 catchup
+        int first = nativeTick();
+        check(first == 32, "queue-full write partially accepts 32 frames, got " + first);
+        check(nativePending() > 0, "unwritten samples retained");
+        for (int guard = 0; guard < 200 && nativePending() > 0; guard++) {
+            nativeConsume(32);
+            nativeTick();
+        }
+        check(nativePending() == 0, "bounded backlog drains without skipping samples");
+        check(nativeWritten() == 4096, "bounded catchup writes exactly the capped budget, got " + nativeWritten());
+        check(nativeOrderErrors() == 0, "partial writes preserve PCM order");
+
+        // 长暂停/late GAIN/stop：无陈旧供给；再显式 P 只从新时间基线供给，不突发旧音频。
+        nativeConsume(32);                  // 清空 partial 会话残留队列
+        check(nativeKey(KEY_S, DOWN, 0, 1) == 1, "stop claimed");
+        nativeAdvanceClock(5_000_000_000L);
+        check(nativeTick() == 0, "long stop supplies no stale frames");
+        AudioFocusRequest stale = audio.lastRequest;
+        audio.emit(stale, AudioManager.AUDIOFOCUS_GAIN);
+        deliver();
+        check(nativeTick() == 0 && nativeState() != OUT_PLAYING, "late GAIN after stop stays inert");
+        audio.nextResult = AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
+        check(nativeKey(KEY_P, DOWN, 0, 1) == 1 && nativeState() == OUT_PLAYING, "explicit P after stop");
+        nativeTick();
+        nativeAdvanceClock(8_000_000);
+        int resumedWrite = nativeTick();
+        check(resumedWrite > 0 && resumedWrite <= 512,
+                "resume supplies one tick, no stale burst, got " + resumedWrite);
+        check(nativeDestroy() == 0, "pacing final cleanup");
 
         System.out.println("NativeAudioHarness: " + checks + " checks, " + failures + " failures");
         if (failures != 0) System.exit(1);
