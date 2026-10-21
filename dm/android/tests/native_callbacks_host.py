@@ -114,6 +114,7 @@ typedef int VkResult;
 #define AKEY_EVENT_ACTION_DOWN 0
 #define AKEY_EVENT_ACTION_UP 1
 #define AKEYCODE_BACK 4
+#define AKEYCODE_T 48
 #define AKEYCODE_BUTTON_A 96
 #define AKEYCODE_BUTTON_B 97
 #define AMOTION_EVENT_ACTION_MASK 0xff
@@ -186,6 +187,10 @@ typedef struct {
     int gamepad_admitted;
     int64_t gamepad_after_ns;
     uint64_t controller_session;
+    int text_active;
+    int text_back_owned;
+    int text_bridge;
+    uint64_t text_session;
     uint64_t last_touch_buttons;
     int32_t last_touch_lx, last_touch_ly, last_touch_rx, last_touch_ry;
     int64_t last_touch_log_ns;
@@ -206,6 +211,9 @@ static dm_diag_scene_mismatch mismatch;
 
 static void update_touch_state(app_state *s) { (void)s; update_calls++; }
 static int input_ready(int fd, int events, void *data);
+static int text_begin_calls, text_end_calls;
+static int text_begin(app_state *s) { text_begin_calls++; if (s) s->text_active = 1; return 1; }
+static void text_end(app_state *s, const char *reason) { (void)reason; text_end_calls++; if (s) s->text_active = 0; }
 static void stop_frame_timer(app_state *s) { if (s && s->frame_fd >= 0) { s->frame_fd = -1; stop_calls++; } }
 static int start_frame_timer(app_state *s) {
     start_calls++;
@@ -328,7 +336,7 @@ static void opened_observed(void *ctx, uint32_t w, uint32_t h) {
 
 MAIN = r'''
 static int input_cases(void) {
-    app_state s;
+    app_state s = {0};
     memset(&s, 0, sizeof s);
     s.density = 1.0f;
     s.touch_allowed = 1;
@@ -447,6 +455,75 @@ static int input_cases(void) {
     q.event.keycode = 999;
     CHECK(input_ready(0, 0, &activity) == 1);
     CHECK(q.finish_calls == 1 && q.last_handled == 0);
+
+    /* A class-button-only source (1) is not a complete keyboard source and
+       cannot start the diagnostic IME. */
+    text_begin_calls = text_end_calls = 0;
+    q.finish_calls = q.last_handled = 0;
+    q.has_event = 1;
+    q.event.type = AINPUT_EVENT_TYPE_KEY;
+    q.event.source = 1;
+    q.event.action = AKEY_EVENT_ACTION_DOWN;
+    q.event.keycode = AKEYCODE_T;
+    q.event.repeat = 0;
+    CHECK(input_ready(0, 0, &activity) == 1);
+    CHECK(text_begin_calls == 0 && !s.text_active);
+    q.has_event = 1;
+    q.event.source = AINPUT_SOURCE_KEYBOARD | AINPUT_SOURCE_MOUSE;
+    CHECK(input_ready(0, 0, &activity) == 1);
+    CHECK(text_begin_calls == 0 && !s.text_active);
+
+    /* A complete keyboard T DOWN starts one session; while active, touch is
+       neutralized and the BACK DOWN/UP pair is consumed, never finishing the
+       Activity. */
+    q.has_event = 1;
+    q.event.source = AINPUT_SOURCE_KEYBOARD;
+    CHECK(input_ready(0, 0, &activity) == 1);
+    CHECK(text_begin_calls == 1 && s.text_active);
+    uint64_t accepted_text = 0;
+    CHECK(dm_input_arbiter_diag(s.arbiter, &d1));
+    accepted_text = d1.accepted_events;
+    q.finish_calls = q.last_handled = 0;
+    q.has_event = 1;
+    q.event.type = AINPUT_EVENT_TYPE_MOTION;
+    q.event.source = AINPUT_SOURCE_TOUCHSCREEN;
+    q.event.action = AMOTION_EVENT_ACTION_DOWN;
+    CHECK(input_ready(0, 0, &activity) == 1);
+    CHECK(q.finish_calls == 1 && q.last_handled == 1);
+    CHECK(dm_input_arbiter_diag(s.arbiter, &d1) && d1.accepted_events == accepted_text);
+    q.finish_calls = q.last_handled = 0;
+    q.has_event = 1;
+    q.event.type = AINPUT_EVENT_TYPE_KEY;
+    q.event.source = AINPUT_SOURCE_KEYBOARD;
+    q.event.action = AKEY_EVENT_ACTION_DOWN;
+    q.event.keycode = AKEYCODE_BACK;
+    finish_before = activity_finish_calls;
+    CHECK(input_ready(0, 0, &activity) == 1);
+    CHECK(!s.text_active && s.text_back_owned);
+    CHECK(q.finish_calls == 1 && q.last_handled == 1);
+    CHECK(activity_finish_calls == finish_before);
+    q.finish_calls = q.last_handled = 0;
+    q.has_event = 1;
+    q.event.action = AKEY_EVENT_ACTION_UP;
+    CHECK(input_ready(0, 0, &activity) == 1);
+    CHECK(!s.text_back_owned);
+    CHECK(q.finish_calls == 1 && q.last_handled == 1);
+    CHECK(activity_finish_calls == finish_before);
+
+    /* A fresh touch DOWN after text retirement is accepted. */
+    q.finish_calls = q.last_handled = 0;
+    q.has_event = 1;
+    q.event.type = AINPUT_EVENT_TYPE_MOTION;
+    q.event.source = AINPUT_SOURCE_TOUCHSCREEN;
+    q.event.action = AMOTION_EVENT_ACTION_DOWN;
+    q.event.time_ns = 3;
+    q.event.pointer_count = 1;
+    q.event.ids[0] = 9;
+    q.event.xs[0] = 150;
+    q.event.ys[0] = 160;
+    CHECK(input_ready(0, 0, &activity) == 1);
+    CHECK(dm_input_arbiter_source(s.arbiter) == DM_INPUT_SOURCE_TOUCH);
+    CHECK(dm_input_arbiter_diag(s.arbiter, &d1) && d1.accepted_events == accepted_text + 1);
 
     /* Lifecycle gate still consumes the queue event but cannot mutate input. */
     s.touch_allowed = 0;
@@ -586,7 +663,7 @@ static void queue_gamepad_motion(AInputQueue *q, int action, int source, int dev
     q->event.time_ns = time_ns;
 }
 static int gamepad_cases(void) {
-    app_state s;
+    app_state s = {0};
     memset(&s, 0, sizeof s);
     s.density = 1.0f;
     s.touch_allowed = 1;
@@ -795,7 +872,7 @@ static int gamepad_cases(void) {
 }
 
 static int controller_hotplug_cases(void) {
-    app_state s;
+    app_state s = {0};
     memset(&s, 0, sizeof s);
     s.density = 1.0f;
     s.touch_allowed = 1;
@@ -804,7 +881,7 @@ static int controller_hotplug_cases(void) {
     AInputQueue q;
     memset(&q, 0, sizeof q);
     s.input = &q;
-    app_state b;
+    app_state b = {0};
     memset(&b, 0, sizeof b);
     g_controller_app = NULL;
     CHECK(controller_hotplug_acquire_owner(&s));
@@ -866,7 +943,7 @@ int main(void) {
     if (gamepad_cases()) return 1;
     if (controller_hotplug_cases()) return 1;
     if (input_cases()) return 1;
-    app_state s;
+    app_state s = {0};
     memset(&s, 0, sizeof s);
     s.frame_fd = -1;
     ANativeActivity activity = {&s};
@@ -1192,7 +1269,7 @@ def main() -> int:
          'stop_frame_timer(s);\n        if(!dm_wsi_bridge_owns_window(&s->wsi_bridge,window)){LOG("wsi stale window destroy ignored");return;}',
          "s.frame_fd"),
         ("omit-source-guard",
-         "&&\n                 (AInputEvent_getSource(event)&AINPUT_SOURCE_TOUCHSCREEN)==AINPUT_SOURCE_TOUCHSCREEN",
+         "&&\n                 (source&AINPUT_SOURCE_TOUCHSCREEN)==AINPUT_SOURCE_TOUCHSCREEN",
          "",
          "s.gamepad_admitted && s.gamepad_id == 42"),
         ("omit-queue-invalidation",
@@ -1200,7 +1277,7 @@ def main() -> int:
          "/* mutant: queue change does not retire arbiter sources */",
          "dm_input_arbiter_source(s.arbiter) == DM_INPUT_SOURCE_NONE"),
         ("omit-gamepad-route",
-         "}else if(gamepad_source(AInputEvent_getSource(event))){",
+         "}else if(gamepad_source(source)){",
          "}else if(0){",
          "q.finish_calls == 1 && q.last_handled == 1"),
         ("omit-pause-gamepad-rearm",

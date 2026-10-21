@@ -36,9 +36,12 @@
 #include <time.h>
 #include <unistd.h>
 #define LOG(...) __android_log_print(ANDROID_LOG_INFO,"D2R-Diagnostic",__VA_ARGS__)
-typedef struct{dm_vk vk;AInputQueue*input;dm_app_lifecycle*lifecycle;ANativeActivity*activity;ANativeWindow*window;dm_input_arbiter*arbiter;dm_view_policy view;dm_input_policy gate;ALooper*looper;int timer_fd;int resumed,focused,touch_allowed;float density,touch_width_pt,touch_height_pt,touch_density;uint64_t last_touch_buttons;int32_t last_touch_lx,last_touch_ly,last_touch_rx,last_touch_ry;int64_t last_touch_log_ns;dm_android_touch_observation hud_obs;dm_touch_hud_frame hud_frame;int hud_obs_valid;dm_gamepad_context gamepad_context;dm_npad_state gamepad_state;uint32_t gamepad_id,gamepad_generation;int gamepad_admitted;int64_t gamepad_after_ns;uint64_t controller_session;jobject controller_boundary;jclass controller_class;jmethodID controller_release;dm_wsi wsi;dm_wsi_bridge wsi_bridge;dm_wsi_report report;dm_vk wsi_vk;dm_vk_swapchain wsi_chain;int wsi_chain_live;int frame_fd;int wsi_last_logged;char vertex[4096],fragment[4096];}app_state;
+typedef struct{dm_vk vk;AInputQueue*input;dm_app_lifecycle*lifecycle;ANativeActivity*activity;ANativeWindow*window;dm_input_arbiter*arbiter;dm_view_policy view;dm_input_policy gate;ALooper*looper;int timer_fd;int resumed,focused,touch_allowed;float density,touch_width_pt,touch_height_pt,touch_density;uint64_t last_touch_buttons;int32_t last_touch_lx,last_touch_ly,last_touch_rx,last_touch_ry;int64_t last_touch_log_ns;dm_android_touch_observation hud_obs;dm_touch_hud_frame hud_frame;int hud_obs_valid;dm_gamepad_context gamepad_context;dm_npad_state gamepad_state;uint32_t gamepad_id,gamepad_generation;int gamepad_admitted;int64_t gamepad_after_ns;uint64_t controller_session;jobject controller_boundary;jclass controller_class;jmethodID controller_release;uint64_t text_session;jobject text_bridge;jclass text_class;jmethodID text_show,text_hide,text_release;int text_active;int text_back_owned;int text_show_accepted;uint32_t text_commit_events,text_delete_events,text_submit_events,text_cancel_events;uint64_t text_event_total;int text_last_units;dm_wsi wsi;dm_wsi_bridge wsi_bridge;dm_wsi_report report;dm_vk wsi_vk;dm_vk_swapchain wsi_chain;int wsi_chain_live;int frame_fd;int wsi_last_logged;char vertex[4096],fragment[4096];}app_state;
 static app_state *g_controller_app;
 static uint64_t g_controller_next_session;
+static app_state *g_text_app;
+static uint64_t g_text_next_session;
+#define DM_TEXT_MAX_UTF16_UNITS 512
 enum{dm_controller_added=0,dm_controller_removed=1,dm_controller_changed=2};
 static int64_t monotonic_ns(void){
     struct timespec ts;
@@ -334,6 +337,34 @@ static void touch_cancel(app_state*s,const char*reason,int64_t now){
     gamepad_rearm(s);
     touch_consume(s,reason);
 }
+static int text_jni_stage_failed(JNIEnv*env,const char*stage){
+    if(!(*env)->ExceptionCheck(env))return 0;
+    (*env)->ExceptionDescribe(env);
+    (*env)->ExceptionClear(env);
+    LOG("text input JNI failure at %s",stage);
+    return 1;
+}
+static void native_text_event(JNIEnv*env,jclass cls,jlong session,jint event,jint code_units){
+    (void)env;(void)cls;
+    app_state*s=g_text_app;
+    if(!s||!s->text_active||(uint64_t)session!=s->text_session)return;
+    if(event<0||event>3||code_units<0||code_units>DM_TEXT_MAX_UTF16_UNITS)return;
+    switch(event){
+        case 0:s->text_commit_events++;break;
+        case 1:s->text_delete_events++;break;
+        case 2:s->text_submit_events++;break;
+        case 3:s->text_cancel_events++;break;
+        default:return;
+    }
+    s->text_event_total++;
+    s->text_last_units=code_units;
+    if(event==2||event==3){
+        s->text_active=0;
+        s->text_show_accepted=0;
+        s->text_session=0;
+        if(s->arbiter)touch_cancel(s,event==2?"text_submit":"text_cancel",monotonic_ns());
+    }
+}
 static uint32_t gamepad_next_generation(app_state*s){
     s->gamepad_generation++;
     if(!s->gamepad_generation)s->gamepad_generation=1;
@@ -597,6 +628,7 @@ static int motion_action(int32_t action){
 }
 static void handle_motion(app_state*s,AInputEvent*event){
     if(!s||!s->arbiter)return;
+    if(s->text_active){LOG("touch event gated during text input");return;}
     if(!s->touch_allowed){LOG("touch event ignored while inactive");return;}
     int32_t packed=AMotionEvent_getAction(event);
     int action=motion_action(packed);
@@ -638,6 +670,7 @@ static void handle_motion(app_state*s,AInputEvent*event){
    the getter's negative sentinel before the uint32 API boundary. */
 static void handle_gamepad(app_state*s,AInputEvent*event){
     if(!s||!s->arbiter)return;
+    if(s->text_active){LOG("gamepad event gated during text input");return;}
     if(!s->touch_allowed){LOG("gamepad event ignored while inactive");return;}
     int32_t raw_id=AInputEvent_getDeviceId(event);
     if(raw_id<0){LOG("gamepad event rejected: negative device id");return;}
@@ -675,16 +708,37 @@ static void handle_gamepad(app_state*s,AInputEvent*event){
     s->gamepad_state=next_state;
     touch_consume(s,"gamepad");
 }
+static int text_begin(app_state*s);
+static void text_end(app_state*s,const char*reason);
 static int input_ready(int fd,int events,void*data){
     (void)fd;(void)events;ANativeActivity*a=data;app_state*s=a->instance;if(!s||!s->input)return 0;
     AInputEvent*event;while(AInputQueue_getEvent(s->input,&event)>=0){
         if(AInputQueue_preDispatchEvent(s->input,event))continue;int handled=0;
-        if(AInputEvent_getType(event)==AINPUT_EVENT_TYPE_KEY&&AKeyEvent_getKeyCode(event)==AKEYCODE_BACK){
+        int32_t type=AInputEvent_getType(event);
+        int32_t source=AInputEvent_getSource(event);
+        int32_t key=type==AINPUT_EVENT_TYPE_KEY?AKeyEvent_getKeyCode(event):0;
+        if(type==AINPUT_EVENT_TYPE_KEY&&key==AKEYCODE_T&&
+           AKeyEvent_getAction(event)==AKEY_EVENT_ACTION_DOWN&&
+           AKeyEvent_getRepeatCount(event)==0&&
+           source==AINPUT_SOURCE_KEYBOARD&&!gamepad_source(source)){
+            if(!s->text_active)(void)text_begin(s);
+            handled=1;
+        }else if(type==AINPUT_EVENT_TYPE_KEY&&key==AKEYCODE_BACK&&s->text_back_owned){
+            /* Consume the matching UP of the BACK pair that retired text. */
+            if(AKeyEvent_getAction(event)==AKEY_EVENT_ACTION_UP)s->text_back_owned=0;
+            handled=1;
+        }else if(s->text_active){
+            if(type==AINPUT_EVENT_TYPE_KEY&&key==AKEYCODE_BACK){
+                if(AKeyEvent_getAction(event)==AKEY_EVENT_ACTION_DOWN)s->text_back_owned=1;
+                text_end(s,"back");
+            }
+            handled=1; // all physical gameplay input is gated during text
+        }else if(type==AINPUT_EVENT_TYPE_KEY&&key==AKEYCODE_BACK){
             if(AKeyEvent_getAction(event)==AKEY_EVENT_ACTION_UP)ANativeActivity_finish(a);handled=1;
-        }else if(AInputEvent_getType(event)==AINPUT_EVENT_TYPE_MOTION&&
-                 (AInputEvent_getSource(event)&AINPUT_SOURCE_TOUCHSCREEN)==AINPUT_SOURCE_TOUCHSCREEN){
+        }else if(type==AINPUT_EVENT_TYPE_MOTION&&
+                 (source&AINPUT_SOURCE_TOUCHSCREEN)==AINPUT_SOURCE_TOUCHSCREEN){
             handle_motion(s,event);handled=1;
-        }else if(gamepad_source(AInputEvent_getSource(event))){
+        }else if(gamepad_source(source)){
             handle_gamepad(s,event);handled=1;
         }
         AInputQueue_finishEvent(s->input,event,handled);
@@ -715,6 +769,8 @@ static void input_created(ANativeActivity*a,AInputQueue*queue){app_state*s=a->in
 }
 static void input_destroyed(ANativeActivity*a,AInputQueue*queue){app_state*s=a->instance;if(!s)return;
     if(s->input!=queue){LOG("stale input queue destroy ignored");return;}
+    s->text_back_owned=0;
+    if(s->text_bridge)text_end(s,"queue_lost");
     AInputQueue_detachLooper(queue);s->input=NULL;update_touch_state(s);
     if(s->arbiter&&!dm_input_arbiter_queue_changed(s->arbiter))
         LOG("arbiter queue-loss invalidation rejected");
@@ -804,6 +860,7 @@ static void window_resized(ANativeActivity*a,ANativeWindow*window){
 }
 static void window_destroyed(ANativeActivity*a,ANativeWindow*window){
     app_state*s=a->instance;if(!s||!s->lifecycle)return;
+    if(s->text_bridge)text_end(s,"window_destroyed");
     if(s->wsi.enabled){
         // 身份校验先于停表等一切副作用。| Identity check before every side effect, the timer included.
         if(!dm_wsi_bridge_owns_window(&s->wsi_bridge,window)){LOG("wsi stale window destroy ignored");return;}
@@ -830,7 +887,10 @@ static void window_destroyed(ANativeActivity*a,ANativeWindow*window){
         LOG("stale surface destroy ignored");
 }
 static void controller_hotplug_stop(app_state*s);
+static int text_begin(app_state*s);
+static void text_end(app_state*s,const char*reason);
 static void destroy(ANativeActivity*a){app_state*s=a->instance;if(s){
+    if(s->text_bridge)text_end(s,"destroy");
     stop_input_timer(s);stop_frame_timer(s);
     if(s->wsi.enabled){
         dm_wsi_report_event(&s->report,DM_WSI_EVENT_STOP);
@@ -861,6 +921,7 @@ static void destroy(ANativeActivity*a){app_state*s=a->instance;if(s){
 static void low_memory(ANativeActivity*a){app_state*s=a->instance;if(s&&s->vk.device){dm_vk_destroy(&s->vk);LOG("low memory: GPU context released; redraw recreates diagnostic");}}
 static void pause_app(ANativeActivity*a){app_state*s=a->instance;if(!s||!s->lifecycle)return;
     s->resumed=0;update_touch_state(s);
+    if(s->text_bridge)text_end(s,"pause");
     if(s->arbiter&&!dm_input_arbiter_pause(s->arbiter,1))LOG("arbiter pause invalidation rejected");
     gamepad_rearm(s);
     if(s->wsi.enabled){dm_wsi_pause(&s->wsi);stop_frame_timer(s);
@@ -884,6 +945,7 @@ static void resume_app(ANativeActivity*a){app_state*s=a->instance;if(!s||!s->lif
     }}
 static void focus_changed(ANativeActivity*a,int focused){app_state*s=a->instance;if(!s)return;
     s->focused=focused?1:0;
+    if(!focused&&s->text_bridge)text_end(s,"focus_lost");
     if(s->arbiter&&!dm_input_arbiter_focus(s->arbiter,focused?1:0))LOG("arbiter focus invalidation rejected");
     if(!focused)gamepad_rearm(s);
     update_touch_state(s);
@@ -1011,6 +1073,131 @@ static void controller_hotplug_stop(app_state*s){
         s->controller_class=NULL;
     }
     s->controller_release=NULL;
+}
+static int text_begin_ready(app_state*s){
+    if(!s||!s->activity||!s->activity->env||!s->activity->clazz)return 0;
+    if(!s->resumed||!s->focused||!s->window||!s->touch_allowed)return 0;
+    if(!s->lifecycle||dm_app_lifecycle_state(s->lifecycle)!=DM_APP_STATE_OWNED_DIAGNOSTIC)return 0;
+    return dm_app_lifecycle_surface(s->lifecycle)==s->window;
+}
+static int text_begin(app_state*s){
+    if(!s)return 0;
+    if(s->text_active)return 1;
+    if(s->text_bridge)text_end(s,"text_restart");
+    if(!text_begin_ready(s)){
+        LOG("text input request ignored: App is not active/focused with a usable window");
+        return 0;
+    }
+    if(g_text_app&&g_text_app!=s){
+        LOG("text input owner busy; request rejected");
+        return 0;
+    }
+    g_text_app=s;
+    JNIEnv*env=s->activity->env;
+    jobject activity_class=NULL,loader=NULL,loader_class=NULL,bridge=NULL;
+    jstring class_name=NULL;
+    jclass bridge_class=NULL;
+    jmethodID get_loader=NULL,load_class=NULL,constructor=NULL,show_method=NULL,hide_method=NULL,release_method=NULL;
+    int result=0,released=0;
+    uint64_t session=++g_text_next_session;
+    if(!session)session=++g_text_next_session;
+    if(!(activity_class=(*env)->GetObjectClass(env,s->activity->clazz)))goto fail;
+    if(!(get_loader=(*env)->GetMethodID(env,activity_class,"getClassLoader","()Ljava/lang/ClassLoader;"))||text_jni_stage_failed(env,"activity getClassLoader signature"))goto fail;
+    if(!(loader=(*env)->CallObjectMethod(env, s->activity->clazz, get_loader))||text_jni_stage_failed(env,"activity class loader"))goto fail;
+    if(!(loader_class=(*env)->GetObjectClass(env,loader)))goto fail;
+    if(!(load_class=(*env)->GetMethodID(env,loader_class,"loadClass","(Ljava/lang/String;)Ljava/lang/Class;"))||text_jni_stage_failed(env,"loadClass signature"))goto fail;
+    if(!(class_name=(*env)->NewStringUTF(env,"org.d2rmobile.android.diagnostic.DmTextEditorJniBridge")))goto fail;
+    if(!(bridge_class=(jclass)(*env)->CallObjectMethod(env,loader,load_class,class_name))||text_jni_stage_failed(env,"text bridge class load"))goto fail;
+    {
+        JNINativeMethod method={"nativeTextEvent","(JII)V",(void*)native_text_event};
+        if((*env)->RegisterNatives(env,bridge_class,&method,1)!=0||text_jni_stage_failed(env,"text native registration"))goto fail;
+    }
+    if(!(constructor=(*env)->GetMethodID(env,bridge_class,"<init>","(Landroid/app/Activity;J)V"))||text_jni_stage_failed(env,"text constructor signature"))goto fail;
+    if(!(show_method=(*env)->GetMethodID(env,bridge_class,"show","()Z"))||text_jni_stage_failed(env,"text show signature"))goto fail;
+    if(!(hide_method=(*env)->GetMethodID(env,bridge_class,"hide","()Z"))||text_jni_stage_failed(env,"text hide signature"))goto fail;
+    if(!(release_method=(*env)->GetMethodID(env,bridge_class,"release","()Z"))||text_jni_stage_failed(env,"text release signature"))goto fail;
+    if(!(bridge=(*env)->NewObject(env,bridge_class,constructor,s->activity->clazz,(jlong)session))||text_jni_stage_failed(env,"text bridge constructor"))goto fail;
+    /* Publish the session and gate before calling Java: a terminal callback
+       re-entering from show() must be observable, not overwritten below. */
+    s->text_session=session;
+    s->text_active=1;
+    s->text_show_accepted=0;
+    jboolean displayed=(*env)->CallBooleanMethod(env,bridge,show_method);
+    if(text_jni_stage_failed(env,"text show"))goto fail;
+    if(!displayed){
+        LOG("text input session show rejected");
+        goto fail;
+    }
+    if(!s->text_active||s->text_session!=session){
+        LOG("text input session became terminal during show; not claiming display");
+        if(release_method){
+            (void)(*env)->CallBooleanMethod(env,bridge,release_method);
+            released=1;
+            if((*env)->ExceptionCheck(env))(*env)->ExceptionClear(env);
+        }
+        goto fail;
+    }
+    s->text_bridge=(*env)->NewGlobalRef(env,bridge);
+    if(!s->text_bridge){
+        text_jni_stage_failed(env,"text bridge global ref");
+        goto fail;
+    }
+    s->text_class=(jclass)(*env)->NewGlobalRef(env,bridge_class);
+    if(!s->text_class){
+        text_jni_stage_failed(env,"text class global ref");
+        goto fail;
+    }
+    s->text_show=show_method;
+    s->text_hide=hide_method;
+    s->text_release=release_method;
+    s->text_show_accepted=1;
+    touch_cancel(s,"text_begin",monotonic_ns());
+    LOG("text input session started session=%llu (event-only diagnostic; no guest text consumer)",(unsigned long long)session);
+    result=1;
+    goto done;
+fail:
+    if((*env)->ExceptionCheck(env))(*env)->ExceptionClear(env);
+    if(bridge&&release_method&&!released){
+        (void)(*env)->CallBooleanMethod(env,bridge,release_method);
+        if((*env)->ExceptionCheck(env))(*env)->ExceptionClear(env);
+    }
+    if(s->text_bridge){(*env)->DeleteGlobalRef(env,s->text_bridge);s->text_bridge=NULL;}
+    if(s->text_class){(*env)->DeleteGlobalRef(env,s->text_class);s->text_class=NULL;}
+    s->text_show=NULL;s->text_hide=NULL;s->text_release=NULL;
+    s->text_session=0;s->text_active=0;s->text_show_accepted=0;
+    if(g_text_app==s)g_text_app=NULL;
+    LOG("text input session unavailable; request not claimed");
+done:
+    if(bridge)(*env)->DeleteLocalRef(env,bridge);
+    if(bridge_class)(*env)->DeleteLocalRef(env,bridge_class);
+    if(class_name)(*env)->DeleteLocalRef(env,class_name);
+    if(loader_class)(*env)->DeleteLocalRef(env,loader_class);
+    if(loader)(*env)->DeleteLocalRef(env,loader);
+    if(activity_class)(*env)->DeleteLocalRef(env,activity_class);
+    return result;
+}
+static void text_end(app_state*s,const char*reason){
+    if(!s)return;
+    int had=s->text_active||s->text_bridge;
+    s->text_active=0;
+    s->text_show_accepted=0;
+    s->text_session=0;
+    JNIEnv*env=(s->activity&&s->activity->env)?s->activity->env:NULL;
+    if(s->text_bridge&&env&&s->text_release){
+        jboolean released=(*env)->CallBooleanMethod(env,s->text_bridge,s->text_release);
+        if(text_jni_stage_failed(env,"release"))LOG("text input release JNI failed");
+        else if(!released)LOG("text input release reported failure");
+    }
+    if(s->text_bridge&&env){(*env)->DeleteGlobalRef(env,s->text_bridge);s->text_bridge=NULL;}
+    if(s->text_class&&env){(*env)->DeleteGlobalRef(env,s->text_class);s->text_class=NULL;}
+    s->text_show=NULL;s->text_hide=NULL;s->text_release=NULL;
+    if(g_text_app==s)g_text_app=NULL;
+    if(had){
+        LOG("text input session ended reason=%s events=%llu commit=%u delete=%u submit=%u cancel=%u last_units=%d (no text logged)",
+            reason,(unsigned long long)s->text_event_total,s->text_commit_events,s->text_delete_events,
+            s->text_submit_events,s->text_cancel_events,s->text_last_units);
+        if(s->arbiter)touch_cancel(s,reason,monotonic_ns());
+    }
 }
 __attribute__((visibility("default"))) void ANativeActivity_onCreate(ANativeActivity*a,void*saved,size_t saved_size){
     (void)saved;(void)saved_size;app_state*s=calloc(1,sizeof(*s));if(!s){ANativeActivity_finish(a);return;}a->instance=s;dm_touch_hud_frame_init(&s->hud_frame);
