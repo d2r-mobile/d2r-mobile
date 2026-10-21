@@ -15,6 +15,7 @@ sys.path.insert(0, REPO_TOOLS)
 sys.path.insert(0, HERE)
 import dmsh_contract_gate as gate
 import test_spirv_contract as hand
+import _sandbox_isolation as sandbox_iso   # 同进程多套件运行时恢复 sys.modules/sys.path/环境 | restore sys.modules/sys.path/env between suites
 
 FAKE_CHAIN = '''HEADER = %(header)r
 LOCK = %(lock)r
@@ -48,6 +49,16 @@ def read(path):
 class BuildPaths(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        cls._iso = sandbox_iso.IsolatedSandbox()   # 先快照：setUpClass 失败也要恢复 | snapshot first: restore even if setUpClass fails
+        try:
+            cls._build()
+        except BaseException:
+            cls._iso.restore()
+            shutil.rmtree(getattr(cls, "tmp", ""), ignore_errors=True)
+            raise
+
+    @classmethod
+    def _build(cls):
         cls.tmp = tempfile.mkdtemp(prefix="dmshgate_")
         cls.root = cls.tmp
         tools = os.path.join(cls.root, "tools")
@@ -111,7 +122,10 @@ class BuildPaths(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
-        shutil.rmtree(cls.tmp, ignore_errors=True)
+        try:
+            shutil.rmtree(cls.tmp, ignore_errors=True)
+        finally:
+            cls._iso.restore()   # 不把假 dmsh_chain 留给下一个套件 | never leave the fake dmsh_chain to the next suite
 
     def setUp(self):
         shutil.rmtree(self.out, ignore_errors=True)

@@ -127,6 +127,7 @@ run: \
 	python3 test_contract_gate.py
 	python3 test_build_gate_paths.py
 	python3 test_build_finish_io.py
+	python3 -m unittest discover -s . -p 'test_build_*.py'
 	MTL_DEBUG_LAYER=1 ./t_accept_scene
 	./t_accept_shader
 .PHONY: run
