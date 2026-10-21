@@ -416,6 +416,12 @@ if(NOT ANDROID)
         add_test(NAME diagnostic_provenance
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_provenance.py)
         set_tests_properties(diagnostic_provenance PROPERTIES TIMEOUT 60)
+        add_test(NAME native_callbacks
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/native_callbacks_host.py
+                --native ${CMAKE_CURRENT_SOURCE_DIR}/app/native.c
+                --app ${CMAKE_CURRENT_SOURCE_DIR}/app
+                --cc ${CMAKE_C_COMPILER})
+        set_tests_properties(native_callbacks PROPERTIES TIMEOUT 120)
     endif()
 endif()
 

@@ -84,6 +84,12 @@ int main(void) {
     CHECK(run(&acquire_ood) == DM_WSI_REBUILD);
     CHECK(acquire_ood.submits == 0 && acquire_ood.presents == 0);
 
+    // acquire 返回 DEVICE_LOST：错误不被 SUBOPTIMAL/成功标记掩盖，且不提交/呈现。
+    // Acquire device loss: no submit/present and the error is not masked.
+    stub acquire_device_lost = {.acquire_result = VK_ERROR_DEVICE_LOST};
+    CHECK(run(&acquire_device_lost) == DM_WSI_ERROR);
+    CHECK(acquire_device_lost.submits == 0 && acquire_device_lost.presents == 0);
+
     // OUT_OF_DATE 在 present 阶段：帧已提交，呈现被拒。| OUT_OF_DATE at present: submitted, present rejected.
     stub present_ood = {.acquire_result = VK_SUCCESS, .submit_result = VK_SUCCESS,
                         .present_result = VK_ERROR_OUT_OF_DATE_KHR};
