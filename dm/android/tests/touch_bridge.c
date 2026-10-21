@@ -274,6 +274,105 @@ static void resize_density_and_neutral_destroy(void) {
     CHECK(neutral.buttons == 0 && neutral.lx == 0 && neutral.ly == 0);
 }
 
+static void belt_context_change_cancels_outer_and_reuses_id(void) {
+    dm_touch_bridge *b = dm_touch_bridge_create(667, 375, 2.0f);
+    dm_tc_layout layout;
+    dm_touch_event e;
+    dm_npad_state s;
+    CHECK(b != NULL);
+    dm_tc_layout_make(&layout, 667, 375);
+    down(b, 7, layout.target[DM_TC_MAIN].x, layout.target[DM_TC_MAIN].y, 8000000000);
+    s = read_state(b); CHECK(s.buttons == DM_BTN_A);
+    CHECK(dm_touch_bridge_set_belt_context(b, 4, 0));   /* real change */
+    s = read_state(b); CHECK(s.buttons == 0);
+    /* The adapter released the pointer; the outer table must agree, or these
+       stale events would be accepted and the reused DOWN rejected. */
+    e = event(DM_TOUCH_ACTION_MOVE, 0, 8010000000);
+    point(&e, 7, layout.target[DM_TC_MAIN].x, layout.target[DM_TC_MAIN].y, 2.0f);
+    CHECK(!dm_touch_bridge_event(b, &e));
+    e = event(DM_TOUCH_ACTION_UP, 0, 8020000000);
+    point(&e, 7, layout.target[DM_TC_MAIN].x, layout.target[DM_TC_MAIN].y, 2.0f);
+    CHECK(!dm_touch_bridge_event(b, &e));
+    down(b, 7, layout.target[DM_TC_MAIN].x, layout.target[DM_TC_MAIN].y, 8030000000);
+    s = read_state(b); CHECK(s.buttons == DM_BTN_A);   /* same ID accepted again */
+    up(b, 7, layout.target[DM_TC_MAIN].x, layout.target[DM_TC_MAIN].y, 8040000000);
+    s = read_state(b); CHECK(s.buttons == 0);
+    dm_touch_bridge_destroy(b, NULL);
+}
+
+static void belt_context_invalid_and_same_preserve_ownership(void) {
+    dm_touch_bridge *b = dm_touch_bridge_create(667, 375, 2.0f);
+    dm_tc_layout layout;
+    dm_touch_event e;
+    dm_npad_state s;
+    CHECK(b != NULL);
+    dm_tc_layout_make(&layout, 667, 375);
+    down(b, 9, layout.target[DM_TC_MAIN].x, layout.target[DM_TC_MAIN].y, 8100000000);
+    s = read_state(b); CHECK(s.buttons == DM_BTN_A);
+    CHECK(!dm_touch_bridge_set_belt_context(NULL, 4, 0));
+    CHECK(!dm_touch_bridge_set_belt_context(b, -1, 0));
+    CHECK(!dm_touch_bridge_set_belt_context(b, 5, 0));
+    CHECK(!dm_touch_bridge_set_belt_context(b, 4, 2));
+    CHECK(!dm_touch_bridge_set_belt_context(b, 4, -1));
+    /* Rejected updates changed neither layer: the held pointer still moves. */
+    e = event(DM_TOUCH_ACTION_MOVE, 0, 8101000000);
+    point(&e, 9, layout.target[DM_TC_MAIN].x, layout.target[DM_TC_MAIN].y, 2.0f);
+    CHECK(dm_touch_bridge_event(b, &e));
+    s = read_state(b); CHECK(s.buttons == DM_BTN_A);
+    /* Same snapshot (bridge default 0/0) is a no-op: no cancel, no consume. */
+    CHECK(dm_touch_bridge_set_belt_context(b, 0, 0));
+    s = read_state(b); CHECK(s.buttons == DM_BTN_A);
+    e = event(DM_TOUCH_ACTION_MOVE, 0, 8102000000);
+    point(&e, 9, layout.target[DM_TC_MAIN].x, layout.target[DM_TC_MAIN].y, 2.0f);
+    CHECK(dm_touch_bridge_event(b, &e));
+    up(b, 9, layout.target[DM_TC_MAIN].x, layout.target[DM_TC_MAIN].y, 8103000000);
+    s = read_state(b); CHECK(s.buttons == 0);
+    dm_touch_bridge_destroy(b, NULL);
+}
+
+static void belt_context_survives_cancel_and_resize(void) {
+    dm_touch_bridge *b = dm_touch_bridge_create(667, 375, 2.0f);
+    dm_tc_layout layout;
+    dm_touch_event e;
+    dm_npad_state s;
+    CHECK(b != NULL);
+    dm_tc_layout_make(&layout, 667, 375);
+    CHECK(dm_touch_bridge_set_belt_context(b, 4, 0));
+    CHECK(dm_touch_bridge_cancel_all(b, 8190000000));   /* context is host state, not a gesture */
+    down(b, 5, layout.target[DM_TC_MAIN].x, layout.target[DM_TC_MAIN].y, 8200000000);
+    s = read_state(b); CHECK(s.buttons == DM_BTN_A);
+    CHECK(dm_touch_bridge_set_belt_context(b, 4, 0));   /* retained: same values, no cancel */
+    s = read_state(b); CHECK(s.buttons == DM_BTN_A);
+    up(b, 5, layout.target[DM_TC_MAIN].x, layout.target[DM_TC_MAIN].y, 8201000000);
+    s = read_state(b); CHECK(s.buttons == 0);
+    /* Resize cancels pointers but keeps the host snapshot; a same-value update
+       after resize must not cancel a newly held finger. */
+    CHECK(dm_touch_bridge_resize(b, 812, 375, 8210000000));
+    dm_tc_layout_make(&layout, 812, 375);
+    down(b, 6, layout.target[DM_TC_MAIN].x, layout.target[DM_TC_MAIN].y, 8211000000);
+    s = read_state(b); CHECK(s.buttons == DM_BTN_A);
+    CHECK(dm_touch_bridge_set_belt_context(b, 4, 0));
+    s = read_state(b); CHECK(s.buttons == DM_BTN_A);
+    up(b, 6, layout.target[DM_TC_MAIN].x, layout.target[DM_TC_MAIN].y, 8212000000);
+    s = read_state(b); CHECK(s.buttons == 0);
+    /* A real change after resize still invalidates both layers. */
+    down(b, 7, layout.target[DM_TC_MAIN].x, layout.target[DM_TC_MAIN].y, 8220000000);
+    s = read_state(b); CHECK(s.buttons == DM_BTN_A);
+    CHECK(dm_touch_bridge_set_belt_context(b, 4, 1));
+    s = read_state(b); CHECK(s.buttons == 0);
+    e = event(DM_TOUCH_ACTION_MOVE, 0, 8221000000);
+    point(&e, 7, layout.target[DM_TC_MAIN].x, layout.target[DM_TC_MAIN].y, 2.0f);
+    CHECK(!dm_touch_bridge_event(b, &e));
+    /* The same ID is accepted under the new (expanded) context; a bottom-row
+       cell still drinks, so the pointer is genuinely live. */
+    down(b, 7, layout.target[DM_TC_BELT2].x, layout.target[DM_TC_BELT2].y, 8222000000);
+    s = read_state(b); CHECK(s.buttons == 0);
+    up(b, 7, layout.target[DM_TC_BELT2].x, layout.target[DM_TC_BELT2].y, 8223000000);
+    s = read_state(b); CHECK(s.buttons == DM_BTN_UP);
+    s = read_state(b); CHECK(s.buttons == 0);
+    dm_touch_bridge_destroy(b, NULL);
+}
+
 int main(void) {
     CASE(density_and_noncontiguous_ids);
     CASE(action_index_multifinger);
@@ -286,6 +385,9 @@ int main(void) {
     CASE(ring_full_up_retry);
     CASE(cancel_clears_queued_pulses);
     CASE(resize_density_and_neutral_destroy);
+    CASE(belt_context_change_cancels_outer_and_reuses_id);
+    CASE(belt_context_invalid_and_same_preserve_ownership);
+    CASE(belt_context_survives_cancel_and_resize);
     printf("PASS touch bridge: %d checks\n", checks);
     return 0;
 }
