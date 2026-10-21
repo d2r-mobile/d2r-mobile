@@ -31,6 +31,8 @@ void dm_live_touch_resize(dm_live_touch *touch, float width_pt, float height_pt)
 // navigation = menu/front-end/panel state supplied by the real host.
 // mask is the core target mask; callers use dm_tc_nav_mask/game mode mask.
 void dm_live_touch_set_mode(dm_live_touch *touch, int navigation, uint32_t mask);
+// Original iOS tick: an identification scroll is not a dragged item.
+void dm_live_touch_set_holding(dm_live_touch *touch, int holding, int targeting);
 // Update the real host belt snapshot used by the original core. rows=0/open=0
 // is the explicit unknown/clear form; rows 1..4 and open 0/1 are valid. Invalid
 // values clear any old request and do not enable belt gestures.
@@ -196,13 +198,14 @@ void dm_live_touch_item_snapshot_get(const dm_live_touch *touch,
 // True while the core still owns physical pointers or has deferred/belt/pulse
 // work that the owner loop must advance. Not a claim that the game consumed it.
 int dm_live_touch_needs_work(const dm_live_touch *touch);
-// One owner-thread scheduler step: advance core timers, bound-release a pulse
-// after its core hold plus a fixed small margin (no game ack is fabricated),
-// and return whether more owner work remains.
-int dm_live_touch_scheduler_step(dm_live_touch *touch, int64_t time_ns);
+// Advance core work using the real input poll count and cursor-withheld A state.
+// Return work remaining; -1 cancels an unacknowledged pulse rather than reporting pickup.
+int dm_live_touch_scheduler_step(dm_live_touch *touch, int64_t time_ns,
+                                  uint64_t input_samples, int cursor_pending);
 // End a short zero-hold core pulse after it has been published once. The host
 // press-edge latch is what makes the short A tap visible to the game; this is
 // not an acknowledgement that the game consumed an action.
+// Pointer pickup/drop pulses are excluded: only the receipt scheduler ends them.
 int dm_live_touch_end_released_pulse(dm_live_touch *touch);
 
 #ifdef __cplusplus

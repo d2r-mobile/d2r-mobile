@@ -25,7 +25,9 @@ static int strings_ok(const char *path, char *why, size_t n) {
         char *tab1=strchr(line,'\t'); if(!tab1){ok=0;break;} *tab1=0;
         char *tab2=strchr(tab1+1,'\t'); if(!tab2){ok=0;break;} *tab2=0;
         int hex=strlen(tab1+1)==8; for(int i=0;hex&&i<8;i++){char c=tab1[1+i];if(!((c>='0'&&c<='9')||(c>='a'&&c<='f')||(c>='A'&&c<='F')))hex=0;}
-        if(!line[0]||!hex||!tab2[1])ok=0;
+        // The original generator uses an empty replacement to hide hints.
+        // The third field must exist, but its text may intentionally be empty.
+        if(!line[0]||!hex||strchr(tab2+1,'\t'))ok=0;
     }
     fclose(f);
     if(!ok)snprintf(why,n,"touch_strings.tsv line %d is not key<TAB>8-hex<TAB>value",lines);

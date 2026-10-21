@@ -34,7 +34,10 @@ int main(void) {
     CHECK(event(t, DM_LIVE_ACTION_UP, 0, 1, &id, &x, &y, 1010000000) == 1);
     CHECK(!dm_live_touch_has_pointer(t, id));
     CHECK((dm_live_touch_buttons(t) & DM_BTN_A) != 0);
-    CHECK(dm_live_touch_end_released_pulse(t) == 1);
+    CHECK(dm_live_touch_end_released_pulse(t) == 0);
+    dm_live_touch_scheduler_step(t, 1020000000, 10, 0);
+    dm_live_touch_scheduler_step(t, 1030000000, 11, 0);
+    dm_live_touch_scheduler_step(t, 1160000000, 14, 0);
     CHECK(dm_live_touch_buttons(t) == 0);
 
     // No further MotionEvent: the owner tick must advance the core's stationary

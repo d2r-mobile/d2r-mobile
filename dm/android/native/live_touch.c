@@ -12,7 +12,8 @@ struct dm_live_touch {
     dm_touch_pointer_map pointers;
     float width, height;
     int64_t last_ns;
-    int64_t pulse_started_ns;
+    int64_t pulse_started_ns, pulse_seen_ns, pulse_free_ns;
+    uint64_t pulse_epoch, pulse_samples_start, pulse_samples_free;
     uint32_t belt_fingers;
     int portal_request;
     int have_context;
@@ -167,6 +168,10 @@ void dm_live_touch_destroy(dm_live_touch *touch) {
     if (!touch) return;
     dm_tc_cancel_all(&touch->state);
     free(touch);
+}
+
+void dm_live_touch_set_holding(dm_live_touch *touch, int holding, int targeting) {
+    if (touch) dm_tc_set_holding(&touch->state, holding && !targeting);
 }
 
 void dm_live_touch_resize(dm_live_touch *touch, float width_pt, float height_pt) {
@@ -592,25 +597,56 @@ int dm_live_touch_needs_work(const dm_live_touch *touch) {
            s->belt_q > 0 || s->close_left > 0 || s->stash_x_check_s > 0;
 }
 
-int dm_live_touch_scheduler_step(dm_live_touch *touch, int64_t time_ns) {
+int dm_live_touch_scheduler_step(dm_live_touch *touch, int64_t time_ns,
+                                  uint64_t samples, int cursor_pending) {
     if (!touch || time_ns < 0) return 0;
     dm_tc_tick(&touch->state, now_s(touch, time_ns));
-    if (!touch->state.pulse_button && touch->state.pointer_pulse_pending)
-        dm_tc_pulse_resume(&touch->state);
     if (touch->state.pulse_button) {
-        if (touch->pulse_started_ns == 0) touch->pulse_started_ns = time_ns;
-        int64_t hold_ns = (int64_t)(touch->state.pulse_hold_s * 1000000000.0);
-        if (hold_ns < 200000000) hold_ns = 200000000;
-        hold_ns += 100000000;
-        if (time_ns - touch->pulse_started_ns >= hold_ns) {
-            dm_tc_pulse_end(&touch->state, touch->state.pulse_epoch);
+        if (!touch->pulse_started_ns || touch->pulse_epoch != touch->state.pulse_epoch) {
+            touch->pulse_epoch = touch->state.pulse_epoch;
+            touch->pulse_started_ns = time_ns;
+            touch->pulse_samples_start = samples;
+            touch->pulse_seen_ns = touch->pulse_free_ns = 0;
+        }
+        if (samples < touch->pulse_samples_start) goto unacknowledged;
+        if (!touch->pulse_seen_ns && samples > touch->pulse_samples_start)
+            touch->pulse_seen_ns = time_ns;
+        if (cursor_pending) touch->pulse_free_ns = 0;
+        if (touch->pulse_seen_ns && !touch->pulse_free_ns && !cursor_pending) {
+            touch->pulse_free_ns = time_ns;
+            touch->pulse_samples_free = samples;
+        }
+        int64_t hold = (int64_t)(touch->state.pulse_hold_s * 1000000000.0);
+        // Withheld A polls do not acknowledge a pickup: keep its origin fixed
+        // for three polls and 120ms after the cursor releases A to the game.
+        int taken = touch->pulse_free_ns && time_ns - touch->pulse_free_ns >= 120000000 &&
+            samples >= touch->pulse_samples_free && samples - touch->pulse_samples_free >= 3 && !cursor_pending &&
+            (hold <= 0 || (touch->pulse_free_ns && time_ns - touch->pulse_free_ns >= hold));
+        if (taken) {
+            dm_tc_pulse_end(&touch->state, touch->pulse_epoch);
+            touch->pulse_samples_start = samples;
+            touch->pulse_started_ns = time_ns;
+        } else if (time_ns - touch->pulse_started_ns > 2000000000LL + hold) {
+            goto unacknowledged;
+        }
+    } else if (dm_tc_pulse_pending(&touch->state)) {
+        if (samples < touch->pulse_samples_start) goto unacknowledged;
+        // The queued drop must see two real released polls before its next A.
+        if (samples - touch->pulse_samples_start >= 2) {
+            dm_tc_pulse_resume(&touch->state);
             touch->pulse_started_ns = 0;
+        } else if (time_ns - touch->pulse_started_ns > 500000000) {
+            goto unacknowledged;
         }
     } else {
         touch->pulse_started_ns = 0;
     }
     sync_pointers(touch);
     return dm_live_touch_needs_work(touch);
+unacknowledged:
+    // A timeout cancels; it must never mark an unreceived pickup as successful.
+    dm_live_touch_cancel_all(touch, time_ns);
+    return -1;
 }
 
 uint64_t dm_live_touch_buttons(const dm_live_touch *touch) { return touch ? touch->state.buttons : 0; }
@@ -775,6 +811,10 @@ void dm_live_touch_item_snapshot_get(const dm_live_touch *touch,
 
 int dm_live_touch_end_released_pulse(dm_live_touch *touch) {
     if (!touch || !touch->state.pulse_button || touch->state.pulse_hold_s > 0) return 0;
+    // The input callback's publish-once shortcut must not lift a pickup or
+    // release a drop before the owner scheduler observes game input receipts.
+    if (touch->state.pulse_button == DM_BTN_A &&
+        (touch->state.pointer_pulse_active || touch->state.pointer_pulse_pending)) return 0;
     int ended = dm_tc_pulse_end(&touch->state, touch->state.pulse_epoch);
     touch->pulse_started_ns = 0;
     return ended;

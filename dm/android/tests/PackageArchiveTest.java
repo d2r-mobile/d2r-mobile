@@ -37,7 +37,7 @@ public final class PackageArchiveTest {
             entry(zip, "shaders/a", new byte[]{1});
             if (overlay) {
                 entry(zip, "overlay/ctrl_touch", "marker\n".getBytes(StandardCharsets.UTF_8));
-                entry(zip, "overlay/touch_strings.tsv", "A\tABCDEF12\tB\n".getBytes(StandardCharsets.UTF_8));
+                entry(zip, "overlay/touch_strings.tsv", "A\tABCDEF12\tB\nHiddenHint\t1234abcd\t\n".getBytes(StandardCharsets.UTF_8));
                 entry(zip, "overlay/data/.build.config", "config\n".getBytes(StandardCharsets.UTF_8));
                 entry(zip, "overlay/data/00-00000007.data", new byte[]{1});
             }
@@ -137,6 +137,16 @@ public final class PackageArchiveTest {
         check(new File(overlayRoot, "assets/overlay/ctrl_touch").isFile(), "overlay marker installed");
         check(new File(overlayRoot, "assets/overlay/data/00-00000007.data").isFile(), "overlay CASC installed");
         check(new File(overlayRoot, "assets/overlay.import").exists() == false, "overlay staging cleaned");
+        File stringsFile = new File(overlayRoot, "assets/overlay/touch_strings.tsv");
+        for (String malformed : new String[]{"A\tABCDEF12\n", "A\tABCDEF12\tB\textra\n", "A\tNOTHEX\t\n"}) {
+            Files.writeString(stringsFile.toPath(), malformed);
+            try {
+                PackageArchive.validateOverlay(stringsFile.getParentFile());
+                check(false, "malformed string record must fail");
+            } catch (PackageArchive.Failure expected) {
+                check(true, "malformed string record rejected");
+            }
+        }
         File save = new File(overlayRoot, "assets/save");
         check(save.mkdirs(), "save fixture");
         check(new File(save, "slot.sav").createNewFile(), "save sentinel");
