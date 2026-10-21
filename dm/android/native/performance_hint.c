@@ -11,6 +11,7 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/system_properties.h>
 
 // NDK 接口从 API 33 开始提供；动态解析令 API 29–32 仍能加载应用。
 // NDK interfaces start at API 33; dynamic resolution keeps the application loadable on API 29–32.
@@ -18,6 +19,7 @@ typedef struct {
     APerformanceHintManager *(*manager)(void);
     APerformanceHintSession *(*create)(APerformanceHintManager *,const int32_t *,size_t,int64_t);
     int (*report)(APerformanceHintSession *,int64_t);
+    int (*update)(APerformanceHintSession *,int64_t);
     void (*close)(APerformanceHintSession *);
     int64_t (*preferred_rate)(APerformanceHintManager *);
 } hint_api;
@@ -28,11 +30,12 @@ static pthread_mutex_t hint_lock=PTHREAD_MUTEX_INITIALIZER;
 static APerformanceHintSession *session;
 static int available,attempted,reported;
 static int32_t bound_tid;
-static const int64_t target_ns=16666667;
+static int64_t target_ns;
 static int paused,cycle_pending,cycle_invalid,cycle_index;
 static const void *cycle_window;
 static int32_t cycle_tid;
 static uint64_t cycle_start,cycle_wsi,accepted,skipped,cycles,work_total,wsi_total;
+static uint64_t cycle_period;
 
 static uint64_t monotonic_ns(void) {
     struct timespec t;if(clock_gettime(CLOCK_MONOTONIC,&t))return 0;
@@ -44,6 +47,8 @@ static void cycle_clear(void) {
 
 static void load_api(void) {
     const char *enabled=getenv("DM_ANDROID_PERF_HINT");
+    char property[PROP_VALUE_MAX];
+    if(__system_property_get("debug.d2r.perf_hint",property)>0)enabled=property;
     if(enabled&&!strcmp(enabled,"0")){fprintf(stderr,"[dm] [adpf] disabled by launch environment\n");return;}
     void *library=dlopen("libandroid.so",RTLD_NOW|RTLD_LOCAL);
     if(!library){fprintf(stderr,"[dm] [adpf] libandroid load failed\n");return;}
@@ -54,17 +59,18 @@ static void load_api(void) {
     LOAD_HINT(manager,"APerformanceHint_getManager");
     LOAD_HINT(create,"APerformanceHint_createSession");
     LOAD_HINT(report,"APerformanceHint_reportActualWorkDuration");
+    LOAD_HINT(update,"APerformanceHint_updateTargetWorkDuration");
     LOAD_HINT(close,"APerformanceHint_closeSession");
     LOAD_HINT(preferred_rate,"APerformanceHint_getPreferredUpdateRateNanos");
 #undef LOAD_HINT
-    available=api.manager&&api.create&&api.report&&api.close;
+    available=api.manager&&api.create&&api.report&&api.update&&api.close;
     // 冷路径写入已有游戏日志，避免设备过滤 logcat 后误判会话状态。
     // Mirror cold-path evidence to the existing game log when device logcat filters hide session state.
     fprintf(stderr,"[dm] [adpf] API available=%d\n",available);
     if(!available)__android_log_print(ANDROID_LOG_INFO,"D2R","[adpf] native performance hints unavailable; continue with normal scheduling");
 }
 
-void dm_android_performance_frame_begin(const void *window,int index) {
+void dm_android_performance_frame_begin(const void *window,int index,uint64_t period_ns) {
     pthread_once(&load_once,load_api);
     if(!available)return;
     pthread_mutex_lock(&hint_lock);
@@ -73,8 +79,8 @@ void dm_android_performance_frame_begin(const void *window,int index) {
     if(!paused){
         if(cycle_pending)cycle_invalid=1;
         else {
-            cycle_pending=1;cycle_window=window;cycle_index=index;cycle_tid=gettid();cycle_start=monotonic_ns();cycle_wsi=0;
-            cycle_invalid=!window||index<0||index>=4||!cycle_start;
+            cycle_pending=1;cycle_window=window;cycle_index=index;cycle_tid=gettid();cycle_start=monotonic_ns();cycle_wsi=0;cycle_period=period_ns;
+            cycle_invalid=!window||index<0||index>=4||!cycle_start||!period_ns||period_ns>INT64_MAX;
         }
     }
     pthread_mutex_unlock(&hint_lock);
@@ -89,13 +95,13 @@ void dm_android_performance_wsi_calls(uint64_t duration_ns) {
     pthread_mutex_unlock(&hint_lock);
 }
 
-static void session_create_locked(int32_t tid) {
+static void session_create_locked(int32_t tid,int64_t period_ns) {
     if(!attempted){
         attempted=1;
         APerformanceHintManager *manager=api.manager();
-        if(manager)session=api.create(manager,&tid,1,target_ns);
+        if(manager)session=api.create(manager,&tid,1,period_ns);
         if(session){
-            bound_tid=tid;
+            bound_tid=tid;target_ns=period_ns;
             int64_t preferred=api.preferred_rate?api.preferred_rate(manager):-1;
             fprintf(stderr,"[dm] [adpf] session created tid=%d target_ns=%lld preferred_ns=%lld\n",bound_tid,(long long)target_ns,(long long)preferred);
             __android_log_print(ANDROID_LOG_INFO,"D2R","[adpf] session tid=%d target=%.3f ms preferred_report=%.3f ms",bound_tid,target_ns/1e6,preferred<0?-1:preferred/1e6);
@@ -110,11 +116,21 @@ void dm_android_performance_frame_end(const void *window,int index) {
     if(paused||!available){cycle_clear();pthread_mutex_unlock(&hint_lock);return;}
     uint64_t elapsed=ended>=cycle_start?ended-cycle_start:0;
     int valid=cycle_pending&&!cycle_invalid&&cycle_window==window&&cycle_index==index&&cycle_tid==tid&&elapsed>cycle_wsi;
-    uint64_t work_ns=valid?elapsed-cycle_wsi:0,wsi_ns=cycle_wsi;
+    uint64_t work_ns=valid?elapsed-cycle_wsi:0,wsi_ns=cycle_wsi,period_ns=cycle_period;
+    // Uncapped work has no declared deadline; retire a previous capped session.
+    if(cycle_pending&&!period_ns){
+        if(session){api.close(session);session=NULL;}
+        bound_tid=0;attempted=reported=0;target_ns=0;
+    }
     // 周期墙钟保留真实依赖等待；仅扣 WSI 两个完整调用，含少量驱动CPU，不称为纯等待。
     // Cycle wall time retains dependency waits; subtract only both full WSI calls, including some driver CPU, not pure idle.
     cycle_clear();cycles++;
-    if(valid&&work_ns&&work_ns<=INT64_MAX){session_create_locked(tid);valid=session&&bound_tid==tid;}else valid=0;
+    if(valid&&work_ns&&work_ns<=INT64_MAX){session_create_locked(tid,(int64_t)period_ns);valid=session&&bound_tid==tid;}else valid=0;
+    if(valid&&target_ns!=(int64_t)period_ns){
+        int result=api.update(session,(int64_t)period_ns);
+        if(!result)target_ns=(int64_t)period_ns;
+        else {api.close(session);session=NULL;bound_tid=0;valid=0;}
+    }
     if(valid){
         int result=api.report(session,(int64_t)work_ns);
         if(!reported||result){if(dm_diagnostics_enabled()||result)fprintf(stderr,"[dm] [adpf] report bound_tid=%d caller_tid=%d work_ns=%llu result=%d\n",bound_tid,gettid(),(unsigned long long)work_ns,result);reported=1;}
@@ -140,7 +156,7 @@ void dm_android_performance_resume(void) {
 }
 
 #else
-void dm_android_performance_frame_begin(const void *window,int index) {(void)window;(void)index;}
+void dm_android_performance_frame_begin(const void *window,int index,uint64_t period_ns) {(void)window;(void)index;(void)period_ns;}
 void dm_android_performance_frame_end(const void *window,int index) {(void)window;(void)index;}
 void dm_android_performance_wsi_calls(uint64_t duration_ns) {(void)duration_ns;}
 void dm_android_performance_close(void) {}

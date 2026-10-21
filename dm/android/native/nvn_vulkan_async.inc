@@ -1,8 +1,6 @@
 // 每批独立命令/查询/fence；GPU 完成后按 FIFO 公布客体内存，再释放资源。
 // Independent commands/queries/fences per batch; publish guest memory in FIFO order after GPU completion, then release resources.
-#ifndef DM_VK_BATCH_SLOTS
-#define DM_VK_BATCH_SLOTS 3
-#endif
+#include "nvn_vulkan_batch_policy.h"
 
 enum {ASYNC_FREE,ASYNC_RECORDING,ASYNC_PENDING};
 // 每段至少 32 draw 且录制 2 ms，再在自然通道边界提交；每批最多八段。
@@ -426,7 +424,7 @@ static void *async_completion_main(void *unused) {
 
 static void async_initialize_locked(void) {
     if(async_initialized)return;
-    for(unsigned i=0;i<DM_VK_BATCH_SLOTS;i++){
+    for(unsigned i=0;i<batch_policy.slots;i++){
         async_batch *batch=&async_batches[i];
         if(!i&&command&&gpu_fence&&draw_queries){batch->command=command;batch->fence=gpu_fence;batch->queries=draw_queries;batch->times=batch_times;}
         else{
@@ -444,7 +442,7 @@ static void async_initialize_locked(void) {
     }
     async_stopping=0;async_initialized=1;
     int result=pthread_create(&async_thread,NULL,async_completion_main,NULL);if(result)die("Vulkan completion worker %d",result);
-    LOG("[vulkan] asynchronous submission contexts=%u; completion publishes guest effects in FIFO order",DM_VK_BATCH_SLOTS);
+    LOG("[vulkan] asynchronous submission contexts=%u; completion publishes guest effects in FIFO order",batch_policy.slots);
 }
 
 // host GetQueryPoolResults 在 LVP 中会隐含 DeviceWaitIdle，即使不用 WAIT；
@@ -468,13 +466,13 @@ static unsigned async_begin_locked(void) {
     async_chunk_report();
     if(async_current||async_stopping)die("Vulkan asynchronous nested/stopping recording");
     for(;;){
-        for(unsigned i=0;i<DM_VK_BATCH_SLOTS;i++){
-            unsigned slot=(async_next_slot+i)%DM_VK_BATCH_SLOTS;async_batch *batch=&async_batches[slot];
+        for(unsigned i=0;i<batch_policy.slots;i++){
+            unsigned slot=(async_next_slot+i)%batch_policy.slots;async_batch *batch=&async_batches[slot];
             if(batch->status!=ASYNC_FREE)continue;
             if(batch->pending_ranges.collections[0].count||batch->pending_ranges.collections[1].count||batch->pending_ranges.live_nodes)die("Vulkan pending index reused before retirement");
             batch->status=ASYNC_RECORDING;batch->has_known_cpu_copy=batch->known_copy_unbounded=0;batch->known_copy_low=batch->known_copy_high=0;
             batch->temporary_base=active_buffer_bytes-read_cache_bytes-immutable_buffer_bytes;
-            async_current=batch;async_next_slot=(slot+1)%DM_VK_BATCH_SLOTS;
+            async_current=batch;async_next_slot=(slot+1)%batch_policy.slots;
             batch->chunk_index=batch->chunk_draws=0;batch->command=batch->chunks[0];batch->chunk_started=0;batch->upload_recording=0;upload_epoch++;
             batch->counter_used=0;
             command=batch->command;gpu_fence=batch->fence;draw_queries=batch->queries;batch_times=batch->times;

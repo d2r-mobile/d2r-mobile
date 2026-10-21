@@ -9,7 +9,7 @@ extern "C" {
 
 // acquire 等待后开始、真实 present 后结束；仅同窗口/贴图/线程的完整周期可报告。
 // Begin after acquire waits, end after real present; report only a complete same-window/image/thread cycle.
-void dm_android_performance_frame_begin(const void *window,int index);
+void dm_android_performance_frame_begin(const void *window,int index,uint64_t period_ns);
 void dm_android_performance_frame_end(const void *window,int index);
 // 扣除 Vulkan acquire/present 整个调用墙钟（含少量驱动CPU），不扣真实GPU依赖等待。
 // Exclude entire Vulkan acquire/present call wall time (including some driver CPU), not GPU dependency waits.
