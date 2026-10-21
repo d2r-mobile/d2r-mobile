@@ -1064,6 +1064,22 @@ if(NOT ANDROID)
     add_test(NAME live_touch_visual COMMAND dm_live_touch_visual_test)
     set_tests_properties(live_touch_visual PROPERTIES TIMEOUT 30)
 
+    # #318 Android MAP placement and iOS preservation from the shared layout.
+    add_executable(dm_map_button_layout_test tests/map_button_layout_test.c ../ios/Sources/dm_touch_controls.c)
+    target_compile_definitions(dm_map_button_layout_test PRIVATE __ANDROID__)
+    target_link_libraries(dm_map_button_layout_test PRIVATE m)
+    target_include_directories(dm_map_button_layout_test PRIVATE ../ios/Sources ../host)
+    target_compile_options(dm_map_button_layout_test PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME map_button_layout COMMAND dm_map_button_layout_test)
+    set_tests_properties(map_button_layout PROPERTIES TIMEOUT 30)
+
+    add_executable(dm_map_button_layout_ios_test tests/map_button_layout_test.c ../ios/Sources/dm_touch_controls.c)
+    target_link_libraries(dm_map_button_layout_ios_test PRIVATE m)
+    target_include_directories(dm_map_button_layout_ios_test PRIVATE ../ios/Sources ../host)
+    target_compile_options(dm_map_button_layout_ios_test PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME map_button_layout_ios COMMAND dm_map_button_layout_ios_test)
+    set_tests_properties(map_button_layout_ios PROPERTIES TIMEOUT 30)
+
     add_executable(dm_ui_trace_test tests/ui_trace_test.c)
     target_include_directories(dm_ui_trace_test PRIVATE ../host)
     target_compile_options(dm_ui_trace_test PRIVATE -Wall -Wextra -Werror)
