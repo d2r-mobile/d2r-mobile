@@ -13,6 +13,7 @@ struct dm_live_touch {
     int64_t last_ns;
     int64_t pulse_started_ns;
     uint32_t belt_fingers;
+    int portal_request;
     int have_context;
     uint64_t scene_epoch, world_epoch, ui_identity, object_generation;
 };
@@ -107,6 +108,7 @@ void dm_live_touch_resize(dm_live_touch *touch, float width_pt, float height_pt)
     dm_tc_resize(&touch->state, width_pt, height_pt);
     touch->state.belt_request = 0;
     touch->state.diff_request = 0;
+    touch->portal_request = 0;
     touch->belt_fingers = 0;
     touch->pulse_started_ns = 0;
     touch->width = width_pt;
@@ -199,6 +201,30 @@ int dm_live_touch_consume_difficulty_request(dm_live_touch *touch,
     return 1;
 }
 
+int dm_live_touch_consume_portal_request(dm_live_touch *touch,
+                                         uint64_t scene_epoch, uint64_t world_epoch,
+                                         uint64_t ui_identity,
+                                         const dm_live_touch_portal_actions *actions) {
+    if (!touch) return 0;
+    if (!actions || !actions->request_portal) {
+        touch->portal_request = 0;
+        return 0;
+    }
+    int matches = touch->have_context && touch->scene_epoch == scene_epoch &&
+                  touch->world_epoch == world_epoch && touch->ui_identity == ui_identity;
+    if (!matches) {
+        touch->portal_request = 0;
+        return 0;
+    }
+    if (!touch->portal_request) return 0;
+    touch->portal_request = 0;
+    matches = touch->have_context && touch->scene_epoch == scene_epoch &&
+              touch->world_epoch == world_epoch && touch->ui_identity == ui_identity;
+    if (!matches) return 0;
+    actions->request_portal(actions->context);
+    return 1;
+}
+
 void dm_live_touch_set_mode(dm_live_touch *touch, int navigation, uint32_t mask) {
     if (!touch) return;
     navigation = !!navigation;
@@ -208,6 +234,7 @@ void dm_live_touch_set_mode(dm_live_touch *touch, int navigation, uint32_t mask)
     if (mask != touch->state.enabled_targets) dm_tc_enable_targets(&touch->state, mask);
     if (changed) {
         touch->state.diff_request = 0;
+        touch->portal_request = 0;
         touch->belt_fingers = 0;
     }
     sync_pointers(touch);
@@ -276,6 +303,13 @@ int dm_live_touch_event(dm_live_touch *touch, int action, int action_index,
             }
             touch->belt_fingers |= 1u << slot;
         }
+        // The original iOS front end requests the free town portal from the
+        // same fresh valid portal-target down. This is one-shot host state; the
+        // core's existing portal modifier/binding fields are not rewritten.
+        touch->portal_request = 0;
+        if (!touch->state.navigation_mode &&
+            touch->state.finger[slot].target == DM_TC_PORTAL)
+            touch->portal_request = 1;
         changed = 1;
     } else if (action == DM_LIVE_ACTION_MOVE) {
         for (int i = 0; i < pointer_count; ++i) {
@@ -313,6 +347,7 @@ int dm_live_touch_cancel_all(dm_live_touch *touch, int64_t time_ns) {
     dm_touch_pointer_clear(&touch->pointers);
     touch->state.belt_request = 0;
     touch->state.diff_request = 0;
+    touch->portal_request = 0;
     touch->belt_fingers = 0;
     touch->pulse_started_ns = 0;
     touch->have_context = 0;
