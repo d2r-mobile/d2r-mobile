@@ -161,6 +161,17 @@ target_link_libraries(dm_input_policy_test PRIVATE dm_android_input_policy dm_an
 target_compile_options(dm_input_policy_test PRIVATE -Wall -Wextra -Werror)
 add_test(NAME input_policy COMMAND dm_input_policy_test)
 set_tests_properties(input_policy PROPERTIES TIMEOUT 30)
+# #154 Physical gamepad AInputEvent getters -> accepted dm_npad_state. Host
+# tests replace only the narrow Android getter boundary; no App wiring.
+add_library(dm_android_gamepad_events STATIC app/gamepad_events.c)
+target_include_directories(dm_android_gamepad_events PUBLIC app runtime ${CMAKE_CURRENT_SOURCE_DIR}/../host)
+target_link_libraries(dm_android_gamepad_events PUBLIC m)
+target_compile_options(dm_android_gamepad_events PRIVATE -Wall -Wextra -Werror)
+add_executable(dm_gamepad_events_test tests/gamepad_events.c)
+target_link_libraries(dm_gamepad_events_test PRIVATE dm_android_gamepad_events)
+target_compile_options(dm_gamepad_events_test PRIVATE -Wall -Wextra -Werror)
+add_test(NAME gamepad_events COMMAND dm_gamepad_events_test)
+set_tests_properties(gamepad_events PROPERTIES TIMEOUT 30)
 # #150 Touch/gamepad source arbitration. The module links the accepted real
 # bridge/adapter and uses dm_npad_state; no Android event extraction or UI.
 add_library(dm_android_input_source STATIC app/input_source.c)
@@ -442,6 +453,10 @@ if(NOT ANDROID)
                 --app ${CMAKE_CURRENT_SOURCE_DIR}/app
                 --cc ${CMAKE_C_COMPILER})
         set_tests_properties(native_callbacks PROPERTIES TIMEOUT 120)
+        add_test(NAME gamepad_events_mutants
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/gamepad_events_mutants.py
+                --cc ${CMAKE_C_COMPILER})
+        set_tests_properties(gamepad_events_mutants PROPERTIES TIMEOUT 120)
         add_test(NAME input_source_mutants
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/input_source_mutants.py
                 --cc ${CMAKE_C_COMPILER})
