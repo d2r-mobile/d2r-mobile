@@ -7,9 +7,14 @@
 #include "../../host/dm_input.h"
 #include "../../host/dm_i18n.h"
 #include "../../host/dm_hud.h"
+#include "../../host/dm_uiscreen.h"
+#include "../../host/dm_cursor.h"
 #include "debug_stats.h"
 #include "game_output.h"
 #include "touch_pointer_map.h"
+#include "live_touch.h"
+#include "live_touch_geometry.h"
+#include "../../ios/Sources/dm_touch_controls.h"
 #include "performance_hint.h"
 #include "launch_settings.h"
 #include <android/native_activity.h>
@@ -22,6 +27,8 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <sys/stat.h>
+#include <sys/timerfd.h>
+#include <sys/system_properties.h>
 #include <unistd.h>
 #include <stdatomic.h>
 #include <limits.h>
@@ -46,6 +53,8 @@ typedef struct {
     int stop; _Atomic int started; _Atomic int activity_resumed;
     uint64_t pad_buttons,hat_buttons,trigger_buttons,move_keys;int tap_a;int32_t lx,ly,rx,ry;
     uint64_t touch_buttons;int32_t touch_lx,touch_ly,touch_rx,touch_ry;
+    dm_live_touch *live_touch;
+    int touch_timer_fd;
     dm_touch_pointer_map touch_map;
     pthread_t debug_thread;int debug_started;_Atomic int debug_stop;
     float requested_frame_rate;int frame_rate_attempted;
@@ -385,7 +394,26 @@ int dm_thermal_now(void) {
     void *(*acquire)(void)=dlsym(library,"AThermal_acquireManager");void (*release)(void*)=dlsym(library,"AThermal_releaseManager");int (*status)(void*)=dlsym(library,"AThermal_getCurrentThermalStatus");int result=-1;
     if(acquire&&release&&status){void *manager=acquire();if(manager){int v=status(manager);result=v<0?-1:v==0?0:v<=2?1:v==3?2:3;release(manager);}}dlclose(library);return result;
 }
+static int live_touch_mode_enabled(void) {
+    static int enabled=-1;
+    if(enabled<0){
+        char property[PROP_VALUE_MAX]={0};
+        enabled=__system_property_get("debug.d2r.live_touch",property)>0&&!strcmp(property,"1");
+        if(!enabled){const char *value=getenv("DM_LIVE_TOUCH");enabled=value&&!strcmp(value,"1");}
+    }
+    return enabled;
+}
+static void live_touch_sync(game_app *s) {
+    if(!s->live_touch||!live_touch_mode_enabled())return;
+    int navigation=!dm_uiscreen_ingame()||dm_uiscreen_panel()||atomic_load(&menu_open);
+    uint32_t mask=navigation?(dm_tc_nav_mask(1)|(1u<<DM_TC_MENU)):
+        (((1u<<DM_TC_COUNT)-1)&~(1u<<DM_TC_MAP));
+    dm_live_touch_set_mode(s->live_touch,navigation,mask);
+}
 static void pad_publish(game_app *s) {
+    live_touch_sync(s);
+    int live_on=s->live_touch&&live_touch_mode_enabled();
+    uint64_t live_buttons=live_on?dm_live_touch_buttons(s->live_touch):0;
     int32_t x=s->lx,y=s->ly;
     if(s->move_keys){x=((!!(s->move_keys&DM_BTN_RIGHT))-(!!(s->move_keys&DM_BTN_LEFT)))*DM_STICK_MAX;y=((!!(s->move_keys&DM_BTN_UP))-(!!(s->move_keys&DM_BTN_DOWN)))*DM_STICK_MAX;}
     // 分开合并实体与屏幕手柄；抬起一只手不会清掉另一输入来源仍按住的键。
@@ -393,11 +421,46 @@ static void pad_publish(game_app *s) {
     // Merge physical and on-screen pads separately; releasing one source never clears a key held by another.
     // D-pad bits that arrive as HAT axes keep their own mask, otherwise one HAT zero would also clear a
     // simultaneously held DPAD keycode.
+    if(!x&&!y&&live_on){int32_t lx=dm_live_touch_lx(s->live_touch),ly=dm_live_touch_ly(s->live_touch);if(lx||ly){x=lx;y=ly;}}
     if(!x&&!y){x=s->touch_lx;y=s->touch_ly;}
-    int32_t rx=s->rx,ry=s->ry;if(!rx&&!ry){rx=s->touch_rx;ry=s->touch_ry;}
-    dm_pad_set(s->pad_buttons|s->hat_buttons|s->trigger_buttons|s->touch_buttons|(s->tap_a?DM_BTN_A:0),x,y,rx,ry);
+    int32_t rx=s->rx,ry=s->ry;if(!rx&&!ry&&live_on){int32_t lx=dm_live_touch_rx(s->live_touch),ly=dm_live_touch_ry(s->live_touch);if(lx||ly){rx=lx;ry=ly;}}
+    if(!rx&&!ry){rx=s->touch_rx;ry=s->touch_ry;}
+    dm_pad_set(s->pad_buttons|s->hat_buttons|s->trigger_buttons|s->touch_buttons|live_buttons|(s->tap_a?DM_BTN_A:0),x,y,rx,ry);
 }
-static void pad_clear(game_app *s) {s->pad_buttons=s->hat_buttons=s->trigger_buttons=s->move_keys=s->touch_buttons=0;s->tap_a=0;s->lx=s->ly=s->rx=s->ry=s->touch_lx=s->touch_ly=s->touch_rx=s->touch_ry=0;pad_publish(s);}
+static void pad_clear(game_app *s) {s->pad_buttons=s->hat_buttons=s->trigger_buttons=s->move_keys=s->touch_buttons=0;s->tap_a=0;s->lx=s->ly=s->rx=s->ry=s->touch_lx=s->touch_ly=s->touch_rx=s->touch_ry=0;if(s->live_touch)dm_live_touch_cancel_all(s->live_touch,0);pad_publish(s);}
+static void touch_timer_stop(game_app *s) {
+    if(s->touch_timer_fd<0)return;
+    ALooper *looper=ALooper_forThread();
+    if(looper)ALooper_removeFd(looper,s->touch_timer_fd);
+    close(s->touch_timer_fd);s->touch_timer_fd=-1;
+}
+static int touch_timer_tick(int fd,int events,void *data) {
+    (void)events;game_app *s=data;uint64_t expirations;
+    while(read(fd,&expirations,sizeof expirations)==(ssize_t)sizeof expirations){}
+    if(!s->live_touch||!live_touch_mode_enabled()){touch_timer_stop(s);return 1;}
+    live_touch_sync(s);
+    int needs=dm_live_touch_scheduler_step(s->live_touch,(int64_t)now_ns());
+    pad_publish(s);
+    if(!needs)touch_timer_stop(s);
+    return 1;
+}
+static void touch_timer_start(game_app *s) {
+    if(s->touch_timer_fd>=0||!s->live_touch||!live_touch_mode_enabled()||!dm_live_touch_needs_work(s->live_touch))return;
+    ALooper *looper=ALooper_forThread();if(!looper)return;
+    int fd=timerfd_create(CLOCK_MONOTONIC,TFD_NONBLOCK|TFD_CLOEXEC);if(fd<0){LOG("[android-touch] owner tick timer unavailable");return;}
+    struct itimerspec interval={{0,16000000},{0,16000000}};
+    if(timerfd_settime(fd,0,&interval,NULL)<0||ALooper_addFd(looper,fd,ALOOPER_POLL_CALLBACK,ALOOPER_EVENT_INPUT,touch_timer_tick,s)<0){close(fd);LOG("[android-touch] owner tick timer attach failed");return;}
+    s->touch_timer_fd=fd;
+    LOG("[android-touch] owner tick timer started");
+}
+static int live_touch_prepare(game_app *s,int w,int h,dm_live_touch_geometry *g) {
+    uint64_t output=front_game_res(1);
+    *g=dm_live_touch_geometry_for(w,h,(int)(uint32_t)output,(int)(uint32_t)(output>>32),dm_uiscreen_ingame());
+    if(!g->valid){dm_live_touch_cancel_all(s->live_touch,0);touch_timer_stop(s);pad_publish(s);return 0;}
+    dm_live_touch_resize(s->live_touch,g->logical_width,g->logical_height);
+    return 1;
+}
+static void ui_touch_cancel(void) { dm_ui_touch(3,0,0); }
 static int32_t touch_axis(jint value) {return value>DM_STICK_MAX?DM_STICK_MAX:value< -DM_STICK_MAX?-DM_STICK_MAX:value;}
 // 游戏内菜单的两项运行时开关。注意命名方向：Java 侧的 setDebugOverlay 是 native → Java（通知显隐），
 // 这两个是 Java → native（菜单点了要改状态），所以名字不同。
@@ -424,6 +487,9 @@ __attribute__((visibility("default"))) void Java_org_d2r_android_port_D2RActivit
     // Java 窗口触控和 AInputQueue 都在 Activity 的主 Looper；统一走 HLE 的短按锁存。
     // Java window touches and AInputQueue run on the Activity's main Looper; both use the HLE press-edge latch.
     s->touch_buttons=(uint64_t)buttons&0xffff;s->touch_lx=touch_axis(lx);s->touch_ly=touch_axis(ly);s->touch_rx=touch_axis(rx);s->touch_ry=touch_axis(ry);pad_publish(s);
+}
+__attribute__((visibility("default"))) jboolean Java_org_d2r_android_port_D2RActivity_isLiveTouchReady(JNIEnv *env,jclass klass) {
+    (void)env;(void)klass;return application&&application->live_touch&&live_touch_mode_enabled()?JNI_TRUE:JNI_FALSE;
 }
 static int32_t stick_value(float value) {if(value>1)value=1;if(value<-1)value=-1;return value>-.15f&&value<.15f?0:(int32_t)(value*DM_STICK_MAX);}
 static uint64_t pad_key(int key) {
@@ -479,16 +545,42 @@ static int input_ready(int fd,int events,void *data) {
             if(trigger!=s->trigger_buttons)LOG("[android-pad] trigger LT=%.2f RT=%.2f → buttons=%#llx (阈值 %.2f)",lt,rt,(unsigned long long)trigger,0.5);
             s->trigger_buttons=trigger;
             pad_publish(s);handled=1;
-        }else if(is_motion){int raw_action=AMotionEvent_getAction(event),action=raw_action&AMOTION_EVENT_ACTION_MASK;unsigned lifted=(raw_action&AMOTION_EVENT_ACTION_POINTER_INDEX_MASK)>>AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT;dm_touch touches[16];int count=0;
+        }else if(is_motion){int raw_action=AMotionEvent_getAction(event),action=raw_action&AMOTION_EVENT_ACTION_MASK;unsigned lifted=(raw_action&AMOTION_EVENT_ACTION_POINTER_INDEX_MASK)>>AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT;
             pthread_mutex_lock(&s->lock);ANativeWindow *window=s->window;int w=window?ANativeWindow_getWidth(window):1,h=window?ANativeWindow_getHeight(window):1;pthread_mutex_unlock(&s->lock);
             float gw=w,gh=w*9.f/16.f;if(gh>h){gh=h;gw=h*16.f/9.f;}float left=(w-gw)/2,top=(h-gh)/2;
-            if(action!=AMOTION_EVENT_ACTION_UP&&action!=AMOTION_EVENT_ACTION_CANCEL)for(unsigned i=0;i<AMotionEvent_getPointerCount(event);i++){if(action==AMOTION_EVENT_ACTION_POINTER_UP&&i==lifted)continue;float x=(AMotionEvent_getX(event,i)-left)/gw,y=(AMotionEvent_getY(event,i)-top)/gh;if(!(x>=0&&x<1&&y>=0&&y<1))continue;int32_t id=AMotionEvent_getPointerId(event,i);int slot=dm_touch_pointer_acquire(&s->touch_map,id);if(slot<0){if(!s->touch_map.overflow)LOG("[android-touch] pointer table full: dropping new id=%d (no alias)",id);continue;}if(count<16)touches[count++]=(dm_touch){slot,x,y};}
-            if(action==AMOTION_EVENT_ACTION_POINTER_UP)dm_touch_pointer_release(&s->touch_map,AMotionEvent_getPointerId(event,lifted));
-            if(action==AMOTION_EVENT_ACTION_UP||action==AMOTION_EVENT_ACTION_CANCEL)dm_touch_pointer_clear(&s->touch_map);
-            dm_touch_set(touches,count);
-            // 首画面阶段：点击可确认标题/提示；按下沿由 HLE 锁存，不丢短按。
-            // First-frame controls: taps confirm title/prompts; HLE latches press edges so short taps are retained.
-            if(action==AMOTION_EVENT_ACTION_DOWN)s->tap_a=1;else if(action==AMOTION_EVENT_ACTION_UP||action==AMOTION_EVENT_ACTION_CANCEL)s->tap_a=0;pad_publish(s);handled=1;
+            int live_on=s->live_touch&&live_touch_mode_enabled();dm_live_touch_geometry picture;
+            if(live_on){live_touch_sync(s);
+                if(!live_touch_prepare(s,w,h,&picture)){handled=1;}
+                else {gw=picture.width;gh=picture.height;left=picture.left;top=picture.top;
+                    unsigned count=AMotionEvent_getPointerCount(event);int32_t ids[16];float xs[16],ys[16];
+                if(count<=16){
+                    for(unsigned i=0;i<count;i++){ids[i]=AMotionEvent_getPointerId(event,i);xs[i]=AMotionEvent_getX(event,i);ys[i]=AMotionEvent_getY(event,i);}
+                    // 主菜单 / 选角 / 建角 / 读取画面不是局内：沿用原版前端的真实界面点击路（dm_ui_touch -> 鼠标消息），
+                    // 不用手柄 A 猜菜单焦点。局内才把触点送进 D2R 手势核心。
+                    // Front-end pages are not in a run: use the original front end's real UI click path (dm_ui_touch ->
+                    // mouse messages) instead of guessing menu focus with A. Only in-run touches enter the D2R gesture core.
+                    if(!dm_uiscreen_ingame()){
+                        unsigned at=action==AMOTION_EVENT_ACTION_MOVE?0:lifted;
+                        if(at<count){float nx=(xs[at]-left)/gw,ny=(ys[at]-top)/gh;if(nx<0)nx=0;if(nx>.999f)nx=.999f;if(ny<0)ny=0;if(ny>.999f)ny=.999f;
+                            int phase=(action==AMOTION_EVENT_ACTION_DOWN||action==AMOTION_EVENT_ACTION_POINTER_DOWN)?0:action==AMOTION_EVENT_ACTION_MOVE?1:(action==AMOTION_EVENT_ACTION_UP||action==AMOTION_EVENT_ACTION_POINTER_UP)?2:3;
+                            dm_ui_touch(phase,nx,ny);}
+                        handled=1;
+                    }else if(dm_live_touch_event(s->live_touch,action,action==AMOTION_EVENT_ACTION_MOVE?-1:(int)lifted,(int)count,ids,xs,ys,w,h,left,top,gw,gh,(int64_t)now_ns())){
+                        pad_publish(s);
+                        if(dm_live_touch_end_released_pulse(s->live_touch))pad_publish(s);
+                        handled=1;
+                    }else handled=1;
+                }else LOG("[android-touch] pointer count %u exceeds 16; refusing the event",count);
+                    if(dm_live_touch_needs_work(s->live_touch))touch_timer_start(s);else touch_timer_stop(s);
+                }
+            }else{
+                dm_touch touches[16];int count=0;
+                if(action!=AMOTION_EVENT_ACTION_UP&&action!=AMOTION_EVENT_ACTION_CANCEL)for(unsigned i=0;i<AMotionEvent_getPointerCount(event);i++){if(action==AMOTION_EVENT_ACTION_POINTER_UP&&i==lifted)continue;float x=(AMotionEvent_getX(event,i)-left)/gw,y=(AMotionEvent_getY(event,i)-top)/gh;if(!(x>=0&&x<1&&y>=0&&y<1))continue;int32_t id=AMotionEvent_getPointerId(event,i);int slot=dm_touch_pointer_acquire(&s->touch_map,id);if(slot<0){if(!s->touch_map.overflow)LOG("[android-touch] pointer table full: dropping new id=%d (no alias)",id);continue;}if(count<16)touches[count++]=(dm_touch){slot,x,y};}
+                if(action==AMOTION_EVENT_ACTION_POINTER_UP)dm_touch_pointer_release(&s->touch_map,AMotionEvent_getPointerId(event,lifted));
+                if(action==AMOTION_EVENT_ACTION_UP||action==AMOTION_EVENT_ACTION_CANCEL)dm_touch_pointer_clear(&s->touch_map);
+                dm_touch_set(touches,count);
+                if(action==AMOTION_EVENT_ACTION_DOWN)s->tap_a=1;else if(action==AMOTION_EVENT_ACTION_UP||action==AMOTION_EVENT_ACTION_CANCEL)s->tap_a=0;pad_publish(s);handled=1;
+            }
         }else if(AInputEvent_getType(event)==AINPUT_EVENT_TYPE_KEY){int key=AKeyEvent_getKeyCode(event),down=AKeyEvent_getAction(event)==AKEY_EVENT_ACTION_DOWN;uint64_t button=pad_key(key),move=key==AKEYCODE_W?DM_BTN_UP:key==AKEYCODE_A?DM_BTN_LEFT:key==AKEYCODE_S?DM_BTN_DOWN:key==AKEYCODE_D?DM_BTN_RIGHT:0;
             if(button){uint64_t before=s->pad_buttons;if(down)s->pad_buttons|=button;else s->pad_buttons&=~button;handled=1;
                 // 按键码这条路也要看得见（LB/RB/A/B 等走这里，部分手柄的方向键也走这里）：出问题时能直接对上
@@ -574,7 +666,7 @@ static void window_resized(ANativeActivity *a,ANativeWindow *w) {game_app *s=a->
     // slow (surface/swapchain rebuild, caches gone cold), so as on returning to the foreground the dynamic
     // resolution controller is told not to read it as GPU pressure.
     if(same_window&&atomic_load(&s->started)){void mtl_screen_attach(struct ANativeWindow *);mtl_screen_attach(w);dm_3d_scale_resumed();if(atomic_load(&s->activity_resumed))dm_gfx_suspend(0);LOG("[android] 窗口尺寸变化：表面与交换链已按新尺寸重建，进程与本局保留");}}
-static void window_destroyed(ANativeActivity *a,ANativeWindow *w) {game_app *s=a->instance;
+static void window_destroyed(ANativeActivity *a,ANativeWindow *w) {game_app *s=a->instance;dm_live_touch_cancel_sources(s->live_touch,(int64_t)now_ns(),ui_touch_cancel);touch_timer_stop(s);pad_publish(s);
     // 窗口销毁不再等于退出进程：安卓在 Activity 停止时必然销毁窗口，保留进程才能在回到前台时接着玩。
     // 退出前照 Mac/iOS 请游戏存盘（否则丢掉上一次提交之后的进度），再释放表面与交换链；真正退出走 destroyed()。
     // **顺序不能换**：请存盘在前、冻结客体时钟与挂起图形在后。反过来游戏线程会被挡在 NVN 入口外，那次自动存盘
@@ -592,8 +684,8 @@ static void window_destroyed(ANativeActivity *a,ANativeWindow *w) {game_app *s=a
     // last commit is lost), then release the surface and swapchain. A real exit goes through destroyed().
     if(atomic_load(&s->started)){settle_save();guest_clock_freeze_for(1,1);void mtl_screen_detach(void);mtl_screen_detach();LOG("[android] 窗口销毁：保留进程等待回到前台");}
     pthread_mutex_lock(&s->lock);if(s->window==w){s->window=NULL;ANativeWindow_release(w);}pthread_mutex_unlock(&s->lock);}
-static void input_created(ANativeActivity *a,AInputQueue *q) {game_app *s=a->instance;s->input=q;dm_touch_pointer_clear(&s->touch_map);AInputQueue_attachLooper(q,ALooper_forThread(),0,input_ready,s);}
-static void input_destroyed(ANativeActivity *a,AInputQueue *q) {game_app *s=a->instance;AInputQueue_detachLooper(q);s->input=NULL;dm_touch_pointer_clear(&s->touch_map);dm_touch_set(NULL,0);pad_clear(s);}
+static void input_created(ANativeActivity *a,AInputQueue *q) {game_app *s=a->instance;s->input=q;dm_touch_pointer_clear(&s->touch_map);if(!s->live_touch){s->live_touch=dm_live_touch_create(667,375);if(!s->live_touch)LOG("[android-touch] live D2R core allocation failed; using raw touch fallback");else LOG("[android-touch] live D2R core attached");}AInputQueue_attachLooper(q,ALooper_forThread(),0,input_ready,s);}
+static void input_destroyed(ANativeActivity *a,AInputQueue *q) {game_app *s=a->instance;AInputQueue_detachLooper(q);s->input=NULL;dm_live_touch_cancel_sources(s->live_touch,(int64_t)now_ns(),ui_touch_cancel);touch_timer_stop(s);dm_touch_pointer_clear(&s->touch_map);dm_touch_set(NULL,0);pad_clear(s);}
 // 注意 onPause 里**不**挂起图形（Mac 的最小化路径有这一步，安卓不能照抄）：安卓在停下来之后一定会销毁窗口，
 // 而"请游戏存盘"排在窗口销毁之前（见 window_destroyed）。图形一旦在这里挂起，游戏线程就被挡在 NVN 入口外，
 // 请求的那次自动存盘永远等不到提交 —— 真机上就是这样，日志里只剩一条"未存盘退出"的红字。真正的挂起由
@@ -611,8 +703,12 @@ static void input_destroyed(ANativeActivity *a,AInputQueue *q) {game_app *s=a->i
 // as GPU pressure and the internal 3D ratio is scaled down; ② lifting the guest clock freeze, pairing with the
 // freeze taken when going to the background.
 static void resumed(ANativeActivity *a) {game_app *s=a->instance;atomic_store(&s->activity_resumed,1);dm_android_performance_resume();if(atomic_load(&s->started)){dm_3d_scale_resumed();dm_gfx_suspend(0);guest_clock_freeze_for(1,0);dm_audio_suspend(0);dm_focus_set(1);}}
-static void paused(ANativeActivity *a) {game_app *s=a->instance;atomic_store(&s->activity_resumed,0);dm_touch_pointer_clear(&s->touch_map);dm_touch_set(NULL,0);pad_clear(s);if(atomic_load(&s->started)){dm_focus_set(3);dm_audio_suspend(1);}dm_android_performance_close();}
-static void destroyed(ANativeActivity *a) {game_app *s=a->instance;atomic_store(&s->debug_stop,1);dm_touch_pointer_clear(&s->touch_map);
+static void paused(ANativeActivity *a) {game_app *s=a->instance;atomic_store(&s->activity_resumed,0);dm_live_touch_cancel_sources(s->live_touch,(int64_t)now_ns(),ui_touch_cancel);touch_timer_stop(s);dm_touch_pointer_clear(&s->touch_map);dm_touch_set(NULL,0);pad_clear(s);if(atomic_load(&s->started)){dm_focus_set(3);dm_audio_suspend(1);}dm_android_performance_close();}
+static void focus_changed(ANativeActivity *a,int focused) {game_app *s=a->instance;if(focused)return;
+    dm_live_touch_cancel_sources(s->live_touch,(int64_t)now_ns(),ui_touch_cancel);touch_timer_stop(s);dm_touch_pointer_clear(&s->touch_map);dm_touch_set(NULL,0);
+    pad_publish(s);
+}
+static void destroyed(ANativeActivity *a) {game_app *s=a->instance;atomic_store(&s->debug_stop,1);dm_live_touch_cancel_sources(s->live_touch,(int64_t)now_ns(),ui_touch_cancel);touch_timer_stop(s);dm_touch_pointer_clear(&s->touch_map);
     // 请存盘只做一次：正常退出时 window_destroyed 一定先跑过（安卓在 Activity 停止时必然先销毁窗口），而且那时
     // 图形还没挂起、游戏跑得动，提交等得到。走到这里图形已经挂起，再请一次根本等不到提交，只会白等 3 秒再打一条
     // 假的红色报警（真机上正常退出就是这样多出一条红字）。所以只有窗口还在（window_destroyed 没跑过）时才在这里请。
@@ -623,20 +719,21 @@ static void destroyed(ANativeActivity *a) {game_app *s=a->instance;atomic_store(
     // Ask here only when the window is still present, i.e. window_destroyed never ran.
     pthread_mutex_lock(&s->lock);int window_present=s->window!=NULL;pthread_mutex_unlock(&s->lock);
     if(atomic_load(&s->started)){if(window_present)settle_save();dm_host_shutdown("Android activity destroyed");}
-    pthread_mutex_lock(&s->lock);s->stop=1;pthread_cond_signal(&s->ready);pthread_mutex_unlock(&s->lock);pthread_join(s->worker,NULL);if(s->debug_started)pthread_join(s->debug_thread,NULL);if(s->window)ANativeWindow_release(s->window);free(s);application=NULL;}
+    pthread_mutex_lock(&s->lock);s->stop=1;pthread_cond_signal(&s->ready);pthread_mutex_unlock(&s->lock);pthread_join(s->worker,NULL);if(s->debug_started)pthread_join(s->debug_thread,NULL);if(s->window)ANativeWindow_release(s->window);if(s->live_touch)dm_live_touch_destroy(s->live_touch);free(s);application=NULL;}
 __attribute__((visibility("default"))) void ANativeActivity_onCreate(ANativeActivity *a,void *saved,size_t bytes) {
     // NativeActivity 自行 dlopen，不登记 Java 类加载器的 native 库；显式注册文本与触控回调。
     // NativeActivity dlopens its library without Java class-loader native-library registration; explicitly register text and touch callbacks.
     jclass klass=(*a->env)->GetObjectClass(a->env,a->clazz);JNINativeMethod methods[]={
         {"onTextResult","(JLjava/lang/String;Z)V",(void*)Java_org_d2r_android_port_D2RActivity_onTextResult},
         {"onTouchPad","(JIIII)V",(void*)Java_org_d2r_android_port_D2RActivity_onTouchPad},
+        {"isLiveTouchReady","()Z",(void*)Java_org_d2r_android_port_D2RActivity_isLiveTouchReady},
         {"setOverlayEnabled","(Z)V",(void*)Java_org_d2r_android_port_D2RActivity_setOverlayEnabled},
         {"setQualityPreset","(I)V",(void*)Java_org_d2r_android_port_D2RActivity_setQualityPreset},
         {"setMenuOpen","(Z)V",(void*)Java_org_d2r_android_port_D2RActivity_setMenuOpen},
         {"setSkipSaveOnExit","(Z)V",(void*)Java_org_d2r_android_port_D2RActivity_setSkipSaveOnExit}
     };
     if((*a->env)->RegisterNatives(a->env,klass,methods,sizeof methods/sizeof methods[0])!=JNI_OK){(*a->env)->ExceptionDescribe(a->env);(*a->env)->ExceptionClear(a->env);ANativeActivity_finish(a);return;}(*a->env)->DeleteLocalRef(a->env,klass);
-    (void)saved;(void)bytes;game_app *s=calloc(1,sizeof *s);if(!s){ANativeActivity_finish(a);return;}s->activity=a;a->instance=s;application=s;dm_touch_pointer_clear(&s->touch_map);pthread_mutex_init(&s->lock,NULL);pthread_cond_init(&s->ready,NULL);
-    a->callbacks->onNativeWindowCreated=window_created;a->callbacks->onNativeWindowResized=window_resized;a->callbacks->onNativeWindowDestroyed=window_destroyed;a->callbacks->onInputQueueCreated=input_created;a->callbacks->onInputQueueDestroyed=input_destroyed;a->callbacks->onPause=paused;a->callbacks->onResume=resumed;a->callbacks->onDestroy=destroyed;
+    (void)saved;(void)bytes;game_app *s=calloc(1,sizeof *s);if(!s){ANativeActivity_finish(a);return;}s->touch_timer_fd=-1;s->activity=a;a->instance=s;application=s;dm_touch_pointer_clear(&s->touch_map);s->live_touch=dm_live_touch_create(667,375);if(s->live_touch)LOG("[android-touch] live D2R core created");else LOG("[android-touch] live D2R core unavailable; raw touch fallback");pthread_mutex_init(&s->lock,NULL);pthread_cond_init(&s->ready,NULL);
+    a->callbacks->onNativeWindowCreated=window_created;a->callbacks->onNativeWindowResized=window_resized;a->callbacks->onNativeWindowDestroyed=window_destroyed;a->callbacks->onInputQueueCreated=input_created;a->callbacks->onInputQueueDestroyed=input_destroyed;a->callbacks->onPause=paused;a->callbacks->onResume=resumed;a->callbacks->onWindowFocusChanged=focus_changed;a->callbacks->onDestroy=destroyed;
     ANativeActivity_setWindowFlags(a,AWINDOW_FLAG_FULLSCREEN|AWINDOW_FLAG_KEEP_SCREEN_ON,0);pthread_attr_t attr;pthread_attr_init(&attr);pthread_attr_setstacksize(&attr,64u<<20);int error=pthread_create(&s->worker,&attr,boot,s);pthread_attr_destroy(&attr);if(error)ANativeActivity_finish(a);
 }

@@ -423,15 +423,26 @@ public final class D2RActivity extends NativeActivity {
 
     private void updateTouchVisibility() {
         if (touchControls == null) return;
-        boolean value = controlsEnabled && activityResumed && hasWindowFocus() && textDialog == null && !physicalController;
+        boolean live = liveTouchReady();
+        boolean value = controlsEnabled && activityResumed && hasWindowFocus() && textDialog == null && !physicalController && !live;
         // 诊断构建：每次求值都打印。只打「状态翻转」时，恒为 false 的情况一行日志都不会留下，正是最难查的那种。
         // Diagnostic build: log every evaluation. Logging only transitions leaves the always-false case with no line at
         // all, which is exactly the case that is hardest to diagnose.
         Log.i("D2RAndroid", "[touch] evaluate=" + value + " (enabled=" + controlsEnabled + " resumed=" + activityResumed +
-            " focus=" + hasWindowFocus() + " dialog=" + (textDialog != null) + " gamepad=" + physicalController + ")");
+            " focus=" + hasWindowFocus() + " dialog=" + (textDialog != null) + " gamepad=" + physicalController +
+            " live=" + live + ")");
         touchVisible = value;
         touchControls.setVisible(value);
     }
+
+    // NativeActivity 的真实 AInputQueue 已接上原 D2R 手势核心时，旧的 Switch 按钮层让位；未接上则保留明确 fallback。
+    // When NativeActivity's real AInputQueue is connected to the original D2R gesture core, the legacy Switch-button
+    // overlay yields; if it is not connected, keep the explicit fallback usable.
+    private boolean liveTouchReady() {
+        try { return isLiveTouchReady(); }
+        catch (UnsatisfiedLinkError error) { return false; }
+    }
+    private native boolean isLiveTouchReady();
 
     // 手柄是否接入。只认真正能推的摇杆轴，避免把触屏、遥控器、系统注入的虚拟键盘也算成手柄。
     // Count only devices that actually expose stick axes, so touchscreens, remotes and virtual keyboards do not
