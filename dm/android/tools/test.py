@@ -47,7 +47,7 @@ if __name__ == "__main__":
         "gpu-driver-properties": [ROOT / "tests/gpu_driver_properties.c", native / "gpu_driver.c", "-landroid", "-llog", "-ldl", "-lm"],
         "vulkan-test": [ROOT / "tests/vulkan_test.c", native / "legacy_digest.c", native / "pending_ranges.c", native / "gpu_driver.c", ROOT.parent / "gfx/nvn/nvn_tex.c", ROOT.parent / "gfx/tex/nvn_deswizzle.c", "-I", ROOT.parent / "gfx/nvn/include", "-landroid", "-llog", "-ldl", "-lm"],
     }
-    run([ADB, "push", BUILD / "probe/libdmguest_probe.so", BUILD / "probe/probe.fixups.tsv", BUILD / "probe/probe.gates.tsv", DEVICE + "/"])
+    run([ADB, "push", BUILD / "probe/libdmguest_probe.so", BUILD / "probe/probe.fixups.tsv", BUILD / "probe/probe.gates.tsv", BUILD / "probe/probe.target", DEVICE + "/"])
     run([ADB, "shell", "mkdir", "-p", DEVICE + "/gpu-test-shaders"])
     run([ADB, "push", str(BUILD / "gpu-test-shaders") + "/.", DEVICE + "/gpu-test-shaders/"])
     for name, inputs in tests.items():
