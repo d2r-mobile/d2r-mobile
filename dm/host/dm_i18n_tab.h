@@ -387,4 +387,5 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru; } k_dm_i18n[] = {
     { "dmDoorRift", "大秘境", "Greater Rift", "Grieta superior", "Grieta mayor", "Великий рифт" },
     { "dmDoorRiftTown", "回城", "Return to Town", "Volver a la ciudad", "Volver a la ciudad", "Портал в город" },
     { "dmDoorBossRush", "Boss 连战", "Boss Rush", "Ronda de jefes", "Ronda de jefes", "Босс-раш" },
+    { "dmAndroidDiagnosticName", "D2R 诊断", "D2R Diagnostics", "D2R Diagnostics", "D2R Diagnostics", "D2R Diagnostics" },
 };
