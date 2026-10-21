@@ -175,6 +175,22 @@ target_include_directories(dm_live_touch_bind_tap_items_test PRIVATE native ../i
 target_compile_options(dm_live_touch_bind_tap_items_test PRIVATE -Wall -Wextra -Werror)
 add_test(NAME live_touch_bind_tap_items COMMAND dm_live_touch_bind_tap_items_test)
 set_tests_properties(live_touch_bind_tap_items PROPERTIES TIMEOUT 30)
+add_executable(dm_live_touch_glyph_test tests/live_touch_glyph_test.c
+    native/live_touch.c native/live_touch_glyph.c tests/touch_art_synthetic.c
+    ../ios/Sources/dm_touch_controls.c)
+target_link_libraries(dm_live_touch_glyph_test PRIVATE m)
+target_include_directories(dm_live_touch_glyph_test PRIVATE native ../ios/Sources ../host)
+target_compile_options(dm_live_touch_glyph_test PRIVATE -Wall -Wextra -Werror)
+add_test(NAME live_touch_glyph COMMAND dm_live_touch_glyph_test)
+set_tests_properties(live_touch_glyph PROPERTIES TIMEOUT 30)
+add_executable(dm_live_touch_glyph_race_test tests/live_touch_glyph_race_test.c
+    native/live_touch.c native/live_touch_glyph.c tests/touch_art_synthetic.c
+    ../ios/Sources/dm_touch_controls.c)
+target_link_libraries(dm_live_touch_glyph_race_test PRIVATE m Threads::Threads)
+target_include_directories(dm_live_touch_glyph_race_test PRIVATE native ../ios/Sources ../host)
+target_compile_options(dm_live_touch_glyph_race_test PRIVATE -Wall -Wextra -Werror)
+add_test(NAME live_touch_glyph_race COMMAND dm_live_touch_glyph_race_test)
+set_tests_properties(live_touch_glyph_race PROPERTIES TIMEOUT 30)
 # #35 shared guest skill snapshot bridge: parse/group/identity, Android safe
 # reader semantics, gate absent/present attach and scene/TTL fail-closed.
 add_executable(dm_skill_snapshot_test tests/skill_snapshot.c
@@ -794,7 +810,7 @@ if(ANDROID)
                 "${CMAKE_READELF}" "${CMAKE_OBJDUMP}" "$<TARGET_FILE:dm_android_app>"
             VERBATIM)
     endif()
-    foreach(target dm_android_probe dm_texture_test dm_nso_inspect dm_nso_test dm_image_test dm_runtime_test dm_system_patch_test dm_input_test dm_touch_adapter_test dm_live_touch_belt_test dm_live_touch_difficulty_test dm_live_touch_portal_test dm_live_touch_skill_empty_test dm_live_touch_bind_tap_test dm_live_touch_bind_tap_items_test dm_skill_snapshot_test dm_touch_bridge_test dm_touch_game_bridge_test dm_view_policy_test dm_input_policy_test dm_app_lifecycle_test dm_app_diagnostic_scene_test dm_app_present_policy_test dm_app_wsi_test dm_wsi_bridge_test dm_wsi_report_test dm_module_inspect dm_module_test dm_x18_patch_test dm_x18_control_test dm_x18_regions_test dm_image_code_test dm_artifact_inspect dm_artifact_test dm_romfs_test dm_sync_test dm_arbiter_test dm_thread_test dm_bootstrap_test dm_memory_test dm_mutex_test dm_exclusive_return_test)
+    foreach(target dm_android_probe dm_texture_test dm_nso_inspect dm_nso_test dm_image_test dm_runtime_test dm_system_patch_test dm_input_test dm_touch_adapter_test dm_live_touch_belt_test dm_live_touch_difficulty_test dm_live_touch_portal_test dm_live_touch_skill_empty_test dm_live_touch_bind_tap_test dm_live_touch_bind_tap_items_test dm_live_touch_glyph_test dm_live_touch_glyph_race_test dm_skill_snapshot_test dm_touch_bridge_test dm_touch_game_bridge_test dm_view_policy_test dm_input_policy_test dm_app_lifecycle_test dm_app_diagnostic_scene_test dm_app_present_policy_test dm_app_wsi_test dm_wsi_bridge_test dm_wsi_report_test dm_module_inspect dm_module_test dm_x18_patch_test dm_x18_control_test dm_x18_regions_test dm_image_code_test dm_artifact_inspect dm_artifact_test dm_romfs_test dm_sync_test dm_arbiter_test dm_thread_test dm_bootstrap_test dm_memory_test dm_mutex_test dm_exclusive_return_test)
         target_link_options(${target} PRIVATE "-Wl,-z,max-page-size=16384")
     endforeach()
     foreach(target dm_gate_test dm_gate_vectors)
