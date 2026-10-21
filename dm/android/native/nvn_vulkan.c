@@ -113,6 +113,19 @@ static int snapshot_heap_api_available(void) {
     return 0;
 #endif
 }
+// 客体基线读取：先在堆权限租约内直接复制（一次 tryrdlock + memcpy），租约不覆盖或拿不到时再走
+// process_vm_readv 安全读取。小读取每帧上百次，系统调用本身就是开销的大头。目的缓冲区都归调用方独占。
+// Guest baseline read: copy directly under the heap permission lease first (one tryrdlock + memcpy) and fall back
+// to the process_vm_readv safe read when the lease does not cover the range. Small reads run hundreds of times per
+// frame, where the syscall itself is most of the cost. Destinations are always owned by the caller.
+static int guest_baseline_read(uintptr_t address,void *destination,uint64_t size) {
+    if(snapshot_heap_api_available()&&size<=SIZE_MAX){
+        int copied=dm_android_guest_heap_copy_owned(address,destination,(size_t)size);
+        if(copied!=0&&copied!=1)die("Vulkan guest heap copy contract: result=%d",copied);
+        if(copied)return 0;
+    }
+    return dm_android_read_memory(address,destination,size);
+}
 typedef struct pool_range { const uint8_t *base; uint64_t size; struct pool_range *next; } pool_range;
 typedef struct post_op {
     int kind; volatile uint32_t *event; uint32_t mode, value;
@@ -795,7 +808,7 @@ static int snapshot_read(uintptr_t address, void *destination, uint64_t size) {
     // 按命令顺序覆盖尚未发布的复制结果；客体内存仍到提交完成时才改变。
     // Overlay pending copy results in command order; guest memory still changes only when submission completes.
     if(!async_read_known_full_copy(address,destination,size)){
-        if(dm_android_read_memory(address,destination,size))return -1;
+        if(guest_baseline_read(address,destination,size))return -1;
         async_overlay_copies(address,destination,size);
     }
     snapshot_read_account(size);return 0;
@@ -817,8 +830,9 @@ static int snapshot_read_owned(uintptr_t address,const vk_buffer *destination,ui
         owned_snapshot_stats.known_calls++;owned_snapshot_stats.known_bytes+=size;
     }else{
         int copied=0;
-        if(size<=65536)owned_snapshot_stats.small_fallback++;
-        else if(!snapshot_heap_api_available())owned_snapshot_stats.absent_fallback++;
+        // 小读取同样先走堆租约；small_fallback 现在只计租约未覆盖的小读取。
+        // Small reads also try the heap lease first; small_fallback now counts only small reads the lease did not cover.
+        if(!snapshot_heap_api_available())owned_snapshot_stats.absent_fallback++;
         else{
             uint64_t started=snapshot_diagnostic_clock();
             copied=dm_android_guest_heap_copy_owned(address,destination->mapped,(size_t)size);
@@ -826,7 +840,7 @@ static int snapshot_read_owned(uintptr_t address,const vk_buffer *destination,ui
             if(copied!=0&&copied!=1)die("Vulkan owned heap copy contract: result=%d",copied);
             if(copied){owned_snapshot_stats.heap_calls++;owned_snapshot_stats.heap_bytes+=size;
                 if(started&&ended>=started)owned_snapshot_stats.heap_valid_wall_ns+=ended-started;else owned_snapshot_stats.heap_clock_unavailable++;
-            }else owned_snapshot_stats.refused_fallback++;
+            }else if(size<=65536)owned_snapshot_stats.small_fallback++;else owned_snapshot_stats.refused_fallback++;
         }
         if(!copied){owned_snapshot_stats.safe_calls++;owned_snapshot_stats.safe_requested_bytes+=size;
             if(dm_android_read_memory(address,destination->mapped,size)){owned_snapshot_stats.safe_errors++;return -1;}}
