@@ -26,6 +26,7 @@ ssize_t pwrite(int, const void *, size_t, off_t);
 
 struct dm_flags g_flag; uint64_t g_t0_ns; uint64_t now_ns(void) { return 0; }   // 日志时间戳与读路径的桩（写路径不用） | stubs for log timestamps and the read path (not used by the write path)
 void dm_prof_add(int id, uint64_t ns, uint64_t b) { (void)id; (void)ns; (void)b; } void dm_guest_write_prepare(void *a, size_t n) { (void)a; (void)n; }
+#include "../guest_snapshot_guard.inc"
 void dm_fs_save_poison(int e);
 extern int g_nfail, g_lasterr;                                        // 前端通知计数（t_fs_stub.c 的强实现替掉 hle_fs.c 的弱实现） | front-end notification count (the strong implementation in t_fs_stub.c replaces the weak one in hle_fs.c)
 static int g_mode, g_calls;                   // 0 照常写；1 一律返回 0；2 第一次只写 3 字节 | 0 write normally; 1 always return 0; 2 write only 3 bytes the first time

@@ -121,6 +121,8 @@ void dm_guest_write_prep_register(void (*fn)(void *addr, size_t len)) {
 // Called before the host itself writes guest memory (read() straight into a guest buffer, etc.): for a system call a write-protected page does not trigger a page fault but returns EFAULT
 void dm_guest_write_prepare(void *addr, size_t len) { for (int i = 0; i < g_nwrite_prep; i++) g_write_prep[i](addr, len); }
 
+#include "guest_snapshot_guard.inc"
+
 // 诊断模块（diag.c 的探针）与线程现场（hle_thread.c）由各自注册进来：单测只链本文件时不依赖它们
 // The diagnostics module (the probes in diag.c) and the thread state dump (hle_thread.c) each register themselves here: a unit test that links only this file does not depend on them
 static int (*g_trap_hook)(ucontext_t *uc);
