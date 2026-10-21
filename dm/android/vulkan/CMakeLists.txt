@@ -135,6 +135,23 @@ else()
     set_tests_properties(vulkan_indexed_textured_fail PROPERTIES TIMEOUT 60)
 endif()
 
+# #117 应用诊断场景的 GPU 交叉验证：同一自有场景走已验收 #115 接口，宿主 GPU 上核对 20 个检查点。
+# #117 GPU cross-check of the app diagnostic scene: the same owned scene through the accepted #115 API, verifying
+# the 20 probes on the host GPU.
+add_executable(dm_vulkan_app_scene_test ../tests/vulkan_app_diagnostic_scene.c)
+target_link_libraries(dm_vulkan_app_scene_test PRIVATE dm_android_vk dm_android_app_scene)
+target_compile_options(dm_vulkan_app_scene_test PRIVATE -Wall -Wextra -Werror)
+add_dependencies(dm_vulkan_app_scene_test dm_vk_indexed_shaders)
+if(ANDROID)
+    target_link_options(dm_vulkan_app_scene_test PRIVATE "-Wl,-z,max-page-size=16384")
+else()
+    add_test(NAME vulkan_app_diagnostic_scene COMMAND dm_vulkan_app_scene_test ${indexed_textured_vert} ${indexed_textured_frag})
+    set_tests_properties(vulkan_app_diagnostic_scene PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77)
+    if(APPLE AND DM_MOLTENVK_ICD)
+        set_tests_properties(vulkan_app_diagnostic_scene PROPERTIES ENVIRONMENT "VK_DRIVER_FILES=${DM_MOLTENVK_ICD}")
+    endif()
+endif()
+
 add_executable(dm_vulkan_test ../tests/vulkan.c)
 target_link_libraries(dm_vulkan_test PRIVATE dm_android_vk)
 target_compile_options(dm_vulkan_test PRIVATE -Wall -Wextra -Werror)

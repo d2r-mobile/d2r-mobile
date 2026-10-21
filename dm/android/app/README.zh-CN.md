@@ -4,7 +4,35 @@ English: [README.md](README.md)
 
 本 NativeActivity 开发 App **只打包自有合成样例**，不是可玩的 D2R。APK 中没有游戏数据或 Switch 密钥。包名 `org.d2rmobile.android.diagnostic`，仅 ARM64，最低 API 29、目标 API 35，不申请网络或共享存储权限。
 
-启动时读取合成产物、重绑定宿主门、映射 RX/R/RW 页面，尝试在实际 App 进程中完成原生客体 TLS 往返；日志标签为 `D2R-Diagnostic`。窗口建立后执行已测试的 Vulkan 片段坐标图案，读回并复制到 Android 原生窗口。这是单帧工程诊断，不是优化后的游戏呈现器。暂停／恢复记录日志，低内存时释放 GPU 上下文，重绘时重建。不包含后台渲染循环、游戏资源导入、存档、游戏操作或音频。
+启动时读取合成产物、重绑定宿主门、映射 RX/R/RW 页面，尝试在实际 App 进程中完成原生客体 TLS 往返；日志标签为 `D2R-Diagnostic`。窗口建立且生命周期就绪后，执行自有索引纹理场景（#117，见下），读回并复制到 Android 原生窗口。这是单帧工程诊断，不是优化后的游戏呈现器。暂停／恢复记录日志，低内存时释放 GPU 上下文，重绘时重建。不包含后台渲染循环、游戏资源导入、存档、游戏操作或音频。
+
+## 自有索引纹理场景（#117）
+
+`app/diagnostic_scene.c` 持有整个场景：一张非均匀 4×4 RGBA8 纹理（16 个两两不同的 texel）、四个 NDC ±0.75 且 UV 0..1 的顶点、六个 `uint16` 索引。`app/native.c` 把这些顶点复制进已验收 #115 调用 `dm_vk_draw_indexed_textured_offscreen()` 要求的固定 16 字节布局，渲染 256×256 RGBA8 读回。打包的着色器只有 `indexed_textured.vert.spv` 与 `indexed_textured.frag.spv`，由 `app/build.sh` 从 `android/arm64-v8a/vulkan/` 精确取这两份，其他着色器资源不进入 APK。
+
+验证用的就是同一份场景数据：`dm_diag_scene_check_pixels()` 按文档几何推算 20 个检查点（每个 texel 的中心加四个清屏角点）。不符时记录首个坏点的期望／实测 RGBA 并且不呈现该帧，因此错误画面表现为日志失败，而不是一张看起来合理的窗口图像。
+
+绘制受现有生命周期控制器约束。`dm_diag_scene_ready()` 要求状态为 `owned-diagnostic` 且控制器当前持有的正是该 Surface，所以 Surface 尚未建立、暂停、有待排空工作的停止中、已停止、`failed`、陈旧窗口令牌以及停止后的迟到回调都不会绘制；窗口路径还会再次核对就绪与已暂存的着色器资源。
+
+`app/present_policy.c` 是呈现接缝：要求 `WINDOW_FORMAT_RGBA_8888`、`stride >= width`、容量覆盖精确的 `width*height*4` 字节，并用 64 位尺寸运算。它只清零可见行区，按居中复制（窗口更小时从源居中裁剪），行距填充既不读也不写；被拒绝的复制写入目标零字节。资源复制、Vulkan 创建、绘制与窗口加锁失败都按实际错误码记录；读回缓冲在所有路径释放，Vulkan 上下文只由停止／低内存销毁。
+
+随接入新增的测试：
+
+| 测试 | 独立验证内容 |
+|---|---|
+| `app_diagnostic_scene` | 场景字面值（16 个不同 texel、±0.75 几何、固定索引）与检查器（对照测试自己算出的画布）；改一个 texel、脏一个角点都能定位；容量少一字节／空指针／零尺寸被拒绝；用真实生命周期控制器覆盖暂停、恢复、Surface 丢失、有待排空工作的停止、停止与迟到回调的绘制抑制。 |
+| `app_present_policy` | 格式／行距／容量／溢出边界，所有拒绝路径零写入，居中放置、居中裁剪，改尺寸时行距填充不被触碰。 |
+| `vulkan_app_diagnostic_scene` | 同一自有场景走已验收 #115 接口在宿主 Vulkan（本机 MoltenVK）上渲染，核对 20 个检查点，再做改 texel 负控，必须在对应检查点失败。 |
+
+```sh
+python3 dm/i18n/scan_literals.py
+bash dm/android/test.sh
+PATH=/opt/homebrew/bin:$PATH bash dm/android/app/build.sh
+bash ci/scripts/ci.sh host
+DM_CI_ALLOW_ARM_CROSS=1 bash ci/scripts/ci.sh android
+```
+
+未验证：未在手机上安装或启动，未验证真机 `ANativeWindow_lock` 的格式／行距行为，也未做 Adreno 或 Android Vulkan 驱动验证；无 swapchain、帧调度或游戏呈现器。下面的 2026-10-17 检查点属于更早的片段坐标图案，当前 APK 未重新安装，也未在任何设备上观察过。
 
 ## 生命周期所有权
 

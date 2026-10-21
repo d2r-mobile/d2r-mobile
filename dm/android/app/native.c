@@ -1,9 +1,12 @@
-// NativeActivity 工程诊断：APK 域内合成 ARM64 门往返与 Vulkan 图案，窗口只在回调期间借用，不运行游戏。
-// NativeActivity engineering diagnostics: synthetic ARM64 gates / Vulkan pattern inside the APK domain, borrow windows only during callbacks, never run the game.
+// NativeActivity 工程诊断：APK 域内合成 ARM64 门往返与自有索引纹理 Vulkan 场景，窗口只在就绪回调期间借用，不运行游戏。
+// NativeActivity engineering diagnostics: synthetic ARM64 gates plus an owned indexed-textured Vulkan scene inside the APK domain, borrowing windows only while the lifecycle is ready; never runs the game.
 #include "../artifact.h"
 #include "../vulkan/vk_host.h"
+#include "../vulkan/vk_indexed_textured.h"
+#include "diagnostic_scene.h"
 #include "input_policy.h"
 #include "lifecycle.h"
+#include "present_policy.h"
 #include "touch_bridge.h"
 #include "view_policy.h"
 #include <android/asset_manager.h>
@@ -49,9 +52,9 @@ static int host_load(void*ctx){
     int failed=native_smoke(s->activity);
     LOG("synthetic APK-process ARM64 gate smoke=%s",failed?"FAIL":"PASS");
     if(failed)return 1;
-    if(copy_asset(s->activity,"fullscreen.vert.spv",s->vertex)||
-       copy_asset(s->activity,"pixels.frag.spv",s->fragment)){
-        LOG("shader asset copy failed");return 1;
+    if(copy_asset(s->activity,"indexed_textured.vert.spv",s->vertex)||
+       copy_asset(s->activity,"indexed_textured.frag.spv",s->fragment)){
+        LOG("indexed textured shader asset copy failed");return 1;
     }
     return 0;
 }
@@ -134,41 +137,70 @@ static void touch_resize_window(app_state*s,ANativeWindow*window){
     s->touch_width_pt=width_pt;s->touch_height_pt=height_pt;
     touch_consume(s,"resize");
 }
-static void draw(ANativeActivity*a,ANativeWindow*window){
-    app_state*s=a->instance;if(!s)return;
-    if(!s->vk.device){VkResult r=dm_vk_create(&s->vk);if(r!=VK_SUCCESS){LOG("Vulkan create failed: %d",r);return;}}
-    uint8_t*pixels=malloc(256u*256u*4u);if(!pixels)return;
-    dm_vk_pixels target={.width=256,.height=256,.bytes=pixels,.capacity=256u*256u*4u};
-    VkResult r=dm_vk_draw_pixels(&s->vk,s->vertex,s->fragment,&target);
-    if(r!=VK_SUCCESS){LOG("Vulkan draw failed: %d",r);free(pixels);return;}
-    for(unsigned y=0;y<256;y++)for(unsigned x=0;x<256;x++){
-        const uint8_t*p=pixels+(y*256+x)*4;
-        if(p[0]!=(x&15u)*17||p[1]!=(y&15u)*17||p[2]!=((x^y)&1u)*255||p[3]!=255){
-            LOG("Vulkan pixel mismatch at %u,%u",x,y);free(pixels);return;}
+// 诊断读回目标尺寸；窗口缓冲尺寸与它无关（居中裁剪由 app/present_policy.c 决定）。
+// Diagnostic readback extent; the window buffer size is independent and handled by the centred crop in app/present_policy.c.
+#define DM_DIAG_TARGET_EXTENT 256u
+static void draw_diagnostic(ANativeActivity*a,ANativeWindow*window){
+    app_state*s=a->instance;if(!s||!window)return;
+    if(!dm_diag_scene_ready(s->lifecycle,window)){
+        LOG("graphics draw suppressed: state=%s owned-surface=%s",
+            dm_app_lifecycle_state_name(dm_app_lifecycle_state(s->lifecycle)),
+            dm_app_lifecycle_surface(s->lifecycle)?"yes":"no");
+        return;
+    }
+    if(!s->vertex[0]||!s->fragment[0]){LOG("graphics draw skipped: no staged shader assets");return;}
+    if(!s->vk.device){VkResult created=dm_vk_create(&s->vk);if(created!=VK_SUCCESS){LOG("Vulkan create failed: %d",created);return;}}
+    const size_t target_bytes=(size_t)DM_DIAG_TARGET_EXTENT*DM_DIAG_TARGET_EXTENT*4u;
+    uint8_t*pixels=malloc(target_bytes);
+    if(!pixels){LOG("graphics target allocation failed: %zu bytes",target_bytes);return;}
+    dm_vk_pixels target={.width=DM_DIAG_TARGET_EXTENT,.height=DM_DIAG_TARGET_EXTENT,.bytes=pixels,.capacity=target_bytes};
+    const dm_diag_scene*scene=dm_diag_scene_owned();
+    // 场景顶点复制进固定 16 字节布局；纹理与索引是借用输入，API 同步复制，不保留指针。
+    // Scene vertices are copied into the fixed 16-byte layout; texture and indices are borrowed and copied synchronously by the API.
+    dm_vk_indexed_textured_vertex vertices[DM_DIAG_SCENE_VERTEX_COUNT];
+    for(uint32_t i=0;i<DM_DIAG_SCENE_VERTEX_COUNT;i++){
+        vertices[i].position[0]=scene->vertices[i].position[0];
+        vertices[i].position[1]=scene->vertices[i].position[1];
+        vertices[i].uv[0]=scene->vertices[i].uv[0];
+        vertices[i].uv[1]=scene->vertices[i].uv[1];
+    }
+    dm_vk_indexed_textured_draw request={.vertices=vertices,.vertex_count=scene->vertex_count,
+        .vertex_stride=DM_VK_INDEXED_TEXTURED_VERTEX_STRIDE,.indices=scene->indices,.index_count=scene->index_count,
+        .texture_pixels=scene->texture,.texture_size=scene->texture_size,
+        .texture_width=scene->texture_width,.texture_height=scene->texture_height,
+        .vertex_spv=s->vertex,.fragment_spv=s->fragment};
+    VkResult r=dm_vk_draw_indexed_textured_offscreen(&s->vk,&request,&target);
+    if(r!=VK_SUCCESS){LOG("indexed textured draw failed: %d",r);free(pixels);return;}
+    dm_diag_scene_mismatch mismatch;
+    uint32_t probes=dm_diag_scene_check_pixels(scene,pixels,target.width,target.height,target.capacity,&mismatch);
+    if(!probes){
+        if(mismatch.kind==DM_DIAG_SCENE_MISMATCH_PIXEL)
+            LOG("indexed textured pixel-check=FAIL at %u,%u expected=%u,%u,%u,%u observed=%u,%u,%u,%u",
+                mismatch.x,mismatch.y,mismatch.expected[0],mismatch.expected[1],mismatch.expected[2],mismatch.expected[3],
+                mismatch.observed[0],mismatch.observed[1],mismatch.observed[2],mismatch.observed[3]);
+        else LOG("indexed textured pixel-check=FAIL: invalid readback canvas");
+        free(pixels);return;
     }
     int window_width=ANativeWindow_getWidth(window),window_height=ANativeWindow_getHeight(window);
     if(window_width>0&&window_height>0)
         (void)dm_view_policy_set_view(&s->view,(uint32_t)window_width,(uint32_t)window_height,s->density);
     ANativeWindow_Buffer buffer;
-    if(!ANativeWindow_lock(window,&buffer,NULL)){
-        int copied=0;
-        if(buffer.bits&&buffer.format==WINDOW_FORMAT_RGBA_8888&&buffer.width>0&&
-           buffer.height>0&&buffer.stride>=buffer.width){
-            (void)dm_view_policy_set_buffer(&s->view,buffer.width,buffer.height);
-            for(uint32_t y=0;y<(uint32_t)buffer.height;y++)
-                memset((uint8_t*)buffer.bits+(size_t)y*buffer.stride*4,0,(size_t)buffer.width*4);
-            uint32_t copy_w=buffer.width<256?buffer.width:256;
-            uint32_t copy_h=buffer.height<256?buffer.height:256;
-            uint32_t origin_x=(buffer.width-copy_w)/2,origin_y=(buffer.height-copy_h)/2;
-            for(uint32_t y=0;y<copy_h;y++)
-                memcpy((uint8_t*)buffer.bits+((size_t)(origin_y+y)*buffer.stride+origin_x)*4,
-                       pixels+(size_t)y*256*4,(size_t)copy_w*4);
-            copied=1;
-        }else LOG("unexpected window buffer");
-        if(ANativeWindow_unlockAndPost(window))LOG("window post failed");
-        else if(copied)LOG("Vulkan graphics diagnostic: 256x256 pixel-check=PASS, CPU-readback window post=PASS (%dx%d view, %dx%d buffer); game presenter not implemented",
-            window_width,window_height,buffer.width,buffer.height);
-    }else LOG("window lock failed");
+    if(ANativeWindow_lock(window,&buffer,NULL)){LOG("window lock failed");free(pixels);return;}
+    dm_present_source source={.pixels=pixels,.width=target.width,.height=target.height,.capacity=target.capacity};
+    dm_present_target present={.bits=buffer.bits,.width=buffer.width>0?(uint32_t)buffer.width:0,
+        .height=buffer.height>0?(uint32_t)buffer.height:0,
+        .stride=buffer.stride>0?(uint32_t)buffer.stride:0,
+        .format_rgba8888=buffer.format==WINDOW_FORMAT_RGBA_8888};
+    dm_present_rect copied;
+    int presented=dm_present_copy(&source,&present,&copied);
+    if(!presented)
+        LOG("window copy rejected: format=%d %dx%d stride=%d; readback kept out of the window",
+            (int)buffer.format,(int)buffer.width,(int)buffer.height,(int)buffer.stride);
+    else (void)dm_view_policy_set_buffer(&s->view,present.width,present.height);
+    if(ANativeWindow_unlockAndPost(window))LOG("window post failed");
+    else if(presented)LOG("indexed textured diagnostic: %ux%u pixel-check=PASS (%u probes), copy %ux%u at %u,%u into %dx%d view / %dx%d buffer; game presenter not implemented",
+        target.width,target.height,probes,copied.width,copied.height,copied.x,copied.y,
+        window_width,window_height,(int)buffer.width,(int)buffer.height);
     free(pixels);
 }
 static void stop_input_timer(app_state*s){
@@ -327,7 +359,7 @@ static void window_ready(ANativeActivity*a,ANativeWindow*window){
     s->window=window;
     touch_resize_window(s,window);
     update_touch_state(s);
-    if(dm_app_lifecycle_state(s->lifecycle)==DM_APP_STATE_OWNED_DIAGNOSTIC)draw(a,window);
+    if(dm_diag_scene_ready(s->lifecycle,window))draw_diagnostic(a,window);
 }
 static void window_destroyed(ANativeActivity*a,ANativeWindow*window){
     app_state*s=a->instance;if(!s||!s->lifecycle)return;
