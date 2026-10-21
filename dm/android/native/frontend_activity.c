@@ -14,6 +14,7 @@
 #include "game_output.h"
 #include "touch_pointer_map.h"
 #include "live_touch.h"
+#include "live_touch_items.h"
 #include "live_touch_geometry.h"
 #include "live_touch_provider.h"
 #include "live_touch_readiness.h"
@@ -57,6 +58,7 @@ typedef struct {
     uint64_t pad_buttons,hat_buttons,trigger_buttons,move_keys;int tap_a;int32_t lx,ly,rx,ry;
     uint64_t touch_buttons;int32_t touch_lx,touch_ly,touch_rx,touch_ry;
     dm_live_touch *live_touch;
+    dm_live_touch_items *live_items;
     dm_live_touch_provider live_provider;
     dm_live_touch_readiness live_readiness;
     int live_provider_ready;
@@ -70,6 +72,8 @@ typedef struct {
 static game_app *application;
 static void touch_timer_stop(game_app *s);
 static void ui_touch_cancel(void);
+static void live_touch_cancel_sources_all(game_app *s);
+static void live_touch_items_ensure(game_app *s);
 static _Atomic int display_hz;
 // 运行时可切的调试浮层（游戏内菜单的「帧率显示」）：UI 线程写，调试线程每拍读。启动初值见 debug_overlay 的读取处。
 // Runtime-togglable debug overlay (the in-game menu's "frame rate display"): the UI thread writes it, the debug
@@ -460,7 +464,7 @@ static void live_touch_sync(game_app *s) {
         memset(&s->live_observation,0,sizeof s->live_observation);
         // Unknown identity is a real caller boundary: cancel the original UI
         // phase-3 press, the live core and the legacy raw pointer ownership.
-        dm_live_touch_cancel_sources(s->live_touch,(int64_t)now_ns(),ui_touch_cancel);
+        live_touch_cancel_sources_all(s);
         dm_touch_pointer_clear(&s->touch_map);
         dm_touch_set(NULL,0);
         touch_timer_stop(s);
@@ -477,6 +481,10 @@ static void live_touch_sync(game_app *s) {
     dm_live_touch_set_context(s->live_touch,navigation,mask,
                               snapshot.scene_epoch,snapshot.world_epoch,
                               snapshot.ui_identity,0);
+    live_touch_items_ensure(s);
+    if(s->live_items)
+        (void)dm_live_touch_items_set_context(s->live_items,snapshot.scene_epoch,
+            snapshot.world_epoch,snapshot.ui_identity,navigation);
     { dm_tg_snapshot skill_snapshot; int have_skill=dm_touch_game_snapshot(&skill_snapshot);
       dm_live_touch_set_skill_snapshot(s->live_touch,have_skill?&skill_snapshot:NULL,
                                        snapshot.scene_epoch,snapshot.world_epoch);
@@ -493,6 +501,49 @@ static void belt_expand_host(void *context, int on) { (void)context; dm_belt_exp
 static void belt_use_host(void *context, int col, int row) { (void)context; dm_belt_use(col, row); }
 static void request_players_host(void *context, int players) { (void)context; dm_hud_request_players(players); }
 static void request_portal_host(void *context) { (void)context; void dm_tp_request(void); dm_tp_request(); }
+static unsigned item_query_host(void *context, float nx, float ny) { (void)context; return dm_ui_item_query(nx, ny); }
+static int item_result_host(void *context, unsigned seq) { (void)context; return dm_ui_item_result(seq); }
+static unsigned drop_query_host(void *context, float nx, float ny_lifted, float ny_finger) { (void)context; return dm_ui_drop_query(nx, ny_lifted, ny_finger); }
+static int drop_result_host(void *context, unsigned seq) { (void)context; return dm_ui_item_result(seq); }
+static int drop_last_host(void *context) { (void)context; return dm_ui_drop_last(); }
+static int drop_point_host(void *context, float *nx, float *ny) { (void)context; return dm_ui_drop_point(nx, ny); }
+static int origin_point_host(void *context, float *nx, float *ny) { (void)context; return dm_ui_origin_point(nx, ny); }
+static void item_tap_host(void *context) { (void)context; dm_ui_item_tap(); }
+static void identify_host(void *context) { (void)context; dm_ui_identify_hovered(); }
+static void use_host(void *context) { (void)context; dm_ui_use_item(); }
+static void long_press_host(void *context) { (void)context; dm_ui_long_press(); }
+static void tab_go_host(void *context) { (void)context; dm_ui_tab_go(); }
+static void stack_take_host(void *context) { (void)context; dm_stash_take(1); }
+static void mouse_click_host(void *context, float nx, float ny) { (void)context; dm_ui_touch(0, nx, ny); dm_ui_touch(2, nx, ny); }
+static void live_touch_items_ensure(game_app *s) {
+    if (!s->live_touch || s->live_items) return;
+    dm_live_touch_items_host host = {s, item_query_host, item_result_host, drop_query_host,
+                                     drop_result_host, drop_last_host, drop_point_host,
+                                     origin_point_host};
+    s->live_items = dm_live_touch_items_create(s->live_touch, &host);
+    if (!s->live_items) LOG("[android-touch] live item routing allocation failed");
+}
+static void live_touch_cancel_sources_all(game_app *s) {
+    if (!s) return;
+    if (s->live_items) dm_live_touch_items_cancel(s->live_items);
+    dm_live_touch_cancel_sources(s->live_touch, (int64_t)now_ns(), ui_touch_cancel);
+}
+static void live_cursor_set(void *context,float x,float y,float w,float h){(void)context;dm_cursor_set_screen(x,y,w,h);}
+static void live_cursor_clear(void *context){(void)context;dm_cursor_clear();}
+static void live_touch_cursor_update(game_app *s){
+    if(!s->live_touch)return;
+    int live_on=live_touch_mode_enabled()&&s->live_provider_available;
+    dm_live_touch_cursor_publish(s->live_touch,live_on,live_cursor_set,live_cursor_clear,NULL);
+}
+static void live_touch_consume_items(game_app *s) {
+    if (!s->live_items || !s->live_touch || !live_touch_mode_enabled() || !s->live_provider_available) return;
+    dm_live_touch_items_actions actions = {s, item_tap_host, identify_host, use_host,
+                                           long_press_host, tab_go_host, stack_take_host,
+                                           mouse_click_host};
+    (void)dm_live_touch_items_consume(s->live_items,
+        s->live_observation.scene_epoch, s->live_observation.world_epoch,
+        s->live_observation.ui_identity, &actions);
+}
 static void begin_skill_bind_host(void *context, uint64_t key) {
     (void)context;
     dm_ui_bind_begin(key);
@@ -548,9 +599,12 @@ static void pad_publish(game_app *s) {
     if(!x&&!y){x=s->touch_lx;y=s->touch_ly;}
     int32_t rx=s->rx,ry=s->ry;if(!rx&&!ry&&live_on){int32_t lx=dm_live_touch_rx(s->live_touch),ly=dm_live_touch_ry(s->live_touch);if(lx||ly){rx=lx;ry=ly;}}
     if(!rx&&!ry){rx=s->touch_rx;ry=s->touch_ry;}
+    if(s->live_touch){
+        live_touch_cursor_update(s);
+    }
     dm_pad_set(s->pad_buttons|s->hat_buttons|s->trigger_buttons|s->touch_buttons|live_buttons|(s->tap_a?DM_BTN_A:0),x,y,rx,ry);
 }
-static void pad_clear(game_app *s) {s->pad_buttons=s->hat_buttons=s->trigger_buttons=s->move_keys=s->touch_buttons=0;s->tap_a=0;s->lx=s->ly=s->rx=s->ry=s->touch_lx=s->touch_ly=s->touch_rx=s->touch_ry=0;if(s->live_touch)dm_live_touch_cancel_all(s->live_touch,0);pad_publish(s);}
+static void pad_clear(game_app *s) {s->pad_buttons=s->hat_buttons=s->trigger_buttons=s->move_keys=s->touch_buttons=0;s->tap_a=0;s->lx=s->ly=s->rx=s->ry=s->touch_lx=s->touch_ly=s->touch_rx=s->touch_ry=0;if(s->live_items)dm_live_touch_items_cancel(s->live_items);if(s->live_touch)dm_live_touch_cancel_all(s->live_touch,0);pad_publish(s);}
 static void touch_timer_stop(game_app *s) {
     if(s->touch_timer_fd<0)return;
     ALooper *looper=ALooper_forThread();
@@ -563,6 +617,7 @@ static int touch_timer_tick(int fd,int events,void *data) {
     if(!s->live_touch||!live_touch_mode_enabled()){touch_timer_stop(s);return 1;}
     live_touch_sync(s);
     int needs=dm_live_touch_scheduler_step(s->live_touch,(int64_t)now_ns());
+    if(s->live_items){dm_live_touch_items_tick(s->live_items,(int64_t)now_ns());live_touch_cursor_update(s);live_touch_consume_items(s);needs=dm_live_touch_needs_work(s->live_touch);}
     pad_publish(s);
     live_touch_consume_belt(s);
     live_touch_consume_difficulty(s);
@@ -583,7 +638,7 @@ static void touch_timer_start(game_app *s) {
 static int live_touch_prepare(game_app *s,int w,int h,dm_live_touch_geometry *g) {
     uint64_t output=front_game_res(1);
     *g=dm_live_touch_geometry_for(w,h,(int)(uint32_t)output,(int)(uint32_t)(output>>32),dm_uiscreen_ingame());
-    if(!g->valid){dm_live_touch_cancel_all(s->live_touch,0);touch_timer_stop(s);pad_publish(s);return 0;}
+    if(!g->valid){if(s->live_items)dm_live_touch_items_cancel(s->live_items);dm_live_touch_cancel_all(s->live_touch,0);touch_timer_stop(s);pad_publish(s);return 0;}
     dm_live_touch_resize(s->live_touch,g->logical_width,g->logical_height);
     return 1;
 }
@@ -625,6 +680,19 @@ static uint64_t pad_key(int key) {
         case AKEYCODE_BUTTON_X:return DM_BTN_X;case AKEYCODE_BUTTON_Y:return DM_BTN_Y;case AKEYCODE_BUTTON_L1:return DM_BTN_L;case AKEYCODE_BUTTON_R1:return DM_BTN_R;
         case AKEYCODE_BUTTON_L2:return DM_BTN_ZL;case AKEYCODE_BUTTON_R2:return DM_BTN_ZR;case AKEYCODE_BUTTON_START:return DM_BTN_PLUS;case AKEYCODE_BUTTON_SELECT:return DM_BTN_MINUS;
         case AKEYCODE_BUTTON_THUMBL:return DM_BTN_LS;case AKEYCODE_BUTTON_THUMBR:return DM_BTN_RS;default:return 0;}
+}
+static int live_touch_event_routed(game_app *s,int action,int action_index,int pointer_count,
+        const int32_t *ids,const float *xs,const float *ys,int width,int height,
+        float left,float top,float gw,float gh,int64_t time_ns) {
+    int handled=s->live_items?
+        dm_live_touch_items_event(s->live_items,action,action_index,pointer_count,ids,xs,ys,width,height,left,top,gw,gh,time_ns):
+        dm_live_touch_event(s->live_touch,action,action_index,pointer_count,ids,xs,ys,width,height,left,top,gw,gh,time_ns);
+    if(handled&&s->live_items){
+        dm_live_touch_items_tick(s->live_items,time_ns);
+        live_touch_cursor_update(s);
+        live_touch_consume_items(s);
+    }
+    return handled;
 }
 static int input_ready(int fd,int events,void *data) {
     (void)fd;(void)events;game_app *s=data;AInputEvent *event;
@@ -693,7 +761,7 @@ static int input_ready(int fd,int events,void *data) {
                             int phase=(action==AMOTION_EVENT_ACTION_DOWN||action==AMOTION_EVENT_ACTION_POINTER_DOWN)?0:action==AMOTION_EVENT_ACTION_MOVE?1:(action==AMOTION_EVENT_ACTION_UP||action==AMOTION_EVENT_ACTION_POINTER_UP)?2:3;
                             dm_ui_touch(phase,nx,ny);}
                         handled=1;
-                    }else if(dm_live_touch_event(s->live_touch,action,action==AMOTION_EVENT_ACTION_MOVE?-1:(int)lifted,(int)count,ids,xs,ys,w,h,left,top,gw,gh,(int64_t)now_ns())){
+                    }else if(live_touch_event_routed(s,action,action==AMOTION_EVENT_ACTION_MOVE?-1:(int)lifted,(int)count,ids,xs,ys,w,h,left,top,gw,gh,(int64_t)now_ns())){
                         pad_publish(s);
                         if(dm_live_touch_end_released_pulse(s->live_touch))pad_publish(s);
                         live_touch_consume_belt(s);
@@ -798,7 +866,7 @@ static void window_resized(ANativeActivity *a,ANativeWindow *w) {game_app *s=a->
     // slow (surface/swapchain rebuild, caches gone cold), so as on returning to the foreground the dynamic
     // resolution controller is told not to read it as GPU pressure.
     if(same_window&&atomic_load(&s->started)){void mtl_screen_attach(struct ANativeWindow *);mtl_screen_attach(w);dm_3d_scale_resumed();if(atomic_load(&s->activity_resumed))dm_gfx_suspend(0);LOG("[android] 窗口尺寸变化：表面与交换链已按新尺寸重建，进程与本局保留");}}
-static void window_destroyed(ANativeActivity *a,ANativeWindow *w) {game_app *s=a->instance;dm_live_touch_cancel_sources(s->live_touch,(int64_t)now_ns(),ui_touch_cancel);touch_timer_stop(s);pad_publish(s);
+static void window_destroyed(ANativeActivity *a,ANativeWindow *w) {game_app *s=a->instance;live_touch_cancel_sources_all(s);touch_timer_stop(s);pad_publish(s);
     // 窗口销毁不再等于退出进程：安卓在 Activity 停止时必然销毁窗口，保留进程才能在回到前台时接着玩。
     // 退出前照 Mac/iOS 请游戏存盘（否则丢掉上一次提交之后的进度），再释放表面与交换链；真正退出走 destroyed()。
     // **顺序不能换**：请存盘在前、冻结客体时钟与挂起图形在后。反过来游戏线程会被挡在 NVN 入口外，那次自动存盘
@@ -816,8 +884,8 @@ static void window_destroyed(ANativeActivity *a,ANativeWindow *w) {game_app *s=a
     // last commit is lost), then release the surface and swapchain. A real exit goes through destroyed().
     if(atomic_load(&s->started)){settle_save();guest_clock_freeze_for(1,1);void mtl_screen_detach(void);mtl_screen_detach();LOG("[android] 窗口销毁：保留进程等待回到前台");}
     pthread_mutex_lock(&s->lock);if(s->window==w){s->window=NULL;ANativeWindow_release(w);}pthread_mutex_unlock(&s->lock);}
-static void input_created(ANativeActivity *a,AInputQueue *q) {game_app *s=a->instance;s->input=q;dm_touch_pointer_clear(&s->touch_map);if(!s->live_touch){s->live_touch=dm_live_touch_create(667,375);if(!s->live_touch)LOG("[android-touch] live D2R core allocation failed; using raw touch fallback");else LOG("[android-touch] live D2R core attached");}if(!s->live_provider_ready){dm_live_touch_provider_init(&s->live_provider,NULL);s->live_provider_ready=1;}AInputQueue_attachLooper(q,ALooper_forThread(),0,input_ready,s);}
-static void input_destroyed(ANativeActivity *a,AInputQueue *q) {game_app *s=a->instance;AInputQueue_detachLooper(q);s->input=NULL;live_touch_set_available(s,0);dm_live_touch_cancel_sources(s->live_touch,(int64_t)now_ns(),ui_touch_cancel);touch_timer_stop(s);dm_touch_pointer_clear(&s->touch_map);dm_touch_set(NULL,0);pad_clear(s);}
+static void input_created(ANativeActivity *a,AInputQueue *q) {game_app *s=a->instance;s->input=q;dm_touch_pointer_clear(&s->touch_map);if(!s->live_touch){s->live_touch=dm_live_touch_create(667,375);if(!s->live_touch)LOG("[android-touch] live D2R core allocation failed; using raw touch fallback");else LOG("[android-touch] live D2R core attached");}live_touch_items_ensure(s);if(!s->live_provider_ready){dm_live_touch_provider_init(&s->live_provider,NULL);s->live_provider_ready=1;}AInputQueue_attachLooper(q,ALooper_forThread(),0,input_ready,s);}
+static void input_destroyed(ANativeActivity *a,AInputQueue *q) {game_app *s=a->instance;AInputQueue_detachLooper(q);s->input=NULL;live_touch_set_available(s,0);live_touch_cancel_sources_all(s);touch_timer_stop(s);dm_touch_pointer_clear(&s->touch_map);dm_touch_set(NULL,0);pad_clear(s);}
 // 注意 onPause 里**不**挂起图形（Mac 的最小化路径有这一步，安卓不能照抄）：安卓在停下来之后一定会销毁窗口，
 // 而"请游戏存盘"排在窗口销毁之前（见 window_destroyed）。图形一旦在这里挂起，游戏线程就被挡在 NVN 入口外，
 // 请求的那次自动存盘永远等不到提交 —— 真机上就是这样，日志里只剩一条"未存盘退出"的红字。真正的挂起由
@@ -835,12 +903,12 @@ static void input_destroyed(ANativeActivity *a,AInputQueue *q) {game_app *s=a->i
 // as GPU pressure and the internal 3D ratio is scaled down; ② lifting the guest clock freeze, pairing with the
 // freeze taken when going to the background.
 static void resumed(ANativeActivity *a) {game_app *s=a->instance;atomic_store(&s->activity_resumed,1);dm_android_performance_resume();if(atomic_load(&s->started)){dm_3d_scale_resumed();dm_gfx_suspend(0);guest_clock_freeze_for(1,0);dm_audio_suspend(0);dm_focus_set(1);}}
-static void paused(ANativeActivity *a) {game_app *s=a->instance;atomic_store(&s->activity_resumed,0);dm_live_touch_cancel_sources(s->live_touch,(int64_t)now_ns(),ui_touch_cancel);touch_timer_stop(s);dm_touch_pointer_clear(&s->touch_map);dm_touch_set(NULL,0);pad_clear(s);if(atomic_load(&s->started)){dm_focus_set(3);dm_audio_suspend(1);}dm_android_performance_close();}
+static void paused(ANativeActivity *a) {game_app *s=a->instance;atomic_store(&s->activity_resumed,0);live_touch_cancel_sources_all(s);touch_timer_stop(s);dm_touch_pointer_clear(&s->touch_map);dm_touch_set(NULL,0);pad_clear(s);if(atomic_load(&s->started)){dm_focus_set(3);dm_audio_suspend(1);}dm_android_performance_close();}
 static void focus_changed(ANativeActivity *a,int focused) {game_app *s=a->instance;if(focused)return;
-    dm_live_touch_cancel_sources(s->live_touch,(int64_t)now_ns(),ui_touch_cancel);touch_timer_stop(s);dm_touch_pointer_clear(&s->touch_map);dm_touch_set(NULL,0);
+    live_touch_cancel_sources_all(s);touch_timer_stop(s);dm_touch_pointer_clear(&s->touch_map);dm_touch_set(NULL,0);
     pad_publish(s);
 }
-static void destroyed(ANativeActivity *a) {game_app *s=a->instance;atomic_store(&s->debug_stop,1);dm_live_touch_readiness_destroy(&s->live_readiness);s->live_provider_available=0;dm_live_touch_cancel_sources(s->live_touch,(int64_t)now_ns(),ui_touch_cancel);touch_timer_stop(s);dm_touch_pointer_clear(&s->touch_map);
+static void destroyed(ANativeActivity *a) {game_app *s=a->instance;atomic_store(&s->debug_stop,1);dm_live_touch_readiness_destroy(&s->live_readiness);s->live_provider_available=0;live_touch_cancel_sources_all(s);touch_timer_stop(s);dm_touch_pointer_clear(&s->touch_map);
     // 请存盘只做一次：正常退出时 window_destroyed 一定先跑过（安卓在 Activity 停止时必然先销毁窗口），而且那时
     // 图形还没挂起、游戏跑得动，提交等得到。走到这里图形已经挂起，再请一次根本等不到提交，只会白等 3 秒再打一条
     // 假的红色报警（真机上正常退出就是这样多出一条红字）。所以只有窗口还在（window_destroyed 没跑过）时才在这里请。
@@ -851,7 +919,7 @@ static void destroyed(ANativeActivity *a) {game_app *s=a->instance;atomic_store(
     // Ask here only when the window is still present, i.e. window_destroyed never ran.
     pthread_mutex_lock(&s->lock);int window_present=s->window!=NULL;pthread_mutex_unlock(&s->lock);
     if(atomic_load(&s->started)){if(window_present)settle_save();dm_host_shutdown("Android activity destroyed");}
-    pthread_mutex_lock(&s->lock);s->stop=1;pthread_cond_signal(&s->ready);pthread_mutex_unlock(&s->lock);pthread_join(s->worker,NULL);if(s->debug_started)pthread_join(s->debug_thread,NULL);if(s->window)ANativeWindow_release(s->window);if(s->live_touch)dm_live_touch_destroy(s->live_touch);free(s);application=NULL;}
+    pthread_mutex_lock(&s->lock);s->stop=1;pthread_cond_signal(&s->ready);pthread_mutex_unlock(&s->lock);pthread_join(s->worker,NULL);if(s->debug_started)pthread_join(s->debug_thread,NULL);if(s->window)ANativeWindow_release(s->window);if(s->live_items)dm_live_touch_items_destroy(s->live_items);if(s->live_touch)dm_live_touch_destroy(s->live_touch);free(s);application=NULL;}
 __attribute__((visibility("default"))) void ANativeActivity_onCreate(ANativeActivity *a,void *saved,size_t bytes) {
     // NativeActivity 自行 dlopen，不登记 Java 类加载器的 native 库；显式注册文本与触控回调。
     // NativeActivity dlopens its library without Java class-loader native-library registration; explicitly register text and touch callbacks.
@@ -865,7 +933,7 @@ __attribute__((visibility("default"))) void ANativeActivity_onCreate(ANativeActi
         {"setSkipSaveOnExit","(Z)V",(void*)Java_org_d2r_android_port_D2RActivity_setSkipSaveOnExit}
     };
     if((*a->env)->RegisterNatives(a->env,klass,methods,sizeof methods/sizeof methods[0])!=JNI_OK){(*a->env)->ExceptionDescribe(a->env);(*a->env)->ExceptionClear(a->env);ANativeActivity_finish(a);return;}(*a->env)->DeleteLocalRef(a->env,klass);
-    (void)saved;(void)bytes;game_app *s=calloc(1,sizeof *s);if(!s){ANativeActivity_finish(a);return;}s->touch_timer_fd=-1;s->activity=a;a->instance=s;application=s;dm_touch_pointer_clear(&s->touch_map);s->live_touch=dm_live_touch_create(667,375);if(s->live_touch)LOG("[android-touch] live D2R core created");else LOG("[android-touch] live D2R core unavailable; raw touch fallback");pthread_mutex_init(&s->lock,NULL);pthread_cond_init(&s->ready,NULL);
+    (void)saved;(void)bytes;game_app *s=calloc(1,sizeof *s);if(!s){ANativeActivity_finish(a);return;}s->touch_timer_fd=-1;s->activity=a;a->instance=s;application=s;dm_touch_pointer_clear(&s->touch_map);s->live_touch=dm_live_touch_create(667,375);if(s->live_touch)LOG("[android-touch] live D2R core created");else LOG("[android-touch] live D2R core unavailable; raw touch fallback");live_touch_items_ensure(s);pthread_mutex_init(&s->lock,NULL);pthread_cond_init(&s->ready,NULL);
     a->callbacks->onNativeWindowCreated=window_created;a->callbacks->onNativeWindowResized=window_resized;a->callbacks->onNativeWindowDestroyed=window_destroyed;a->callbacks->onInputQueueCreated=input_created;a->callbacks->onInputQueueDestroyed=input_destroyed;a->callbacks->onPause=paused;a->callbacks->onResume=resumed;a->callbacks->onWindowFocusChanged=focus_changed;a->callbacks->onDestroy=destroyed;
     ANativeActivity_setWindowFlags(a,AWINDOW_FLAG_FULLSCREEN|AWINDOW_FLAG_KEEP_SCREEN_ON,0);pthread_attr_t attr;pthread_attr_init(&attr);pthread_attr_setstacksize(&attr,64u<<20);int error=pthread_create(&s->worker,&attr,boot,s);pthread_attr_destroy(&attr);if(error)ANativeActivity_finish(a);
 }

@@ -3,6 +3,7 @@
 // output; it does not own game scene/UI state and does not synthesize actions.
 #pragma once
 #include <stdint.h>
+#include <stddef.h>
 #include "../../ios/Sources/dm_touch_game_state.h"
 
 #ifdef __cplusplus
@@ -117,6 +118,46 @@ int32_t dm_live_touch_ry(const dm_live_touch *touch);
 int dm_live_touch_has_pointer(const dm_live_touch *touch, int32_t id);
 int dm_live_touch_active(const dm_live_touch *touch);
 int dm_live_touch_pointer_long(const dm_live_touch *touch);
+int dm_live_touch_navigation(const dm_live_touch *touch);
+int dm_live_touch_pointer_slot_for_id(const dm_live_touch *touch, int32_t id);
+int dm_live_touch_pointer_slot(const dm_live_touch *touch);
+int dm_live_touch_pointer_dragged_for_id(const dm_live_touch *touch, int32_t id);
+float dm_live_touch_pointer_lift_norm(const dm_live_touch *touch);
+int dm_live_touch_pointer_position(const dm_live_touch *touch,
+                                   float *x, float *y, float *w, float *h);
+
+// Publish the core's current pointer into the host cursor before any host item
+// action or pad A pulse. The helper is shared by the event and timer producer
+// paths so cursor placement cannot drift between them. It clears the host
+// cursor when live routing is off or the core has no valid pointer.
+typedef void (*dm_live_touch_cursor_set_fn)(void *context, float x, float y,
+                                            float width, float height);
+typedef void (*dm_live_touch_cursor_clear_fn)(void *context);
+static inline void dm_live_touch_cursor_publish(const dm_live_touch *touch,
+                                                int live_on,
+                                                dm_live_touch_cursor_set_fn set,
+                                                dm_live_touch_cursor_clear_fn clear,
+                                                void *context) {
+    float x, y, w, h;
+    if (live_on && set && dm_live_touch_pointer_position(touch, &x, &y, &w, &h))
+        set(context, x, y, w, h);
+    else if (clear)
+        clear(context);
+}
+// Item routing seam owned by live_touch_items.c. These call the original
+// gesture core directly after a host hit/drop verdict; they do not synthesize
+// an item action or acknowledge a host operation.
+void dm_live_touch_apply_item_hit(dm_live_touch *touch, int slot, int kind);
+void dm_live_touch_apply_drop(dm_live_touch *touch, int kind, float nx, float ny);
+int dm_live_touch_finish_pointer(dm_live_touch *touch, int32_t id, int64_t time_ns);
+typedef struct {
+    unsigned use_seq, ident_seq, item_tap_seq, long_press_seq;
+    unsigned stack_take_seq, tab_tap_seq, mouse_click_seq, shop_drop_seq;
+    float mouse_click_x, mouse_click_y;
+    int pointer_dragged, pointer_shop, pointer_stack;
+} dm_live_touch_item_snapshot;
+void dm_live_touch_item_snapshot_get(const dm_live_touch *touch,
+                                     dm_live_touch_item_snapshot *out);
 // True while the core still owns physical pointers or has deferred/belt/pulse
 // work that the owner loop must advance. Not a claim that the game consumed it.
 int dm_live_touch_needs_work(const dm_live_touch *touch);
