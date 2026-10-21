@@ -1,6 +1,7 @@
 // #112 自有 typed indexed 离屏绘制：预检 → vertex/index buffer 拷贝 → graphics pipeline → indexed draw → RGBA8 读回。
 // #112 owned typed indexed offscreen draw: preflight -> vertex/index buffer copies -> graphics pipeline -> indexed draw -> RGBA8 readback.
 #include "vk_indexed.h"
+#include "vk_graphics_interface.h"
 #include <math.h>
 #include <string.h>
 
@@ -10,9 +11,11 @@ static int finite_range(float v, float lo, float hi) {
     return isfinite(v) && v >= lo && v <= hi;
 }
 
-VkResult dm_vk_draw_indexed_offscreen(dm_vk *vk, const dm_vk_indexed_draw *draw, dm_vk_pixels *pixels) {
-    if (!vk || !vk->device || !draw || !pixels || !draw->vertices || !draw->indices ||
-        !draw->vertex_spv || !draw->fragment_spv)
+static VkResult draw_indexed_impl(dm_vk *vk, const dm_vk_indexed_draw *draw, dm_vk_pixels *pixels,
+                                  const dm_vk_graphics_plan *plan) {
+    if (!vk || !vk->device || !draw || !pixels || !draw->vertices || !draw->indices)
+        return VK_ERROR_INITIALIZATION_FAILED;
+    if (!plan && (!draw->vertex_spv || !draw->fragment_spv))
         return VK_ERROR_INITIALIZATION_FAILED;
     // 固定接口与有界输入，所有检查都在创建 Vulkan 对象之前完成。
     // Fixed interface and bounded inputs; every check completes before any Vulkan object is created.
@@ -75,8 +78,17 @@ VkResult dm_vk_draw_indexed_offscreen(dm_vk *vk, const dm_vk_indexed_draw *draw,
     memcpy(index_buffer.mapped, draw->indices, (size_t)index_bytes);
     TRY(dm_vk_buffer_sync(vk, &vertex_buffer, 1));
     TRY(dm_vk_buffer_sync(vk, &index_buffer, 1));
-    TRY(dm_vk_shader_load(vk, draw->vertex_spv, &vertex_shader));
-    TRY(dm_vk_shader_load(vk, draw->fragment_spv, &fragment_shader));
+    if (plan) {
+        VkShaderModuleCreateInfo vsci = {.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+            .codeSize = plan->vs_code_bytes, .pCode = (const uint32_t *)(const void *)plan->vs_code};
+        VkShaderModuleCreateInfo psci = {.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+            .codeSize = plan->ps_code_bytes, .pCode = (const uint32_t *)(const void *)plan->ps_code};
+        TRY(vkCreateShaderModule(vk->device, &vsci, NULL, &vertex_shader));
+        TRY(vkCreateShaderModule(vk->device, &psci, NULL, &fragment_shader));
+    } else {
+        TRY(dm_vk_shader_load(vk, draw->vertex_spv, &vertex_shader));
+        TRY(dm_vk_shader_load(vk, draw->fragment_spv, &fragment_shader));
+    }
     TRY(dm_vk_buffer_create(vk, &rbi, &readback));
 
     VkImageCreateInfo image_info = {.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, .imageType = VK_IMAGE_TYPE_2D,
@@ -128,8 +140,12 @@ VkResult dm_vk_draw_indexed_offscreen(dm_vk *vk, const dm_vk_indexed_draw *draw,
     VkVertexInputBindingDescription binding = {.binding = 0, .stride = DM_VK_INDEXED_VERTEX_STRIDE,
         .inputRate = VK_VERTEX_INPUT_RATE_VERTEX};
     VkVertexInputAttributeDescription attributes[2] = {
-        {.location = 0, .binding = 0, .format = VK_FORMAT_R32G32_SFLOAT, .offset = 0},
-        {.location = 1, .binding = 0, .format = VK_FORMAT_R32G32B32A32_SFLOAT, .offset = 8}};
+        {.location = plan ? plan->position_location : 0, .binding = 0,
+         .format = plan ? (plan->position_components == 2 ? VK_FORMAT_R32G32_SFLOAT : VK_FORMAT_UNDEFINED) : VK_FORMAT_R32G32_SFLOAT,
+         .offset = 0},
+        {.location = plan ? plan->color_location : 1, .binding = 0,
+         .format = plan ? (plan->color_components == 4 ? VK_FORMAT_R32G32B32A32_SFLOAT : VK_FORMAT_UNDEFINED) : VK_FORMAT_R32G32B32A32_SFLOAT,
+         .offset = 8}};
     VkPipelineVertexInputStateCreateInfo input = {.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
         .vertexBindingDescriptionCount = 1, .pVertexBindingDescriptions = &binding,
         .vertexAttributeDescriptionCount = 2, .pVertexAttributeDescriptions = attributes};
@@ -199,4 +215,15 @@ done:
     if (image) vkDestroyImage(vk->device, image, NULL);
     if (image_memory) vkFreeMemory(vk->device, image_memory, NULL);
     return result;
+}
+
+VkResult dm_vk_draw_indexed_offscreen(dm_vk *vk, const dm_vk_indexed_draw *draw, dm_vk_pixels *pixels) {
+    return draw_indexed_impl(vk, draw, pixels, NULL);
+}
+
+VkResult dm_vk_draw_indexed_plan_offscreen(dm_vk *vk, const dm_vk_indexed_draw *draw,
+                                           const dm_vk_graphics_plan *plan, dm_vk_pixels *pixels) {
+    char why[DM_VK_GRAPHICS_WHY] = {0};
+    if (!plan || !dm_vk_graphics_plan_check(plan, why, sizeof why)) return VK_ERROR_INITIALIZATION_FAILED;
+    return draw_indexed_impl(vk, draw, pixels, plan);
 }

@@ -1,6 +1,6 @@
 # Vulkan 底座在 Android 链接系统 loader，开发机通过已安装 Vulkan SDK 验证；着色器由宿主 glslc 构建。
 # Link Android's system loader, verify on hosts with an installed Vulkan SDK; compile the synthetic shader using host glslc.
-add_library(dm_android_vk STATIC vk_host.c vk_memory.c vk_compute.c vk_clear.c vk_shader.c vk_draw.c vk_indexed.c vk_indexed_textured.c vk_texture.c vk_texture_mips.c vk_sampler.c vk_shader_reflect.c)
+add_library(dm_android_vk STATIC vk_host.c vk_memory.c vk_compute.c vk_clear.c vk_shader.c vk_draw.c vk_indexed.c vk_indexed_textured.c vk_graphics_interface.c vk_texture.c vk_texture_mips.c vk_sampler.c vk_shader_reflect.c)
 target_link_libraries(dm_android_vk PUBLIC dm_android_tex)
 target_link_libraries(dm_android_vk PRIVATE dm_nso_dependencies)   # 复用已固定的 MbedTLS SHA-256 | reuse pinned MbedTLS SHA-256
 target_include_directories(dm_android_vk PRIVATE ${dm_mbedtls_SOURCE_DIR}/include)
@@ -41,6 +41,32 @@ add_custom_command(OUTPUT ${indexed_textured_frag}
     COMMAND ${DM_GLSLC} --target-env=vulkan1.1 -O ${CMAKE_CURRENT_SOURCE_DIR}/indexed_textured.frag -o ${indexed_textured_frag}
     DEPENDS indexed_textured.frag VERBATIM)
 add_custom_target(dm_vk_indexed_shaders DEPENDS ${indexed_vert} ${indexed_frag} ${indexed_textured_vert} ${indexed_textured_frag})
+set(graphics_bad_model ${CMAKE_CURRENT_BINARY_DIR}/graphics_bad_model.spv)
+add_custom_command(OUTPUT ${graphics_bad_model}
+    COMMAND ${DM_GLSLC} --target-env=vulkan1.1 -O ${CMAKE_CURRENT_SOURCE_DIR}/graphics_bad_model.comp -o ${graphics_bad_model}
+    DEPENDS graphics_bad_model.comp VERBATIM)
+set(graphics_bad_type ${CMAKE_CURRENT_BINARY_DIR}/graphics_bad_type.spv)
+add_custom_command(OUTPUT ${graphics_bad_type}
+    COMMAND ${DM_GLSLC} --target-env=vulkan1.1 -O ${CMAKE_CURRENT_SOURCE_DIR}/graphics_bad_type.vert -o ${graphics_bad_type}
+    DEPENDS graphics_bad_type.vert VERBATIM)
+set(graphics_bad_varying ${CMAKE_CURRENT_BINARY_DIR}/graphics_bad_varying.spv)
+add_custom_command(OUTPUT ${graphics_bad_varying}
+    COMMAND ${DM_GLSLC} --target-env=vulkan1.1 -O ${CMAKE_CURRENT_SOURCE_DIR}/graphics_bad_varying.vert -o ${graphics_bad_varying}
+    DEPENDS graphics_bad_varying.vert VERBATIM)
+set(graphics_bad_descriptor ${CMAKE_CURRENT_BINARY_DIR}/graphics_bad_descriptor.spv)
+add_custom_command(OUTPUT ${graphics_bad_descriptor}
+    COMMAND ${DM_GLSLC} --target-env=vulkan1.1 -O ${CMAKE_CURRENT_SOURCE_DIR}/graphics_bad_descriptor.vert -o ${graphics_bad_descriptor}
+    DEPENDS graphics_bad_descriptor.vert VERBATIM)
+set(graphics_bad_scalar ${CMAKE_CURRENT_BINARY_DIR}/graphics_bad_scalar.spv)
+add_custom_command(OUTPUT ${graphics_bad_scalar}
+    COMMAND ${DM_GLSLC} --target-env=vulkan1.1 -O ${CMAKE_CURRENT_SOURCE_DIR}/graphics_bad_scalar.vert -o ${graphics_bad_scalar}
+    DEPENDS graphics_bad_scalar.vert VERBATIM)
+set(graphics_bad_push ${CMAKE_CURRENT_BINARY_DIR}/graphics_bad_push.spv)
+add_custom_command(OUTPUT ${graphics_bad_push}
+    COMMAND ${DM_GLSLC} --target-env=vulkan1.1 -O ${CMAKE_CURRENT_SOURCE_DIR}/graphics_bad_push.vert -o ${graphics_bad_push}
+    DEPENDS graphics_bad_push.vert VERBATIM)
+add_custom_target(dm_vk_graphics_interface_fixtures DEPENDS ${graphics_bad_model} ${graphics_bad_type}
+    ${graphics_bad_varying} ${graphics_bad_descriptor} ${graphics_bad_scalar} ${graphics_bad_push})
 add_custom_target(dm_vk_shaders DEPENDS ${pattern} ${vertex} ${fragment})
 # #13 采样绘制片段着色器（自有合成着色器） | #13 sampled-draw fragment shader (owned synthetic shader)
 set(sample_frag ${CMAKE_CURRENT_BINARY_DIR}/sample2d.frag.spv)
@@ -60,6 +86,22 @@ add_custom_command(OUTPUT ${image_spv}
     COMMAND ${DM_GLSLC} --target-env=vulkan1.1 -O ${CMAKE_CURRENT_SOURCE_DIR}/../tests/fixtures/image.comp -o ${image_spv}
     DEPENDS ../tests/fixtures/image.comp VERBATIM)
 add_custom_target(dm_vk_reflect_image_fixture DEPENDS ${image_spv})
+add_executable(dm_vulkan_graphics_interface_test ../tests/vulkan_graphics_interface.c)
+target_link_libraries(dm_vulkan_graphics_interface_test PRIVATE dm_android_vk)
+target_compile_options(dm_vulkan_graphics_interface_test PRIVATE -Wall -Wextra -Werror)
+add_dependencies(dm_vulkan_graphics_interface_test dm_vk_indexed_shaders dm_vk_graphics_interface_fixtures)
+if(ANDROID)
+    target_link_options(dm_vulkan_graphics_interface_test PRIVATE "-Wl,-z,max-page-size=16384")
+else()
+    add_test(NAME vulkan_graphics_interface COMMAND dm_vulkan_graphics_interface_test
+        ${indexed_vert} ${indexed_frag} ${graphics_bad_model} ${graphics_bad_type} ${graphics_bad_varying} ${graphics_bad_descriptor}
+        ${graphics_bad_scalar} ${graphics_bad_push})
+    set_tests_properties(vulkan_graphics_interface PROPERTIES TIMEOUT 60 SKIP_RETURN_CODE 77)
+    if(APPLE AND DM_MOLTENVK_ICD)
+        set_tests_properties(vulkan_graphics_interface PROPERTIES ENVIRONMENT "VK_DRIVER_FILES=${DM_MOLTENVK_ICD}")
+    endif()
+endif()
+
 add_executable(dm_vulkan_indexed_test ../tests/vulkan_indexed.c)
 target_link_libraries(dm_vulkan_indexed_test PRIVATE dm_android_vk)
 target_compile_options(dm_vulkan_indexed_test PRIVATE -Wall -Wextra -Werror)
