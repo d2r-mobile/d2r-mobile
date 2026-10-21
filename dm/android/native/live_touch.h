@@ -27,6 +27,23 @@ void dm_live_touch_resize(dm_live_touch *touch, float width_pt, float height_pt)
 // navigation = menu/front-end/panel state supplied by the real host.
 // mask is the core target mask; callers use dm_tc_nav_mask/game mode mask.
 void dm_live_touch_set_mode(dm_live_touch *touch, int navigation, uint32_t mask);
+// Update the real host belt snapshot used by the original core. rows=0/open=0
+// is the explicit unknown/clear form; rows 1..4 and open 0/1 are valid. Invalid
+// values clear any old request and do not enable belt gestures.
+int dm_live_touch_set_belt(dm_live_touch *touch, int rows, int open);
+// One-shot belt request consumer. Context epochs must match the current live
+// context; an invalid/mismatched request is cleared without calling a host
+// action. The callbacks are the actual host belt expand/use boundary, not an
+// acknowledgement or a synthetic action queue.
+typedef struct {
+    void *context;
+    void (*expand)(void *context, int on);
+    void (*use)(void *context, int col, int row);
+} dm_live_touch_belt_actions;
+int dm_live_touch_consume_belt_request(dm_live_touch *touch,
+                                       uint64_t scene_epoch, uint64_t world_epoch,
+                                       uint64_t ui_identity,
+                                       const dm_live_touch_belt_actions *actions);
 // Apply one validated provider context. Any scene/world/UI identity change
 // cancels the old core ownership before the new mode is installed, so an old
 // pointer or release is never delivered into the new scene/character.

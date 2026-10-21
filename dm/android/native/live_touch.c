@@ -12,6 +12,7 @@ struct dm_live_touch {
     float width, height;
     int64_t last_ns;
     int64_t pulse_started_ns;
+    uint32_t belt_fingers;
     int have_context;
     uint64_t scene_epoch, world_epoch, ui_identity, object_generation;
 };
@@ -45,6 +46,44 @@ static void sync_pointers(dm_live_touch *touch) {
     }
 }
 
+// The original core marks a bottom belt cell directly; an upper-row press is
+// represented by DM_TC_DIFF, so identify that region with the same geometry as
+// dm_tc_begin_at. Only the touched belt gesture is quarantined; unrelated
+// fingers keep their slots and actions.
+static int belt_upper_hit(const dm_live_touch *touch, float x, float y) {
+    const dm_tc_state *s = &touch->state;
+    if (!s->belt_open || s->belt_rows <= 1) return 0;
+    float u = s->layout.height / 1320.0f;
+    for (int r = 1; r < s->belt_rows && r < 4; ++r) {
+        for (int c = 0; c < 4; ++c) {
+            const dm_tc_target *t = &s->layout.target[DM_TC_BELT1 + c];
+            if (fabsf(x - t->x) <= 60.0f * u &&
+                fabsf(y - (t->y - (165.0f + 162.0f * (r - 1)) * u)) <= 53.75f * u)
+                return 1;
+        }
+    }
+    return 0;
+}
+
+static int belt_finger_at(const dm_live_touch *touch, int slot) {
+    if (slot < 0 || slot >= DM_TC_MAX_TOUCH || !touch->state.finger[slot].active) return 0;
+    const dm_tc_finger *f = &touch->state.finger[slot];
+    if (f->target >= DM_TC_BELT1 && f->target <= DM_TC_BELT4) return 1;
+    return f->target == DM_TC_DIFF && belt_upper_hit(touch, f->x, f->y);
+}
+
+static void quarantine_belt_fingers(dm_live_touch *touch) {
+    uint32_t bits = touch->belt_fingers;
+    touch->belt_fingers = 0;
+    for (int i = 0; i < DM_TC_MAX_TOUCH; ++i) {
+        if (!(bits & (1u << i))) continue;
+        int32_t id = touch->pointers.platform[i];
+        dm_tc_cancel_finger(&touch->state, i);
+        if (id >= 0) dm_touch_pointer_release(&touch->pointers, id);
+    }
+    if (bits) sync_pointers(touch);
+}
+
 dm_live_touch *dm_live_touch_create(float width_pt, float height_pt) {
     if (!isfinite(width_pt) || !isfinite(height_pt) || width_pt <= 0 || height_pt <= 0) return NULL;
     dm_live_touch *touch = calloc(1, sizeof *touch);
@@ -66,18 +105,80 @@ void dm_live_touch_resize(dm_live_touch *touch, float width_pt, float height_pt)
     if (!touch || !isfinite(width_pt) || !isfinite(height_pt) || width_pt <= 0 || height_pt <= 0) return;
     if (touch->width == width_pt && touch->height == height_pt) return;
     dm_tc_resize(&touch->state, width_pt, height_pt);
+    touch->state.belt_request = 0;
+    touch->belt_fingers = 0;
     touch->pulse_started_ns = 0;
     touch->width = width_pt;
     touch->height = height_pt;
     dm_touch_pointer_clear(&touch->pointers);
 }
 
+int dm_live_touch_set_belt(dm_live_touch *touch, int rows, int open) {
+    if (!touch) return 0;
+    if (rows < 0 || rows > 4 || open < 0 || open > 1 ||
+        (open && rows <= 1) || (rows == 0 && open != 0)) {
+        quarantine_belt_fingers(touch);
+        // Unknown/invalid host state must not leave stale gestures or requests.
+        touch->state.belt_rows = 0;
+        touch->state.belt_open = 0;
+        touch->state.belt_request = 0;
+        return 0;
+    }
+    if (rows == 0) {
+        quarantine_belt_fingers(touch);
+        touch->state.belt_request = 0;
+    }
+    touch->state.belt_rows = rows;
+    touch->state.belt_open = open ? 1 : 0;
+    return 1;
+}
+
+int dm_live_touch_consume_belt_request(dm_live_touch *touch,
+                                       uint64_t scene_epoch, uint64_t world_epoch,
+                                       uint64_t ui_identity,
+                                       const dm_live_touch_belt_actions *actions) {
+    if (!touch) return 0;
+    if (!actions || !actions->expand || !actions->use) {
+        touch->state.belt_request = 0;
+        return 0;
+    }
+    int matches = touch->have_context && touch->scene_epoch == scene_epoch &&
+                  touch->world_epoch == world_epoch && touch->ui_identity == ui_identity;
+    if (!matches) {
+        touch->state.belt_request = 0;
+        return 0;
+    }
+    int request = touch->state.belt_request;
+    if (!request) return 0;
+    touch->state.belt_request = 0;
+    // Recheck the context immediately before handing the request to the host.
+    matches = touch->have_context && touch->scene_epoch == scene_epoch &&
+              touch->world_epoch == world_epoch && touch->ui_identity == ui_identity;
+    if (!matches) return 0;
+
+    if (request == 1 || request == 2) {
+        if (touch->state.belt_rows <= 1) return 0;
+        actions->expand(actions->context, request == 1);
+        return 1;
+    }
+    if (request >= 0x100) {
+        int col = request & 0xf;
+        int row = (request >> 4) & 0xf;
+        if (col > 3 || row < 1 || row > 3 || row >= touch->state.belt_rows) return 0;
+        actions->use(actions->context, col, row);
+        return 1;
+    }
+    return 0;
+}
+
 void dm_live_touch_set_mode(dm_live_touch *touch, int navigation, uint32_t mask) {
     if (!touch) return;
     navigation = !!navigation;
-    if (navigation != touch->state.navigation_mode) dm_tc_set_navigation_mode(&touch->state, navigation);
     mask &= (1u << DM_TC_COUNT) - 1;
+    int changed = navigation != touch->state.navigation_mode || mask != touch->state.enabled_targets;
+    if (navigation != touch->state.navigation_mode) dm_tc_set_navigation_mode(&touch->state, navigation);
     if (mask != touch->state.enabled_targets) dm_tc_enable_targets(&touch->state, mask);
+    if (changed) touch->belt_fingers = 0;
     sync_pointers(touch);
 }
 
@@ -132,6 +233,18 @@ int dm_live_touch_event(dm_live_touch *touch, int action, int action_index,
             dm_touch_pointer_release(&touch->pointers, id);
             return 0;
         }
+        touch->belt_fingers &= ~(1u << slot);
+        if (belt_finger_at(touch, slot)) {
+            if (touch->state.belt_rows <= 0) {
+                // The host HUD is unknown: do not let this touch become a belt
+                // gesture merely because the core still has a target there.
+                dm_tc_cancel_finger(&touch->state, slot);
+                dm_touch_pointer_release(&touch->pointers, id);
+                sync_pointers(touch);
+                return 0;
+            }
+            touch->belt_fingers |= 1u << slot;
+        }
         changed = 1;
     } else if (action == DM_LIVE_ACTION_MOVE) {
         for (int i = 0; i < pointer_count; ++i) {
@@ -140,13 +253,17 @@ int dm_live_touch_event(dm_live_touch *touch, int action, int action_index,
             dm_tc_move_at(&touch->state, slot,
                           point_x(touch, x_px[i], picture_left, picture_width),
                           point_y(touch, y_px[i], picture_top, picture_height), t);
-            if (!touch->state.finger[slot].active) dm_touch_pointer_release(&touch->pointers, ids[i]);
+            if (!touch->state.finger[slot].active) {
+                touch->belt_fingers &= ~(1u << slot);
+                dm_touch_pointer_release(&touch->pointers, ids[i]);
+            }
             changed = 1;
         }
     } else if (action == DM_LIVE_ACTION_UP || action == DM_LIVE_ACTION_POINTER_UP) {
         int32_t id = ids[action_index];
         int slot = dm_touch_pointer_slot(&touch->pointers, id);
         if (slot < 0) return 0;
+        touch->belt_fingers &= ~(1u << slot);
         dm_tc_end_at(&touch->state, slot, t);
         dm_touch_pointer_release(&touch->pointers, id);
         changed = 1;
@@ -163,6 +280,8 @@ int dm_live_touch_cancel_all(dm_live_touch *touch, int64_t time_ns) {
     (void)now_s(touch, time_ns);
     dm_tc_cancel_all(&touch->state);
     dm_touch_pointer_clear(&touch->pointers);
+    touch->state.belt_request = 0;
+    touch->belt_fingers = 0;
     touch->pulse_started_ns = 0;
     touch->have_context = 0;
     return 1;
