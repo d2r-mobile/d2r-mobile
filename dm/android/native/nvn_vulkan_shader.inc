@@ -101,6 +101,13 @@ static VkDescriptorType descriptor_type(const shader_binding *b) {
     if(b->separate)return (b->type&255)==0?VK_DESCRIPTOR_TYPE_SAMPLER:VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
     return VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
 }
+#include "nvn_vulkan_shader_module.inc"
+
+static VkResult shader_module_create_dispatch(VkDevice device, const VkShaderModuleCreateInfo *info,
+                                               const VkAllocationCallbacks *alloc, VkShaderModule *module) {
+    return vkCreateShaderModule(device, info, alloc, module);
+}
+
 static shader_entry *shader_load_by_key(const char *key,int stats,int fatal) {
     pthread_mutex_lock(&graphics_object_lock);
     for(shader_entry *s=shader_list;s;s=s->next)if(!strcmp(s->key,key)){pthread_mutex_unlock(&graphics_object_lock);return s;}
@@ -151,7 +158,10 @@ static shader_entry *shader_load_by_key(const char *key,int stats,int fatal) {
     }
 #endif
     shader_entry *s=calloc(1,sizeof *s);if(!s)die("Vulkan shader allocation");strcpy(s->key,key);s->stage=meta[2];s->set=meta[3];s->count=meta[4];s->c1_size=meta[5];s->bindings=(void*)(meta+7);s->c1=(uint8_t*)s->bindings+s->count*40;memcpy(s->attributes,s->c1+s->c1_size,128);
-    VkShaderModuleCreateInfo mi={.sType=VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,.codeSize=bytes,.pCode=code};VK_CHECK(vkCreateShaderModule(device,&mi,NULL,&s->module));free(code);
+    VkShaderModuleCreateInfo mi={.sType=VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,.codeSize=bytes,.pCode=code};
+    VkResult module_result=shader_module_create_or_skip(shader_module_create_dispatch,device,&mi,&s->module,fatal,key,code,meta,s,&graphics_object_lock);
+    if(module_result!=VK_SUCCESS)return NULL;
+    free(code);
     // 反射与 shader 同寿命；只预计算布局和索引，不缓存动态资源地址或工作区指针。
     // Reflection lives with the shader; precompute only layout and indices, never dynamic resource addresses or scratch pointers.
     if(s->count){s->binding_plan=calloc(s->count,sizeof *s->binding_plan);if(!s->binding_plan)die("Vulkan shader binding plan allocation");}

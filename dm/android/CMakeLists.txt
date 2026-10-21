@@ -908,6 +908,15 @@ if(NOT ANDROID)
     add_test(NAME nvn_shader_feature_decisions COMMAND dm_nvn_shader_feature_decisions_test)
     set_tests_properties(nvn_shader_feature_decisions PROPERTIES TIMEOUT 30)
 
+    # #246 module-create failure boundary; no Vulkan loader/device is opened.
+    find_package(Threads REQUIRED)
+    add_executable(dm_nvn_optional_module_create_test tests/nvn_optional_module_create.c)
+    target_include_directories(dm_nvn_optional_module_create_test PRIVATE native)
+    target_compile_options(dm_nvn_optional_module_create_test PRIVATE -Wall -Wextra -Werror)
+    target_link_libraries(dm_nvn_optional_module_create_test PRIVATE Threads::Threads)
+    add_test(NAME nvn_optional_module_create COMMAND dm_nvn_optional_module_create_test)
+    set_tests_properties(nvn_optional_module_create PROPERTIES TIMEOUT 30)
+
     # #230 draw-parameter capability/chain counterexample. The feature policy
     # is pure Vulkan metadata; no physical device or loader is opened here.
     find_package(Vulkan QUIET)
