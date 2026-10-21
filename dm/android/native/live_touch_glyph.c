@@ -8,6 +8,8 @@ static pthread_mutex_t g_glyph_lock = PTHREAD_MUTEX_INITIALIZER;
 static dm_live_touch_glyph g_glyph_records[5];
 static uint64_t g_glyph_signature;
 static int g_glyph_valid;
+static dm_live_touch_glyph g_glyph_hold[5];
+static int g_glyph_hold_valid;
 
 static dm_ta_glyph shown(const dm_tg_snapshot *s, uint64_t button,
                          uint64_t now, int set) {
@@ -54,11 +56,36 @@ static uint64_t glyph_hash(const dm_live_touch_glyph g[5]) {
 void dm_live_touch_glyph_publish(dm_live_touch *touch,
                                  const dm_tg_snapshot *snapshot,
                                  uint64_t host_now_ns) {
+    dm_tc_state *state = touch ? dm_live_touch_controls(touch) : NULL;
+    int navigation = state && state->navigation_mode;
+    int usable = snapshot && snapshot->valid && snapshot->ready && snapshot->supported;
     dm_live_touch_glyph next[5];
-    compute_glyphs(touch, snapshot, host_now_ns, next);
+    if (usable) {
+        compute_glyphs(touch, snapshot, host_now_ns, next);
+    } else {
+        // A scene/area transition or host readiness gap clears the native
+        // snapshot before the next complete table arrives. Keep the last
+        // complete game-state icon set only while still in-game; navigation
+        // (character select/panels) and destroyed state explicitly clear it.
+        pthread_mutex_lock(&g_glyph_lock);
+        if (g_glyph_hold_valid && !navigation)
+            memcpy(next, g_glyph_hold, sizeof next);
+        else
+            for (int i = 0; i < 5; ++i)
+                next[i] = (dm_live_touch_glyph){DM_LIVE_GLYPH_UNKNOWN, -1, -1, -1, UINT32_MAX};
+        pthread_mutex_unlock(&g_glyph_lock);
+    }
     uint64_t signature = glyph_hash(next);
     pthread_mutex_lock(&g_glyph_lock);
     memcpy(g_glyph_records, next, sizeof g_glyph_records);
+    if (usable) {
+        int known = 0;
+        for (int i = 0; i < 5; ++i) known |= next[i].status != DM_LIVE_GLYPH_UNKNOWN;
+        if (known && !navigation) { memcpy(g_glyph_hold, next, sizeof g_glyph_hold); g_glyph_hold_valid = 1; }
+        else g_glyph_hold_valid = 0;
+    } else if (navigation) {
+        g_glyph_hold_valid = 0;
+    }
     g_glyph_signature = signature;
     g_glyph_valid = 1;
     pthread_mutex_unlock(&g_glyph_lock);
@@ -93,6 +120,8 @@ void dm_live_touch_glyph_invalidate(void) {
         unknown[i] = (dm_live_touch_glyph){DM_LIVE_GLYPH_UNKNOWN, -1, -1, -1, UINT32_MAX};
     pthread_mutex_lock(&g_glyph_lock);
     memcpy(g_glyph_records, unknown, sizeof g_glyph_records);
+    memset(g_glyph_hold, 0, sizeof g_glyph_hold);
+    g_glyph_hold_valid = 0;
     g_glyph_valid = 0;
     g_glyph_signature = 0;
     pthread_mutex_unlock(&g_glyph_lock);
