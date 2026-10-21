@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 图标前景：金色菱框 + 四面暗红宝石 + 中心金点（"灵魂石"式几何图形，项目自画，不含游戏美术）。
+     安全区：自适应图标会把 108dp 缩到 72dp 再裁剪，所以图形收在中心 60dp 见方以内，圆形遮罩也裁不到。
+     Foreground: a gold diamond frame around a four-faceted deep-red gem with a gold centre; geometry of the
+     project's own making, no game art. Safe zone: an adaptive icon scales 108dp down to 72dp and masks it, so
+     everything stays inside the central 60dp square and survives a circular mask. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M54,24 L84,54 L54,84 L24,54 Z"
+        android:strokeColor="#e8c078"
+        android:strokeLineJoin="round"
+        android:strokeWidth="5" />
+    <path
+        android:fillColor="#c2333c"
+        android:pathData="M54,37 L71,54 L54,54 Z" />
+    <path
+        android:fillColor="#6e161c"
+        android:pathData="M71,54 L54,71 L54,54 Z" />
+    <path
+        android:fillColor="#5a1218"
+        android:pathData="M54,71 L37,54 L54,54 Z" />
+    <path
+        android:fillColor="#a8262e"
+        android:pathData="M37,54 L54,37 L54,54 Z" />
+    <path
+        android:fillColor="#f2c98a"
+        android:pathData="M54,49 L59,54 L54,59 L49,54 Z" />
+</vector>

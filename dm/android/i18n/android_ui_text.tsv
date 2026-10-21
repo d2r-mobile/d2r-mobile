@@ -1,0 +1,82 @@
+键	中文	English	用在哪
+dmAndroidTitle	暗黑破坏神2	Diablo II	Android 应用名
+dmAndroidRuntimePass	运行时测试通过	Runtime Pass	Android 移植原型诊断页
+dmAndroidRuntimeFail	运行时测试失败	Runtime Fail	Android 移植原型诊断页
+dmAndroidVulkanActive	Vulkan 已运行	Vulkan Active	Android 移植原型诊断页
+dmAndroidBackendPending	游戏后端待接通	Game Backend Pending	Android 移植原型诊断页
+dmAndroidTouchStatus	触屏 %d %d 按键 %llu	Touch %d %d Buttons %llu	Android 移植原型诊断页
+dmAndroidDebugMetrics	FPS %.1f | 帧 %.1f ms\nCPU %.1f ms | GPU %s ms | 等待 %.1f ms\n%s\n绘制 %.0f | 通道 %.0f | 提交 %.1f | 复制 %.1f MiB/帧\n缓冲 %.0f MiB | 内存 %.0f MiB\n%s | 区域 %d | 坐标 %d,%d | 输入 %llu	FPS %.1f | Frame %.1f ms\nCPU %.1f ms | GPU %s ms | Wait %.1f ms\n%s\nDraws %.0f | Passes %.0f | Submits %.1f | Copies %.1f MiB/frame\nBuffers %.0f MiB | RSS %.0f MiB\n%s | Area %d | Position %d,%d | Input %llu	Android 真机调试浮层
+dmAndroidPower	功耗 %s | 电量 %.0f%%	Power %s | Battery %.0f%%	Android 真机调试浮层电池行（数值由 native 拼好，读不到时显示 --）
+dmAndroidCharging	充电 %s | 电量 %.0f%%	Charging %s | Battery %.0f%%	Android 真机调试浮层电池行（外接电源时）
+dmAndroidStageBoot	正在启动	Starting	Android 真机调试浮层
+dmAndroidStageLoading	正在加载	Loading	Android 真机调试浮层
+dmAndroidStageGame	游戏中	In game	Android 真机调试浮层
+dmAndroidStageMenu	菜单	Menu	Android 真机调试浮层
+dmAndroidStageText	文字输入	Text entry	Android 真机调试浮层
+dmAndroidTouchMove	移动摇杆	Movement stick	Android 虚拟手柄无障碍说明
+dmAndroidTouchButtons	手柄按键	Controller buttons	Android 虚拟手柄无障碍说明
+dmAndroidPadA	A	A	Android 虚拟手柄键帽
+dmAndroidPadB	B	B	Android 虚拟手柄键帽
+dmAndroidPadX	X	X	Android 虚拟手柄键帽
+dmAndroidPadY	Y	Y	Android 虚拟手柄键帽
+dmAndroidPadL	L	L	Android 虚拟手柄键帽
+dmAndroidPadR	R	R	Android 虚拟手柄键帽
+dmAndroidPadZL	ZL	ZL	Android 虚拟手柄键帽
+dmAndroidPadZR	ZR	ZR	Android 虚拟手柄键帽
+dmAndroidPadPlus	+	+	Android 虚拟手柄键帽
+dmAndroidPadMinus	−	−	Android 虚拟手柄键帽
+dmAndroidPadLS	L3	L3	Android 虚拟手柄键帽
+dmAndroidPadRS	R3	R3	Android 虚拟手柄键帽
+dmAndroidPadLeft	←	←	Android 虚拟手柄键帽
+dmAndroidPadUp	↑	↑	Android 虚拟手柄键帽
+dmAndroidPadRight	→	→	Android 虚拟手柄键帽
+dmAndroidPadDown	↓	↓	Android 虚拟手柄键帽
+dmAndroidLaunchTitle	暗黑破坏神 II：狱火重生	Diablo II: Resurrected	Android 启动界面
+dmAndroidLaunchSubtitle	Android 移植 · 启动设置	Android port · launch settings	Android 启动界面
+dmAndroidLaunchOverlay	显示调试信息（FPS / 功耗）	Show debug overlay (FPS / power)	Android 启动界面
+dmAndroidLaunchOverlayNote	关闭后游戏中不显示浮层；按住不影响首帧检测	Hides the in-game overlay; the first-frame watchdog keeps running	Android 启动界面
+dmAndroidLaunchProfile	画面档位	Graphics profile	Android 启动界面
+dmAndroidLaunchHandheld	掌机 1280×720	Handheld 1280×720	Android 启动界面
+dmAndroidLaunchConsole	主机 1600×900	Docked 1600×900	Android 启动界面
+dmAndroidLaunchNotSet	未设置	Not set	Android 启动界面
+dmAndroidLaunchStart	启动游戏	Start game	Android 启动界面
+dmAndroidLaunchImport	导入数据包	Import package	Android 启动界面
+dmAndroidLaunchImported	已导入：%s	Imported: %s	Android 启动界面
+dmAndroidLaunchImporting	正在导入 %d%%	Importing %d%%	Android 启动界面
+dmAndroidLaunchImportSummary	%d 个资源、%d 个着色器	%d assets, %d shaders	Android 启动界面
+dmAndroidLaunchImportFailed	导入失败：%s	Import failed: %s	Android 启动界面
+dmAndroidLaunchImportIncomplete	数据包不完整，缺：%s	Package incomplete; missing: %s	Android 启动界面
+dmAndroidLaunchImportFormat	数据包格式 %s 不认识，本版只认 %s	Unsupported package format %s; this build takes %s	Android 启动界面
+dmAndroidLaunchImportCounts	清单数量与实际不符（%s：清单 %s，实际 %s）	Count mismatch (%s: %s declared, %s unpacked)	Android 启动界面
+dmAndroidLaunchImportBadEntry	数据包里有不接受的条目：%s	Package contains an entry that is not accepted: %s	Android 启动界面
+dmAndroidLaunchImportTooBig	数据包过大或条目过多，已拒绝	Package too large or too many entries; refused	Android 启动界面
+dmAndroidLaunchImportCancelled	已取消导入	Import cancelled	Android 启动界面
+dmAndroidLaunchCancel	正在取消…	Cancelling…	Android 启动界面
+dmAndroidLaunchResolution	分辨率	Resolution	Android 启动界面
+dmAndroidLaunchDriver	驱动	Driver	Android 启动界面
+dmAndroidLaunchDriverSystem	系统驱动	System driver	Android 启动界面
+dmAndroidLaunchDriverTurnip	内置 Turnip	Built-in Turnip	Android 启动界面
+dmAndroidLaunchDriverPreparing	正在准备内置驱动…	Preparing built-in driver…	Android 启动界面
+dmAndroidLaunchDriverFailed	内置驱动不可用：%s	Built-in driver unavailable: %s	Android 启动界面
+dmAndroidLaunchFollowProfile	跟随档位	Follow profile	Android 启动界面
+dmAndroidLaunchNeedsImport	还没有数据包，请先导入再启动游戏	No package yet; import one before starting the game	Android 启动界面
+dmAndroidLaunchPending	数据包由电脑端生成（见 docs/ANDROID_PACKAGE.zh-CN.md），导入后即可启动	The package is produced on a PC (see docs/ANDROID_PACKAGE.zh-CN.md); import it to start	Android 启动界面
+dmAndroidMenuTitle	游戏菜单	Game menu	Android 游戏内菜单
+dmAndroidMenuOverlay	帧率显示	Frame rate display	Android 游戏内菜单
+dmAndroidMenuControls	虚拟摇杆	On-screen controls	Android 游戏内菜单
+dmAndroidMenuQuality	画质	Quality	Android 游戏内菜单
+dmAndroidMenuExit	退出游戏	Exit game	Android 游戏内菜单
+dmAndroidMenuOn	开	On	Android 游戏内菜单
+dmAndroidMenuOff	关	Off	Android 游戏内菜单
+dmAndroidMenuQualityAuto	自动	Auto	Android 游戏内菜单
+dmAndroidMenuQualityHigh	高质量	High	Android 游戏内菜单
+dmAndroidSaveExport	导出存档	Export save	Android 存档
+dmAndroidSaveImport	导入存档	Import save	Android 存档
+dmAndroidSaveExported	已导出 %d 个文件	Exported %d files	Android 存档
+dmAndroidSaveExportFailed	导出失败：%s	Export failed: %s	Android 存档
+dmAndroidSaveImported	已导入 %d 个文件	Imported %d files	Android 存档
+dmAndroidSaveImportFailed	导入失败：%s	Import failed: %s	Android 存档
+dmAndroidSaveImportConfirm	导入会替换当前存档，启动游戏后生效。	Importing replaces the current save; it takes effect when the game starts.	Android 存档
+dmAndroidSaveImportConfirmGame	导入会替换当前存档并退出游戏，重开后加载导入的存档。	Importing replaces the current save and exits the game; the next launch loads the imported save.	Android 存档
+dmAndroidSaveNone	还没有存档可以导出	There is no save to export yet	Android 存档
+dmAndroidSaveWorking	正在处理存档…	Working on the save…	Android 存档

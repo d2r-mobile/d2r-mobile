@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 图标背景：近黑的深色底 + 两层低透明度金色圆，做出中心微光（不用渐变，aapt2 直接编）。
+     Icon background: a near-black base plus two low-alpha gold circles for a soft centre glow (no gradients, so
+     aapt2 compiles it directly). The artwork is original to this project; no game art is shipped. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#101014"
+        android:pathData="M0,0 h108 v108 h-108 z" />
+    <path
+        android:fillColor="#14e8c078"
+        android:pathData="M54,54 m-40,0 a40,40 0 1,0 80,0 a40,40 0 1,0 -80,0" />
+    <path
+        android:fillColor="#1ce8c078"
+        android:pathData="M54,54 m-28,0 a28,28 0 1,0 56,0 a28,28 0 1,0 -56,0" />
+</vector>
