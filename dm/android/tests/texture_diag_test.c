@@ -68,6 +68,44 @@ int main(void) {
     texture_diag_state_tick(&rejected, overlong);
     CHECK(!rejected.active && !rejected.used);
 
+    // 重复 UI atlas 只占一行，不能饿死后续不同 shader/stage/slot/纹理绑定。
+    texture_diag_state coverage = {0};
+    texture_diag_state_tick(&coverage, "scene-coverage");
+    texture_diag_key ui;
+    memset(&ui, 0, sizeof ui);
+    strcpy(ui.shader, "ui-atlas-key-0001");
+    ui.stage = 1; ui.slot = 1; ui.type = 3; ui.texture_id = 0x200; ui.format = 0x25;
+    CHECK(texture_diag_state_observe(&coverage, &ui));
+    CHECK(coverage.used == 1);
+    for (unsigned i = 0; i < 99; i++) CHECK(!texture_diag_state_observe(&coverage, &ui));
+    CHECK(coverage.used == 1 && coverage.duplicates == 99);
+
+    // 实际绑定键必须区分 shader、stage、slot、type 和纹理 id；不能只按尺寸/格式去重。
+    texture_diag_key material = ui;
+    material.texture_id = 0x201;
+    CHECK(texture_diag_state_observe(&coverage, &material));
+    material = ui; material.stage = 2;
+    CHECK(texture_diag_state_observe(&coverage, &material));
+    material = ui; material.slot = 2;
+    CHECK(texture_diag_state_observe(&coverage, &material));
+    material = ui; material.type = 4;
+    CHECK(texture_diag_state_observe(&coverage, &material));
+    material = ui; strcpy(material.shader, "character-key-01");
+    CHECK(texture_diag_state_observe(&coverage, &material));
+
+    // 填满预算后新键被拒绝；同一 token 不重置。
+    unsigned next_id = 0x300;
+    while (coverage.used < TEXTURE_DIAG_WINDOW_MAX) {
+        material = ui; material.texture_id = next_id++;
+        CHECK(texture_diag_state_observe(&coverage, &material));
+    }
+    material = ui; material.texture_id = 0xffff;
+    CHECK(!texture_diag_state_observe(&coverage, &material));
+    texture_diag_state_tick(&coverage, "scene-coverage");
+    CHECK(coverage.used == TEXTURE_DIAG_WINDOW_MAX && coverage.key_count == TEXTURE_DIAG_WINDOW_MAX);
+    texture_diag_state_tick(&coverage, "scene-coverage-next");
+    CHECK(coverage.used == 0 && coverage.key_count == 0 && coverage.duplicates == 0);
+
     // 清空 property token 撤销当前窗口；env 仍可单独使用。
     texture_diag_state_tick(&state, "");
     CHECK(!state.active && !texture_diag_state_reserve(&state));

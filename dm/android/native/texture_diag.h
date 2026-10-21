@@ -54,13 +54,21 @@ static inline unsigned texture_diag_texture_id(unsigned handle) {
     return handle & TEXTURE_DIAG_TEXTURE_MASK;
 }
 
+// 去重键必须含实际 shader/stage/slot 和纹理绑定；仅按尺寸/格式会饿死角色材质。
+// The key must include the actual shader/stage/slot and texture binding; size/format alone starves character materials.
+typedef struct {
+    char shader[17];
+    unsigned stage, slot, type, texture_id, format, view_format, view_set, flags;
+} texture_diag_key;
+
 // 一次请求 token 最多产生 limit 行；off by default，token 变化才重新开窗。
 // One request token produces at most limit lines; off by default and only a token change re-arms.
 typedef struct {
-    unsigned limit, used, seen;
+    unsigned limit, used, seen, duplicates;
     unsigned ok, unbound, missing, unsupported, unsampled, view_format, depth, linear;
-    unsigned active, summarized, initialized;
+    unsigned active, summarized, initialized, key_count;
     char token[TEXTURE_DIAG_TOKEN_MAX];
+    texture_diag_key keys[TEXTURE_DIAG_WINDOW_MAX];
 } texture_diag_state;
 
 static inline void texture_diag_state_init(texture_diag_state *state) {
@@ -98,6 +106,7 @@ static inline void texture_diag_state_tick(texture_diag_state *state, const char
     memcpy(state->token, token, length + 1);
     state->limit = TEXTURE_DIAG_WINDOW_MAX;
     state->used = state->seen = 0;
+    state->duplicates = state->key_count = 0;
     state->ok = state->unbound = state->missing = 0;
     state->unsupported = state->unsampled = state->view_format = state->depth = state->linear = 0;
     state->summarized = 0;
@@ -109,6 +118,23 @@ static inline void texture_diag_state_tick(texture_diag_state *state, const char
 static inline int texture_diag_state_reserve(texture_diag_state *state) {
     texture_diag_state_init(state);
     if (!state->active || state->used >= state->limit) return 0;
+    state->used++;
+    state->seen++;
+    return 1;
+}
+
+// 只接受新的绑定键；重复 UI atlas 不消耗预算，记录去重次数但不输出。
+// Accept only a new binding key; repeated UI atlas entries consume no budget and increment duplicates without output.
+static inline int texture_diag_state_observe(texture_diag_state *state, const texture_diag_key *key) {
+    texture_diag_state_init(state);
+    if (!state->active) return 0;
+    for (unsigned i = 0; i < state->key_count; i++)
+        if (!memcmp(&state->keys[i], key, sizeof *key)) {
+            state->duplicates++;
+            return 0;
+        }
+    if (state->used >= state->limit) return 0;
+    state->keys[state->key_count++] = *key;
     state->used++;
     state->seen++;
     return 1;
