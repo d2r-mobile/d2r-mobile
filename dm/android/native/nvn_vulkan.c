@@ -809,10 +809,16 @@ void mtl_drain(void) { mtl_init();mtl_finish(); pthread_mutex_lock(&queue_lock);
 #include "nvn_vulkan_probe.inc"
 
 static void execute(const uint8_t *p, unsigned depth) {
+    const uint8_t *root = p, *previous = NULL;
+    op_hdr previous_header = {0};
     if (depth > 32) die("NVN command call recursion");
     for (uint64_t count = 0; count < 10000000; ++count) {
         op_hdr h; memcpy(&h, p, sizeof h); const uint8_t *a = p + sizeof h;
-        if (h.size < 8 || (h.size & 7) || h.op >= OP_COUNT_) die("Malformed NVN packet op=%u size=%u", h.op, h.size);
+        if (h.size < 8 || (h.size & 7) || h.op >= OP_COUNT_)
+            die("Malformed NVN packet op=%u size=%u root=%p packet=%p depth=%u ordinal=%llu previous=%p previous_op=%u previous_size=%u",
+                h.op, h.size, (const void *)root, (const void *)p, depth, (unsigned long long)count,
+                (const void *)previous, previous_header.op, previous_header.size);
+        previous = p; previous_header = h;
         uint64_t v[3] = {0}; size_t payload = h.size - 8; memcpy(v, a, payload < sizeof v ? payload : sizeof v);
         switch (h.op) {
             case OP_END: return;
