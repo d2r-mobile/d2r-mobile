@@ -12,13 +12,21 @@ public class View {
         void onFocusChange(View view, boolean hasFocus);
     }
 
+    public interface OnApplyWindowInsetsListener {
+        WindowInsets onApplyWindowInsets(View view, WindowInsets insets);
+    }
+
     private final Context context;
     private ViewParent parent;
     private OnFocusChangeListener focusListener;
+    private OnApplyWindowInsetsListener insetsListener;
     private boolean focusable;
     private boolean focusableInTouchMode;
     private boolean focused;
     public static boolean rejectFocus;
+    public int requestApplyInsetsCalls;
+    public int width;
+    public int height;
 
     public View(Context context) {
         this.context = context;
@@ -30,6 +38,18 @@ public class View {
 
     public final ViewParent getParent() {
         return parent;
+    }
+
+    public int getWidth() {
+        return width;
+    }
+
+    public int getHeight() {
+        return height;
+    }
+
+    public View getRootView() {
+        return parent instanceof View ? ((View) parent).getRootView() : this;
     }
 
     void setParent(ViewParent parent) {
@@ -60,6 +80,22 @@ public class View {
 
     public void setOnFocusChangeListener(OnFocusChangeListener listener) {
         focusListener = listener;
+    }
+
+    public void setOnApplyWindowInsetsListener(OnApplyWindowInsetsListener listener) {
+        insetsListener = listener;
+    }
+
+    public OnApplyWindowInsetsListener getOnApplyWindowInsetsListener() {
+        return insetsListener;
+    }
+
+    public void requestApplyInsets() {
+        requestApplyInsetsCalls++;
+    }
+
+    public WindowInsets dispatchApplyWindowInsets(WindowInsets insets) {
+        return insetsListener == null ? insets : insetsListener.onApplyWindowInsets(this, insets);
     }
 
     public IBinder getWindowToken() {

@@ -22,11 +22,17 @@ mkdir -p "$work/stubs" "$work/classes" "$work/real"
     "$root/dm/android/app/java/org/d2rmobile/android/diagnostic/DmInputConnection.java" \
     "$root/dm/android/app/java/org/d2rmobile/android/diagnostic/DmTextEditorView.java" \
     "$host_source" \
+    "$root/dm/android/app/java/org/d2rmobile/android/diagnostic/DmImeInsetsObserver.java" \
+    "$root/dm/android/app/java/org/d2rmobile/android/diagnostic/DmImeInsetsObservation.java" \
+    "$root/dm/android/app/java/org/d2rmobile/android/diagnostic/DmImeInsetsApi30.java" \
     "$here/DmTextEditorHostTest.java"
 "$java" -cp "$work/stubs:$work/classes:$framework" \
     org.d2rmobile.android.diagnostic.DmTextEditorHostTest
 "$javac" --release 11 -classpath "$framework" -d "$work/real" \
     "$root/dm/android/app/java/org/d2rmobile/android/diagnostic/DmInputConnection.java" \
     "$root/dm/android/app/java/org/d2rmobile/android/diagnostic/DmTextEditorView.java" \
-    "$host_source"
+    "$host_source" \
+    "$root/dm/android/app/java/org/d2rmobile/android/diagnostic/DmImeInsetsObserver.java" \
+    "$root/dm/android/app/java/org/d2rmobile/android/diagnostic/DmImeInsetsObservation.java" \
+    "$root/dm/android/app/java/org/d2rmobile/android/diagnostic/DmImeInsetsApi30.java"
 echo "real android.jar compile: ok"
