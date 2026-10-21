@@ -19,6 +19,7 @@
 #include "live_touch_geometry.h"
 #include "live_touch_provider.h"
 #include "live_touch_readiness.h"
+#include "padmode_route.h"
 #include "live_owner_timer.h"
 #include "../../ios/Sources/dm_touch_controls.h"
 #include "performance_hint.h"
@@ -73,6 +74,8 @@ typedef struct {
     uint64_t live_visual_signature;
     int live_bind_state;
     int touch_timer_fd;
+    int padmode_requested;
+    int padmode_touch_swallow;
     dm_touch_pointer_map touch_map;
     pthread_t debug_thread;int debug_started;_Atomic int debug_stop;
     float requested_frame_rate;int frame_rate_attempted;
@@ -82,6 +85,9 @@ static void touch_timer_stop(game_app *s);
 static void ui_touch_cancel(void);
 static void live_touch_cancel_sources_all(game_app *s);
 static void live_touch_items_ensure(game_app *s);
+void dm_padmode_request(int pad);
+int dm_padmode_current(void);
+int dm_padmode_busy(void);
 static void live_touch_cursor_update(game_app *s);
 static _Atomic int display_hz;
 // 运行时可切的调试浮层（游戏内菜单的「帧率显示」）：UI 线程写，调试线程每拍读。启动初值见 debug_overlay 的读取处。
@@ -866,6 +872,43 @@ static int live_touch_event_routed(game_app *s,int action,int action_index,int p
     }
     return handled;
 }
+static int external_gamepad_source(int source) {
+    return dm_padmode_is_pad_source(source);
+}
+static int touchscreen_source(int source) {
+    return dm_padmode_is_touch_source(source);
+}
+static void padmode_release_pad(game_app *s) {
+    s->pad_buttons = s->hat_buttons = s->trigger_buttons = 0;
+    s->lx = s->ly = s->rx = s->ry = 0;
+}
+static void padmode_release_touch(game_app *s) {
+    live_touch_cancel_sources_all(s);
+    dm_touch_pointer_clear(&s->touch_map);
+    dm_touch_set(NULL, 0);
+    s->tap_a = 0;
+    // Legacy Java on-screen controls are a separate touch source: retire their
+    // published buttons and axes too, or pad_publish will keep feeding them
+    // after a real controller takes the layout back.
+    s->touch_buttons = 0;
+    s->touch_lx = s->touch_ly = s->touch_rx = s->touch_ry = 0;
+}
+static void padmode_request_touch(game_app *s) {
+    if (s->padmode_requested == 0 && dm_padmode_current() == 0) return;
+    padmode_release_pad(s);
+    dm_padmode_request(0);
+    s->padmode_requested = 0;
+    pad_publish(s);   // release controller buttons before the host freezes/rebuilds
+}
+static void padmode_request_pad(game_app *s) {
+    if (s->padmode_requested == 1) return;
+    // A controller press takes the layout back from touch: retire the touch
+    // gesture and its one-shot actions before the host freezes the switch.
+    padmode_release_touch(s);
+    dm_padmode_request(1);
+    s->padmode_requested = 1;
+}
+
 static int input_ready(int fd,int events,void *data) {
     (void)fd;(void)events;game_app *s=data;AInputEvent *event;
     while(AInputQueue_getEvent(s->input,&event)>=0){if(AInputQueue_preDispatchEvent(s->input,event))continue;int handled=0;
@@ -874,6 +917,18 @@ static int input_ready(int fd,int events,void *data) {
         // Pad events arrive with either a JOYSTICK or a GAMEPAD source. Accepting only the former sends a
         // GAMEPAD-source D-pad into the touch branch below, where it is read as a finger position.
         int source=AInputEvent_getSource(event),is_motion=AInputEvent_getType(event)==AINPUT_EVENT_TYPE_MOTION;
+        int touch_input=is_motion&&touchscreen_source(source)&&!external_gamepad_source(source);
+        int touch_action=touch_input?(AMotionEvent_getAction(event)&AMOTION_EVENT_ACTION_MASK):-1;
+        int touch_route=dm_padmode_route_event(is_motion,0,source,touch_action,0,0);
+        if(touch_input&&touch_route==DM_PADMODE_ROUTE_TOUCH&&(touch_action==AMOTION_EVENT_ACTION_DOWN||touch_action==AMOTION_EVENT_ACTION_POINTER_DOWN)){
+            int was_pad=dm_padmode_current()!=0;
+            padmode_request_touch(s);
+            if(was_pad)s->padmode_touch_swallow=1;
+        }
+        if(touch_input&&s->padmode_touch_swallow){
+            if(touch_action==AMOTION_EVENT_ACTION_UP||touch_action==AMOTION_EVENT_ACTION_CANCEL)s->padmode_touch_swallow=0;
+            AInputQueue_finishEvent(s->input,event,1);continue;
+        }
         // 游戏内菜单打开时挡住手柄与按键：菜单是独立窗口，手柄事件照样从 AInputQueue 进来，不挡的话角色会在菜单后面
         // 继续动。两处**放行**：① 返回键 —— 它要走到菜单窗口去把菜单收起（菜单是 focusable 弹窗，自己会吃掉返回键）；
         // ② 触摸 —— 菜单自己的触摸走它自己的窗口，屏幕手柄也要能点。
@@ -884,6 +939,13 @@ static int input_ready(int fd,int events,void *data) {
         // must stay usable.
         if(atomic_load(&menu_open)&&((AInputEvent_getType(event)==AINPUT_EVENT_TYPE_KEY&&AKeyEvent_getKeyCode(event)!=AKEYCODE_BACK)||(is_motion&&(source&(AINPUT_SOURCE_JOYSTICK|AINPUT_SOURCE_GAMEPAD))))){AInputQueue_finishEvent(s->input,event,1);continue;}
         if(is_motion&&(source&(AINPUT_SOURCE_JOYSTICK|AINPUT_SOURCE_GAMEPAD))){
+            int pad_action=AMotionEvent_getAction(event)&AMOTION_EVENT_ACTION_MASK;
+            if(dm_padmode_route_event(1,0,source,pad_action,0,0)==DM_PADMODE_ROUTE_TOUCH&&pad_action==AMOTION_EVENT_ACTION_CANCEL){
+                // NativeActivity has no device-removal callback; a controller
+                // motion cancel is the only disconnect signal here.
+                padmode_request_touch(s);
+                AInputQueue_finishEvent(s->input,event,1);continue;
+            }
             s->lx=stick_value(AMotionEvent_getAxisValue(event,AMOTION_EVENT_AXIS_X,0));s->ly=stick_value(-AMotionEvent_getAxisValue(event,AMOTION_EVENT_AXIS_Y,0));
             float x=AMotionEvent_getAxisValue(event,AMOTION_EVENT_AXIS_Z,0),y=AMotionEvent_getAxisValue(event,AMOTION_EVENT_AXIS_RZ,0);if(!x)x=AMotionEvent_getAxisValue(event,AMOTION_EVENT_AXIS_RX,0);if(!y)y=AMotionEvent_getAxisValue(event,AMOTION_EVENT_AXIS_RY,0);s->rx=stick_value(x);s->ry=stick_value(-y);
             // 十字键：不少手柄（含 Xbox）把它报成 HAT 轴而不是 DPAD 键码，之前整块被丢掉，方向键就没反应。
@@ -911,6 +973,7 @@ static int input_ready(int fd,int events,void *data) {
             // lives in dm_input.h and is the single place to tune.
             if(trigger!=s->trigger_buttons)LOG("[android-pad] trigger LT=%.2f RT=%.2f → buttons=%#llx (阈值 %.2f)",lt,rt,(unsigned long long)trigger,0.5);
             s->trigger_buttons=trigger;
+            if((s->lx||s->ly||s->rx||s->ry||hat||trigger)&&dm_padmode_route_event(1,0,source,0,0,1)==DM_PADMODE_ROUTE_PAD)padmode_request_pad(s);
             pad_publish(s);handled=1;
         }else if(is_motion){int raw_action=AMotionEvent_getAction(event),action=raw_action&AMOTION_EVENT_ACTION_MASK;unsigned lifted=(raw_action&AMOTION_EVENT_ACTION_POINTER_INDEX_MASK)>>AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT;
             pthread_mutex_lock(&s->lock);ANativeWindow *window=s->window;int w=window?ANativeWindow_getWidth(window):1,h=window?ANativeWindow_getHeight(window):1;pthread_mutex_unlock(&s->lock);
@@ -966,6 +1029,7 @@ static int input_ready(int fd,int events,void *data) {
                 if(action==AMOTION_EVENT_ACTION_DOWN)s->tap_a=1;else if(action==AMOTION_EVENT_ACTION_UP||action==AMOTION_EVENT_ACTION_CANCEL)s->tap_a=0;pad_publish(s);handled=1;
             }
         }else if(AInputEvent_getType(event)==AINPUT_EVENT_TYPE_KEY){int key=AKeyEvent_getKeyCode(event),down=AKeyEvent_getAction(event)==AKEY_EVENT_ACTION_DOWN;uint64_t button=pad_key(key),move=key==AKEYCODE_W?DM_BTN_UP:key==AKEYCODE_A?DM_BTN_LEFT:key==AKEYCODE_S?DM_BTN_DOWN:key==AKEYCODE_D?DM_BTN_RIGHT:0;
+            if(button&&external_gamepad_source(source)&&dm_padmode_route_event(0,1,source,0,1,0)==DM_PADMODE_ROUTE_PAD)padmode_request_pad(s);
             if(button){uint64_t before=s->pad_buttons;if(down)s->pad_buttons|=button;else s->pad_buttons&=~button;handled=1;
                 // 按键码这条路也要看得见（LB/RB/A/B 等走这里，部分手柄的方向键也走这里）：出问题时能直接对上
                 // 哪一颗键换来哪一位，不必靠猜。只在位掩码真的变了才记，连按不放不会刷屏。
@@ -1089,7 +1153,7 @@ static void input_destroyed(ANativeActivity *a,AInputQueue *q) {game_app *s=a->i
 // as GPU pressure and the internal 3D ratio is scaled down; ② lifting the guest clock freeze, pairing with the
 // freeze taken when going to the background.
 static void resumed(ANativeActivity *a) {game_app *s=a->instance;atomic_store(&s->activity_resumed,1);dm_android_performance_resume();if(atomic_load(&s->started)){dm_3d_scale_resumed();dm_gfx_suspend(0);guest_clock_freeze_for(1,0);dm_audio_suspend(0);dm_focus_set(1);}live_touch_refresh_geometry(s);touch_timer_start(s);}
-static void paused(ANativeActivity *a) {game_app *s=a->instance;atomic_store(&s->activity_resumed,0);live_touch_cancel_sources_all(s);touch_timer_stop(s);dm_touch_pointer_clear(&s->touch_map);dm_touch_set(NULL,0);pad_clear(s);if(atomic_load(&s->started)){dm_focus_set(3);dm_audio_suspend(1);}dm_android_performance_close();}
+static void paused(ANativeActivity *a) {game_app *s=a->instance;atomic_store(&s->activity_resumed,0);live_touch_cancel_sources_all(s);touch_timer_stop(s);dm_touch_pointer_clear(&s->touch_map);dm_touch_set(NULL,0);pad_clear(s);if(s->padmode_requested==1)padmode_request_touch(s);if(atomic_load(&s->started)){dm_focus_set(3);dm_audio_suspend(1);}dm_android_performance_close();}
 static void focus_changed(ANativeActivity *a,int focused) {game_app *s=a->instance;if(focused){touch_timer_start(s);return;}
     live_touch_cancel_sources_all(s);touch_timer_stop(s);dm_touch_pointer_clear(&s->touch_map);dm_touch_set(NULL,0);
     pad_publish(s);
@@ -1120,7 +1184,7 @@ __attribute__((visibility("default"))) void ANativeActivity_onCreate(ANativeActi
         {"setSkipSaveOnExit","(Z)V",(void*)Java_org_d2r_android_port_D2RActivity_setSkipSaveOnExit}
     };
     if((*a->env)->RegisterNatives(a->env,klass,methods,sizeof methods/sizeof methods[0])!=JNI_OK){(*a->env)->ExceptionDescribe(a->env);(*a->env)->ExceptionClear(a->env);ANativeActivity_finish(a);return;}(*a->env)->DeleteLocalRef(a->env,klass);
-    (void)saved;(void)bytes;game_app *s=calloc(1,sizeof *s);if(!s){ANativeActivity_finish(a);return;}s->touch_timer_fd=-1;s->activity=a;a->instance=s;application=s;dm_touch_pointer_clear(&s->touch_map);s->live_touch=dm_live_touch_create(667,375);if(s->live_touch)LOG("[android-touch] live D2R core created");else LOG("[android-touch] live D2R core unavailable; raw touch fallback");live_touch_items_ensure(s);pthread_mutex_init(&s->lock,NULL);pthread_cond_init(&s->ready,NULL);
+    (void)saved;(void)bytes;game_app *s=calloc(1,sizeof *s);if(!s){ANativeActivity_finish(a);return;}s->padmode_requested=-1;s->touch_timer_fd=-1;s->activity=a;a->instance=s;application=s;dm_touch_pointer_clear(&s->touch_map);s->live_touch=dm_live_touch_create(667,375);if(s->live_touch)LOG("[android-touch] live D2R core created");else LOG("[android-touch] live D2R core unavailable; raw touch fallback");live_touch_items_ensure(s);pthread_mutex_init(&s->lock,NULL);pthread_cond_init(&s->ready,NULL);
     a->callbacks->onNativeWindowCreated=window_created;a->callbacks->onNativeWindowResized=window_resized;a->callbacks->onNativeWindowDestroyed=window_destroyed;a->callbacks->onInputQueueCreated=input_created;a->callbacks->onInputQueueDestroyed=input_destroyed;a->callbacks->onPause=paused;a->callbacks->onResume=resumed;a->callbacks->onWindowFocusChanged=focus_changed;a->callbacks->onDestroy=destroyed;
     ANativeActivity_setWindowFlags(a,AWINDOW_FLAG_FULLSCREEN|AWINDOW_FLAG_KEEP_SCREEN_ON,0);pthread_attr_t attr;pthread_attr_init(&attr);pthread_attr_setstacksize(&attr,64u<<20);int error=pthread_create(&s->worker,&attr,boot,s);pthread_attr_destroy(&attr);if(error)ANativeActivity_finish(a);
 }
