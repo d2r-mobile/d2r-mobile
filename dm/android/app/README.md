@@ -6,6 +6,60 @@ This NativeActivity development app bundles **only owned synthetic fixtures**. I
 
 At startup it reads a synthetic artifact, rebinds gates, maps RX/R/RW pages and attempts a native guest-TLS round trip in the actual app process. Log tag: `D2R-Diagnostic`. When a window exists it draws the tested Vulkan fragment-coordinate pattern, reads it back and copies it into an Android native window. This is a one-frame engineering diagnostic, not an optimized game presenter. Pause/resume are logged; low memory releases the GPU context, and redraw recreates it. No background rendering loop, game resource importer, saves, game controls or audio is implemented here.
 
+## Lifecycle ownership
+
+`app/lifecycle.c` is the production NativeActivity lifecycle controller. Its
+states are `created -> starting -> loading -> owned-diagnostic`, with `paused`,
+`stopping`, `stopped` and `failed` transitions. The diagnostic backend is
+explicitly labelled `owned-diagnostic`; `running` is reserved for an admitted
+game backend and is never entered by this app. A load failure is visible as
+`failed`, performs one host cleanup, and requires a stopped/restarted controller
+before another start.
+
+The controller owns one acquired `ANativeWindow` reference, not a
+callback-scoped borrowed pointer. `onNativeWindowCreated` acquires and
+`onNativeWindowDestroyed`/stop releases it. Replacement acquires the new
+reference first; with work outstanding the old reference is retained in one
+retired slot until the final `work_end`, and matching destroy callbacks defer
+rather than release it early. A second replacement while that retired slot is
+occupied is rejected as explicit backpressure. Stale callbacks are ignored.
+Engine cleanup is called once, stop is idempotent, and a stop requested while
+asynchronous work is pending remains in `stopping` until `work_end` completes it.
+The controller is single-threaded on the Android activity/control thread.
+
+Failure is also drain-aware. If pause, resume or a Surface acquire fails while
+work is outstanding, the controller remains `failed`, preserves the pending
+count and owns the Surface until the last `work_end`; cleanup then runs exactly
+once. `stop` acknowledges a drained failure and allows restart, but does not
+erase the outstanding count early. `dm_app_lifecycle_destroy()` returns 0 and
+keeps the pointer valid while work is pending or an active controller has not
+been stopped; the caller must retain it and retry after `work_end`/`stop`.
+
+The current diagnostic draw and gate load are synchronous, so the NativeActivity
+caller normally stops and destroys immediately. A future asynchronous game/engine
+owner must keep the controller pointer, call `work_end` from the owning thread,
+and retry `stop`/destroy only when `dm_app_lifecycle_pending_work()` reaches zero.
+It must not free the controller or release a Surface on the Activity callback's
+behalf while work remains.
+
+## Input delivery gap (issue #32)
+
+The current input looper handles only the Android Back key. It does not deliver
+`MotionEvent` touches to the r2d core. The next input slice must create one
+`dm_android_pad` and one `dm_android_touch` on the same input/core thread, map
+`MotionEvent` pointer IDs as opaque IDs, stamp non-negative `CLOCK_MONOTONIC`
+nanoseconds, and convert physical pixels to logical points using the view
+density before calling `dm_android_touch_down/move/up/cancel`. The consumer must
+call `dm_android_touch_read` (never `dm_android_pad_read`) for the ordered
+queued-pulse view.
+
+The adapter's 16-pulse ring is bounded. If a mutating event is rejected because
+the ring is full, the app must drain reads on the input thread and retry; it must
+not silently ignore the event, and `ACTION_UP`/`ACTION_CANCEL` must be resolved
+on that thread even when the ring is full (fall back to `cancel_all` if a release
+cannot be queued). This wiring is not part of the lifecycle slice and remains
+open in #32.
+
 ## Build
 
 ```sh
