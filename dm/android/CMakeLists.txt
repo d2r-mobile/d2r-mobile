@@ -393,6 +393,15 @@ if(DM_ANDROID_VULKAN)
     endif()
 endif()
 
+if(NOT ANDROID)
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME diagnostic_provenance
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_provenance.py)
+        set_tests_properties(diagnostic_provenance PROPERTIES TIMEOUT 60)
+    endif()
+endif()
+
 if(ANDROID)
     if(NOT ANDROID_ABI STREQUAL "arm64-v8a")
         message(FATAL_ERROR "The Android port targets arm64-v8a only")

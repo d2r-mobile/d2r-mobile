@@ -42,8 +42,19 @@ if [[ ! -f "$keystore" ]]; then
         -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 3650 -dname 'CN=Android Debug,O=D2R Development,C=DE'
 fi
 output=$build/d2r-diagnostic-debug.apk
+sidecar=$output.provenance.json
+rm -f "$sidecar"
 "$tools/apksigner" sign --ks "$keystore" --ks-key-alias androiddebugkey --ks-pass pass:android --key-pass pass:android --out "$output" "$stage/aligned.apk"
 "$tools/apksigner" verify --verbose "$output"
 "$tools/zipalign" -c -P 16 -v 4 "$output"
+python3 "$here/provenance.py" write \
+    --apk "$output" \
+    --output "$sidecar" \
+    --source-root "$here/../../.." \
+    --native-build "$native_build" \
+    --build-tools "$tools" \
+    --min-sdk 29 \
+    --target-sdk 35
 "$tools/aapt2" dump badging "$output"
 printf 'Diagnostic APK (synthetic ARM64 / Vulkan only, no game): %s\n' "$output"
+printf 'Provenance sidecar: %s\n' "$sidecar"
