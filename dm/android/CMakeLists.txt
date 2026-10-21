@@ -1012,6 +1012,12 @@ if(NOT ANDROID)
     add_test(NAME live_touch_visual COMMAND dm_live_touch_visual_test)
     set_tests_properties(live_touch_visual PROPERTIES TIMEOUT 30)
 
+    add_executable(dm_ui_trace_test tests/ui_trace_test.c)
+    target_include_directories(dm_ui_trace_test PRIVATE ../host)
+    target_compile_options(dm_ui_trace_test PRIVATE -Wall -Wextra -Werror)
+    add_test(NAME ui_trace COMMAND dm_ui_trace_test)
+    set_tests_properties(ui_trace PROPERTIES TIMEOUT 10)
+
     add_executable(dm_texture_deswizzle_formats_test tests/texture_deswizzle_formats_test.c ../gfx/nvn/nvn_tex.c ../gfx/tex/nvn_deswizzle.c)
     target_include_directories(dm_texture_deswizzle_formats_test PRIVATE native ../gfx/nvn ../gfx/tex)
     target_compile_options(dm_texture_deswizzle_formats_test PRIVATE -Wall -Wextra -Werror)
