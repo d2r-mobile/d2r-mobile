@@ -47,7 +47,9 @@ checks when Vulkan tooling is unavailable; such a run does not verify graphics.
 - SDK synchronization, TLR/preemption and SVC36 adaptation are not admitted.
   See ,
    and
-  .
+  . The proposed contract and
+  counterexamples (design only, unverified on Android) are in
+  [`docs/android/runtime-contract.md`](../../docs/android/runtime-contract.md).
 - The `lm` backend retains at most four copied packets per host. It is not a
   complete logging sink; unsupported commands still fail.
 - Complete SDK initialization, required services, normal SDK teardown and
