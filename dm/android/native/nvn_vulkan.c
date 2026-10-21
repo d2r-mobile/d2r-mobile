@@ -77,6 +77,15 @@ extern int dm_android_guest_heap_copy_owned(uintptr_t address,void *destination,
 #pragma weak nvn_dirty_snapshot_begin
 #pragma weak nvn_dirty_snapshot_end
 #pragma weak nvn_dirty_snapshot_abort
+// 参考后端把宿主快照 guard 作为可选 ABI；本仓 dm/host 尚未提供这些符号，
+// 声明后弱引用为空，后端保守走无 guard 的完整读取路径。
+// The reference backend treats host snapshot guards as optional ABI; this
+// tree does not provide the symbols yet, so the weak references stay null and
+// the backend conservatively uses its unguarded full-read path.
+extern int dm_guest_snapshot_try_begin(void);
+extern void dm_guest_snapshot_end(void);
+extern void dm_guest_host_write_begin(void *addr, size_t len);
+extern void dm_guest_host_write_end(void);
 #pragma weak dm_guest_snapshot_try_begin
 #pragma weak dm_guest_snapshot_end
 #pragma weak dm_guest_host_write_begin
@@ -493,7 +502,6 @@ static post_op *post_new(int kind) {
 }
 
 #include "nvn_vulkan_async.inc"
-#include "nvn_vulkan_guest_publish.inc"
 #include "nvn_vulkan_forward.inc"
 
 void mtl_sub_begin(void) {

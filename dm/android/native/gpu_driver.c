@@ -2,7 +2,7 @@
 // Optional Turnip loading and unified Vulkan dispatch. System by default; never change another app's configuration.
 #define _GNU_SOURCE
 #include "gpu_driver.h"
-#include <adrenotools/driver.h>
+#include "gpu_driver_adrenotools.h"
 #include <ctype.h>
 #include <dlfcn.h>
 #include <errno.h>

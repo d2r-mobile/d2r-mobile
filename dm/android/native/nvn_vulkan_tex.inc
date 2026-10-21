@@ -51,7 +51,7 @@ static VkFormat vk_format(int format) {
         [0x76]=VK_FORMAT_R32G32B32A32_SFLOAT, [0x77]=VK_FORMAT_R32G32B32A32_UINT, [0x78]=VK_FORMAT_R32G32B32A32_SINT,
     };
     if (format >= 0x79 && format <= 0x94) return VK_FORMAT_ASTC_4x4_UNORM_BLOCK + (format - 0x79) % 14 * 2 + (format >= 0x87);
-    return format > 0 && format < sizeof formats / sizeof *formats ? formats[format] : VK_FORMAT_UNDEFINED;
+    return format > 0 && (unsigned)format < sizeof formats / sizeof *formats ? formats[format] : VK_FORMAT_UNDEFINED;
 }
 // 按真正的读写风险同步；连续只读与通道内同附件写入不加全局屏障。
 // Synchronize actual read/write hazards; avoid global barriers for consecutive reads or same-pass attachment writes.

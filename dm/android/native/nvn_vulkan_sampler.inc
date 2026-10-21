@@ -51,4 +51,3 @@ static VkSampler sampler_get_for_type(int id,uint32_t type) {
     }
     pthread_mutex_unlock(&descriptor_lock);return entry->sampler;
 }
-static VkSampler sampler_get(int id) {return sampler_get_for_type(id,0);}

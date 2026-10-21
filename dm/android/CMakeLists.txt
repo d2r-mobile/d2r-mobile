@@ -701,6 +701,15 @@ if(ANDROID)
     if(NOT ANDROID_ABI STREQUAL "arm64-v8a")
         message(FATAL_ERROR "The Android port targets arm64-v8a only")
     endif()
+    # Imported reference NVN→Vulkan backend. It compiles against this tree's
+    # nvn_obj.h/nvn_dirty.h and is linked beside the existing diagnostic lane;
+    # it does not replace native.c or register a second production loader.
+    add_library(dm_android_nvn_backend STATIC native/nvn_vulkan.c native/gpu_driver.c)
+    target_include_directories(dm_android_nvn_backend PUBLIC
+        native native/compat ../gfx/nvn ../gfx/nvn/include ../gfx/tex ../host)
+    target_link_libraries(dm_android_nvn_backend PUBLIC dm_android_tex android log dl m vulkan)
+    target_compile_options(dm_android_nvn_backend PRIVATE -Wall -Wextra -Werror)
+    set_source_files_properties(native/nvn_vulkan.c PROPERTIES COMPILE_DEFINITIONS _GNU_SOURCE)
     add_executable(dm_android_probe probe.c)
     target_compile_options(dm_android_probe PRIVATE -Wall -Wextra -Werror)
     target_link_libraries(dm_android_probe PRIVATE vulkan)
