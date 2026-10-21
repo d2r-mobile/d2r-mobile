@@ -11,6 +11,95 @@ static int host_panel_bits(void *context) { (void)context; return dm_ui_panel_st
 static uint32_t host_ui_gen(void *context) { (void)context; return dm_ui_gen(); }
 static void host_hud(void *context, dm_hud_info *out) { (void)context; dm_hud_get(out); }
 static uint64_t host_now(void *context) { (void)context; return now_ns(); }
+static int provider_snapshot(void *context, dm_tgp_snapshot *out);
+
+static uint32_t module_name_id(const char *name) {
+    uint32_t hash = 2166136261u;
+    for (const unsigned char *p = (const unsigned char *)name; *p; ++p)
+        hash = (hash ^ *p) * 16777619u;
+    return hash ? hash : 1u;
+}
+
+static int provider_hit(void *context, float x, float y, dm_tgp_hit *out) {
+    (void)context; (void)x; (void)y;
+    if (out) memset(out, 0, sizeof(*out));
+    return 0;
+}
+static int provider_action(void *context, const dm_tgp_action *action, uint64_t now_ns) {
+    (void)context; (void)action; (void)now_ns;
+    return 0;
+}
+
+static int valid_identity(const dm_module_identity *identity) {
+    return identity && identity->name[0] && identity->generation != 0 &&
+           identity->size != 0 && identity->size <= DM_TGP_MAX_MODULE_BYTES &&
+           identity->base != 0 && identity->base <= UINT64_MAX - identity->size;
+}
+
+static void apply_identity(dm_live_touch_provider *provider,
+                           const dm_module_identity *identity) {
+    provider->iface.abi_version = DM_TGP_ABI_VERSION;
+    provider->iface.module_id = module_name_id(identity->name);
+    provider->iface.generation = identity->generation;
+    provider->iface.module_base = identity->base;
+    provider->iface.module_size = identity->size;
+    // The loader does not provide an object range. Keep it unknown; hit/action
+    // stay unavailable and the existing bridge range validation is untouched.
+    provider->iface.object_range_base = 0;
+    provider->iface.object_range_size = 0;
+    provider->iface.context = provider;
+    provider->iface.snapshot = provider_snapshot;
+    provider->iface.hit = provider_hit;
+    provider->iface.action = provider_action;
+}
+
+static int sync_generic_identity(dm_live_touch_provider *provider) {
+    dm_module_identity identity;
+    if (!dm_module_identity_get("main", &identity) || !valid_identity(&identity))
+        return 0;
+    apply_identity(provider, &identity);
+    return 1;
+}
+
+static int provider_snapshot(void *context, dm_tgp_snapshot *out) {
+    dm_live_touch_provider *provider = context;
+    if (!provider || !out) return 0;
+    memset(out, 0, sizeof(*out));
+
+    dm_module_identity before, after;
+    if (!dm_module_identity_get("main", &before) || !valid_identity(&before))
+        return 0;
+
+    // Scene host callbacks may invalidate or replace the loader identity. Do
+    // not hold the identity mutex across them; revalidate the exact same
+    // generation/base/size/name after observation and fail closed on any
+    // change. An old scene is never relabeled as a new module generation.
+    dm_live_touch_scene_observation observation;
+    if (!dm_live_touch_provider_observe(provider, &observation)) return 0;
+    if (!dm_module_identity_get("main", &after) || !valid_identity(&after)) return 0;
+    if (before.generation != after.generation || before.base != after.base ||
+        before.size != after.size || strcmp(before.name, after.name) != 0)
+        return 0;
+
+    apply_identity(provider, &after);
+    out->abi_version = DM_TGP_ABI_VERSION;
+    out->module_id = provider->iface.module_id;
+    out->generation = provider->iface.generation;
+    out->scene_epoch = observation.scene_epoch;
+    out->world_epoch = observation.world_epoch;
+    out->object_generation = 0;
+    out->captured_ns = observation.captured_ns;
+    out->ui_identity = observation.ui_identity;
+    out->panel_bits = observation.panel_bits;
+    out->available = 1;
+    out->scene = observation.scene == DM_LIVE_TOUCH_SCENE_GAME ? DM_TGP_SCENE_GAME :
+                 observation.scene == DM_LIVE_TOUCH_SCENE_PANEL ? DM_TGP_SCENE_PANEL :
+                 observation.scene == DM_LIVE_TOUCH_SCENE_DEAD ? DM_TGP_SCENE_DEAD :
+                 DM_TGP_SCENE_MENU;
+    out->dialogue_only = 0;
+    out->dead = observation.dead;
+    return 1;
+}
 
 void dm_live_touch_provider_init(dm_live_touch_provider *provider,
                                  const dm_live_touch_provider_host *host) {
@@ -92,9 +181,7 @@ int dm_live_touch_provider_observe(dm_live_touch_provider *provider,
 }
 
 const dm_tgp_provider *dm_live_touch_provider_generic_interface(
-    const dm_live_touch_provider *provider) {
-    (void)provider;
-    // This slice has no pinned guest module, hit model or action consumer.
-    // There is deliberately no generic provider object to hand to a bridge.
-    return NULL;
+    dm_live_touch_provider *provider) {
+    if (!provider || !sync_generic_identity(provider)) return NULL;
+    return &provider->iface;
 }

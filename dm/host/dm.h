@@ -37,8 +37,23 @@ typedef struct {
     uint64_t init, init_array, init_arraysz;   // init = DT_INIT（模块 _init：登记 DSO 并跑本模块 init_array） | init = DT_INIT (the module's _init: registers the DSO and runs this module's init_array)
 } module_t;
 
+// Immutable loader-published code identity. This is copied out of module_t by
+// the loader only after a successful load_modules; callers never read g_mod.
+typedef struct {
+    char name[16];
+    uint64_t generation;   // loader publication generation, not a guest/player epoch
+    uint64_t base;
+    uint64_t size;
+} dm_module_identity;
+
 extern module_t g_mod[MAX_MOD];
 extern int g_nmod;
+// Invalidate before touching g_mod for a new load; publish only after the
+// complete successful load. Query copies a bounded snapshot under a mutex and
+// returns 0 while unavailable / for an unknown name.
+void dm_module_identity_invalidate(void);
+int dm_module_identity_publish(const module_t *modules, int count);
+int dm_module_identity_get(const char *name, dm_module_identity *out);
 // 四个线程本地槽：K18 = Switch 的 x18、KTLS = tpidr_el0、KTLR = tpidrro_el0（ThreadLocalRegion）、KGATE = 宿主门入口；实际键号由装载器写入键页
 // Four thread-local slots: K18 = the Switch's x18, KTLS = tpidr_el0, KTLR = tpidrro_el0 (ThreadLocalRegion), KGATE = host gate entry; the actual key numbers are written into the key page by the loader
 extern pthread_key_t g_key18, g_keytls, g_keytlr, g_keygate;

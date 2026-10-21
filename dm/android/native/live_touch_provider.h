@@ -2,11 +2,11 @@
 //
 // This module reads the existing host state entry points:
 // dm_uiscreen_ingame / dm_uiscreen_panel, dm_ui_panel_state, dm_ui_gen and the
-// per-tick dm_hud_get publication. It is deliberately NOT a module-backed
-// dm_tgp_provider: this slice has no pinned guest module, item hit model or
-// action consumer. The generic provider interface is explicitly unavailable;
-// callers must not treat these observations as game identity or readiness for
-// module/hit/action work.
+// per-tick dm_hud_get publication. Scene observation is always available when
+// those entries publish state. A generic dm_tgp_provider is exposed only when
+// the loader has published immutable real module metadata for "main"; this
+// slice still has no object range, hit model or action consumer, so hit/action
+// remain unavailable.
 #pragma once
 
 #include <stdint.h>
@@ -48,6 +48,7 @@ typedef struct dm_live_touch_scene_observation {
 
 typedef struct dm_live_touch_provider {
     dm_live_touch_provider_host host;
+    dm_tgp_provider iface;
     uint64_t scene_epoch;
     uint64_t world_epoch;
     uint64_t last_ui_identity;
@@ -67,10 +68,13 @@ void dm_live_touch_provider_init(dm_live_touch_provider *provider,
 // Front-end pages (not in a run) remain a valid menu observation.
 int dm_live_touch_provider_observe(dm_live_touch_provider *provider,
                                    dm_live_touch_scene_observation *out);
-// Scene/identity observation does not construct a generic dm_tgp_provider.
-// Always NULL; this makes the missing module/hit/action capability explicit.
+// Scene/identity observation does not itself construct a generic provider.
+// Returns NULL until real successful-loader metadata for "main" is published;
+// when available, the returned provider carries exact base/size and the real
+// loader publication generation. object range is unknown, and hit/action stay
+// unavailable.
 const dm_tgp_provider *dm_live_touch_provider_generic_interface(
-    const dm_live_touch_provider *provider);
+    dm_live_touch_provider *provider);
 
 #ifdef __cplusplus
 }
