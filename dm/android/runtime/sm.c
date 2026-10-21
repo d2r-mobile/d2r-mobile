@@ -87,8 +87,17 @@ int dm_sm_install(dm_host *host) {
     }
     struct dm_sm_state *state = host->sm;
     pthread_mutex_unlock(&host->mutex);
+    // A repeat install is idempotent only when the live sm: port has exactly
+    // this endpoint identity. A foreign same-name endpoint is never adopted.
     int rc = dm_host_ipc_register_port_full(host, "sm:", sm_handler, sm_closer, state);
-    return rc == EEXIST ? 0 : rc;
+    if (rc == 0) return 0;
+    if (rc == EEXIST) {
+        pthread_mutex_lock(&host->mutex);
+        int match = dm_host_ipc_port_matches_locked(host, "sm:", sm_handler, sm_closer, state);
+        pthread_mutex_unlock(&host->mutex);
+        return match ? 0 : EEXIST;
+    }
+    return rc;
 }
 // 仅在宿主销毁（无会话、无附着线程）时调用；调用方持有 host->mutex。
 // Only called at host destruction (no sessions, no attached threads); the caller holds host->mutex.
