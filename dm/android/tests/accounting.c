@@ -173,6 +173,20 @@ int main(void){
         CHECK(!dm_host_map_modules(h,images,codes,2,NULL,0,&maps)&&info(h,22)==UNIT+module_bytes);
         CHECK(!dm_host_destroy(h));
     }
+    // Active accounting local leases are owned construction state: destroy must
+    // refuse before unmapping the host, then succeed after reverse release.
+    {
+        h=dm_host_create_accounted_process(UNIT,page,page,UNIT);CHECK(h);
+        dm_accounted_local *local=NULL;
+        CHECK(!dm_host_accounting_local_create(h,&local,page));
+        CHECK(local&&dm_host_accounting_used(h)==page);
+        CHECK(dm_host_destroy(h)==EBUSY);
+        pthread_mutex_lock(&h->mutex);
+        dm_host_accounting_local_release_locked(h,local);
+        pthread_mutex_unlock(&h->mutex);
+        CHECK(!dm_host_accounting_used(h));
+        CHECK(!dm_host_destroy(h));
+    }
     for(unsigned i=0;i<2;i++)dm_nso_free(&images[i]);
-    puts("PASS accounting: real linked owned images, exact backing budget, RO/gap pins, alias dedup, heap quota, real SVC21/22, TLS deferred lifetime and concurrent quota rollback; unified address containment, protected reset/reuse and11 partial-commit failures/retries");return 0;
+    puts("PASS accounting: real linked owned images, exact backing budget, RO/gap pins, alias dedup, heap quota, real SVC21/22, TLS deferred lifetime and concurrent quota rollback; unified address containment, protected reset/reuse and11 partial-commit failures/retries, active local lease destroy refusal/release");return 0;
 }
