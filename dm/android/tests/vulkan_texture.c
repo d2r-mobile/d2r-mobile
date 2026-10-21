@@ -39,15 +39,8 @@ static uint8_t*make_source(const fixture*f,size_t*size){
     }
     free(written);return bytes;
 }
-static void enable_validation(void){
-    uint32_t count=0;VK_CHECK(vkEnumerateInstanceLayerProperties(&count,NULL));VkLayerProperties*layers=calloc(count?count:1,sizeof(*layers));CHECK(layers);
-    VK_CHECK(vkEnumerateInstanceLayerProperties(&count,layers));int available=0;
-    for(unsigned i=0;i<count;i++)if(!strcmp(layers[i].layerName,"VK_LAYER_KHRONOS_validation"))available=1;free(layers);
-    if(available){const char*old=getenv("VK_INSTANCE_LAYERS");if(!old||!strstr(old,"VK_LAYER_KHRONOS_validation")){
-            size_t n=(old?strlen(old):0)+64;char*value=malloc(n);CHECK(value);snprintf(value,n,"%s%sVK_LAYER_KHRONOS_validation",old?old:"",old&&*old?":":"");CHECK(!setenv("VK_INSTANCE_LAYERS",value,1));free(value);}
-        puts("validation: VK_LAYER_KHRONOS_validation requested; messages remain visible on stderr");
-    }else puts("validation: VK_LAYER_KHRONOS_validation unavailable; GPU comparisons still required");
-}
+// 验证层通过 dm_vk_create_ex 显式请求（#42）；不再改 VK_INSTANCE_LAYERS 环境变量假装启用。
+// The layer is requested through dm_vk_create_ex (#42); no VK_INSTANCE_LAYERS environment override pretending to enable it.
 static size_t sample(dm_vk*vk,const dm_vk_texture*texture,const fixture*f,const char*shader_path){
     VkShaderModule shader;VK_CHECK(dm_vk_shader_load(vk,shader_path,&shader));
     VkDescriptorSetLayoutBinding bindings[2]={{.binding=0,.descriptorType=VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,.descriptorCount=1,.stageFlags=VK_SHADER_STAGE_COMPUTE_BIT},
@@ -111,7 +104,8 @@ static void invalid(dm_vk*vk){
 int main(int argc,char**argv){
     CHECK(argc==3);mip_spec gob={16,8,1,0};CHECK(address(&gob,0,0)==0&&address(&gob,32,0)==256&&address(&gob,0,1)==16);
     CHECK(address(&gob,16,0)==32&&address(&gob,0,2)==64&&address(&gob,63,7)==511);
-    enable_validation();dm_vk vk={0};VK_CHECK(dm_vk_create(&vk));printf("GPU: %s Vulkan %u.%u.%u\n",vk.properties.deviceName,VK_VERSION_MAJOR(vk.properties.apiVersion),VK_VERSION_MINOR(vk.properties.apiVersion),VK_VERSION_PATCH(vk.properties.apiVersion));
+    dm_vk_options vopt = DM_VK_OPTIONS_INIT; vopt.validation = DM_VK_VALIDATION_OPTIONAL;
+    dm_vk vk={0};VK_CHECK(dm_vk_create_ex(&vopt,&vk));printf("validation: %s\n",dm_vk_validation_status(&vk));printf("GPU: %s Vulkan %u.%u.%u\n",vk.properties.deviceName,VK_VERSION_MAJOR(vk.properties.apiVersion),VK_VERSION_MINOR(vk.properties.apiVersion),VK_VERSION_PATCH(vk.properties.apiVersion));
     invalid(&vk);size_t total=0;
     for(unsigned i=0;i<sizeof(fixtures)/sizeof(fixtures[0]);i++){
         const fixture*f=&fixtures[i];size_t size;uint8_t*source=make_source(f,&size);reject(&vk,&f->desc,source,size-1);
