@@ -1,6 +1,5 @@
 // Actual rendered-picture geometry for Android touch forwarding.
-// Front-end pages are the original centered 16:9 UI; in-run output is fitted
-// from the actual game output aspect (explicit 16:9, phone aspect, capped
+// All pages fit the actual game output aspect (explicit 16:9, phone aspect, capped
 // ultrawide), never blindly stretched to the surface. Invalid surfaces or
 // output sizes must not produce a fake picture.
 #pragma once
@@ -16,10 +15,11 @@ static inline dm_live_touch_geometry dm_live_touch_geometry_for(int surface_w, i
                                                                  int output_w, int output_h,
                                                                  int ingame) {
     dm_live_touch_geometry g = {0};
+    (void)ingame; // Scene changes do not change the rendered output rectangle.
     if (surface_w < 320 || surface_h < 240 || surface_w <= 0 || surface_h <= 0 ||
         surface_w > 16384 || surface_h > 16384) return g;
     float sw = (float)surface_w, sh = (float)surface_h;
-    if (ingame && output_w > 0 && output_h > 0) {
+    if (output_w > 0 && output_h > 0) {
         // Fit the actual output aspect into the visible surface.
         float ow = (float)output_w, oh = (float)output_h;
         float sx = sw / ow, sy = sh / oh;
@@ -27,7 +27,7 @@ static inline dm_live_touch_geometry dm_live_touch_geometry_for(int surface_w, i
         g.width = ow * scale;
         g.height = oh * scale;
     } else {
-        // Original front-end pages: centered 16:9 within the surface.
+        // Compatibility fallback when output dimensions are unavailable.
         g.width = sw;
         g.height = sw * 9.0f / 16.0f;
         if (g.height > sh) {
