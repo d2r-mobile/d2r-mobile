@@ -24,7 +24,7 @@ MIT · 中文 / English / Español / Русский · iOS 26+ / macOS 26+；老
 
 ## 一句话复刻
 
-备好游戏文件，然后对 Claude Code 或 Codex 说：
+备好你自己的游戏文件，然后对 Claude Code 或 Codex 说：
 
 ```
 用 https://github.com/d2r-mobile/d2r-mobile 里的 d2r-mobile skill，帮我把 D2R Mobile 装到我的 iPhone 上。游戏文件在 <路径>。
