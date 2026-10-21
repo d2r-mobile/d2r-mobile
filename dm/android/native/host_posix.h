@@ -5,6 +5,7 @@
 #include <time.h>
 #include <sys/types.h>
 uint64_t dm_android_clock_ns(clockid_t clock);
+void dm_android_diagnostics_configure(int enabled);
 uint64_t dm_android_process_start_ns(void);
 void *dm_android_stack_top(pthread_t thread);
 size_t dm_android_stack_size(pthread_t thread);

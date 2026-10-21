@@ -150,9 +150,11 @@ def main():
                                     ("PackageArchive.java", "PackageArchiveTest", "数据包导入"),
                                     ("LauncherState.java", "LauncherStateTest", "启动界面状态"),
                                     ("LaunchSettings.java", "LaunchSettingsTest", "启动设置持久化"),
+                                    ("OutputResolution.java", "OutputResolutionTest", "输出分辨率与内部缩放"),
                                     ("TouchVisibility.java", "TouchVisibilityTest", "触控显隐"),
                                     ("TouchOverlayGeometry.java", "TouchOverlayGeometryTest", "触控叠层坐标"),
                                     ("TouchGlyph.java", "TouchGlyphTest", "技能图标图集"),
+                                    ("TouchSkillSilhouette.java", "TouchSkillSilhouetteTest", "银白技能轮廓"),
                                     ("TouchSocketColor.java", "TouchSocketColorTest", "触控槽颜色")):
             if not (JAVAC.exists() and JAVA.exists()):
                 skipped.append("%s（%s）：没有项目 JDK（%s）" % (label, test, JAVAC))

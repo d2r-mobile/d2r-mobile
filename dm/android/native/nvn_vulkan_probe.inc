@@ -19,6 +19,7 @@ static struct {unsigned id;char key[17];probe_cs_buffer *first;} probe_cs_pendin
 static unsigned probe_cs_count;static uint64_t probe_cs_bytes;static char probe_cs_key[17];
 static const char *graphics_probe_role(unsigned role) {static const char *names[]={"uniform","vertex","ssbo","texel"};return role<4?names[role]:"buffer";}
 static void graphics_probe_configure(void) {
+    if (!dm_diagnostics_enabled()) return;
     if(probe_checked)return;probe_checked=1;const char *frame=getenv("DM_VK_PROBE_FRAME"),*dir=getenv("DM_VK_PROBE_DIR"),*temp=getenv("DM_TEMP");
     if(frame)probe_frame=strtoull(frame,NULL,10);
     if(dir&&*dir)snprintf(probe_directory,sizeof probe_directory,"%s",dir);else if(temp&&*temp)snprintf(probe_directory,sizeof probe_directory,"%s/gpu-probe",temp);

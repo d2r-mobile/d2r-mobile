@@ -22,9 +22,17 @@ Updated **2026-10-21**, based on device observations through October 20. Follow 
 
 **Turnip is the rendering baseline.** The system Qualcomm driver remains available as a fallback, but its earlier black patches and lighting defects were not resolved by the experimental UBO workaround. This project does not currently prioritize that driver-specific repair.
 
+Android skill buttons use transparent silver silhouettes following the upstream iOS mask. Normal and pressed frames are converted once and cached. The bound arrow and fist icons, pressed state and empty slots have been visually checked on the test phone; other class skills still need individual verification.
+
 Performance varies by scene and over time. Reaching about 60 fps in some camp samples is not evidence of stable 60 fps in combat or a long session. Energy savings have not been established. Apple performance measurements apply to the Apple build.
 
-Attachment-clear and narrower image-usage experiments are tracked in  and remain disabled by default pending performance acceptance. Tests use bundled Turnip; charging measurements do not establish energy savings. The area-transition skill-icon candidate has passed host/CI checks but still needs visual confirmation across an actual area boundary.
+The performance overlay reports a rolling two-second presented FPS and P95/worst presentation interval when the driver exposes display timing. Without that data it explicitly reports submitted FPS instead. For uniform 60/30 fps, intervals should stay near 16.7/33.3 ms; an average FPS alone cannot establish smoothness. The limiter offers Uncapped, 60 and 30; a cap cannot speed up a frame that already exceeds its time budget.
+
+The launcher's Debug collection switch is off by default and applies on the next game launch. FPS display is independent: with collection off it only shows FPS and presentation intervals. Detailed timing, battery/memory sampling, slow-frame files, optional captures and input traces require collection; fatal errors and gameplay synchronization remain active. With collection on, abnormal-frame logging uses a cap-aware threshold and normally samples at most once per second; per-draw timing still requires its advanced diagnostic flag. Disabling diagnostics does not establish sustained 60 fps.
+
+The CPU candidate combines single-pass descriptor encoding/hash, reuse of identical compute bindings, and a shared sampler/texture lookup lock. Local checks and short stationary camp runs pass. In the measured sequence the combined60fps candidate averaged56.2FPS versus54.2/50.6FPS for baseline runs, but P95 remained25ms and temperature/order differed; stable60 and repeatable power savings remain unproven. The30fps candidate averaged30.0FPS with P95 33.3ms.
+
+Fullscreen Medium and Low keep the UI/output at720 high and render internal3D at640 and480 high respectively. On a1600×720 output, Medium's nominal3D pixel count is about99% of1280×720; similar pixel counts do not guarantee equal frame times.
 
 ## Trying a development build
 
@@ -33,7 +41,7 @@ Build a development APK from `main` or `dev`. This is a device-tested developmen
 1. Install the APK and open the launcher. To retain existing app data, use a compatible update with the same package name and signing key.
 2. Choose **Import data package** and select your locally prepared Android game-data ZIP. Wait for the installed/ready state.
 3. On the supported Qualcomm test phone, use **bundled Turnip**. A custom driver ZIP may be imported; incompatible drivers are rejected before game startup. Imported drivers can be deleted from the launcher. There is currently one custom-driver slot; a successful new import replaces it.
-4. Start with **Phone aspect / Auto**. This keeps the game at the phone's aspect ratio without requiring native-display rendering resolution. Compare quality and frame time before increasing resolution.
+4. Start with **Fullscreen · 720 high**. The selector shows actual output pixels (1600×720 on a 20:9 phone), with lower-cost modes that keep the UI/output at 720 high and render 3D at 480 or 640 high, a 900-high fullscreen mode, and 1280×720/1600×900 16:9 alternatives. The 480 mode has been visually confirmed on the test phone; it trades 3D sharpness for fewer rendered pixels, but repeatable power savings remain unproven. Output no longer depends on a separate handheld/docked selector. Save import/export is on the immersive launcher, below Start; settings and game-package management scroll on the right in wide layouts.
 5. Start the game. When finished, use the game's save/exit and the application's normal exit flow.
 
 **What does importing the ZIP do?** The launcher extracts and validates its contents into the app's own data directories: resources use app-specific storage, while game modules and saves use internal app storage. The ZIP is an import source; the game does not read it on every launch. Once a successful import and launch are confirmed, the copy in Downloads can be removed. Keep a separate backup if you may need to reinstall. Clearing app data or uninstalling can remove imported data and saves; export saves first. Game data is not added to the already installed APK.

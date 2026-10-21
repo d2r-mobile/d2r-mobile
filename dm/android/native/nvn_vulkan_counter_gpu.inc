@@ -58,8 +58,7 @@ static int counter_gpu_record(post_op *post) {
         {.sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,.dstSet=set,.dstBinding=0,.descriptorCount=1,.descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,.pBufferInfo=&buffers[0]},
         {.sType=VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,.dstSet=set,.dstBinding=1,.descriptorCount=1,.descriptorType=VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,.pBufferInfo=&buffers[1]}};
     vkUpdateDescriptorSets(device,2,writes,0,NULL);
-    vkCmdBindPipeline(command,VK_PIPELINE_BIND_POINT_COMPUTE,counter_gpu_pipeline);
-    vkCmdBindDescriptorSets(command,VK_PIPELINE_BIND_POINT_COMPUTE,counter_gpu_pipeline_layout,0,1,&set,0,NULL);
+    compute_command_apply(counter_gpu_pipeline,counter_gpu_pipeline_layout,set,0,NULL);
     vkCmdPushConstants(command,counter_gpu_pipeline_layout,VK_SHADER_STAGE_COMPUTE_BIT,0,sizeof counter_gpu_parameters,counter_gpu_parameters);
     vkCmdDispatch(command,1,1,1);
     // GPU 完成之外还需明确主机读可见性；后续 GPU 消费由 forward 屏障排序。

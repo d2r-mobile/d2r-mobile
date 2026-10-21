@@ -110,6 +110,12 @@ unsigned dm_live_touch_tap_move_seq(const dm_live_touch *touch);
 void dm_live_touch_set_context(dm_live_touch *touch, int navigation, uint32_t mask,
                                uint64_t scene_epoch, uint64_t world_epoch,
                                uint64_t ui_identity, uint64_t object_generation);
+// Rebase only an already-owned movement finger after a proven continuous player observation.
+// Epochs still change and every skill, item, map and one-shot action is cancelled.
+void dm_live_touch_set_context_moving(dm_live_touch *touch, int navigation, uint32_t mask,
+                                      uint64_t scene_epoch, uint64_t world_epoch,
+                                      uint64_t ui_identity, uint64_t object_generation,
+                                      int movement_continuity);
 
 // Android MotionEvent coordinates are window pixels. The viewport conversion
 // maps the game picture into the core's point layout; out-of-picture points are

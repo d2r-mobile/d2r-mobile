@@ -16,7 +16,7 @@ static void texture_upload_report(uint64_t ticket) {
         (unsigned long long)(texture_upload_subresources-subresources),(unsigned long long)(texture_upload_bytes-bytes));
     calls=texture_upload_copy_calls;subresources=texture_upload_subresources;bytes=texture_upload_bytes;
 }
-static void image_upload_regions(image_entry *e,const uint8_t *storage) {
+static void image_upload_regions(image_entry *e,const uint8_t *storage,VkCommandBuffer upload_command) {
     const tex_t *t=&e->texture;
     uint64_t count=(uint64_t)t->L.layers*t->d.levels;
     if(!count)die("Vulkan empty texture upload");
@@ -51,7 +51,7 @@ static void image_upload_regions(image_entry *e,const uint8_t *storage) {
             }else if(nvn_deswizzle(&t->d,level,layer,storage,dst,pitch))die("Vulkan texture deswizzle failed");
             texture_upload_bytes+=pitch*rows*r->imageExtent.depth;
         }
-        vkCmdCopyBufferToImage(command,p->source.buffer,e->image,VK_IMAGE_LAYOUT_GENERAL,n,copies);
+        vkCmdCopyBufferToImage(upload_command,p->source.buffer,e->image,VK_IMAGE_LAYOUT_GENERAL,n,copies);
         texture_upload_copy_calls++;texture_upload_subresources+=n;first+=n;
     }
 }

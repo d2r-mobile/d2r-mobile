@@ -13,6 +13,7 @@
 #include "../../host/dm_actions.h"
 #include "../../host/dm_world.h"
 #include "debug_stats.h"
+#include "host_posix.h"
 #include "game_output.h"
 #include "touch_pointer_map.h"
 #include "live_touch.h"
@@ -116,6 +117,10 @@ static _Atomic int debug_overlay_enabled;
 // Is the in-game menu open (see input_ready): while it is, pad and key events are swallowed so the character does
 // not keep moving behind the menu.
 static _Atomic int menu_open;
+static _Atomic int virtual_controller;
+static void padmode_request_touch(game_app *s);
+static void padmode_request_pad(game_app *s);
+static void padmode_release_touch(game_app *s);
 static _Atomic uint64_t ghost_contact;
 static _Atomic uint64_t ghost_contact_seq;
 static _Atomic int32_t ghost_pointer_id = -1;
@@ -218,7 +223,7 @@ static void *progress_watch(void *argument) {
     else LOG("[android] debug overlay switch unavailable; showing the overlay");
     int overlay_applied=overlay;
     uint64_t previous=0;unsigned unchanged=0;
-    for(unsigned i=0;!atomic_load(&s->debug_stop);i++){usleep(500000);dm_android_debug_stats stats;dm_android_debug_get(&stats);dm_hud_info hud;dm_hud_get(&hud);
+    for(unsigned i=0;!atomic_load(&s->debug_stop);i++){usleep(500000);
         // 菜单改了浮层开关就跟着变：显示/隐藏交给 Java 侧，这里只决定还要不要产出文字。
         // Follow the menu's overlay switch: the Java side owns show/hide, this loop only decides whether to produce text.
         if((overlay=atomic_load(&debug_overlay_enabled))!=overlay_applied){overlay_applied=overlay;if(overlay_method)(*env)->CallVoidMethod(env,a->clazz,overlay_method,(jboolean)(overlay!=0));}
@@ -228,6 +233,14 @@ static void *progress_watch(void *argument) {
         // With the overlay off this whole display block is skipped: no battery query, no /proc read, no string
         // building, no UI-thread call. The first-frame watchdog below must still run; it is not a display concern.
         if(overlay){
+            dm_android_debug_stats stats;dm_android_debug_get(&stats);
+            char cadence[192];
+            if(stats.timing_valid)snprintf(cadence,sizeof cadence,dm_ui(stats.presented_valid?"dmAndroidPresentedMetrics":"dmAndroidSubmittedMetrics"),stats.measured_fps,stats.p95_ms,stats.max_ms);
+            else snprintf(cadence,sizeof cadence,"%s",dm_ui("dmAndroidTimingPending"));
+            char text[1024];
+            if(!dm_diagnostics_enabled())snprintf(text,sizeof text,"%s",cadence);
+            else {
+            dm_hud_info hud;dm_hud_get(&hud);
             int dm_loadscreen_up(void);const char *stage=dm_ui(keyboard?"dmAndroidStageText":dm_loadscreen_up()?"dmAndroidStageLoading":hud.valid?"dmAndroidStageGame":stats.frame?"dmAndroidStageMenu":"dmAndroidStageBoot");
             unsigned long pages=0;FILE *memory=fopen("/proc/self/statm","r");if(memory){unsigned long total;fscanf(memory,"%lu %lu",&total,&pages);fclose(memory);}
             char gpu[32];if(stats.gpu_valid)snprintf(gpu,sizeof gpu,"%.1f",stats.gpu_ms);else snprintf(gpu,sizeof gpu,"--");
@@ -249,7 +262,8 @@ static void *progress_watch(void *argument) {
                 int charging=status==2||status==5;
                 snprintf(power,sizeof power,dm_ui(charging?"dmAndroidCharging":"dmAndroidPower"),value,capacity<0?0.0:(double)capacity);
             }else snprintf(power,sizeof power,dm_ui("dmAndroidPower"),"--",0.0);
-            char text[1024];snprintf(text,sizeof text,dm_ui("dmAndroidDebugMetrics"),stats.frame_ms>0?1000/stats.frame_ms:0,stats.frame_ms,stats.cpu_ms,gpu,stats.wait_ms,power,stats.draws,stats.passes,stats.submits,stats.snapshot_mb,stats.buffer_mb,pages*sysconf(_SC_PAGESIZE)/1048576.,stage,hud.area,hud.x,hud.y,(unsigned long long)dm_input_samples());
+            snprintf(text,sizeof text,dm_ui("dmAndroidDebugMetrics"),cadence,stats.cpu_ms,gpu,stats.wait_ms,power,stats.draws,stats.passes,stats.submits,stats.snapshot_mb,stats.buffer_mb,pages*sysconf(_SC_PAGESIZE)/1048576.,stage,hud.area,hud.x,hud.y,(unsigned long long)dm_input_samples());
+            }
             jstring value=java_text(env,text);(*env)->CallVoidMethod(env,a->clazz,method,value);(*env)->DeleteLocalRef(env,value);
             if((*env)->ExceptionCheck(env)){(*env)->ExceptionDescribe(env);(*env)->ExceptionClear(env);break;}
         }
@@ -358,13 +372,18 @@ static void *boot(void *argument) {
     // Apply fully validated application settings before the guest first caches its operation mode and input log.
     dm_android_launch_settings launch;char launch_error[512];
     if(!dm_android_launch_settings_apply(path,&launch,launch_error,sizeof launch_error))die("[android] launch settings: %s",launch_error);
+    dm_android_diagnostics_configure(launch.debug_collection);
+    LOG_ALWAYS("[android] debug_collection=%d",launch.debug_collection);
     LOG("[android] launch configuration present=%d operation_mode=%d input_receipts=%d 分辨率=%dx%d",launch.present,launch.operation_mode,launch.input_receipts,launch.resolution_width,launch.resolution_height);
     // 设置生效后立刻记一次环境，确认 DM_GAME_RES 真的传下去了（否则只会在游戏那边看到"未设"）。
     // Immediately record the environment after the settings apply, to confirm DM_GAME_RES really got through;
     // otherwise the only symptom is "unset" on the game side.
     LOG("[android] 环境核对 DM_OPMODE=%s DM_GAME_RES=%s DM_DEBUG_OVERLAY=%s",getenv("DM_OPMODE")?getenv("DM_OPMODE"):"(未设)",getenv("DM_GAME_RES")?getenv("DM_GAME_RES"):"(未设)",getenv("DM_DEBUG_OVERLAY")?getenv("DM_DEBUG_OVERLAY"):"(未设)");
-    setenv("DM_TACT_PREFETCH","0",1);setenv("DM_BOOTPROF","1",1);setenv("DM_DBG","1",1);
-    setenv("DM_UIMSG","1",1);setenv("DM_MOVIE","1",1);
+    setenv("DM_TACT_PREFETCH","0",1);
+    if(dm_diagnostics_enabled()) {
+        setenv("DM_BOOTPROF","1",1);setenv("DM_DBG","1",1);
+        setenv("DM_UIMSG","1",1);setenv("DM_MOVIE","1",1);
+    }
     __android_log_print(ANDROID_LOG_INFO,"D2RAndroid","Starting real game host; log: %s",log);atomic_store(&s->started,1);
     // 当前 Android 兼容 host 已在编译期用 dm_hud_exp.h / dm_vault_tab.h /
     // dm_bright_levels.inc 初始化三张表；后者的 dm_bright.c 也直接持有静态 k_lv。
@@ -415,7 +434,7 @@ uint64_t front_game_res(int docked) {
     // 手机比例对主机/掌机两档都给同一张 720 级画面；不能再按 0.8 缩一遍，否则掌机档又回到 16:9 高度。
     // The phone-aspect path gives both docked and handheld profiles the same 720-level picture; the
     // legacy 0.8 handheld scale must not shrink it back to a 16:9 height.
-    phone_aspect = !have_env && phone_w != 0;
+    phone_aspect = (!have_env && phone_w != 0) || (getenv("DM_GAME_RES_EXACT") && !strcmp(getenv("DM_GAME_RES_EXACT"), "1"));
 
     static int reported;
     // 前三次都记：分辨率必须在启动时定下来（游戏按启动时的参数位建窗口贴图），而如果第一次被问发生在启动
@@ -464,6 +483,7 @@ int dm_thermal_now(void) {
     if(acquire&&release&&status){void *manager=acquire();if(manager){int v=status(manager);result=v<0?-1:v==0?0:v<=2?1:v==3?2:3;release(manager);}}dlclose(library);return result;
 }
 static int live_touch_mode_enabled(void) {
+    if (atomic_load(&virtual_controller)) return 0;
     static int enabled=-1;
     if(enabled<0){
         char property[PROP_VALUE_MAX]={0};
@@ -512,6 +532,7 @@ static unsigned g_fe_cancel_trace_count;
 static int g_fe_last_ingress_action = -1;
 static int g_fe_last_fe_action = -1;
 static unsigned frontend_trace_generation(int force) {
+    if (!dm_diagnostics_enabled()) return 0;
     static unsigned cached;
     static int64_t read_ns;
     int64_t now = now_ns();
@@ -615,9 +636,9 @@ static void live_touch_sync(game_app *s) {
     // inventory slots. Only an NPC dialogue keeps the bottom menu target.
     uint32_t mask=navigation?(blocked<0?(1u<<DM_TC_MENU):0):
         ((1u<<DM_TC_COUNT)-1);
-    dm_live_touch_set_context(s->live_touch,navigation,mask,
+    dm_live_touch_set_context_moving(s->live_touch,navigation,mask,
                               snapshot.scene_epoch,snapshot.world_epoch,
-                              snapshot.ui_identity,0);
+                              snapshot.ui_identity,0,snapshot.movement_continuity);
     live_touch_items_ensure(s);
     if(s->live_items)
         (void)dm_live_touch_items_set_context(s->live_items,snapshot.scene_epoch,
@@ -1032,12 +1053,23 @@ __attribute__((visibility("default"))) void Java_org_d2r_android_port_D2RActivit
 }
 __attribute__((visibility("default"))) void Java_org_d2r_android_port_D2RActivity_setMenuOpen(JNIEnv *env,jclass klass,jboolean open) {
     (void)env;(void)klass;atomic_store(&menu_open,open?1:0);
+    if(open&&application)pad_clear(application);
+}
+__attribute__((visibility("default"))) void Java_org_d2r_android_port_D2RActivity_setVirtualControllerEnabled(JNIEnv *env,jclass klass,jboolean enabled) {
+    (void)env;(void)klass;game_app *s=application;if(!s)return;
+    int on=enabled!=0;if(atomic_exchange(&virtual_controller,on)==on)return;
+    touch_timer_stop(s);padmode_release_touch(s);pad_clear(s);
+    s->padmode_touch_swallow=0;live_touch_set_available(s,0);
+    if(on)padmode_request_pad(s);else{padmode_request_touch(s);touch_timer_start(s);}
+    pad_publish(s);
+    LOG("[android-controls] virtual_controller=%d requested_gamepad_layout=%d",on,on);
 }
 __attribute__((visibility("default"))) void Java_org_d2r_android_port_D2RActivity_setSkipSaveOnExit(JNIEnv *env,jclass klass,jboolean skip) {
     (void)env;(void)klass;atomic_store(&skip_save_once,skip?1:0);
 }
 __attribute__((visibility("default"))) void Java_org_d2r_android_port_D2RActivity_onTouchPad(JNIEnv *env,jclass klass,jlong buttons,jint lx,jint ly,jint rx,jint ry) {
     (void)env;(void)klass;game_app *s=application;if(!s)return;
+    if(!atomic_load(&virtual_controller)||atomic_load(&menu_open))return;
     // Java 窗口触控和 AInputQueue 都在 Activity 的主 Looper；统一走 HLE 的短按锁存。
     // Java window touches and AInputQueue run on the Activity's main Looper; both use the HLE press-edge latch.
     s->touch_buttons=(uint64_t)buttons&0xffff;s->touch_lx=touch_axis(lx);s->touch_ly=touch_axis(ly);s->touch_rx=touch_axis(rx);s->touch_ry=touch_axis(ry);pad_publish(s);
@@ -1138,6 +1170,7 @@ static void padmode_release_touch(game_app *s) {
     s->touch_lx = s->touch_ly = s->touch_rx = s->touch_ry = 0;
 }
 static void padmode_request_touch(game_app *s) {
+    if(atomic_load(&virtual_controller)){padmode_release_pad(s);padmode_request_pad(s);pad_publish(s);return;}
     if (s->padmode_requested == 0 && dm_padmode_current() == 0) return;
     padmode_release_pad(s);
     dm_padmode_request(0);
@@ -1163,6 +1196,7 @@ static int input_ready(int fd,int events,void *data) {
         int source=AInputEvent_getSource(event),is_motion=AInputEvent_getType(event)==AINPUT_EVENT_TYPE_MOTION;
         int touch_input=is_motion&&touchscreen_source(source)&&!external_gamepad_source(source);
         int touch_action=touch_input?(AMotionEvent_getAction(event)&AMOTION_EVENT_ACTION_MASK):-1;
+        if(touch_input&&atomic_load(&virtual_controller)){AInputQueue_finishEvent(s->input,event,1);continue;}
         int touch_route=dm_padmode_route_event(is_motion,0,source,touch_action,0,0);
         if(touch_input&&touch_route==DM_PADMODE_ROUTE_TOUCH&&(touch_action==AMOTION_EVENT_ACTION_DOWN||touch_action==AMOTION_EVENT_ACTION_POINTER_DOWN)){
             int was_pad=dm_padmode_current()!=0;
@@ -1434,6 +1468,7 @@ __attribute__((visibility("default"))) void ANativeActivity_onCreate(ANativeActi
         {"setOverlayEnabled","(Z)V",(void*)Java_org_d2r_android_port_D2RActivity_setOverlayEnabled},
         {"setQualityPreset","(I)V",(void*)Java_org_d2r_android_port_D2RActivity_setQualityPreset},
         {"setMenuOpen","(Z)V",(void*)Java_org_d2r_android_port_D2RActivity_setMenuOpen},
+        {"setVirtualControllerEnabled","(Z)V",(void*)Java_org_d2r_android_port_D2RActivity_setVirtualControllerEnabled},
         {"setSkipSaveOnExit","(Z)V",(void*)Java_org_d2r_android_port_D2RActivity_setSkipSaveOnExit}
     };
     if((*a->env)->RegisterNatives(a->env,klass,methods,sizeof methods/sizeof methods[0])!=JNI_OK){(*a->env)->ExceptionDescribe(a->env);(*a->env)->ExceptionClear(a->env);ANativeActivity_finish(a);return;}(*a->env)->DeleteLocalRef(a->env,klass);

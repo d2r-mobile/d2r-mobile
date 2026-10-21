@@ -445,15 +445,26 @@ void dm_live_touch_set_mode(dm_live_touch *touch, int navigation, uint32_t mask)
     sync_pointers(touch);
 }
 
-void dm_live_touch_set_context(dm_live_touch *touch, int navigation, uint32_t mask,
+void dm_live_touch_set_context_moving(dm_live_touch *touch, int navigation, uint32_t mask,
                                uint64_t scene_epoch, uint64_t world_epoch,
-                               uint64_t ui_identity, uint64_t object_generation) {
+                               uint64_t ui_identity, uint64_t object_generation,
+                               int movement_continuity) {
     if (!touch) return;
     int changed = (!touch->have_context && dm_live_touch_active(touch)) ||
                   (touch->have_context &&
                    (touch->scene_epoch != scene_epoch || touch->world_epoch != world_epoch ||
                     touch->ui_identity != ui_identity ||
                     touch->object_generation != object_generation));
+    int slot=touch->state.joy_slot;
+    int carry=changed && movement_continuity && touch->have_context &&
+        !navigation && !touch->state.navigation_mode && mask==touch->state.enabled_targets &&
+        object_generation==touch->object_generation && slot>=0 && slot<DM_TC_MAX_TOUCH &&
+        touch->pointers.platform[slot]>=0 && touch->state.finger[slot].active &&
+        touch->state.finger[slot].target==DM_TC_JOYSTICK;
+    dm_tc_finger finger={0};int32_t pointer=-1;float origin_x=0,origin_y=0,down_x=0,down_y=0;
+    if(carry){finger=touch->state.finger[slot];pointer=touch->pointers.platform[slot];
+        origin_x=touch->state.joy_origin_x;origin_y=touch->state.joy_origin_y;
+        down_x=touch->state.joy_touch_x;down_y=touch->state.joy_touch_y;}
     if (changed) dm_live_touch_cancel_all(touch, touch->last_ns);
     touch->have_context = 1;
     touch->scene_epoch = scene_epoch;
@@ -461,6 +472,17 @@ void dm_live_touch_set_context(dm_live_touch *touch, int navigation, uint32_t ma
     touch->ui_identity = ui_identity;
     touch->object_generation = object_generation;
     dm_live_touch_set_mode(touch, navigation, mask);
+    if(carry){touch->state.finger[slot]=finger;touch->pointers.platform[slot]=pointer;
+        touch->state.joy_slot=slot;touch->state.joy_origin_x=origin_x;touch->state.joy_origin_y=origin_y;
+        touch->state.joy_touch_x=down_x;touch->state.joy_touch_y=down_y;
+        dm_tc_move_at(&touch->state,slot,finger.x,finger.y,(double)touch->last_ns/1e9);}
+}
+
+void dm_live_touch_set_context(dm_live_touch *touch, int navigation, uint32_t mask,
+                               uint64_t scene_epoch, uint64_t world_epoch,
+                               uint64_t ui_identity, uint64_t object_generation) {
+    dm_live_touch_set_context_moving(touch,navigation,mask,scene_epoch,world_epoch,
+                                      ui_identity,object_generation,0);
 }
 
 int dm_live_touch_event(dm_live_touch *touch, int action, int action_index,

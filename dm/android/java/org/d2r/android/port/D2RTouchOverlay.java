@@ -49,6 +49,7 @@ final class D2RTouchOverlay extends View {
     private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint stroke = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint label = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint glyphPaint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
     private final View.OnLayoutChangeListener layoutListener;
     private boolean visible, destroyed;
 
@@ -281,8 +282,11 @@ final class D2RTouchOverlay extends View {
         if (source == null || frame < 0 || frame >= 128) return null;
         if (!TouchGlyph.frameRect(atlasInfo, atlas, frame, glyphRect)) return null;
         try {
-            cached = Bitmap.createBitmap(source, glyphRect[0], glyphRect[1],
-                                         glyphRect[2], glyphRect[3]);
+            int width = glyphRect[2], height = glyphRect[3];
+            int[] pixels = new int[width * height];
+            source.getPixels(pixels, 0, width, glyphRect[0], glyphRect[1], width, height);
+            TouchSkillSilhouette.apply(pixels, width, height);
+            cached = Bitmap.createBitmap(pixels, width, height, Bitmap.Config.ARGB_8888);
             glyphCache[key] = cached;
         } catch (IllegalArgumentException | OutOfMemoryError error) {
             cached = null;
@@ -315,7 +319,7 @@ final class D2RTouchOverlay extends View {
         clip.addCircle(cx, cy, r * .86f, Path.Direction.CW);
         int save = canvas.save();
         canvas.clipPath(clip);
-        canvas.drawBitmap(glyph, src, dst, null);
+        canvas.drawBitmap(glyph, src, dst, glyphPaint);
         canvas.restoreToCount(save);
         return true;
     }

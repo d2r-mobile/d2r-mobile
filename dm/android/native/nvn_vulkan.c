@@ -60,6 +60,7 @@ static int attachment_clear_candidate,narrow_image_candidate;
 static uint64_t attachment_clear_count,narrow_image_count,storage_promotion_count;
 static int graphics_image_is_attachment(const image_entry *image);
 static void graphics_cache_forget_image(image_entry *image);
+static void image_retire_completed(uint64_t ticket);
 static void dependencies_prepare_range(uintptr_t address,uint64_t size);
 static void dependencies_prepare_texture(const tex_t *texture);
 static void dependencies_prepare_copy_texture(const p_copy_b2t *copy);
@@ -69,7 +70,10 @@ static void graphics_probe_dispatch(const p_dispatch *dispatch);
 static void graphics_probe_query_batch(uint64_t ticket,const uint64_t *counts,uint32_t count);
 static pthread_mutex_t debug_lock=PTHREAD_MUTEX_INITIALIZER;
 static dm_android_debug_stats debug_stats;
-void dm_android_debug_get(dm_android_debug_stats *out) {pthread_mutex_lock(&debug_lock);*out=debug_stats;pthread_mutex_unlock(&debug_lock);}
+void dm_android_debug_get(dm_android_debug_stats *out) {
+    pthread_mutex_lock(&debug_lock);*out=debug_stats;pthread_mutex_unlock(&debug_lock);
+    if(dm_android_clock_ns(CLOCK_MONOTONIC)-out->timing_updated_ns>1500000000ull)out->timing_valid=0;
+}
 #pragma weak dm_nvn_sub_cpu_ns
 #pragma weak dm_android_performance_wsi_calls
 extern void dm_android_window_frame_period(double period);
@@ -123,6 +127,7 @@ static int counter_gpu_record(post_op *post);
 static VkInstance instance;
 static VkPhysicalDevice physical;
 static VkDevice device;
+static int upload_prologue_enabled,defer_texture_release_enabled;
 static VkQueue queue;
 static VkCommandPool commands;
 static VkCommandBuffer command;
@@ -192,6 +197,7 @@ int dm_nvn_ruler_truth(void) { return 0; }
 
 #include "nvn_vulkan_pipeline_cache.inc"
 #include "nvn_vulkan_cpu_phases.inc"
+#include "nvn_vulkan_present_timing.inc"
 
 #ifdef DM_VK_REFERENCE_GATES
 #include "nvn_vulkan_test_gate.inc"
@@ -241,6 +247,7 @@ static void screen_create_swapchain(struct ANativeWindow *window) {
     VkSemaphoreCreateInfo sem = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO}; VK_CHECK(vkCreateSemaphore(device, &sem, NULL, &screen_acquired));
     for(unsigned i=0;i<screen_count;i++)VK_CHECK(vkCreateSemaphore(device,&sem,NULL,&screen_present_wait[i]));
     LOG("[vulkan] Android game surface %ux%u images=%u", screen_extent.width, screen_extent.height, screen_count);
+    display_timing_reset();
 }
 
 // 释放表面与交换链。销毁前先等队列空闲：调用点已经挂起图形，这里再把在途提交排空，
@@ -309,7 +316,7 @@ void mtl_screen_attach(struct ANativeWindow *window) {
 }
 #endif
 
-static int present_cubic_advertised(void) {
+static int device_extension_advertised(const char *name) {
     uint32_t count=0;
     if(vkEnumerateDeviceExtensionProperties(physical,NULL,&count,NULL)!=VK_SUCCESS||!count)return 0;
     // 设备扩展列表正常很小；设置上限避免驱动返回异常计数时分配失控。
@@ -320,7 +327,7 @@ static int present_cubic_advertised(void) {
     VkResult result=vkEnumerateDeviceExtensionProperties(physical,NULL,&count,extensions);
     int supported=0;
     if(result==VK_SUCCESS)for(uint32_t i=0;i<count;i++)
-        if(!strcmp(extensions[i].extensionName,VK_EXT_FILTER_CUBIC_EXTENSION_NAME)){supported=1;break;}
+        if(!strcmp(extensions[i].extensionName,name)){supported=1;break;}
     free(extensions);
     return supported;
 }
@@ -347,6 +354,15 @@ static VkFormatFeatureFlags present_source_features(VkFormat format) {
 }
 
 static void initialize(void) {
+    const char *upload_setting=getenv("DM_VK_UPLOAD_PROLOGUE"),*release_setting=getenv("DM_VK_DEFER_TEXTURE_RELEASE");
+    upload_prologue_enabled=upload_setting&&!strcmp(upload_setting,"1");
+    defer_texture_release_enabled=release_setting&&!strcmp(release_setting,"1");
+#ifdef __ANDROID__
+    char experiment[PROP_VALUE_MAX]={0};
+    if(!upload_setting){__system_property_get("debug.d2r.upload_prologue",experiment);upload_prologue_enabled=!strcmp(experiment,"1");}
+    if(!release_setting){__system_property_get("debug.d2r.defer_release",experiment);defer_texture_release_enabled=!strcmp(experiment,"1");}
+#endif
+    LOG("[vulkan-lifetime] upload_prologue=%d deferred_release=%d",upload_prologue_enabled,defer_texture_release_enabled);
     dm_cpu_phase_configure();
     const char *clear_candidate=getenv("DM_ATTACHMENT_CLEAR"),*usage_candidate=getenv("DM_NARROW_IMAGE");
 #ifdef __ANDROID__
@@ -463,12 +479,14 @@ driver_retry:;
     VkDeviceQueueCreateInfo qi = {.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO, .queueFamilyIndex = family, .queueCount = 1, .pQueuePriorities = &priority};
     VkPhysicalDeviceFeatures enable = {.textureCompressionBC = features.textureCompressionBC, .textureCompressionASTC_LDR = features.textureCompressionASTC_LDR, .independentBlend = features.independentBlend, .shaderImageGatherExtended = features.shaderImageGatherExtended, .fragmentStoresAndAtomics = features.fragmentStoresAndAtomics, .vertexPipelineStoresAndAtomics = features.vertexPipelineStoresAndAtomics, .shaderStorageImageReadWithoutFormat = features.shaderStorageImageReadWithoutFormat, .shaderStorageImageWriteWithoutFormat = features.shaderStorageImageWriteWithoutFormat, .occlusionQueryPrecise = features.occlusionQueryPrecise, .depthBiasClamp = features.depthBiasClamp, .tessellationShader = features.tessellationShader, .multiViewport = features.multiViewport};
     VkDeviceCreateInfo di = {.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, .queueCreateInfoCount = 1, .pQueueCreateInfos = &qi, .pEnabledFeatures = &enable}; gpu_depth_bias_clamp = enable.depthBiasClamp == VK_TRUE;
-    int cubic_advertised=present_cubic_advertised();
+    int cubic_advertised=device_extension_advertised(VK_EXT_FILTER_CUBIC_EXTENSION_NAME);
     present_cubic_extension=dm_nvn_present_filter_extension_enabled(cubic_advertised,present_linear_override);
     LOG("[vulkan-present-filter] extension=%s enabled=%d linear_override=%d source=%s value=%s property=debug.d2r.present_filter",cubic_advertised?VK_EXT_FILTER_CUBIC_EXTENSION_NAME:"unavailable",present_cubic_extension,present_linear_override,present_override_source,present_override_value);
-    const char *device_extensions[2]; unsigned device_extension_count=0;
+    display_timing_enabled=surface&&device_extension_advertised(VK_GOOGLE_DISPLAY_TIMING_EXTENSION_NAME);
+    const char *device_extensions[3]; unsigned device_extension_count=0;
     if(surface)device_extensions[device_extension_count++]=VK_KHR_SWAPCHAIN_EXTENSION_NAME;
     if(present_cubic_extension)device_extensions[device_extension_count++]=VK_EXT_FILTER_CUBIC_EXTENSION_NAME;
+    if(display_timing_enabled)device_extensions[device_extension_count++]=VK_GOOGLE_DISPLAY_TIMING_EXTENSION_NAME;
     di.enabledExtensionCount=device_extension_count; if(device_extension_count)di.ppEnabledExtensionNames=device_extensions;
     #ifdef DM_VK_REFERENCE_GATES
     reference_gate_device_setup(&di);
@@ -485,6 +503,7 @@ driver_retry:;
     if(!dm_vk_driver_load_device(&vk_api,device)){if(initialize_driver_fallback(dm_vk_driver_error(&vk_api)))goto driver_retry;die("Vulkan device dispatch: %s",dm_vk_driver_error(&vk_api));}
 #endif
     vkGetDeviceQueue(device,family,0,&queue);
+    display_timing_load();
     VkCommandPoolCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO, .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, .queueFamilyIndex = family};
     VK_CHECK(vkCreateCommandPool(device, &ci, NULL, &commands));
     VkCommandBufferAllocateInfo ai = {.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO, .commandPool = commands, .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY, .commandBufferCount = 1};
@@ -492,8 +511,9 @@ driver_retry:;
     VkFenceCreateInfo fi = {.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO}; VK_CHECK(vkCreateFence(device, &fi, NULL, &gpu_fence));
     pipeline_cache_initialize(&properties);
     VkQueryPoolCreateInfo qci={.sType=VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,.queryType=VK_QUERY_TYPE_OCCLUSION,.queryCount=1024};VK_CHECK(vkCreateQueryPool(device,&qci,NULL,&draw_queries));
-    if(gpu_timestamp_bits&&properties.limits.timestampPeriod>0){
-        gpu_timestamp_period=properties.limits.timestampPeriod;qci.queryType=VK_QUERY_TYPE_TIMESTAMP;qci.queryCount=2;
+    gpu_timestamp_period=properties.limits.timestampPeriod;
+    if(dm_diagnostics_enabled()&&gpu_timestamp_bits&&gpu_timestamp_period>0){
+        qci.queryType=VK_QUERY_TYPE_TIMESTAMP;qci.queryCount=2;
         VK_CHECK(vkCreateQueryPool(device,&qci,NULL,&batch_times));
         LOG("[vulkan] GPU timestamps bits=%u period=%.6f ns",gpu_timestamp_bits,gpu_timestamp_period);
     }
@@ -533,7 +553,7 @@ static vk_buffer buffer_create(uint64_t size) {
         atomic_store(&b.owner->references,1);b.owner->activation=activation;pthread_mutex_unlock(&buffer_cache_lock); free(entry); b.size = size; return b; }
     buffer_allocations++; active_buffer_bytes += capacity; pthread_mutex_unlock(&buffer_cache_lock);
     vk_buffer b = {.size = size, .capacity = capacity};b.owner=calloc(1,sizeof *b.owner);if(!b.owner)die("Vulkan buffer ownership allocation");atomic_init(&b.owner->references,1);b.owner->activation=activation;
-    uint64_t probe_wall = dm_android_clock_ns(CLOCK_MONOTONIC), probe_cpu = dm_android_clock_ns(CLOCK_THREAD_CPUTIME_ID);
+    uint64_t probe_wall = dm_diagnostics_enabled()?dm_android_clock_ns(CLOCK_MONOTONIC):0, probe_cpu = dm_diagnostics_enabled()?dm_android_clock_ns(CLOCK_THREAD_CPUTIME_ID):0;
     VkBufferCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = capacity, .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT, .sharingMode = VK_SHARING_MODE_EXCLUSIVE};
     VK_CHECK(vkCreateBuffer(device, &ci, NULL, &b.buffer));
     VkMemoryDedicatedRequirements dedicated={.sType=VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS};
@@ -550,8 +570,10 @@ static vk_buffer buffer_create(uint64_t size) {
         VK_CHECK(vkAllocateMemory(device, &mi, NULL, &b.memory)); VK_CHECK(vkBindBufferMemory(device, b.buffer, b.memory, 0));
         VK_CHECK(vkMapMemory(device, b.memory, 0, VK_WHOLE_SIZE, 0, &b.mapped));
     }
-    buffer_create_wall_ns += dm_android_clock_ns(CLOCK_MONOTONIC) - probe_wall;
-    buffer_create_cpu_ns += dm_android_clock_ns(CLOCK_THREAD_CPUTIME_ID) - probe_cpu;
+    if (dm_diagnostics_enabled()) {
+        buffer_create_wall_ns += dm_android_clock_ns(CLOCK_MONOTONIC) - probe_wall;
+        buffer_create_cpu_ns += dm_android_clock_ns(CLOCK_THREAD_CPUTIME_ID) - probe_cpu;
+    }
     return b;
 }
 // 跨批消费者持有同一 backing 的引用，到最后一个真正完成的使用者才允许缓存复用。
@@ -669,6 +691,7 @@ static uint64_t snapshot_diag_frame,snapshot_diag_overflow_calls,snapshot_diag_o
 static unsigned snapshot_diag_count,snapshot_diag_retire_cursor;
 static const char *snapshot_diag_role(unsigned role) {return role==1?"readonly_ssbo":role==2?"compute_ubo_pointer":"readonly_texel";}
 static void snapshot_diag_poll(void) {
+    if(!dm_cpu_phase_enabled)return;
     int saved_errno=errno;uint64_t next=presents+1;
     if(snapshot_diag_frame&&snapshot_diag_frame!=next){
         LOG("[vulkan-snapshot-sample] frame=%llu rows=%u overflow_calls=%llu overflow_bytes=%llu dirty_api=%u scope=shader_readonly_over64K write_marks_are_not_content_diff=1",
@@ -714,7 +737,7 @@ static snapshot_diag_row *snapshot_diag_miss_row(uintptr_t address,uint64_t size
     errno=saved_errno;return NULL;
 }
 static void snapshot_diag_retired(const read_snapshot *entry,unsigned reason) {
-    if(entry->buffer.size<=65536)return;
+    if(!dm_cpu_phase_enabled||entry->buffer.size<=65536)return;
     snapshot_diag_retirements[snapshot_diag_retire_cursor++%64]=(snapshot_diag_retirement){entry->address,entry->buffer.size,reason};
 }
 static void snapshot_diag_absent(snapshot_diag_row *row) {
@@ -915,6 +938,7 @@ void mtl_drain(void) { mtl_init();mtl_finish(); pthread_mutex_lock(&queue_lock);
 static int ghost_buffer_override(uintptr_t address,uint64_t size,VkDescriptorBufferInfo *out);
 static void ghost_note(const p_draw *draw,const p_draw_idx *indexed);
 static void ghost_flush(void);
+#include "nvn_vulkan_compute_state.inc"
 #include "nvn_vulkan_shader.inc"
 #include "nvn_vulkan_ui_ghost.inc"
 #include "nvn_vulkan_counter_gpu.inc"
@@ -1011,6 +1035,7 @@ static int stability_compare(const void *a,const void *b) {
     uint64_t x=*(const uint64_t*)a,y=*(const uint64_t*)b;return (x>y)-(x<y);
 }
 static void frame_stability_record(uint64_t frame,uint64_t prev_acquire,uint64_t acquire,uint64_t present,uint64_t present_lock) {
+    if (!dm_diagnostics_enabled()) return;
     // 只在出图边界取时钟；固定120帧窗口保留最慢帧关联，不改变等待或逐draw计时。
     // Sample only present boundaries; fixed 120-frame windows retain worst-frame attribution without changing waits or timing draws.
     static frame_stability_sample samples[120];static unsigned count;
@@ -1088,6 +1113,13 @@ uint64_t mtl_present(const tex_t *t, double period, const int crop[4]) {
         screen_submission = 1; completion_ticket=screen_acquire_ticket=mtl_sub_commit(); screen_submission = 0; screen_initialized[index] = 1;
         dm_cpu_phase_end(DM_CPU_PHASE_BLIT,blit_phase);
         VkPresentInfoKHR pi = {.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR, .waitSemaphoreCount = 1, .pWaitSemaphores = &screen_rendered, .swapchainCount = 1, .pSwapchains = &swapchain, .pImageIndices = &index};
+        VkPresentTimeGOOGLE present_time={.presentID=(uint32_t)ticket};
+        VkPresentTimesInfoGOOGLE present_times={.sType=VK_STRUCTURE_TYPE_PRESENT_TIMES_INFO_GOOGLE,.swapchainCount=1,.pTimes=&present_time};
+        if(display_timing_enabled){
+            if(display_pacing_enabled&&period>=1./35.)present_time.desiredPresentTime=dm_frame_deadline(&display_target_ns,dm_android_clock_ns(CLOCK_MONOTONIC),(uint64_t)(period*1e9),display_refresh_ns,display_phase_ns);
+            else display_target_ns=0;
+            pi.pNext=&present_times;
+        }
         uint64_t present_lock_start=dm_android_clock_ns(CLOCK_MONOTONIC);pthread_mutex_lock(&queue_lock);
         uint64_t present_start=dm_android_clock_ns(CLOCK_MONOTONIC);present_lock_ns=present_start-present_lock_start;
         result = vkQueuePresentKHR(queue, &pi);present_ns=dm_android_clock_ns(CLOCK_MONOTONIC)-present_start;
@@ -1096,7 +1128,7 @@ uint64_t mtl_present(const tex_t *t, double period, const int crop[4]) {
         if(ticket<=3||!(ticket%600))LOG("[vulkan-present] frame=%llu image=%u submit=%llu completed=%llu semaphore_per_image=1 queue_idle=0",(unsigned long long)ticket,index,(unsigned long long)screen_acquire_ticket,(unsigned long long)atomic_load(&completed));
         if (ticket <= 3 || ticket == 30) LOG("[vulkan] Android game frame %llu presented", (unsigned long long)ticket);
     }
-    const char *capture = getenv("DM_VK_CAPTURE");
+    const char *capture = dm_diagnostics_enabled()?getenv("DM_VK_CAPTURE"):NULL;
     if (capture && (ticket <= 8 || ticket == 30 || ticket == 60)) {
         if (t->d.format != NVN_FORMAT_RGBA8) die("Vulkan capture format %#x pending", t->d.format);
         unsigned w = t->d.width, h = t->d.height; uint8_t *pixels = malloc((size_t)w * h * 4); if (!pixels) die("Vulkan capture allocation");
@@ -1110,7 +1142,15 @@ uint64_t mtl_present(const tex_t *t, double period, const int crop[4]) {
     static uint64_t perf_time,perf_submit,perf_bytes,perf_allocations,perf_hits,perf_passes,perf_barriers,perf_create_wall,perf_create_cpu;
     static double perf_gpu,perf_wait;
     uint64_t now=dm_android_clock_ns(CLOCK_MONOTONIC);
+    display_timing_poll(now);
+    if(!dm_diagnostics_enabled()) {
+        pthread_mutex_lock(&queue_lock);pipeline_disk_poll();pthread_mutex_unlock(&queue_lock);
+        pthread_mutex_lock(&debug_lock);debug_stats.frame=ticket;pthread_mutex_unlock(&debug_lock);
+        if(dm_android_performance_wsi_calls)dm_android_performance_wsi_calls(acquire_ns+present_ns);
+        return completion_ticket;
+    }
     pthread_mutex_lock(&queue_lock);snapshot_diag_poll();gpu_snapshot_report();dependencies_report();counter_gpu_report();graphics_pipeline_report();pipeline_disk_poll();double current_gpu=gpu_total_ns,current_wait=fence_wait_total_ns;
+    if(ticket==1||ticket%300==0)LOG("[vulkan-lifetime] frame=%llu prologue_uploads=%llu deferred_releases=%llu retired_MiB=%.2f GPU_timer_excludes_prologue=%d",(unsigned long long)ticket,(unsigned long long)image_prologue_uploads,(unsigned long long)image_deferred_releases,image_retired_bytes/1048576.,upload_prologue_enabled);
     static uint64_t driver_fast_previous,driver_build_previous,driver_bytes_previous,driver_clear_previous;
     if(ticket==1||ticket%60==0){if(ticket!=1){unsigned frames=ticket==60?59:60;
         LOG("[vulkan-driver-table] frame=%llu fast_hits/frame=%.1f builds/frame=%.1f avoided_table_MiB/frame=%.3f avoided_clear_MiB/frame=%.3f",(unsigned long long)ticket,(uniform_driver_fast_hits-driver_fast_previous)/(double)frames,(uniform_driver_builds-driver_build_previous)/(double)frames,(uniform_driver_avoided_bytes-driver_bytes_previous)/(frames*1048576.),(uniform_clear_avoided_bytes-driver_clear_previous)/(frames*1048576.));}
@@ -1123,17 +1163,17 @@ uint64_t mtl_present(const tex_t *t, double period, const int crop[4]) {
     // 异常帧日志：每个出图边界取一次本帧的间隔、线程 CPU 与 GPU；只有越线的帧写进单独文件。
     // Abnormal-frame log: take this frame's interval, thread CPU and GPU at every present boundary; only frames
     // over the thresholds are written to their own file.
-    {static uint64_t abnormal_wall,abnormal_cpu,abnormal_gpu;
+    if(dm_diagnostics_enabled()){static uint64_t abnormal_wall,abnormal_cpu,abnormal_gpu;
      uint64_t abnormal_now=dm_android_clock_ns(CLOCK_MONOTONIC),abnormal_thread=dm_android_clock_ns(CLOCK_THREAD_CPUTIME_ID);
      if(abnormal_wall&&abnormal_now>=abnormal_wall&&abnormal_thread>=abnormal_cpu)
-         dm_abnormal_frame(ticket,abnormal_now-abnormal_wall,abnormal_thread-abnormal_cpu,current_gpu-abnormal_gpu,draw_count,render_passes,texture_uploads,uniform_version_read_bytes,uniform_version_misses,descriptor_version_misses);
+         dm_abnormal_frame(ticket,abnormal_now,period>0?(uint64_t)(period*1e9):0,abnormal_now-abnormal_wall,abnormal_thread-abnormal_cpu,current_gpu-abnormal_gpu,draw_count,render_passes,texture_uploads,uniform_version_read_bytes,uniform_version_misses,descriptor_version_misses);
      abnormal_wall=abnormal_now;abnormal_cpu=abnormal_thread;abnormal_gpu=current_gpu;}
     if(ticket==1){perf_passes=render_passes;perf_barriers=image_barriers;}
     else if(ticket%60==0){unsigned frames=ticket==60?59:60;LOG("[vulkan-passes] frame=%llu passes/frame=%.1f image_barriers/frame=%.1f UBO_arena=%.1f MB driver_hits=%llu layout/pass/frame objects=%llu/%llu/%llu",(unsigned long long)ticket,(render_passes-perf_passes)/(double)frames,(image_barriers-perf_barriers)/(double)frames,uniform_arena_bytes/1048576.,(unsigned long long)uniform_driver_hits,(unsigned long long)graphics_layout_creations,(unsigned long long)graphics_pass_creations,(unsigned long long)graphics_frame_creations);perf_passes=render_passes;perf_barriers=image_barriers;}
     static uint64_t binding_hits,binding_misses,descriptor_hits,descriptor_misses,binding_bytes,binding_compare,binding_copy,dependency_waits,binding_overwrites,binding_uploads,binding_unregistered;
     if(ticket==1){binding_hits=uniform_version_hits;binding_misses=uniform_version_misses;descriptor_hits=descriptor_version_hits;descriptor_misses=descriptor_version_misses;binding_bytes=uniform_version_read_bytes;binding_compare=uniform_version_compare_bytes;binding_copy=uniform_version_copy_bytes;dependency_waits=dependency_flushes;}
     else if(ticket%60==0){unsigned frames=ticket==60?59:60;LOG("[vulkan-bindings] frame=%llu UBO byte_hits/miss=%.1f/%.1f descriptors hits/miss=%.1f/%.1f UBO_read=%.2f MB/frame UBO_compare=%.2f MB/frame UBO_arena_copy=%.2f MB/frame dependency_wait=%.1f/frame gpu_overwrite=%.2f/frame uploads=%.2f/frame unregistered_tex=%.2f/frame",(unsigned long long)ticket,(uniform_version_hits-binding_hits)/(double)frames,(uniform_version_misses-binding_misses)/(double)frames,(descriptor_version_hits-descriptor_hits)/(double)frames,(descriptor_version_misses-descriptor_misses)/(double)frames,(uniform_version_read_bytes-binding_bytes)/(frames*1048576.),(uniform_version_compare_bytes-binding_compare)/(frames*1048576.),(uniform_version_copy_bytes-binding_copy)/(frames*1048576.),(dependency_flushes-dependency_waits)/(double)frames,(image_gpu_overwrites-binding_overwrites)/(double)frames,(texture_uploads-binding_uploads)/(double)frames,(gpu_unregistered_textures-binding_unregistered)/(double)frames);binding_unregistered=gpu_unregistered_textures;binding_hits=uniform_version_hits;binding_misses=uniform_version_misses;descriptor_hits=descriptor_version_hits;descriptor_misses=descriptor_version_misses;binding_bytes=uniform_version_read_bytes;binding_compare=uniform_version_compare_bytes;binding_copy=uniform_version_copy_bytes;dependency_waits=dependency_flushes;binding_overwrites=image_gpu_overwrites;binding_uploads=texture_uploads;}
-    if(ticket%60==0){char diag_token[92]={0};char flat_token[TEXTURE_FLAT_PROPERTY_MAX]={0};
+    if(dm_diagnostics_enabled()&&ticket%60==0){char diag_token[92]={0};char flat_token[TEXTURE_FLAT_PROPERTY_MAX]={0};
         buffer_memory_report(ticket);
         if(nvn_dirty_mp_stats){
             static uint64_t previous_frame,previous_calls,previous_pages,previous_ns;uint64_t calls,pages,ns;
@@ -1185,10 +1225,12 @@ uint64_t mtl_present(const tex_t *t, double period, const int crop[4]) {
 void mtl_present_wait(uint64_t ticket) {
     if(!ticket)return;
     if(ticket>mtl_last_fence())die("Vulkan unknown present completion ticket %llu",(unsigned long long)ticket);
-    uint64_t started=dm_android_clock_ns(CLOCK_MONOTONIC);int pending=atomic_load(&completed)<ticket;
+    uint64_t started=dm_diagnostics_enabled()?dm_android_clock_ns(CLOCK_MONOTONIC):0;int pending=atomic_load(&completed)<ticket;
     if(!mtl_wait(ticket,UINT64_MAX))die("Vulkan texture reuse wait failed");
-    atomic_fetch_add(&present_texture_wait_calls,1);atomic_fetch_add(&present_texture_wait_blocks,pending);
-    atomic_fetch_add(&present_texture_wait_ns,dm_android_clock_ns(CLOCK_MONOTONIC)-started);
+    if(dm_diagnostics_enabled()) {
+        atomic_fetch_add(&present_texture_wait_calls,1);atomic_fetch_add(&present_texture_wait_blocks,pending);
+        atomic_fetch_add(&present_texture_wait_ns,dm_android_clock_ns(CLOCK_MONOTONIC)-started);
+    }
 }
 void mtl_present_flush(void) { mtl_finish(); }
 void mtl_present_test_stall(uint64_t ns) { (void)ns; }
@@ -1253,6 +1295,14 @@ void mtl_create_ns(uint64_t *lib, uint64_t *pso) { *lib = resource_created_ns[0]
 uint64_t mtl_upload_bytes(void) { return 0; }
 void mtl_alloc_stats(uint64_t *wait, uint64_t *grow, int *n) { *wait = *grow = 0; *n = 1; }
 uint32_t mtl_present_qos(void) { return 0; }
-int mtl_fps_target(void) { int dm_fps_setting(void); return dm_fps_setting(); }
+int mtl_fps_target(void) {
+    static _Atomic int limit = -1, previous = -1;
+    int configured = atomic_load(&limit);
+    if (configured < 0) { const char *setting = getenv("DM_PRESENT_HZ"); configured = setting ? atoi(setting) : 60; if (configured < 0) configured = 60; atomic_store(&limit, configured); }
+    int dm_fps_setting(void);
+    int target = dm_fps_setting() == 30 ? 30 : configured;
+    if (atomic_exchange(&previous, target) != target) LOG("[android-frame-limit] configured=%d effective=%d fps (0=uncapped; display may limit)", configured, target);
+    return target;
+}
 void mtl_mem_stat(unsigned long long frame, unsigned long long mb, int ok, unsigned long long total, unsigned long long free_size, unsigned long long max) { (void)ok; (void)total; (void)free_size; (void)max; LOG("[vulkan] frame=%llu resident=%llu MB submits=%llu allocations=%llu reuse=%llu snapshots=%llu MB pipelines=%llu/%llu", frame, mb, (unsigned long long)atomic_load(&submitted), (unsigned long long)buffer_allocations, (unsigned long long)buffer_reuses, (unsigned long long)(snapshot_bytes >> 20), (unsigned long long)pipeline_creations, (unsigned long long)pipeline_reuses); }
 void dm_gfx_shot_at(long frame, const char *path) { (void)frame; dm_shot_written(path, 0); }

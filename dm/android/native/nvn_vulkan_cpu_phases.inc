@@ -1,4 +1,5 @@
 #include <sched.h>
+#include "frame_timing.h"
 // 只读分段计时：按帧累计录制线程与出图路径在各阶段的墙钟，回答 CPU 预算花在哪里。
 // Read-only phase timing: accumulate the recording thread's and present path's wall clock per stage
 // each frame, so the CPU budget can be attributed from measurement instead of estimate.
@@ -25,6 +26,7 @@ static uint64_t dm_cpu_phase_ns[DM_CPU_PHASE_COUNT], dm_cpu_phase_calls[DM_CPU_P
 static uint64_t dm_cpu_phase_frames;
 static int dm_cpu_phase_enabled;
 static void dm_cpu_phase_configure(void) {
+    if (!dm_diagnostics_enabled()) { dm_cpu_phase_enabled=0; return; }
     const char *value=getenv("DM_VK_CPU_PHASES");
 #ifdef __ANDROID__
     char property[PROP_VALUE_MAX];
@@ -60,7 +62,6 @@ static void dm_cpu_phase_report(uint64_t frames) {
 // file, so a reproduction can be read straight from it instead of searching the whole game log.
 // 每帧只做十几次减法与两次比较，写文件只在异常帧发生。
 // Each frame costs a handful of subtractions and two comparisons; the file is written only on abnormal frames.
-enum { DM_ABNORMAL_INTERVAL_NS = 20000000 };
 static FILE *dm_abnormal_file;
 static int dm_abnormal_failed;
 static uint64_t dm_abnormal_previous_ns[DM_CPU_PHASE_COUNT],dm_abnormal_previous_calls[DM_CPU_PHASE_COUNT];
@@ -76,10 +77,7 @@ static void dm_abnormal_open(void) {
     if (written < 0 || (size_t)written >= sizeof path) { dm_abnormal_failed = 1; return; }
     dm_abnormal_file = fopen(path, "a");
     if (!dm_abnormal_file) { dm_abnormal_failed = 1; return; }
-    fprintf(dm_abnormal_file, "# 异常帧日志：帧间隔或线程 CPU 达到 %d ms 才记一行；分段是该帧自身的耗时\n",
-            DM_ABNORMAL_INTERVAL_NS / 1000000);
-    fprintf(dm_abnormal_file, "# abnormal-frame log: a line per frame whose interval or thread CPU reaches %d ms; phases are that frame's own cost\n",
-            DM_ABNORMAL_INTERVAL_NS / 1000000);
+    fprintf(dm_abnormal_file, "# threshold=max(20ms, frame budget*1.2); sampled at most once/second unless cpu_phases=1; phases describe the sampled frame\n");
     fflush(dm_abnormal_file);
     LOG("[vulkan-abnormal] 异常帧日志 %s", path);
 }
@@ -119,9 +117,10 @@ static long dm_abnormal_fastest_core_khz(void) {
 }
 // 每个出图边界取一次本帧分段差；异常帧才落盘，正常帧只有这些减法。
 // Take this frame's phase deltas at every present boundary; only abnormal frames reach the disk, normal frames cost only these subtractions.
-static void dm_abnormal_frame(uint64_t frame, uint64_t interval_ns, uint64_t cpu_ns, uint64_t gpu_ns,
+static void dm_abnormal_frame(uint64_t frame, uint64_t now_ns, uint64_t period_ns, uint64_t interval_ns, uint64_t cpu_ns, uint64_t gpu_ns,
                               uint64_t draws, uint64_t passes, uint64_t uploads,
                               uint64_t ubo_bytes, uint64_t ubo_misses, uint64_t descriptor_misses) {
+    if (!dm_diagnostics_enabled()) return;
     for (unsigned phase = 0; phase < DM_CPU_PHASE_COUNT; phase++) {
         dm_abnormal_frame_ns[phase] = dm_cpu_phase_ns[phase] - dm_abnormal_previous_ns[phase];
         dm_abnormal_previous_ns[phase] = dm_cpu_phase_ns[phase];
@@ -140,7 +139,11 @@ static void dm_abnormal_frame(uint64_t frame, uint64_t interval_ns, uint64_t cpu
     static uint64_t previous_ubo_bytes, previous_ubo_misses, previous_descriptor_misses;
     uint64_t frame_ubo_bytes = ubo_bytes - previous_ubo_bytes, frame_ubo_misses = ubo_misses - previous_ubo_misses, frame_descriptor_misses = descriptor_misses - previous_descriptor_misses;
     previous_ubo_bytes = ubo_bytes; previous_ubo_misses = ubo_misses; previous_descriptor_misses = descriptor_misses;
-    if (interval_ns < DM_ABNORMAL_INTERVAL_NS && cpu_ns < DM_ABNORMAL_INTERVAL_NS) return;
+    if (!dm_frame_abnormal(interval_ns, cpu_ns, period_ns)) return;
+    // Keep frequency sysfs reads and synchronous logging off the ordinary per-frame path.
+    static uint64_t last_record_ns;
+    if (!dm_cpu_phase_enabled && last_record_ns && now_ns-last_record_ns < 1000000000ull) return;
+    last_record_ns=now_ns;
     dm_abnormal_open();
     if (!dm_abnormal_file) return;
     dm_abnormal_records++;

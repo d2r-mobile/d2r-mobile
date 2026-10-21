@@ -15,6 +15,7 @@ typedef struct dependency_detail {
 } dependency_detail;
 static dependency_detail dependency_details[DEP_COUNT];
 static uint64_t dependencies_clock(void) {
+    if (!dm_diagnostics_enabled()) return 0;
     int saved_errno=errno;uint64_t now=dm_android_clock_ns(CLOCK_MONOTONIC);errno=saved_errno;return now;
 }
 static void dependencies_report(void) {

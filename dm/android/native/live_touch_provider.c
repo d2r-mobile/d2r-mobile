@@ -152,13 +152,22 @@ int dm_live_touch_provider_observe(dm_live_touch_provider *provider,
     else scene = DM_LIVE_TOUCH_SCENE_GAME;
 
     int area = hud.valid ? hud.area : 0;
-    int changed = !provider->have_context || provider->last_scene != scene ||
+    int64_t dx=(int64_t)hud.x-provider->last_x,dy=(int64_t)hud.y-provider->last_y;
+    int continuous=provider->have_context && scene==DM_LIVE_TOUCH_SCENE_GAME &&
+        provider->last_scene==DM_LIVE_TOUCH_SCENE_GAME && !panel_bits && !provider->last_panel &&
+        hud.player_identity && hud.game_identity &&
+        hud.player_identity==provider->last_player_identity && hud.game_identity==provider->last_game_identity &&
+        area>0 && provider->last_area>0 && dx>=-8 && dx<=8 && dy>=-8 && dy<=8 &&
+        now>provider->last_captured_ns && now-provider->last_captured_ns<=250000000ull;
+    int identity_changed = provider->last_player_identity != hud.player_identity ||
+                           provider->last_game_identity != hud.game_identity;
+    int changed = !provider->have_context || identity_changed || provider->last_scene != scene ||
                   provider->last_ingame != ingame || provider->last_panel != panel_bits ||
                   provider->last_ui_identity != ui_gen || provider->last_area != area;
     if (changed) {
         if (provider->have_context) {
             provider->scene_epoch++;
-            if (provider->last_ingame != ingame || provider->last_area != area)
+            if (identity_changed || provider->last_ingame != ingame || provider->last_area != area)
                 provider->world_epoch++;
         }
         provider->have_context = 1;
@@ -168,6 +177,8 @@ int dm_live_touch_provider_observe(dm_live_touch_provider *provider,
         provider->last_ui_identity = ui_gen;
         provider->last_area = area;
     }
+    provider->last_player_identity=hud.player_identity;provider->last_game_identity=hud.game_identity;
+    provider->last_x=hud.x;provider->last_y=hud.y;provider->last_captured_ns=now;
 
     out->available = 1;
     out->scene = scene;
@@ -177,6 +188,7 @@ int dm_live_touch_provider_observe(dm_live_touch_provider *provider,
     out->world_epoch = provider->world_epoch;
     out->ui_identity = ui_gen;
     out->captured_ns = now;
+    out->movement_continuity=continuous;
     return 1;
 }
 

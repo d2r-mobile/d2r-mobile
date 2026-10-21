@@ -21,6 +21,8 @@ prefix = r'''
 #define PROP_VALUE_MAX 92
 static char property[PROP_VALUE_MAX];
 static unsigned clock_calls, log_calls;
+static int diagnostics=1;
+static int dm_diagnostics_enabled(void) {return diagnostics;}
 static uint64_t dm_android_clock_ns(clockid_t clock) {
     (void)clock;return (++clock_calls)*100;
 }
@@ -46,10 +48,12 @@ int main(void) {
     setenv("DM_VK_CPU_PHASES","invalid",1);property[0]=0;dm_cpu_phase_configure();
     assert(dm_cpu_phase_begin()==0);
     strcpy(property,"1");dm_cpu_phase_configure();assert(dm_cpu_phase_begin()!=0);
+    diagnostics=0;unsigned before=clock_calls;dm_cpu_phase_configure();
+    dm_cpu_phase_end(DM_CPU_PHASE_DRAW,dm_cpu_phase_begin());assert(clock_calls==before);
     puts("actual phase timing: default zero clock calls, opt-in timings, strict property override PASS");
 }
 '''
 output = Path(sys.argv[2])
 output.write_text(prefix + production + body)
-subprocess.run([sys.argv[3] if len(sys.argv)>3 else 'clang','-std=c11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined',str(output),'-o',str(output.with_suffix(''))], check=True)
+subprocess.run([sys.argv[3] if len(sys.argv)>3 else 'clang','-std=c11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined','-I',str(Path(sys.argv[1]).parent),str(output),'-o',str(output.with_suffix(''))], check=True)
 subprocess.run([str(output.with_suffix(''))], check=True)

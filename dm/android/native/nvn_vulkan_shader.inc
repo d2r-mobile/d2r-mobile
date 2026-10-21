@@ -28,10 +28,11 @@ static uint64_t resource_created_count[3],resource_created_ns[3];
 static _Thread_local int resource_create_quiet;
 static const char *resource_create_names[]={"shader_load","graphics_pipeline","compute_pipeline"};
 static resource_create_start resource_create_begin(void) {
+    if (!dm_diagnostics_enabled()) return (resource_create_start){0};
     return (resource_create_start){dm_android_clock_ns(CLOCK_MONOTONIC),dm_android_clock_ns(CLOCK_THREAD_CPUTIME_ID)};
 }
 static void resource_create_end(unsigned kind,resource_create_start start,const char *shader,const char *fragment) {
-    if(resource_create_quiet)return;
+    if(!dm_diagnostics_enabled()||resource_create_quiet)return;
     uint64_t cpu=dm_android_clock_ns(CLOCK_THREAD_CPUTIME_ID)-start.cpu,wall=dm_android_clock_ns(CLOCK_MONOTONIC)-start.wall,frame=presents+1;
     resource_create_stats *s=&resource_creates[kind];s->count++;s->wall+=wall;s->cpu+=cpu;
     resource_created_count[kind]++;resource_created_ns[kind]+=wall;
@@ -233,9 +234,7 @@ static void program_remove(const prog_t *program) {
 static VkSamplerAddressMode wrap_mode(unsigned wrap) {switch(wrap){case 1:return VK_SAMPLER_ADDRESS_MODE_REPEAT;case 6:return VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;case 4:case 5:return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;default:return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;}}
 #include "nvn_vulkan_sampler.inc"
 
-static texture_descriptor descriptor_texture(int id) {
-    texture_descriptor d={0};pthread_mutex_lock(&descriptor_lock);if(id>=0&&id<texture_capacity)d=texture_descriptors[id];pthread_mutex_unlock(&descriptor_lock);return d;
-}
+#include "nvn_vulkan_descriptor_lookup.inc"
 static image_entry *descriptor_image(const texture_descriptor *d,uint32_t type,int storage,VkPipelineStageFlags stage,VkAccessFlags access,int flat) {
     if(flat){image_entry *e=texture_flat_image();image_access(e,stage,access);texture_flat_overrides++;return e;}
     if(d->valid){const tex_t *source=&d->texture;tex_t alias;int alias_format=texture_shadow_alias_format(type,storage,source->d.format);
@@ -407,8 +406,9 @@ static VkDescriptorSet bind_shader(shader_entry *s,post_op *lifetime,uint32_t *d
             }
             else {
                 uint32_t handle=shader_handle(b,s->stage,j);
-                images[j]=(VkDescriptorImageInfo){.sampler=sampler_get_for_type((handle>>20)&0xfff,type==VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER?b->type:0),.imageLayout=VK_IMAGE_LAYOUT_GENERAL};
-                if(type!=VK_DESCRIPTOR_TYPE_SAMPLER){texture_descriptor descriptor=descriptor_texture(handle&0xfffff);
+                texture_descriptor descriptor={0};
+                images[j]=(VkDescriptorImageInfo){.sampler=descriptor_sampled(handle,type==VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER?b->type:0,type==VK_DESCRIPTOR_TYPE_SAMPLER?NULL:&descriptor),.imageLayout=VK_IMAGE_LAYOUT_GENERAL};
+                if(type!=VK_DESCRIPTOR_TYPE_SAMPLER){
                     texture_diag_bind(&descriptor,handle,b->type,b->binding,s->stage,s->key);
                     // 只读计数：游戏绑了句柄、端口却查不到登记，就会退回 1x1 替身贴图，整个四边形采到同一个颜色。
                     // Read-only counter: the game bound a handle the port cannot resolve, which falls back to a 1x1
@@ -460,7 +460,7 @@ static void dispatch_compute(const p_dispatch *d) {
     post_op *const *output_scope=post_copy_tail;forward_scope_marker=output_scope;
     uint32_t dynamic_offsets[256];unsigned dynamic_count=0;
     VkDescriptorSet set=bind_shader(s,NULL,dynamic_offsets,&dynamic_count);
-    vkCmdBindPipeline(command,VK_PIPELINE_BIND_POINT_COMPUTE,s->compute_pipeline);vkCmdBindDescriptorSets(command,VK_PIPELINE_BIND_POINT_COMPUTE,s->compute_layout,0,1,&set,dynamic_count,dynamic_offsets);graphics_probe_dispatch(d);if(frame_trace_reserve(&frame_trace))FRAME_TRACE_LOG("dispatch shader=%s groups=%d,%d,%d",s->key,d->x,d->y,d->z);vkCmdDispatch(command,d->x,d->y,d->z);gpu_snapshot_consumer_encoded();forward_record_outputs(output_scope,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
+    compute_command_apply(s->compute_pipeline,s->compute_layout,set,dynamic_count,dynamic_offsets);graphics_probe_dispatch(d);if(frame_trace_reserve(&frame_trace))FRAME_TRACE_LOG("dispatch shader=%s groups=%d,%d,%d",s->key,d->x,d->y,d->z);vkCmdDispatch(command,d->x,d->y,d->z);gpu_snapshot_consumer_encoded();forward_record_outputs(output_scope,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
     graphics_probe_cs_outputs(s);
     // 图像消费者由 image_access 精确同步；仅真实缓冲写回需要主机可见性屏障。
     // image_access synchronizes image consumers precisely; only actual buffer writebacks need host visibility.
