@@ -15,6 +15,7 @@ struct dm_audio {
     uint32_t capacity, mask;
     _Atomic uint32_t head, tail;
     _Atomic uint64_t written, dropped, underrun_frames, underrun_events, callbacks;
+    _Atomic uint32_t gain_q15;   // 0..32768；1.0 = 32768 | 0..32768, 32768 is unity
     _Atomic int closing, disconnected, callback_active;
     _Atomic uintptr_t callback_thread;
     _Atomic int teardown; // ACTIVE / DESTROYING / CLOSE_FAILED / CLOSED
@@ -70,6 +71,20 @@ static uint32_t round_pow2(uint32_t n) {
 
 static void dm_audio_free(dm_audio *a);
 
+// 定点音量：Q15（1.0 = 32768）。src 为 int16，乘积 |src*g| <= 2^30，加 2^14 舍入偏置仍远在 int32 内，无溢出。
+// 1.0 分支原样返回，保证位精确；其余按 (v + 16384) >> 15 四舍五入（负值同样向 +∞ 方向取整到最近 LSB）。
+// Fixed-point gain in Q15 (1.0 = 32768): |src*g| <= 2^30 and the 2^14 rounding bias stays well inside int32, so no
+// overflow is possible. Unity returns the sample unchanged (bit-exact); otherwise (v + 16384) >> 15 rounds to the
+// nearest LSB with a documented +0.5 bias (identical rule for negative samples).
+static inline int16_t apply_gain(int16_t sample, uint32_t gain_q15) {
+    if (gain_q15 >= 32768u) return sample;
+    int32_t value = (int32_t)sample * (int32_t)gain_q15;
+    value = (value + 16384) >> 15;
+    if (value > 32767) value = 32767;
+    if (value < -32768) value = -32768;
+    return (int16_t)value;
+}
+
 static dm_audio_callback_result data_callback(dm_aaudio_stream *stream, void *user, void *data, int32_t num_frames) {
     (void)stream;
     dm_audio *a = user;
@@ -92,7 +107,9 @@ static dm_audio_callback_result data_callback(dm_aaudio_stream *stream, void *us
     uint32_t available = head - tail;
     uint32_t take = available < frames ? available : frames;
     int16_t *out = data;
-    for (uint32_t i = 0; i < take * DM_AUDIO_CHANNELS; i++) out[i] = a->ring[(tail * DM_AUDIO_CHANNELS + i) & (a->capacity * DM_AUDIO_CHANNELS - 1)];
+    const uint32_t gain_q15 = atomic_load_explicit(&a->gain_q15, memory_order_relaxed);
+    for (uint32_t i = 0; i < take * DM_AUDIO_CHANNELS; i++)
+        out[i] = apply_gain(a->ring[(tail * DM_AUDIO_CHANNELS + i) & (a->capacity * DM_AUDIO_CHANNELS - 1)], gain_q15);
     if (take < frames) {
         memset(out + take * DM_AUDIO_CHANNELS, 0, (size_t)(frames - take) * DM_AUDIO_FRAME_BYTES);
         atomic_fetch_add_explicit(&a->underrun_frames, frames - take, memory_order_relaxed);
@@ -126,6 +143,7 @@ int dm_audio_create(const dm_audio_options *options, dm_audio **out) {
     dm_audio *a = calloc(1, sizeof *a);
     if (!a) return -ENOMEM;
     a->api = api;
+    atomic_store_explicit(&a->gain_q15, 32768u, memory_order_relaxed);   // 默认 1.0 | default unity gain
     a->capacity = round_pow2(options->queue_frames);
     a->mask = a->capacity - 1;
     a->ring = calloc((size_t)a->capacity * DM_AUDIO_CHANNELS, sizeof *a->ring);
@@ -206,9 +224,26 @@ uint32_t dm_audio_write(dm_audio *a, const int16_t *samples, uint32_t frames) {
     return take;
 }
 
+int dm_audio_set_gain(dm_audio *a, float gain) {
+    if (!a) return -EINVAL;
+    // NaN 与越界都拒绝；比较对 NaN 为假，因此显式检查范围即可（NaN 不满足 gain >= 0）。
+    // NaN and out-of-range are refused; the range test also rejects NaN because NaN >= 0 is false.
+    if (!(gain >= 0.0f && gain <= 1.0f)) return -EINVAL;
+    uint32_t q15 = (uint32_t)(gain * 32768.0f + 0.5f);
+    if (q15 > 32768u) q15 = 32768u;
+    atomic_store_explicit(&a->gain_q15, q15, memory_order_relaxed);
+    return 0;
+}
+
+uint32_t dm_audio_gain_q15(const dm_audio *a) {
+    if (!a) return 0;
+    return atomic_load_explicit(&a->gain_q15, memory_order_relaxed);
+}
+
 void dm_audio_get_stats(const dm_audio *a, dm_audio_stats *stats) {
     if (!stats) return;
     memset(stats, 0, sizeof *stats);
+    stats->gain_q15 = dm_audio_gain_q15(a);
     if (!a) return;
     stats->frames_written = atomic_load_explicit(&a->written, memory_order_relaxed);
     stats->frames_dropped = atomic_load_explicit(&a->dropped, memory_order_relaxed);
