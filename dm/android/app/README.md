@@ -42,23 +42,46 @@ and retry `stop`/destroy only when `dm_app_lifecycle_pending_work()` reaches zer
 It must not free the controller or release a Surface on the Activity callback's
 behalf while work remains.
 
-## Input delivery gap (issue #32)
+## MotionEvent delivery and diagnostic consumer (#32)
 
-The current input looper handles only the Android Back key. It does not deliver
-`MotionEvent` touches to the r2d core. The next input slice must create one
-`dm_android_pad` and one `dm_android_touch` on the same input/core thread, map
-`MotionEvent` pointer IDs as opaque IDs, stamp non-negative `CLOCK_MONOTONIC`
-nanoseconds, and convert physical pixels to logical points using the view
-density before calling `dm_android_touch_down/move/up/cancel`. The consumer must
-call `dm_android_touch_read` (never `dm_android_pad_read`) for the ordered
-queued-pulse view.
+The NativeActivity input looper now translates Android `MotionEvent`s into the
+existing reusable r2d touch core through `app/touch_bridge.c`. `DOWN`,
+`POINTER_DOWN`, `MOVE`, `UP`, `POINTER_UP` and `CANCEL` are handled on the same
+looper/core thread. Pointer IDs are opaque Android IDs; event time is
+`CLOCK_MONOTONIC` nanoseconds; physical pixels are divided by the activity
+density before the adapter call. Action-index pointer selection supports
+non-contiguous IDs. `app/view_policy.c` keeps the physical view dimensions,
+density and logical point bounds separate from the diagnostic render buffer; the
+draw path no longer forces 256x256 window geometry, so a later redraw cannot
+turn a 1440x900 physical input view into a 256x256 input domain.
 
-The adapter's 16-pulse ring is bounded. If a mutating event is rejected because
-the ring is full, the app must drain reads on the input thread and retry; it must
-not silently ignore the event, and `ACTION_UP`/`ACTION_CANCEL` must be resolved
-on that thread even when the ring is full (fall back to `cancel_all` if a release
-cannot be queued). This wiring is not part of the lifecycle slice and remains
-open in #32.
+A `timerfd` is attached to the same looper so `dm_android_touch_tick` advances
+timers (ZL lead, deferred pulses, settle and repeat) even when no further touch
+arrives. Timer ticks and MotionEvents are accepted only while
+`app/input_policy.c` reports resumed, focused, input-queue, window and bridge
+readiness together. A timer start failure, fatal read error or hangup is part of
+that acceptance decision: input is gated, touch state is neutralized, and the
+failure is logged until a later callback deliberately retries the timer. Pause,
+focus loss, queue replacement, window loss and destruction stop the timer, cancel
+active pointers and queued pulses, then consume a neutral snapshot exactly once.
+A replacing input queue cancels and destroys the old bridge before attaching the
+new queue. Resume/focus are not assumed at process creation; they are accepted
+only after the corresponding NativeActivity callbacks observe them. Duplicate/stale
+input queue and timer callbacks are ignored or cleaned up without stale pointer use.
+Timer error/hangup and read failures stop the timer, cancel touch state and log;
+there is no synthetic input event used as a tick fallback.
+
+The bridge is the explicit diagnostic consumer: it drains at most one ordered
+pulse per read and stores a bounded snapshot for log-throttled observation. Its
+`diagnostic_reads` counter means this bridge consumed a snapshot, not that a
+guest/game HID layer received it. The bridge drains one pulse and retries a
+rejected `UP`; if the release still cannot be queued it falls back to
+`cancel_all`, so a full 16-pulse ring cannot leave a pointer stuck. `CANCEL`
+works even when the platform frame has no usable pointers/coordinates.
+
+The current app remains an owned diagnostic: the consumed snapshot is only
+logged, and no game-state/HID/HUD consumer is attached. Real guest HID and the
+game-specific gesture/acceptance path remain future work in #32/#33–40.
 
 ## Build
 
