@@ -46,3 +46,17 @@ typedef struct {
 VkResult dm_vk_texture_upload(dm_vk *vk, const nvn_texdesc *desc,
     const void *source, size_t capacity, dm_vk_texture *out);
 void dm_vk_texture_destroy(dm_vk *vk, dm_vk_texture *texture);
+
+// 线性 RGBA8 区域更新／读回（#11 行距验收的 Vulkan 对应）：region 以纹素计，须落在该级范围内；
+// row_bytes 是行首到行首的字节数（0 = 紧排），非 0 时须 ≥ region.width×4，行距里的填充既不读也不写。
+// 前置条件：texture 处于 dm_vk_texture_upload 留下的 SHADER_READ_ONLY_OPTIMAL；本模块不追踪布局，调用者保证串行。
+// Linear RGBA8 region update/readback (the Vulkan counterpart of the #11 row-stride acceptance): region is in texels and
+// must lie inside that level; row_bytes is start-to-start bytes (0 = tight) and must be >= region.width*4 when non-zero;
+// padding inside the row stride is neither read nor written.
+// Precondition: the texture sits in the SHADER_READ_ONLY_OPTIMAL state left by dm_vk_texture_upload; this module does not
+// track layouts, and the caller guarantees serialized use.
+typedef struct { uint32_t x, y, width, height; } dm_vk_region;
+VkResult dm_vk_texture_update_rows(dm_vk *vk, dm_vk_texture *texture, uint32_t level, uint32_t layer,
+    const dm_vk_region *region, const void *source, size_t source_size, uint32_t row_bytes);
+VkResult dm_vk_texture_read_rows(dm_vk *vk, const dm_vk_texture *texture, uint32_t level, uint32_t layer,
+    const dm_vk_region *region, uint32_t row_bytes, void *dest, size_t dest_size);
