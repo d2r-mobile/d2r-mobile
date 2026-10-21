@@ -790,7 +790,7 @@ if(ANDROID)
     # Imported reference NVN→Vulkan backend. It compiles against this tree's
     # nvn_obj.h/nvn_dirty.h and is linked beside the existing diagnostic lane;
     # it does not replace native.c or register a second production loader.
-    add_library(dm_android_nvn_backend STATIC native/nvn_vulkan.c native/gpu_driver.c ../gfx/nvn/nvn_dirty.c)
+    add_library(dm_android_nvn_backend STATIC native/nvn_vulkan.c native/nvn_present_filter.c native/gpu_driver.c ../gfx/nvn/nvn_dirty.c)
     target_include_directories(dm_android_nvn_backend PUBLIC
         native native/compat ../gfx/nvn ../gfx/nvn/include ../gfx/tex ../host)
     target_link_libraries(dm_android_nvn_backend PUBLIC dm_android_tex android log dl m vulkan)
@@ -1115,6 +1115,14 @@ if(NOT ANDROID)
     # is pure Vulkan metadata; no physical device or loader is opened here.
     find_package(Vulkan QUIET)
     if(Vulkan_FOUND)
+        # #298 final-present cubic policy: absent extension, unsupported source
+        # format and supported cubic are decided by the same production helper.
+        add_executable(dm_nvn_present_filter_test tests/nvn_present_filter_test.c native/nvn_present_filter.c)
+        target_include_directories(dm_nvn_present_filter_test PRIVATE native ${Vulkan_INCLUDE_DIRS})
+        target_compile_options(dm_nvn_present_filter_test PRIVATE -Wall -Wextra -Werror)
+        add_test(NAME nvn_present_filter COMMAND dm_nvn_present_filter_test)
+        set_tests_properties(nvn_present_filter PROPERTIES TIMEOUT 30)
+
         add_executable(dm_nvn_draw_parameters_test tests/nvn_draw_parameters.c native/gpu_driver.c)
         target_include_directories(dm_nvn_draw_parameters_test PRIVATE native ${Vulkan_INCLUDE_DIRS})
         target_compile_options(dm_nvn_draw_parameters_test PRIVATE -Wall -Wextra -Werror)
