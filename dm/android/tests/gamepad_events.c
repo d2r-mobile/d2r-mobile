@@ -30,6 +30,7 @@ enum {
     EVENT_KEY = 1, EVENT_MOTION = 2, EVENT_FOCUS = 3,
     SOURCE_GAMEPAD = 0x00000401, SOURCE_JOYSTICK = 0x01000010,
     SOURCE_TOUCHSCREEN = 0x00001002,
+    SOURCE_MOUSE = 0x00002002, SOURCE_KEYBOARD = 0x00000101,
     KEY_DOWN = 0, KEY_UP = 1, KEY_MULTIPLE = 2,
     MOTION_DOWN = 0, MOTION_UP = 1, MOTION_MOVE = 2, MOTION_CANCEL = 3,
     KEY_DPAD_UP = 19, KEY_DPAD_DOWN = 20, KEY_DPAD_LEFT = 21, KEY_DPAD_RIGHT = 22,
@@ -312,6 +313,35 @@ int main(void) {
     event = key_event(SOURCE_GAMEPAD, KEY_DOWN, KEY_L2, 0);
     CHECK(dm_gamepad_event_apply(&ctx, &event, &state));
     CHECK((state.buttons & DM_BTN_ZL) != 0);
+
+    /* Android combined source masks are valid when they contain a complete
+       GAMEPAD or JOYSTICK membership; pure mouse/keyboard are not. */
+    dm_gamepad_context combined;
+    dm_gamepad_context_init(&combined);
+    dm_npad_state combined_state;
+    memset(&combined_state, 0, sizeof combined_state);
+    event = key_event(SOURCE_GAMEPAD | SOURCE_JOYSTICK, KEY_DOWN, KEY_A, 0);
+    CHECK(dm_gamepad_event_apply(&combined, &event, &combined_state));
+    CHECK((combined_state.buttons & DM_BTN_A) != 0);
+    event = motion_event(SOURCE_GAMEPAD | SOURCE_JOYSTICK, MOTION_MOVE);
+    event.axis[AXIS_X] = 0.5f;
+    CHECK(dm_gamepad_event_apply(&combined, &event, &combined_state));
+    CHECK(combined_state.lx > 0);
+    CHECK(dm_gamepad_source_is_gamepad(SOURCE_GAMEPAD));
+    CHECK(dm_gamepad_source_is_gamepad(SOURCE_JOYSTICK));
+    CHECK(dm_gamepad_source_is_gamepad(SOURCE_GAMEPAD | SOURCE_JOYSTICK));
+    CHECK(!dm_gamepad_source_is_gamepad(SOURCE_MOUSE));
+    CHECK(!dm_gamepad_source_is_gamepad(SOURCE_KEYBOARD));
+    dm_npad_state rejected_state = combined_state;
+    dm_gamepad_context rejected_context = combined;
+    event = key_event(SOURCE_MOUSE, KEY_DOWN, KEY_A, 0);
+    CHECK(!dm_gamepad_event_apply(&combined, &event, &combined_state));
+    CHECK(!memcmp(&combined_state, &rejected_state, sizeof combined_state));
+    CHECK(!memcmp(&combined, &rejected_context, sizeof combined));
+    event = key_event(SOURCE_KEYBOARD, KEY_DOWN, KEY_A, 0);
+    CHECK(!dm_gamepad_event_apply(&combined, &event, &combined_state));
+    CHECK(!memcmp(&combined_state, &rejected_state, sizeof combined_state));
+    CHECK(!memcmp(&combined, &rejected_context, sizeof combined));
 
     printf("PASS gamepad events: %d checks\n", checks);
     return 0;

@@ -27,6 +27,12 @@ typedef struct dm_gamepad_context {
 // disconnect/replacement so no contribution leaks across devices.
 void dm_gamepad_context_init(dm_gamepad_context *context);
 
+// Returns 1 when the Android source contains complete GAMEPAD or JOYSTICK
+// membership (InputEvent.isFromSource semantics for those two classes),
+// including combined source masks. Pure mouse/keyboard/touch classes return 0;
+// this is not a generic source-class test.
+int dm_gamepad_source_is_gamepad(int32_t source);
+
 // Returns 1 and atomically updates *state for a recognized gamepad/joystick
 // KeyEvent or MotionEvent. Digital KeyEvent and analog MotionEvent button
 // contributions are composed, so releasing one channel does not clear the

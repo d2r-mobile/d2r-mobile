@@ -52,6 +52,9 @@ def main() -> int:
         ("omit-trigger-release",
          "        next_context.analog_buttons = 0;\n        next.buttons = (state->buttons & ~old) |\n                       next_context.digital_buttons | next_context.analog_buttons;\n        next.lx = next.ly = next.rx = next.ry = 0;",
          "        next.buttons = (state->buttons & ~old) |\n                       next_context.digital_buttons | next_context.analog_buttons;\n        next.lx = next.ly = next.rx = next.ry = 0;"),
+        ("source-class-exact",
+         "return (source & AINPUT_SOURCE_GAMEPAD) == AINPUT_SOURCE_GAMEPAD ||\n           (source & AINPUT_SOURCE_JOYSTICK) == AINPUT_SOURCE_JOYSTICK;",
+         "return source == AINPUT_SOURCE_GAMEPAD || source == AINPUT_SOURCE_JOYSTICK;"),
     ]
     with tempfile.TemporaryDirectory() as td:
         work = Path(td)

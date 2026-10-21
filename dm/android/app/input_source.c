@@ -25,7 +25,7 @@ struct dm_input_arbiter {
 };
 
 static int valid_device(uint32_t id, uint32_t generation) {
-    return id <= DM_INPUT_MAX_DEVICE_ID && generation != 0;
+    return id <= (uint32_t)INT32_MAX && generation != 0;
 }
 
 static int gamepad_active(const dm_pad_sample *sample) {

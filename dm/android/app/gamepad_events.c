@@ -63,7 +63,12 @@ float AMotionEvent_getAxisValue(const AInputEvent *event, int32_t axis, size_t p
 #define DM_GAMEPAD_TRIGGER_BITS (DM_BTN_ZL | DM_BTN_ZR)
 
 static int recognized_source(int32_t source) {
-    return source == AINPUT_SOURCE_GAMEPAD || source == AINPUT_SOURCE_JOYSTICK;
+    return dm_gamepad_source_is_gamepad(source);
+}
+
+int dm_gamepad_source_is_gamepad(int32_t source) {
+    return (source & AINPUT_SOURCE_GAMEPAD) == AINPUT_SOURCE_GAMEPAD ||
+           (source & AINPUT_SOURCE_JOYSTICK) == AINPUT_SOURCE_JOYSTICK;
 }
 
 static uint64_t key_button(int32_t keycode) {
