@@ -57,6 +57,7 @@ public final class LauncherActivity extends Activity {
     private static final int PICK_PACKAGE = 1;
     private static final int EXPORT_SAVE = 2;
     private static final int IMPORT_SAVE = 3;
+    private static final int PICK_DRIVER = 4;
 
     private static final int GOLD = 0xffe8c078;
     private static final int PARCHMENT = 0xffe8e0d0;
@@ -77,10 +78,9 @@ public final class LauncherActivity extends Activity {
     // aspect at 720-level height; 1600x900 is the 16:9 compatibility preset (handheld still 1280x720);
     // the other two keep the existing explicit high-resolution semantics.
     private static final String[] RESOLUTION_PRESETS = {"", "1600x900", "1920x1080", "2560x1440"};
-    // 图形驱动两档：系统自带的 Adreno 驱动，和随 APK 一起发的 Turnip（选它由 native 的 gpu-driver.conf 生效）。
-    // Measured difference: the Adreno driver shows blocky lighting around the player, Turnip does not — see the
-    // driver notes under docs/.
-    private static final String[] DRIVER_STATES = {"system", "turnip"};
+    // Explicit system/built-in/imported choices apply on the next process launch.
+    private static final String[] DRIVER_STATES = {"system", "turnip", "custom"};
+    private DriverArchive.Info customDriver;
     private static final String TURNIP_ASSET = "turnip/vulkan.purple.so";
 
     private String text(String key) {
@@ -187,11 +187,6 @@ public final class LauncherActivity extends Activity {
         return text("dmAndroidLaunchResolution") + "：" + parts[0] + "×" + parts[1];
     }
 
-    // 内置 Turnip 是构建时打进 assets 的（build.py --turnip / dm/android/prebuilt/turnip）。
-    // APK 里没有它就把这一行整行藏起来 —— 不让玩家选一个根本装不出来的东西；系统驱动始终可用。
-    // The built-in Turnip is packed into assets at build time (build.py --turnip / dm/android/prebuilt/turnip).
-    // Without it the row hides entirely, so nobody can pick something that cannot work; the system driver is
-    // always available.
     private boolean turnipBundled() {
         try (InputStream stream = getAssets().open(TURNIP_ASSET)) {
             return stream != null;
@@ -200,9 +195,78 @@ public final class LauncherActivity extends Activity {
         }
     }
 
+    private File customDriverDirectory() { return new File(getFilesDir(), "gpu-driver-custom"); }
+
+    private static DriverArchive.Info driverMetadata(byte[] bytes) throws IOException {
+        try {
+            JSONObject meta = new JSONObject(new String(bytes, StandardCharsets.UTF_8));
+            if (meta.getInt("schemaVersion") != 1) throw new IOException("Unsupported driver schema");
+            return new DriverArchive.Info(meta.getString("name"), meta.getString("libraryName"), meta.getInt("minApi"),
+                    "Qualcomm".equalsIgnoreCase(meta.optString("vendor")) ? 8 : 18);
+        } catch (JSONException error) { throw new IOException("Invalid meta.json", error); }
+    }
+
     private String driverLabel() {
-        return text("dmAndroidLaunchDriver") + "：" + text(
-                DRIVER_STATES[driverIndex].equals("turnip") ? "dmAndroidLaunchDriverTurnip" : "dmAndroidLaunchDriverSystem");
+        String name = driverIndex == 2 && customDriver != null ? customDriver.name : text(
+                driverIndex == 1 ? "dmAndroidLaunchDriverTurnip" : "dmAndroidLaunchDriverSystem");
+        return text("dmAndroidLaunchDriver") + "：" + name;
+    }
+
+    private void chooseDriver() {
+        if (importing) return;
+        java.util.ArrayList<String> names = new java.util.ArrayList<>();
+        java.util.ArrayList<Integer> choices = new java.util.ArrayList<>();
+        names.add(text("dmAndroidLaunchDriverSystem")); choices.add(0);
+        if (turnipBundled()) { names.add(text("dmAndroidLaunchDriverTurnip")); choices.add(1); }
+        if (customDriver != null) { names.add(customDriver.name); choices.add(2); }
+        names.add(text("dmAndroidDriverImport"));
+        if (customDriverDirectory().exists()) names.add(text("dmAndroidDriverDelete"));
+        new AlertDialog.Builder(this).setTitle(text("dmAndroidLaunchDriver"))
+            .setItems(names.toArray(new String[0]), (dialog, which) -> {
+                if (which == choices.size()) {
+                    Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                    intent.addCategory(Intent.CATEGORY_OPENABLE); intent.setType("*/*");
+                    try { startActivityForResult(intent, PICK_DRIVER); }
+                    catch (RuntimeException error) { setStatus(error.getMessage(), WARNING); }
+                } else if (which > choices.size()) {
+                    new AlertDialog.Builder(this).setMessage(text("dmAndroidDriverDeleteConfirm"))
+                        .setPositiveButton(android.R.string.ok, (confirm, button) -> deleteDriver())
+                        .setNegativeButton(android.R.string.cancel, null).show();
+                } else { driverIndex = choices.get(which); applyLabels(); writeState(); }
+            }).show();
+    }
+
+    private void deleteDriver() {
+        if (importing) return;
+        try {
+            DriverArchive.remove(customDriverDirectory());
+            customDriver = null;
+            if (driverIndex == 2) driverIndex = turnipBundled() ? 1 : 0;
+            writeState(); applyLabels();
+            setStatus(text("dmAndroidDriverDeleted"), PARCHMENT);
+        } catch (IOException error) {
+            refreshFromDisk();
+            setStatus(error.getMessage(), WARNING);
+        }
+    }
+
+    private void importDriver(Uri uri) {
+        if (importing) return;
+        importing = true; updateStartState();
+        setStatus(text("dmAndroidDriverImporting"), MUTED);
+        new Thread(() -> {
+            try (InputStream in = getContentResolver().openInputStream(uri)) {
+                if (in == null) throw new IOException("Cannot read driver ZIP");
+                DriverArchive.Info info = DriverArchive.install(in, customDriverDirectory(),
+                        LauncherActivity::driverMetadata, android.os.Build.VERSION.SDK_INT);
+                runOnUiThread(() -> {
+                    customDriver = info; driverIndex = 2; writeState(); applyLabels();
+                    setStatus(text("dmAndroidDriverImported") + "：" + info.name, PARCHMENT);
+                });
+            } catch (Exception error) {
+                runOnUiThread(() -> setStatus(text("dmAndroidDriverImportFailed") + "：" + error.getMessage(), WARNING));
+            } finally { runOnUiThread(() -> { importing = false; updateStartState(); }); }
+        }, "d2r-driver-import").start();
     }
 
     // 数据包里那张子组档位表（一行裸数字，不是 key=value）。端口会用驱动实际选中的子组尺寸逐项校验它，
@@ -223,41 +287,42 @@ public final class LauncherActivity extends Activity {
         }
     }
 
-    // 驱动选择通过应用内部目录里的 gpu-driver.conf 生效（native 的 gpu_driver.c 读它，不需要任何环境变量）：
-    // 选内置驱动就把 assets 里的 .so 放到内部可执行目录再写这份配置，选系统驱动就把配置删掉。
-    // require_custom 留 0：驱动万一在这台机器上加载失败，端口会退回系统驱动并在日志里写明
-    // （requested=Turnip selected=system），不会让游戏直接起不来。
-    // The choice takes effect through gpu-driver.conf in the app's internal directory, which native's
-    // gpu_driver.c reads without any environment variable: the built-in driver copies its .so into internal
-    // executable storage and writes that file, while the system driver deletes it. require_custom stays 0 so that
-    // a driver which fails to load falls back to the system one with the log saying so
-    // (requested=Turnip selected=system) instead of refusing to start the game.
+    // A selected custom driver must match its runtime identity and the shader subgroup profile.
     private String prepareDriver() {
-        File temporary = new File(getFilesDir(), "temp");
+        File temporary = configFile().getParentFile();
         File configuration = new File(temporary, "gpu-driver.conf");
-        if (!DRIVER_STATES[driverIndex].equals("turnip")) {
-            configuration.delete();
+        if (driverIndex == 0) {
+            if (configuration.exists() && !configuration.delete()) return "Cannot select system driver";
             return null;
         }
         String profile = readProfileSize();
-        if (profile == null) return "host-subgroup-size.txt";
-        File directory = new File(temporary, "driver");
-        if (!directory.isDirectory() && !directory.mkdirs()) return text("dmAndroidLaunchDriverFailed");
-        File library = new File(directory, "vulkan.purple.so");
-        try (InputStream source = getAssets().open(TURNIP_ASSET);
-             OutputStream target = new FileOutputStream(library, false)) {
-            byte[] buffer = new byte[262144];
-            int count;
-            while ((count = source.read(buffer)) > 0) target.write(buffer, 0, count);
-        } catch (IOException error) {
-            return error.getMessage();
-        }
-        write(configuration, "# 由启动界面写入（内置 Turnip）| written by the launcher (built-in Turnip)\n"
-                + "directory=" + directory.getAbsolutePath() + "\n"
-                + "library=vulkan.purple.so\n"
-                + "require_custom=0\n"
-                + "subgroup_size=" + profile + "\n");
-        return null;
+        if (!("32".equals(profile) || "64".equals(profile) || "128".equals(profile))) return "host-subgroup-size.txt";
+        File directory;
+        String library;
+        int expectedDriver = 18;
+        try {
+            if (driverIndex == 2) {
+                DriverArchive.Info info = DriverArchive.installed(customDriverDirectory(),
+                        LauncherActivity::driverMetadata, android.os.Build.VERSION.SDK_INT);
+                directory = customDriverDirectory(); library = info.library; expectedDriver = info.driverId;
+            } else {
+                directory = new File(temporary, "driver"); library = "vulkan.purple.so";
+                if (!directory.isDirectory() && !directory.mkdirs()) throw new IOException("Cannot create driver directory");
+                try (InputStream source = getAssets().open(TURNIP_ASSET);
+                     OutputStream target = new FileOutputStream(new File(directory, library), false)) {
+                    byte[] buffer = new byte[262144]; int count;
+                    while ((count = source.read(buffer)) != -1) target.write(buffer, 0, count);
+                }
+            }
+            // Keep the package's subgroup contract; never bypass it to make a driver start.
+            String content = "directory=" + directory.getAbsolutePath() + "\n"
+                    + "library=" + library + "\nrequire_custom=1\nexpected_driver_id=" + expectedDriver
+                    + "\nsubgroup_size=" + profile + "\n";
+            try (OutputStreamWriter out = new OutputStreamWriter(new FileOutputStream(configuration), StandardCharsets.UTF_8)) {
+                out.write(content);
+            }
+            return null;
+        } catch (IOException error) { return error.getMessage(); }
     }
 
     private String importLabel() {
@@ -313,9 +378,12 @@ public final class LauncherActivity extends Activity {
         // against a strict key whitelist, so a new key cannot go there. When the APK ships no built-in driver the
         // choice is forced back to the system driver, so a stale value cannot make the screen offer a missing one.
         String driver = LaunchSettings.read(stateFile(), "driver");
-        driverIndex = 0;
+        driverIndex = driver == null && turnipBundled() && android.os.Build.VERSION.SDK_INT >= 30
+                && new File("/dev/kgsl-3d0").exists() ? 1 : 0;
+        try { customDriver = DriverArchive.installed(customDriverDirectory(), LauncherActivity::driverMetadata, android.os.Build.VERSION.SDK_INT); }
+        catch (IOException error) { customDriver = null; }
         if (driver != null) for (int i = 0; i < DRIVER_STATES.length; i++) if (DRIVER_STATES[i].equals(driver)) driverIndex = i;
-        if (!turnipBundled()) driverIndex = 0;
+        if ((driverIndex == 1 && !turnipBundled()) || (driverIndex == 2 && customDriver == null)) driverIndex = 0;
         applyLabels();
     }
 
@@ -359,9 +427,9 @@ public final class LauncherActivity extends Activity {
         resolutionItem.setOnClickListener(v -> { resolutionIndex = (resolutionIndex + 1) % RESOLUTION_PRESETS.length; applyLabels(); });
         column.addView(resolutionItem);
 
-        if (turnipBundled()) {
+        {
             driverItem = item(driverLabel(), 19, PARCHMENT, false, true);
-            driverItem.setOnClickListener(v -> { driverIndex = (driverIndex + 1) % DRIVER_STATES.length; applyLabels(); writeState(); });
+            driverItem.setOnClickListener(v -> chooseDriver());
             column.addView(driverItem);
         }
 
@@ -497,12 +565,14 @@ public final class LauncherActivity extends Activity {
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
         if (result != RESULT_OK || data == null || data.getData() == null) return;
+        if (request == PICK_DRIVER) { importDriver(data.getData()); return; }
         if (request == EXPORT_SAVE) { writeSaveArchive(data.getData()); return; }
         if (request == IMPORT_SAVE) { readSaveArchive(data.getData()); return; }
         if (request == PICK_PACKAGE) beginImport(data.getData());
     }
 
     private void beginImport(Uri uri) {
+        if (importing) return;
         importing = true;
         cancelImport = false;
         updateStartState();
@@ -605,6 +675,54 @@ public final class LauncherActivity extends Activity {
             setStatus(String.format(text("dmAndroidLaunchDriverFailed"), driverProblem), WARNING);
             return;
         }
+        if (driverIndex != 0) {
+            importing = true; updateStartState();
+            new Thread(() -> {
+                String problem = checkDriver();
+                runOnUiThread(() -> {
+                    importing = false; updateStartState();
+                    if (isFinishing() || isDestroyed()) return;
+                    if (problem != null) {
+                        new AlertDialog.Builder(this).setTitle(text("dmAndroidDriverIncompatible"))
+                            .setMessage(text("dmAndroidDriverTryBuiltin") + "\n\n" + problem)
+                            .setPositiveButton(android.R.string.ok, null).show();
+                        setStatus(text("dmAndroidDriverIncompatible"), WARNING);
+                    } else startPreparedGame();
+                });
+            }, "d2r-driver-check").start();
+            return;
+        }
+        startPreparedGame();
+    }
+
+    private String checkDriver() {
+        File report = new File(getCacheDir(), "driver-check.txt");
+        Process process = null;
+        try {
+            String libraries = getApplicationInfo().nativeLibraryDir;
+            process = new ProcessBuilder(libraries + "/libdmdrivercheck.so",
+                    new File(configFile().getParentFile(), "gpu-driver.conf").getAbsolutePath(), libraries)
+                    .redirectErrorStream(true).redirectOutput(report).start();
+            if (!process.waitFor(15, java.util.concurrent.TimeUnit.SECONDS)) {
+                process.destroyForcibly(); return "Driver compatibility check timed out";
+            }
+            if (process.exitValue() == 0) return null;
+            try (InputStream in = new FileInputStream(report)) {
+                byte[] bytes = new byte[4096]; int n = in.read(bytes);
+                if (n > 0) {
+                    String reportText = new String(bytes, 0, n, StandardCharsets.UTF_8).trim();
+                    int lastLine = reportText.lastIndexOf('\n');
+                    return reportText.substring(lastLine + 1);
+                }
+                return "Driver check failed (exit " + process.exitValue() + ")";
+            }
+        } catch (IOException | InterruptedException error) {
+            if (error instanceof InterruptedException) Thread.currentThread().interrupt();
+            return String.valueOf(error.getMessage());
+        } finally { if (process != null && process.isAlive()) process.destroyForcibly(); }
+    }
+
+    private void startPreparedGame() {
         setStatus("", PARCHMENT);
         StringBuilder content = new StringBuilder();
         content.append("# 由启动界面写入 | written by the launcher\n");

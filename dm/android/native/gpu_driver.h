@@ -23,7 +23,7 @@ typedef struct dm_vk_driver {
 #undef DM_VK_FIELD
     char hook_directory[1024], driver_directory[1024], driver_name[128], error[512];
     int requested_custom, using_custom, require_custom, needs_surface;
-    uint32_t actual_driver_id, subgroup_size;
+    uint32_t actual_driver_id, subgroup_size, expected_driver_id;
     // 保留真实物理缺省属性；shader明确选择的大小单独记录，政策只在初始化确定。
     // Preserve actual physical defaults; record explicitly selected shader size separately and choose only at initialization.
     uint32_t requested_subgroup_size, effective_shader_subgroup_size;

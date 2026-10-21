@@ -64,6 +64,7 @@ static void reset_subgroup_policy(dm_vk_driver *d) {
     d->shader_draw_parameters_prepared=0;
 }
 static int configure(dm_vk_driver *d) {
+    d->expected_driver_id=VK_DRIVER_ID_MESA_TURNIP;
     // 严格环境标志先解析，配置语法错误也不能悄悄退回系统。
     // Parse strict environment policy first so malformed configuration cannot silently fall back.
     const char *required=getenv("DM_VK_DRIVER_REQUIRE");
@@ -90,6 +91,11 @@ static int configure(dm_vk_driver *d) {
                     else{*value++=0;key=trim(key);value=trim(value);
                         if(!strcmp(key,"directory")){driver_keys=1;line_ok=copy_text(d,d->driver_directory,sizeof d->driver_directory,value);}
                         else if(!strcmp(key,"library")){driver_keys=1;line_ok=copy_text(d,d->driver_name,sizeof d->driver_name,value);}
+                        else if(!strcmp(key,"expected_driver_id")){driver_keys=1;
+                            if(!strcmp(value,"8"))d->expected_driver_id=VK_DRIVER_ID_QUALCOMM_PROPRIETARY;
+                            else if(!strcmp(value,"18"))d->expected_driver_id=VK_DRIVER_ID_MESA_TURNIP;
+                            else line_ok=driver_error(d,"expected_driver_id must be Qualcomm8 or Turnip18");
+                        }
                         else if(!strcmp(key,"require_custom")){driver_keys=1;if(strcmp(value,"0")&&strcmp(value,"1"))line_ok=driver_error(d,"require_custom must be 0 or 1");else if(!required)d->require_custom=*value=='1';}
                         else if(!strcmp(key,"subgroup_size")){
                             d->subgroup_policy_required=1;
@@ -344,9 +350,11 @@ int dm_vk_driver_validate(dm_vk_driver *d,VkPhysicalDevice physical,const char *
     if(!validate_subgroup_policy(d,physical))return 0;
     if(!d->using_custom){if(d->requested_subgroup_size&&shader_directory)return profile_matches(d,shader_directory);return 1;}
     if(base.apiVersion<VK_API_VERSION_1_1)return driver_error(d,"custom driver requires Vulkan1.1+");
-    if(!supported||identity.driverID!=VK_DRIVER_ID_MESA_TURNIP)return driver_error(d,"requested Turnip was not loaded; actual driver_id=%u",d->actual_driver_id);
+    uint32_t expected=d->expected_driver_id?d->expected_driver_id:VK_DRIVER_ID_MESA_TURNIP;
+    if(!supported||identity.driverID!=expected)return driver_error(d,"custom driver identity mismatch: expected=%u actual=%u",expected,d->actual_driver_id);
     if(shader_directory&&!profile_matches(d,shader_directory))return 0;
-    driver_log("requested=Turnip selected=Turnip identity verified");return 1;
+    driver_log("requested=custom selected=%s identity verified driver_id=%u",
+        d->actual_driver_id==VK_DRIVER_ID_MESA_TURNIP?"Turnip":"Qualcomm",d->actual_driver_id);return 1;
 }
 int dm_vk_driver_fallback(dm_vk_driver *d,const char *reason) {
     if(!d->using_custom)return 0;
