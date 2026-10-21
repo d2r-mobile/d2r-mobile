@@ -47,8 +47,8 @@ static vk_buffer gpu_snapshot_buffer(uintptr_t address,uint64_t size) {
     vk_buffer output={0},staging[NVN_DIRTY_SNAPSHOT_MAX_RUNS]={{0}};unsigned staged=0;
     nvn_dirty_snapshot_plan plan={0};int host_held=0,transaction=0,full_read=0,inplace=0;
     uint64_t patch_bytes=0;owned_snapshot_counters before=owned_snapshot_stats;
-    int reuse=gpu_snapshot_reuse_enabled();
-    if(!gpu_snapshot_mode_logged){gpu_snapshot_mode_logged=1;LOG("[vulkan-gpu-snapshot] effective reuse=%s source=%s restart_required=1 env=DM_VK_GPU_SNAPSHOT_REUSE property=debug.d2r.gpu_snapshot_reuse",reuse?"on":"off",gpu_snapshot_reuse_source_name());}
+    int reuse=gpu_snapshot_reuse_enabled();int inplace_enabled=gpu_snapshot_inplace_enabled();
+    if(!gpu_snapshot_mode_logged){gpu_snapshot_mode_logged=1;LOG("[vulkan-gpu-snapshot] effective reuse=%s source=%s inplace=%s inplace_source=%s restart_required=1 env=DM_VK_GPU_SNAPSHOT_REUSE,DM_VK_GPU_SNAPSHOT_INPLACE property=debug.d2r.gpu_snapshot_reuse,debug.d2r.gpu_snapshot_inplace",reuse?"on":"off",gpu_snapshot_reuse_source_name(),inplace_enabled?"on":"off",gpu_snapshot_inplace_source_name());}
     if(size<=65536||size>(64u<<20)||size>UINTPTR_MAX-address){gpu_snapshot_stats.budget++;reason=SNAP_DIAG_LIMIT;goto raw;}
     if(!reuse){reason=SNAP_DIAG_NO_ENTRY;goto raw;}
     if(!mtl_addr(address,size,NULL,NULL)){gpu_snapshot_stats.plan++;reason=SNAP_DIAG_POOL;goto raw;}
@@ -64,7 +64,7 @@ static vk_buffer gpu_snapshot_buffer(uintptr_t address,uint64_t size) {
         reason=plan.reason==NVN_DIRTY_SNAPSHOT_UNTRACKED?SNAP_DIAG_UNTRACKED:SNAP_DIAG_DIRTY;goto raw;
     }transaction=1;
     if(old&&row){row->old_entries++;row->old_stamp=old->stamp;}
-    if(!plan.full&&!plan.run_count){
+    if(gpu_snapshot_choose_action(plan.full,plan.run_count,inplace_enabled,old?old->last_acquired:0,gpu_snapshot_encoded)==GPU_SNAPSHOT_ACTION_HIT){
         transaction=0;int valid=nvn_dirty_snapshot_end(&plan);dm_guest_snapshot_end();host_held=0;
         if(!valid){gpu_snapshot_stats.validate++;goto raw;}
         old->stamp=plan.stamp;old->used=++read_cache_clock;read_lru_front(old);read_cache_hits++;gpu_snapshot_stats.hits++;
@@ -85,7 +85,8 @@ static vk_buffer gpu_snapshot_buffer(uintptr_t address,uint64_t size) {
         if(!old||(size&3)){gpu_snapshot_stats.align++;goto raw;}
         for(unsigned i=0;i<plan.run_count;i++)if((plan.runs[i].offset|plan.runs[i].size)&3){gpu_snapshot_stats.align++;goto raw;}
     }
-    inplace=!full_read&&gpu_snapshot_inplace_allowed(old->last_acquired,gpu_snapshot_encoded);
+    gpu_snapshot_action action=gpu_snapshot_choose_action(full_read,plan.run_count,inplace_enabled,old?old->last_acquired:0,gpu_snapshot_encoded);
+    inplace=action==GPU_SNAPSHOT_ACTION_INPLACE;
     if(!inplace)output=buffer_create(size);
     if(full_read){
         if(snapshot_read_owned(address,&output,size))die("Vulkan trusted full snapshot read");gpu_snapshot_stats.full_guest_bytes+=size;
