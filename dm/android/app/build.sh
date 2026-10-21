@@ -31,6 +31,8 @@ printf '<resources><string name="app_name">%s</string></resources>\n' "$chinese"
 "$host_build/dm_artifact_test" --export "$stage/assets/synthetic.dma"
 cp "$native_build/vulkan/indexed_textured.vert.spv" "$stage/assets/"
 cp "$native_build/vulkan/indexed_textured.frag.spv" "$stage/assets/"
+cp "$native_build/vulkan/hud.vert.spv" "$stage/assets/"
+cp "$native_build/vulkan/hud.frag.spv" "$stage/assets/"
 cp "$native_build/libdm_android_app.so" "$stage/lib/arm64-v8a/"
 # #170 真实 Java 焦点边界：用 android.jar 编译，再 d8 成 classes.dex 一并打包；不再只是 hasCode=false 的原生壳。
 # #170 real Java focus boundary: compile against android.jar, dex with d8 and package classes.dex.

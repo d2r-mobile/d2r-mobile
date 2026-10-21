@@ -13,6 +13,7 @@
 #include "gamepad_events.h"
 #include "touch_hud.h"
 #include "touch_hud_overlay.h"
+#include "touch_hud_swapchain.h"
 #include "view_policy.h"
 #include "wsi_bridge.h"
 #include "wsi_diagnostic.h"
@@ -37,7 +38,7 @@
 #include <time.h>
 #include <unistd.h>
 #define LOG(...) __android_log_print(ANDROID_LOG_INFO,"D2R-Diagnostic",__VA_ARGS__)
-typedef struct{dm_vk vk;AInputQueue*input;dm_app_lifecycle*lifecycle;ANativeActivity*activity;ANativeWindow*window;dm_input_arbiter*arbiter;dm_view_policy view;dm_input_policy gate;ALooper*looper;int timer_fd;int resumed,focused,touch_allowed;float density,touch_width_pt,touch_height_pt,touch_density;uint64_t last_touch_buttons;int32_t last_touch_lx,last_touch_ly,last_touch_rx,last_touch_ry;int64_t last_touch_log_ns;dm_android_touch_observation hud_obs;dm_touch_hud_frame hud_frame;int hud_obs_valid;dm_gamepad_context gamepad_context;dm_npad_state gamepad_state;uint32_t gamepad_id,gamepad_generation;int gamepad_admitted;int64_t gamepad_after_ns;uint64_t controller_session;jobject controller_boundary;jclass controller_class;jmethodID controller_release;uint64_t text_session;jobject text_bridge;jclass text_class;jmethodID text_show,text_hide,text_release;int text_active;int text_back_owned;int text_show_accepted;uint32_t text_commit_events,text_delete_events,text_submit_events,text_cancel_events;uint64_t text_event_total;int text_last_units;jclass ime_entry_class;uint64_t ime_entry_token;int ime_entry_installed;dm_wsi wsi;dm_wsi_bridge wsi_bridge;dm_wsi_report report;dm_vk wsi_vk;dm_vk_swapchain wsi_chain;int wsi_chain_live;int frame_fd;int wsi_last_logged;char vertex[4096],fragment[4096];native_audio*audio;}app_state;
+typedef struct{dm_vk vk;AInputQueue*input;dm_app_lifecycle*lifecycle;ANativeActivity*activity;ANativeWindow*window;dm_input_arbiter*arbiter;dm_view_policy view;dm_input_policy gate;ALooper*looper;int timer_fd;int resumed,focused,touch_allowed;float density,touch_width_pt,touch_height_pt,touch_density;uint64_t last_touch_buttons;int32_t last_touch_lx,last_touch_ly,last_touch_rx,last_touch_ry;int64_t last_touch_log_ns;dm_android_touch_observation hud_obs;dm_touch_hud_frame hud_frame;int hud_obs_valid;dm_gamepad_context gamepad_context;dm_npad_state gamepad_state;uint32_t gamepad_id,gamepad_generation;int gamepad_admitted;int64_t gamepad_after_ns;uint64_t controller_session;jobject controller_boundary;jclass controller_class;jmethodID controller_release;uint64_t text_session;jobject text_bridge;jclass text_class;jmethodID text_show,text_hide,text_release;int text_active;int text_back_owned;int text_show_accepted;uint32_t text_commit_events,text_delete_events,text_submit_events,text_cancel_events;uint64_t text_event_total;int text_last_units;jclass ime_entry_class;uint64_t ime_entry_token;int ime_entry_installed;dm_wsi wsi;dm_wsi_bridge wsi_bridge;dm_wsi_report report;dm_vk wsi_vk;dm_vk_swapchain wsi_chain;dm_touch_hud_swapchain wsi_hud;int wsi_chain_live;int wsi_hud_live;int wsi_hud_failed;int frame_fd;int wsi_last_logged;char vertex[4096],fragment[4096],hud_vertex[4096],hud_fragment[4096];native_audio*audio;}app_state;
 static app_state *g_controller_app;
 static uint64_t g_controller_next_session;
 static app_state *g_text_app;
@@ -179,6 +180,26 @@ static int wsi_open(void*ctx,void*window,uint32_t width,uint32_t height){
         dm_vk_destroy(&s->wsi_vk);s->wsi_vk=(dm_vk){0};return DM_WSI_ERROR;
     }
     s->wsi_chain_live=1;
+    // 显式 WSI 诊断必须实际绘制 HUD；shader 缺失或 presenter 初始化失败在
+    // 打开边界显式失败，而不是静默退回 clear-only。| Explicit WSI must draw
+    // the accepted HUD; shader/presenter failure is an explicit open failure.
+    if(copy_asset(s->activity,"hud.vert.spv",s->hud_vertex)||
+       copy_asset(s->activity,"hud.frag.spv",s->hud_fragment)){
+        LOG("wsi HUD shader asset copy failed");
+        wsi_report_fail(s,DM_WSI_STAGE_INIT,DM_WSI_CODE_UNKNOWN,0,1);
+        (void)dm_vk_swapchain_destroy(&s->wsi_vk,&s->wsi_chain);
+        s->wsi_chain_live=0;s->wsi_chain=(dm_vk_swapchain){0};
+        dm_vk_destroy(&s->wsi_vk);s->wsi_vk=(dm_vk){0};return DM_WSI_ERROR;
+    }
+    r=dm_touch_hud_swapchain_create(&s->wsi_vk,&s->wsi_chain,s->hud_vertex,s->hud_fragment,&s->wsi_hud);
+    if(r!=VK_SUCCESS){
+        LOG("wsi HUD presenter create failed: %d",(int)r);
+        wsi_report_fail(s,DM_WSI_STAGE_INIT,(int)r,0,1);
+        (void)dm_vk_swapchain_destroy(&s->wsi_vk,&s->wsi_chain);
+        s->wsi_chain_live=0;s->wsi_chain=(dm_vk_swapchain){0};
+        dm_vk_destroy(&s->wsi_vk);s->wsi_vk=(dm_vk){0};return DM_WSI_ERROR;
+    }
+    s->wsi_hud_live=1;s->wsi_hud_failed=0;
     // 记录实际协商结果（请求尺寸与 extent 分开）；未知保持 unknown，不编造。| Record the real negotiation; unknown stays unknown.
     dm_wsi_report_negotiated(&s->report,s->wsi_chain.extent.width,s->wsi_chain.extent.height,
         (int)s->wsi_chain.format,(int)s->wsi_chain.present_mode,s->wsi_chain.image_count,
@@ -193,30 +214,21 @@ static int wsi_close(void*ctx){
         if(r!=VK_SUCCESS){LOG("wsi swapchain retirement not proven: %d; objects retained",(int)r);wsi_report_fail(s,DM_WSI_STAGE_DRAIN,(int)r,0,0);return 1;}
         s->wsi_chain_live=0;s->wsi_chain=(dm_vk_swapchain){0};
     }
+    if(s->wsi_hud_live){
+        // Chain destroy above waited every acquire/present/submit fence, so the
+        // presenter's buffers/pipeline have no in-flight users at this point.
+        dm_touch_hud_swapchain_destroy(&s->wsi_vk,&s->wsi_hud);
+        s->wsi_hud_live=0;s->wsi_hud_failed=0;
+    }
     if(s->wsi_vk.device){dm_vk_destroy(&s->wsi_vk);s->wsi_vk=(dm_vk){0};}
     return 0;
 }
-static VkResult wsi_acquire(void*ctx,int*suboptimal){app_state*s=ctx;VkResult r=dm_vk_swapchain_acquire(&s->wsi_vk,&s->wsi_chain,suboptimal);
-    if(r!=VK_SUCCESS&&r!=VK_SUBOPTIMAL_KHR)dm_wsi_report_note_stage(&s->report,DM_WSI_STAGE_ACQUIRE,(int)r);
-    return r;}
 static VkResult wsi_submit(void*ctx){app_state*s=ctx;VkResult r=dm_vk_swapchain_submit(&s->wsi_vk,&s->wsi_chain);
     if(r!=VK_SUCCESS)dm_wsi_report_note_stage(&s->report,DM_WSI_STAGE_SUBMIT,(int)r);
     return r;}
 static VkResult wsi_present(void*ctx,int*suboptimal){app_state*s=ctx;VkResult r=dm_vk_swapchain_present(&s->wsi_vk,&s->wsi_chain,suboptimal);
     if(r!=VK_SUCCESS&&r!=VK_SUBOPTIMAL_KHR&&r!=VK_ERROR_OUT_OF_DATE_KHR)dm_wsi_report_note_stage(&s->report,DM_WSI_STAGE_PRESENT,(int)r);
     return r;}
-static int wsi_frame(void*ctx){
-    app_state*s=ctx;
-    dm_wsi_frame_ops ops={.ctx=s,.acquire=wsi_acquire,.submit=wsi_submit,.present=wsi_present};
-    dm_wsi_status status=dm_wsi_present_frame(&ops);
-    dm_wsi_report_result(&s->report,status);
-    if(status==DM_WSI_ERROR||status==DM_WSI_UNSUPPORTED){
-        // 用真实阶段/原始 VkResult 记录，不从控制器枚举反推。| Real stage and raw VkResult, not inferred from the enum.
-        char line[320];dm_wsi_report_failure_line(&s->report,line,sizeof line);LOG("wsi frame failed: %s",line);
-        wsi_report_snapshot(s,"frame failure");
-    }
-    return (int)status;
-}
 static void lifecycle_state(void*ctx,dm_app_state state){
     (void)ctx;
     LOG("app lifecycle state=%s",dm_app_lifecycle_state_name(state));
@@ -244,6 +256,53 @@ static void touch_refresh_hud(app_state*s){
     if(!s->hud_obs_valid||memcmp(&s->hud_obs,&o,sizeof o)!=0){
         s->hud_obs=o;s->hud_obs_valid=1;dm_touch_hud_frame_dirty(&s->hud_frame);
     }
+}
+static int wsi_record_hud(app_state*s){
+    if(!s||!s->wsi_hud_live)return 1;
+    touch_refresh_hud(s);
+    dm_android_touch_observation o;
+    if(s->hud_obs_valid)o=s->hud_obs;
+    else{
+        memset(&o,0,sizeof o);
+        o.density=s->density>0?s->density:1.0f;
+        o.width_pt=(float)s->wsi_chain.extent.width/o.density;
+        o.height_pt=(float)s->wsi_chain.extent.height/o.density;
+        if(s->view.view_width_pt>0&&fabsf(s->view.view_width_pt*o.density-(float)s->wsi_chain.extent.width)<=1.0f&&
+           s->view.view_height_pt>0&&fabsf(s->view.view_height_pt*o.density-(float)s->wsi_chain.extent.height)<=1.0f){
+            o.width_pt=s->view.view_width_pt;o.height_pt=s->view.view_height_pt;
+        }
+    }
+    dm_touch_hud_snapshot h;
+    if(!dm_touch_hud_snapshot_from_observation(&o,s->wsi_chain.extent.width,s->wsi_chain.extent.height,&h)){
+        LOG("wsi HUD snapshot rejected: view=%ux%u chain=%ux%u",(unsigned)s->view.view_width_px,(unsigned)s->view.view_height_px,
+            (unsigned)s->wsi_chain.extent.width,(unsigned)s->wsi_chain.extent.height);
+        return 0;
+    }
+    VkResult r=dm_touch_hud_swapchain_record(&s->wsi_vk,&s->wsi_chain,&s->wsi_hud,&h,0);
+    if(r!=VK_SUCCESS){LOG("wsi HUD record failed: %d",(int)r);return 0;}
+    return 1;
+}
+static VkResult wsi_acquire(void*ctx,int*suboptimal){app_state*s=ctx;
+    if(s->wsi_hud_failed)return VK_ERROR_INITIALIZATION_FAILED;
+    VkResult r=dm_vk_swapchain_acquire(&s->wsi_vk,&s->wsi_chain,suboptimal);
+    if(r!=VK_SUCCESS&&r!=VK_SUBOPTIMAL_KHR)dm_wsi_report_note_stage(&s->report,DM_WSI_STAGE_ACQUIRE,(int)r);
+    if((r==VK_SUCCESS||r==VK_SUBOPTIMAL_KHR)&&s->wsi_hud_live&&!wsi_record_hud(s)){
+        s->wsi_hud_failed=1;
+        dm_wsi_report_note_stage(&s->report,DM_WSI_STAGE_SUBMIT,(int)VK_ERROR_INITIALIZATION_FAILED);
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    return r;}
+static int wsi_frame(void*ctx){
+    app_state*s=ctx;
+    dm_wsi_frame_ops ops={.ctx=s,.acquire=wsi_acquire,.submit=wsi_submit,.present=wsi_present};
+    dm_wsi_status status=dm_wsi_present_frame(&ops);
+    dm_wsi_report_result(&s->report,status);
+    if(status==DM_WSI_ERROR||status==DM_WSI_UNSUPPORTED){
+        // 用真实阶段/原始 VkResult 记录，不从控制器枚举反推。| Real stage and raw VkResult, not inferred from the enum.
+        char line[320];dm_wsi_report_failure_line(&s->report,line,sizeof line);LOG("wsi frame failed: %s",line);
+        wsi_report_snapshot(s,"frame failure");
+    }
+    return (int)status;
 }
 /* Production CPU overlay seam. The platform-neutral module validates, clips
    and writes only visible pixels; this wrapper only adapts the Android buffer. */
