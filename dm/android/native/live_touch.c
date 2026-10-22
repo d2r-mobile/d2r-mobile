@@ -221,6 +221,20 @@ void dm_live_touch_resize(dm_live_touch *touch, float width_pt, float height_pt)
     dm_touch_pointer_clear(&touch->pointers);
 }
 
+// Apply the production touch_swap_above custom setting. Changing the setting
+// changes both drawing and hit testing, so retire every owned gesture first;
+// a finger must never remain latched to the old swap position. This mirrors
+// the iOS front end's cancelControlsFrom: + dm_tc_set_swap_above + resize path.
+int dm_live_touch_set_swap_above(dm_live_touch *touch, int above) {
+    if (!touch) return 0;
+    above = above != 0;
+    if (touch->state.layout.swap_above == above) return 0;
+    dm_tc_set_swap_above(above);
+    dm_live_touch_cancel_all(touch, touch->last_ns);
+    dm_tc_resize(&touch->state, touch->width, touch->height);
+    return 1;
+}
+
 int dm_live_touch_set_belt(dm_live_touch *touch, int rows, int open) {
     if (!touch) return 0;
     if (rows < 0 || rows > 4 || open < 0 || open > 1 ||
