@@ -169,7 +169,9 @@ final class SaveArchive {
         if (!backup.exists()) return false;
         if (saveDir.exists()) {
             String[] children = saveDir.isDirectory() ? saveDir.list() : null;
-            if (!saveDir.isDirectory() || children == null || children.length != 0) return false;
+            if (!saveDir.isDirectory() || children == null)
+                throw new IOException("无法恢复上次替换的存档；旧存档保留在 " + backup);
+            if (children.length != 0) return false;
             if (!saveDir.delete())
                 throw new IOException("无法恢复上次替换的存档；旧存档保留在 " + backup);
         }

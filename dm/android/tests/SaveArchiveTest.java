@@ -170,6 +170,20 @@ public final class SaveArchiveTest {
         check(SaveArchive.zip(exportLive, exportBytes, 1700000000000L) == 1, "导出前恢复备份并导出一个文件");
         check(read(new File(exportLive, "character.dat")).equals("export-keep"), "导出恢复后 live 是旧存档");
 
+        File invalidParent = tempDir("invalid-live");
+        File invalidLive = new File(invalidParent, "save");
+        write(invalidLive, "not-a-directory");
+        File invalidBackup = new File(invalidParent, "save.replaced");
+        write(new File(invalidBackup, "character.dat"), "keep-invalid");
+        check(fails(() -> SaveArchive.recover(invalidLive)), "live 不是目录时恢复明确报错");
+        check(read(new File(invalidBackup, "character.dat")).equals("keep-invalid"), "无效 live 不破坏唯一备份");
+        check(invalidLive.delete() && invalidLive.mkdir(), "建立待检查的 live 目录");
+        File unreadableLive = new File(invalidLive.getPath()) {
+            @Override public String[] list() { return null; }
+        };
+        check(fails(() -> SaveArchive.recover(unreadableLive)), "无法读取 live 时恢复明确报错");
+        check(read(new File(invalidBackup, "character.dat")).equals("keep-invalid"), "不可读 live 不破坏唯一备份");
+
         System.out.println("== " + checks + " 项全部通过 ==");
     }
 
