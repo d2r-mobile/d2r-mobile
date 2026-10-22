@@ -2,6 +2,12 @@
 
 English: [CONTRIBUTING.md](CONTRIBUTING.md)
 
+## Android fork 工作流
+
+本 fork 在 `main` 推进 Android。短期功能分支从当前 `origin/main` 建立，PR 提交到 `main`。原项目通过 `upstream` 远程跟踪；有用更新先在独立同步分支审查，再并入我们的 `main`。保留上游代码和许可证，不为更名而删除其他平台。
+
+无游戏内容的 Android 检查使用 `bash ci/scripts/ci.sh host`，其余 Android／Java 检查见 [ci/README.md](ci/README.md)。可玩 APK 通过 `dm/android/tools/build.py --game-run` 构建，见 [README.zh-CN.md](README.zh-CN.md)。下方 Apple 准备和设备命令是上游参考，不是所有 Android 专项修改的前置条件。游戏文件、密钥、存档和私有设备日志不进入提交。
+
 这一页讲三件事：改动之前要能跑通什么，仓库的三条规矩，报问题时附什么。各部分怎么工作不在这里重复，见 [dm/README.zh-CN.md](dm/README.zh-CN.md) 与 [dm/verify/README.zh-CN.md](dm/verify/README.zh-CN.md)。
 
 ## 改动之前：先跑通测试
