@@ -12,7 +12,7 @@ The playable Android port is developed on `main`. Follow upstream through `upstr
 | Touch UI / 触屏界面 |  | Reachable HUD resources, class skill states and safe-area coverage / 可达HUD资源、职业技能状态、安全区 |
 | Input / 操作 | ,  | Combined gestures, trading/controller switching and actual IMEs / 组合手势、交易／手柄切换、真实输入法 |
 | Gameplay lifecycle / 游戏流程 |  | Background, lock screen, Surface recovery, failures and extended runs / 后台、锁屏、Surface恢复、异常及长时运行 |
-| Saves / 存档 |  | Storage failures, interrupted commits/restores and reload consistency / 存储失败、提交／恢复中断、重载一致性 |
+| Saves / 存档 |  completed / 已完成 | Failure regressions, phone backup/restore and inventory reload passed; extended interaction combinations remain in #40 / 故障回归、实机备份恢复与背包重载已通过；扩展交互组合仍由 #40 跟踪 |
 | Audio / 音频 |  | Device listening tests for focus, calls, routing and resume / 焦点、通话、输出设备切换与恢复听测 |
 | Graphics correctness / 图形正确性 | , ,  | Shader/reflection boundaries, resource lifetime/failure paths and actual Adreno validation layers / 着色器反射边界、资源寿命／失败处理、真实Adreno验证层 |
 | Delivery / 交付 |  | Independent build reproduction, import/upgrade/backup instructions and verified release artifacts / 独立复现构建、导入／升级／备份说明、已验证发布产物 |
