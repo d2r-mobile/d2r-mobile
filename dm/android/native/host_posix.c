@@ -187,17 +187,25 @@ static int clone_node(const char *source, const char *destination) {
         DIR *directory = opendir(source);
         if (!directory) { error = -1; goto done; }
         struct dirent *entry;
-        while ((entry = readdir(directory))) {
+        for (;;) {
+            errno = 0;
+            entry = readdir(directory);
+            if (!entry) { if (errno) error = -1; break; }
             if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
             size_t a = strlen(source) + strlen(entry->d_name) + 2, b = strlen(destination) + strlen(entry->d_name) + 2;
             if (a > PATH_MAX || b > PATH_MAX) { errno = ENAMETOOLONG; error = -1; break; }
             char *from = malloc(a), *to = malloc(b);
             if (!from || !to) { free(from); free(to); error = -1; break; }
-            snprintf(from, a, "%s/%s", source, entry->d_name); snprintf(to, b, "%s/%s", destination, entry->d_name);
+            if (snprintf(from, a, "%s/%s", source, entry->d_name) >= (int)a ||
+                snprintf(to, b, "%s/%s", destination, entry->d_name) >= (int)b) {
+                free(from); free(to); errno = ENAMETOOLONG; error = -1; break;
+            }
             int child_error = clone_node(from, to); free(from); free(to);
             if (child_error) { error = -1; break; }
         }
-        closedir(directory);
+        int saved_errno = errno;
+        if (closedir(directory) && !error) { error = -1; saved_errno = errno; }
+        errno = saved_errno;
     } else if (S_ISREG(st.st_mode)) {
         int in = open(source, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
         if (in < 0) return -1;
