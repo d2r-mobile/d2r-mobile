@@ -105,6 +105,17 @@ else
 fi
 
 save_java=$work/java/save
+interface_java=$work/java/interface
+mkdir -p "$interface_java"
+if "$javac" --release 11 -d "$interface_java" \
+        "$root/dm/android/java/org/d2r/android/port/PackageArchive.java" \
+        "$root/dm/android/java/org/d2r/android/port/OverlayArchive.java" \
+        "$root/dm/android/tests/OverlayArchiveTest.java" >> "$log" 2>&1 \
+    && "$(dirname "$javac")/java" -cp "$interface_java" org.d2r.android.port.OverlayArchiveTest "$root" >> "$log" 2>&1; then
+    log_line "PASS independent interface update integrity and recovery"
+else
+    fail "interface update regression"
+fi
 mkdir -p "$save_java"
 if "$javac" --release 11 -d "$save_java" \
         "$root/dm/android/java/org/d2r/android/port/SaveArchive.java" \

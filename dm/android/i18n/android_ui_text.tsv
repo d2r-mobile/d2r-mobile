@@ -47,6 +47,13 @@ dmAndroidLaunchHandheld	掌机 · 较低负载	Handheld · lower load	Android �
 dmAndroidLaunchConsole	主机 · 较高画质	Docked · higher quality	Android 启动界面
 dmAndroidLaunchGameData	游戏与存档	Game & saves	Android 启动界面
 dmAndroidLaunchDataNote	已导入的数据会保留，更新应用无需重新导入。	Imported data is retained. App updates do not require another import.	Android 启动界面
+dmAndroidInterfaceUpdate	更新界面资源	Update interface resources	Android 启动界面
+dmAndroidInterfaceBundled	当前版本随游戏数据包导入	Current version came with the game data	Android 启动界面
+dmAndroidInterfaceHelp	选择本项目生成的界面更新 ZIP。仅替换界面覆盖层，保留游戏数据、着色器和存档；下次启动游戏生效。	Select an interface update ZIP built for this project. Only interface resources are replaced; game data, shaders and saves are kept. Takes effect on the next game launch.	Android 启动界面
+dmAndroidInterfaceUpdating	正在更新界面资源 %d%%	Updating interface resources %d%%	Android 启动界面
+dmAndroidInterfaceUpdated	界面资源已更新：%s	Interface resources updated: %s	Android 启动界面
+dmAndroidInterfaceFailed	界面资源更新失败	Interface resource update failed	Android 启动界面
+dmAndroidInterfaceUseUpdater	这是界面更新包，请使用“更新界面资源”入口。	This is an interface update ZIP. Use Update interface resources.	Android 启动界面
 dmAndroidLaunchSaves	存档管理	Save management	Android 启动界面
 dmAndroidLaunchGraphics	画面与性能	Graphics & performance	Android 启动界面
 dmAndroidLaunchProfileNote	选择游戏的基础画质档位	Choose the base game graphics profile	Android 启动界面
