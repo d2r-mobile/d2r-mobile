@@ -24,6 +24,7 @@ jobs:
           bash ci/tests/test-ci-failures.sh
           bash ci/tests/test-elf-pages.sh
           bash ci/tests/test-java-ci-sdk-branch.sh
+          python3 dm/android/tests/build_reuse_test.py
 
   java-boundary:
     runs-on: ubuntu-24.04

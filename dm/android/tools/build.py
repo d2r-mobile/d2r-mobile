@@ -13,9 +13,11 @@ import struct
 import subprocess
 import sys
 import zipfile
+import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 REPO = ROOT.parents[1]
+PACKAGE_NAME = ET.parse(ROOT / "AndroidManifest.xml").getroot().attrib["package"]
 DEFAULT_BUILD = REPO.parent / (REPO.name + "-build") / "android-reference"
 TOOLS = Path(os.environ.get("DM_ANDROID_TOOLS", str(Path.home() / "dm-work/tools/android")))
 NDK_PREBUILT = os.environ.get("DM_NDK_PREBUILT", "darwin-x86_64" if sys.platform == "darwin" else "linux-x86_64")
@@ -151,6 +153,13 @@ def main():
         print("Package-only build: game modules come from the imported package", flush=True)
     build = Path(os.environ.get("DM_REFERENCE_BUILD", str(DEFAULT_BUILD)))
     build.mkdir(parents=True, exist_ok=True)
+    staging_directories = [build / name for name in ("assets", "res", "java-classes", "dex")]
+    for source in (args.touch_art, args.game_source, args.turnip, args.shader_cache):
+        if source is not None and any(source.resolve().is_relative_to(path.resolve()) for path in staging_directories):
+            sys.exit("Build inputs must be outside the disposable APK staging directories: " + str(source))
+    for staging in staging_directories:
+        if staging.exists():
+            shutil.rmtree(staging)
     if args.game_run: build_counter_timestamp(build)
     for required in [BIN / "aarch64-linux-android29-clang", TOOLS / "jdk/bin/java", TOOLS / "platform/android.jar"]:
         if not required.exists(): sys.exit("Missing tool: " + str(required) + "; run tools/bootstrap.py")
@@ -311,10 +320,12 @@ def main():
             z.write(build / "libdmdrivercheck.so", "lib/arm64-v8a/libdmdrivercheck.so")
         z.write(build / "libdmandroid.so", "lib/arm64-v8a/libdmandroid.so")
         z.write(build / "probe/libdmguest_probe.so", "lib/arm64-v8a/libdmguest_probe.so")
-        for library in sorted((build / "gpu-driver").glob("*.so")):
-            z.write(library,"lib/arm64-v8a/" + library.name)
-        for fixture in sorted((build / "gpu-fixtures").glob("*.so")):
-            z.write(fixture,"lib/arm64-v8a/" + fixture.name)
+        if not args.no_turnip:
+            for library in sorted((build / "gpu-driver").glob("*.so")):
+                z.write(library,"lib/arm64-v8a/" + library.name)
+            if not args.game_run:
+                for fixture in sorted((build / "gpu-fixtures").glob("*.so")):
+                    z.write(fixture,"lib/arm64-v8a/" + fixture.name)
         if args.game_source:
             for name in ["main", "sdk", "subsdk0"]:
                 z.write(args.game_source / ("libdmguest_" + name + ".so"), "lib/arm64-v8a/libdmguest_" + name + ".so")
@@ -334,9 +345,9 @@ def main():
         run([TOOLS / "platform-tools/adb", "install", "-r", apk])
         if args.game_run:
             if not args.shader_cache.is_dir(): sys.exit("Missing shader cache: " + str(args.shader_cache))
-            run([TOOLS / "platform-tools/adb", "shell", "mkdir", "-p", "/sdcard/Android/data/org.d2r.android.port/files/shaders"])
-            run([TOOLS / "platform-tools/adb", "push", "--sync", str(args.shader_cache) + "/.", "/sdcard/Android/data/org.d2r.android.port/files/shaders/"])
-        run([TOOLS / "platform-tools/adb", "shell", "am", "start", "-n", "org.d2r.android.port/" + activity])
+            run([TOOLS / "platform-tools/adb", "shell", "mkdir", "-p", f"/sdcard/Android/data/{PACKAGE_NAME}/files/shaders"])
+            run([TOOLS / "platform-tools/adb", "push", "--sync", str(args.shader_cache) + "/.", f"/sdcard/Android/data/{PACKAGE_NAME}/files/shaders/"])
+        run([TOOLS / "platform-tools/adb", "shell", "am", "start", "-n", PACKAGE_NAME + "/" + activity])
 
 
 if __name__ == "__main__":
