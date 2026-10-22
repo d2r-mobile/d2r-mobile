@@ -79,7 +79,7 @@ export DM_ROOT=/path/to/external-disk/d2r-work
 python3 dm/android/tools/build.py --help
 ```
 
-无需游戏的工具使用 CMake 3.22+、C 编译器和 Capstone 5；原生 ARM64 用例需要 ARM64 宿主。Android 交叉编译需要 NDK，当前构建使用 r29。首次配置可能下载固定版本依赖。工具设置与历史样例见 [Android 开发说明](../../dm/android/README.zh-CN.md)。
+无需游戏的工具使用 CMake 3.22+、C 编译器和 Capstone 5；原生 ARM64 用例需要 ARM64 宿主。Android 交叉编译需要 NDK，当前构建使用 r29。首次配置可能下载固定版本依赖。宿主测试通过合成 Vulkan 驱动检查生产管线缓存的损坏拒绝、驱动隔离、保存失败保留旧文件及退出刷盘；这不代替实机验证。工具设置与历史样例见 [Android 开发说明](../../dm/android/README.zh-CN.md)。
 
 可玩 APK 的入口是 `dm/android/tools/build.py` 的 `--game-run` 模式，需要对应参考工具链、SDK／build tools、JDK、着色器工具和本地准备的资源；按实际构建提供 `--turnip`、`--touch-art` 输入。每次构建重建可丢弃的 `assets`、`res`、`java-classes`、`dex` 打包目录，源输入请放在这些目录之外；依赖缓存保留。`--no-turnip` 也排除缓存中的驱动库，`--install` 使用清单中声明的包名。通用 APK 可在手机导入游戏模块。不要发布嵌入游戏代码或游戏派生美术的构建。`dm/android/app/build.sh` 构建的是较早的合成诊断 APK；`setup.sh` 是上游 Apple 准备流程。
 

@@ -79,7 +79,7 @@ export DM_ROOT=/path/to/external-disk/d2r-work
 python3 dm/android/tools/build.py --help
 ```
 
-The game-free tools use CMake 3.22+, a C compiler and Capstone 5; native ARM64 cases need an ARM64 host. Android cross-compilation requires the NDK (r29 is used in current builds). First configuration may download pinned dependencies. See the [Android developer notes](../../dm/android/README.md) for tool setup and historical fixtures.
+The game-free tools use CMake 3.22+, a C compiler and Capstone 5; native ARM64 cases need an ARM64 host. Android cross-compilation requires the NDK (r29 is used in current builds). First configuration may download pinned dependencies. Host tests include production pipeline-cache corruption/driver isolation, failed-save preservation and final-flush checks using a synthetic Vulkan driver; this does not replace device validation. See the [Android developer notes](../../dm/android/README.md) for tool setup and historical fixtures.
 
 The playable-APK entry is `dm/android/tools/build.py` with `--game-run`. It needs the reference toolchain, SDK/build tools, JDK, shader tooling and locally prepared resources; its `--turnip` and `--touch-art` inputs must be supplied as appropriate. Each build recreates the disposable `assets`, `res`, `java-classes` and `dex` staging directories; keep source inputs outside those directories. Dependency caches are retained. `--no-turnip` excludes cached driver libraries too, and `--install` uses the package declared in the manifest. A generic APK can import game modules on the phone. Do not publish builds embedding game code or derived game artwork. `dm/android/app/build.sh` builds the older synthetic diagnostic APK; `setup.sh` is the upstream Apple preparation flow.
 

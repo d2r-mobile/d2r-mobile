@@ -59,7 +59,8 @@ static int pipeline_disk_write(const uint8_t *blob,size_t size) {
     if(close(fd))ok=0;
     if(ok&&renameat(pipeline_disk_dir,temporary,pipeline_disk_dir,pipeline_disk_name))ok=0;
     if(ok&&fsync(pipeline_disk_dir))ok=0;
-    if(!ok)unlinkat(pipeline_disk_dir,temporary,0);return ok;
+    if(!ok)unlinkat(pipeline_disk_dir,temporary,0);
+    return ok;
 }
 static void pipeline_disk_save(void) {
     uint8_t *blob=NULL;size_t bytes=0;uint64_t generation=0,snapshot_ns=0;
@@ -149,7 +150,8 @@ static void pipeline_cache_initialize(const VkPhysicalDeviceProperties *properti
     dm_android_sha256_update(&digest,vk_api.driver_name,(uint32_t)strlen(vk_api.driver_name));dm_android_sha256_update(&digest,vk_api.driver_directory,(uint32_t)strlen(vk_api.driver_directory));
 #endif
     const char *profile=getenv("DM_VK_SHADERS");if(profile)dm_android_sha256_update(&digest,profile,(uint32_t)strlen(profile));dm_android_sha256_final(pipeline_disk_identity,&digest);
-    for(unsigned i=0;i<32;i++)snprintf(pipeline_disk_name+2*i,3,"%02x",pipeline_disk_identity[i]);strcpy(pipeline_disk_name+64,".bin");
+    for(unsigned i=0;i<32;i++)snprintf(pipeline_disk_name+2*i,3,"%02x",pipeline_disk_identity[i]);
+    strcpy(pipeline_disk_name+64,".bin");
     size_t size=0;void *data=pipeline_disk_load(&size);VkPipelineCacheCreateInfo info={.sType=VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO,.initialDataSize=size,.pInitialData=data};
     VkResult result=vkCreatePipelineCache(device,&info,NULL,&pipeline_cache);free(data);
     if(result!=VK_SUCCESS&&size){LOG("[vulkan-pipeline-cache] driver_rejected_initial=%d retry_empty=1",result);info.initialDataSize=0;info.pInitialData=NULL;result=vkCreatePipelineCache(device,&info,NULL,&pipeline_cache);}
