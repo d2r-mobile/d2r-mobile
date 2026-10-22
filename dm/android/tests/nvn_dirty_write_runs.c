@@ -7,12 +7,23 @@
 #include <sys/mman.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <mach/mach_time.h>
+#include "../../host/dm.h"
 
 #define CHECK(c) do { if(!(c)){fprintf(stderr,"FAIL %d: %s\n",__LINE__,#c);abort();} } while(0)
 static int observed_mprotect(void *,size_t,int);
+static int diagnose = 1;
+static _Atomic unsigned clock_reads;
+static int test_diagnostics_enabled(void) { return diagnose; }
+static uint64_t observed_clock(void);
+#define dm_diagnostics_enabled test_diagnostics_enabled
+#define mach_absolute_time observed_clock
 #define mprotect observed_mprotect
 #include "../../gfx/nvn/nvn_dirty.c"
 #undef mprotect
+#undef mach_absolute_time
+#undef dm_diagnostics_enabled
+static uint64_t observed_clock(void) { clock_reads++; return mach_absolute_time(); }
 
 void dm_fault_hook_register(int (*fn)(void *,int,void *)){(void)fn;}
 void dm_guest_write_prep_register(void (*fn)(void *,size_t)){(void)fn;}
@@ -83,6 +94,29 @@ int main(void){
     CHECK(!atomic_load(&fault_done));atomic_store(&released,1);
     CHECK(!pthread_join(writer,NULL)&&!pthread_join(fault,NULL));CHECK(atomic_load(&fault_done));
     for(unsigned i=0;i<8;i++){CHECK(atomic_load(&range->state[i])==PG_NONE);owned[i*page]=0x5a;}
+    diagnose=0;unsigned clocks=clock_reads;count=calls();
+    protect_all();prep_write(owned,owned_bytes);
+    CHECK(clock_reads==clocks&&calls()==count);
+    for(unsigned i=0;i<8;i++){CHECK(atomic_load(&range->state[i])==PG_NONE);owned[i*page]=0x3c;}
+    diagnose=1;
+    CHECK(nvn_dirty_since((void *)(UINTPTR_MAX-page),2*page,0)==1);
+    nvn_dirty_protect((void *)(UINTPTR_MAX-page),2*page);
+    g_fault_window=4*page;protect_all();old_stamp=nvn_dirty_now();count=calls();
+    uintptr_t first=((uintptr_t)owned+g_fault_window-1)&~(g_fault_window-1);
+    CHECK(first+g_fault_window<=(uintptr_t)owned+owned_bytes);
+    CHECK(on_fault((void *)first,1,NULL)==1&&calls()-count==1);
+    for(unsigned i=0;i<4;i++)CHECK(nvn_dirty_since((void *)(first+i*page),page,old_stamp));
+    protect_all();nvn_dirty_mark_gpu_written((void *)(first+page),page);old_stamp=nvn_dirty_now();
+    CHECK(on_fault((void *)first,1,NULL)==1);
+    CHECK(nvn_dirty_since((void *)first,page,old_stamp)&&!nvn_dirty_since((void *)(first+page),page,old_stamp));
+    CHECK(on_fault((void *)(first+page),1,NULL)==1&&nvn_dirty_since((void *)(first+page),page,old_stamp));
+    CHECK(!nvn_dirty_since((void *)(first+2*page),page,old_stamp));
+    CHECK(on_fault((void *)(first+2*page),1,NULL)==1&&nvn_dirty_since((void *)(first+3*page),page,old_stamp));
+    protect_all();child=fork();CHECK(child>=0);
+    if(!child){fail_rw=1;CHECK(on_fault(owned,1,NULL)==0);CHECK(atomic_load(&range->state[0])==PG_BUSY);_exit(0);}
+    CHECK(waitpid(child,&status,0)==child&&WIFEXITED(status)&&WEXITSTATUS(status)==0);
+    nvn_dirty_remove_range(owned);nvn_dirty_add_range(owned,owned_bytes);protect_all();old_stamp=nvn_dirty_now();
+    CHECK(on_fault((void *)first,1,NULL)==1&&nvn_dirty_since((void *)(first+page),page,old_stamp));
     nvn_dirty_remove_range(owned);CHECK(!munmap(mapping,owned_bytes+2*page));
     puts("PASS dirty write runs: bounded/partial/holes/generations/failure/BUSY fault ordering");return 0;
 }

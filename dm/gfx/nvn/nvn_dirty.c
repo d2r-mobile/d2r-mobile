@@ -35,10 +35,11 @@ enum { BUSY_WAIT_MS = 2000 };
 // 跟踪区间 = 各内存池（MemoryPoolInitialize 登记）。池销毁后复用 live=0 的槽，信号处理里无锁扫描。
 // Tracked ranges = the memory pools (registered by MemoryPoolInitialize). After a pool is destroyed its live=0 slot is reused; the signal handler scans without locks.
 #define MAX_RANGE 4096   // 原为 256：内存池多于它时超出的池不跟踪，里面的贴图每次取用都当成脏的重传（暗黑实测峰值见内存读数行的「内存池」；塞尔达约 300 个，踩过）。扫描只到已用的槽数，容量大不增加开销 | was 256: with more memory pools than that the excess pools are untracked and their textures are treated as dirty and re-uploaded on every use (for Diablo's measured peak see "memory pools" in the memory readout line; Zelda has about 300 and hit this). The scan only covers slots in use, so a larger capacity costs nothing
-typedef struct { uintptr_t base, end; _Atomic uint8_t *state; _Atomic uint64_t *gen; size_t cap; _Atomic int live; uint64_t incarnation; int snapshot_disabled; } range_t;
+typedef struct { uintptr_t base, end; _Atomic uint8_t *state, *gpu_written; _Atomic uint64_t *gen; size_t cap; _Atomic int live; uint64_t incarnation; int snapshot_disabled; } range_t;
 static range_t g_r[MAX_RANGE];
 static _Atomic int g_nr;
 static uintptr_t g_pg, g_shift;
+static uintptr_t g_fault_window;
 static _Atomic uint64_t g_now = 1;
 static _Atomic uint64_t g_faults, g_preps;
 static _Atomic uint64_t g_adds_total;
@@ -49,8 +50,9 @@ static uint64_t g_range_incarnation;
 static pthread_mutex_t g_slot_mu = PTHREAD_MUTEX_INITIALIZER;   // 建池 / 销池（客体线程，可能并发）互斥选槽；缺页处理路径不碰它 | Pool creation / destruction (guest threads, possibly concurrent) pick slots under a mutex; the page-fault handling path does not touch it
 static _Atomic uint64_t g_mp_calls, g_mp_pages, g_mp_ticks;   // 本模块的 mprotect：调用次数、覆盖页数、耗时（mach 时基，缺页路径里也安全） | This module's mprotect: call count, pages covered, time spent (mach timebase, safe in the page-fault path too)
 static int mp(uintptr_t a, size_t len, int prot) {
-    uint64_t t = mach_absolute_time(); int result=mprotect((void *)a, len, prot),error=errno;
-    atomic_fetch_add(&g_mp_ticks, mach_absolute_time() - t); atomic_fetch_add(&g_mp_calls, 1); atomic_fetch_add(&g_mp_pages, len >> g_shift);
+    int diagnose = dm_diagnostics_enabled();
+    uint64_t t = diagnose ? mach_absolute_time() : 0; int result=mprotect((void *)a, len, prot),error=errno;
+    if (diagnose) { atomic_fetch_add(&g_mp_ticks, mach_absolute_time() - t); atomic_fetch_add(&g_mp_calls, 1); atomic_fetch_add(&g_mp_pages, len >> g_shift); }
     errno=error;return result;
 }
 
@@ -75,10 +77,21 @@ static range_t *find(uintptr_t a) {
     for (int i = 0; i < n; i++) if (atomic_load_explicit(&g_r[i].live, memory_order_acquire) && a >= g_r[i].base && a < g_r[i].end) return &g_r[i];
     return NULL;
 }
-static void unprotect_page(range_t *r, uintptr_t p) {   // 调用方已把状态从 PROT 改成 BUSY | The caller has already changed the state from PROT to BUSY
-    mp(r->base + (p << g_shift), g_pg, PROT_READ | PROT_WRITE);
-    atomic_store(&r->gen[p], atomic_fetch_add(&g_now, 1) + 1);
-    atomic_store(&r->state[p], PG_NONE);
+static int unprotect_fault(range_t *r, uintptr_t p) {
+    uintptr_t first=p,end=p+1;
+    // GPU 写过的页保持精确，合并不能越过它；CPU-only 邻页才在有界窗口内合并。
+    // GPU-written pages stay exact and stop coalescing; only CPU-only neighbours join the bounded window.
+    if (!atomic_load_explicit(&r->gpu_written[p],memory_order_acquire) && g_fault_window>g_pg) {
+        uintptr_t address=r->base+(p<<g_shift),low=address&~(g_fault_window-1),high=low+g_fault_window;
+        uintptr_t lo=low<r->base?0:(low-r->base)>>g_shift;
+        uintptr_t hi=high>r->end?(r->end-r->base)>>g_shift:(high-r->base)>>g_shift;
+        while(end<hi&&!atomic_load_explicit(&r->gpu_written[end],memory_order_acquire)){uint8_t state=PG_PROT;if(!atomic_compare_exchange_strong(&r->state[end],&state,PG_BUSY))break;end++;}
+        while(first>lo&&!atomic_load_explicit(&r->gpu_written[first-1],memory_order_acquire)){uint8_t state=PG_PROT;if(!atomic_compare_exchange_strong(&r->state[first-1],&state,PG_BUSY))break;first--;}
+    }
+    for(uintptr_t i=first;i<end;i++)atomic_store(&r->gen[i],atomic_fetch_add(&g_now,1)+1);
+    if(mp(r->base+(first<<g_shift),(end-first)<<g_shift,PROT_READ|PROT_WRITE))return 0;
+    for(uintptr_t i=first;i<end;i++)atomic_store(&r->state[i],PG_NONE);
+    return 1;
 }
 static int on_fault(void *addr, int is_write, void *uc) {
     (void)uc;
@@ -86,7 +99,7 @@ static int on_fault(void *addr, int is_write, void *uc) {
     if (!r) return 0;
     uintptr_t p = ((uintptr_t)addr - r->base) >> g_shift;
     uint8_t st = PG_PROT;
-    if (atomic_compare_exchange_strong(&r->state[p], &st, PG_BUSY)) { unprotect_page(r, p); atomic_fetch_add(&g_faults, 1); return 1; }
+    if (atomic_compare_exchange_strong(&r->state[p], &st, PG_BUSY)) { if(!unprotect_fault(r,p))return 0;atomic_fetch_add(&g_faults, 1); return 1; }
     if (st == PG_BUSY) return busy_wait(r, p);   // 别的线程正在改这页的保护：等它改完重执行（改成了只读就再缺页一次、走上面那一支） | Another thread is changing this page's protection: wait for it to finish and re-execute (if it became read-only, it faults once more and takes the branch above)
     return atomic_load(&r->gen[p]) != 0;   // 刚被别的线程解掉（本次缺页发生在解之前）：重执行；从未保护过的页不是我们的 | Just unprotected by another thread (this fault happened before the unprotect): re-execute; pages that were never protected are not ours
 }
@@ -122,7 +135,15 @@ static void prep_write(void *addr, size_t len) {
 
 void nvn_dirty_add_range(const void *mem, size_t size) {
     static int inited;
-    if (!inited) { inited = 1; g_pg = (uintptr_t)getpagesize(); g_shift = __builtin_ctzl(g_pg); mach_timebase_info(&g_tb); dm_fault_hook_register(on_fault); dm_guest_write_prep_register(prep_write); }
+    if (!inited) { inited = 1; g_pg = (uintptr_t)getpagesize(); g_shift = __builtin_ctzl(g_pg);
+#ifdef __ANDROID__
+        g_fault_window=g_pg>65536?g_pg:65536;
+#else
+        g_fault_window=g_pg;
+#endif
+        const char *exact=getenv("DM_FAULT_AROUND");if(exact&&!strcmp(exact,"1"))g_fault_window=g_pg;
+        LOG("[dirty-fault-window] bytes=%zu gpu_written_pages=exact",(size_t)g_fault_window);
+        mach_timebase_info(&g_tb); dm_fault_hook_register(on_fault); dm_guest_write_prep_register(prep_write); }
     atomic_fetch_add(&g_adds_total, 1);
     pthread_mutex_lock(&g_slot_mu);
     int n = atomic_load(&g_nr);
@@ -141,17 +162,18 @@ void nvn_dirty_add_range(const void *mem, size_t size) {
     uintptr_t base = (uintptr_t)mem & ~(g_pg - 1), end = ((uintptr_t)mem + size + g_pg - 1) & ~(g_pg - 1);
     size_t np = (end - base) >> g_shift;
     _Atomic uint8_t *state = r->state;
+    _Atomic uint8_t *gpu_written = r->gpu_written;
     _Atomic uint64_t *gen = r->gen;
     if (r->cap < np) {
-        state = calloc(np, 1); gen = calloc(np, sizeof *gen);
-        if (!state || !gen) die("脏页表分配失败（%zu 页）", np);
-        // 旧数组不 free：信号处理里可能仍有极短暂的陈旧读者，泄漏量 = 每页 9 字节。
-        // The old array is not freed: the signal handler may still have a very brief stale reader; leak = 9 bytes per page.
+        state = calloc(np, 1); gen = calloc(np, sizeof *gen); gpu_written = calloc(np, 1);
+        if (!state || !gen || !gpu_written) die("脏页表分配失败（%zu 页）", np);
+        // 旧数组不 free：信号处理里可能仍有极短暂的陈旧读者，泄漏量 = 每页 10 字节。
+        // The old array is not freed: the signal handler may still have a very brief stale reader; leak = 10 bytes per page.
         r->cap = np;
     } else {
-        memset((void *)state, 0, np); memset((void *)gen, 0, np * sizeof *gen);
+        memset((void *)state, 0, np); memset((void *)gen, 0, np * sizeof *gen); memset((void *)gpu_written,0,np);
     }
-    r->base = base; r->end = end; r->state = state; r->gen = gen;
+    r->base = base; r->end = end; r->state = state; r->gen = gen; r->gpu_written = gpu_written;
     if (!++g_range_incarnation) die("dirty range incarnation overflow");
     r->incarnation = g_range_incarnation; r->snapshot_disabled = 0;
     if (slot == n) atomic_store(&g_nr, n + 1);
@@ -167,13 +189,24 @@ void nvn_dirty_remove_range(const void *mem) {
     pthread_mutex_unlock(&g_slot_mu);
 }
 int nvn_dirty_tracked(const void *addr, size_t len) {
-    range_t *r = find((uintptr_t)addr); return r && (uintptr_t)addr + len <= r->end;
+    range_t *r = find((uintptr_t)addr); return r && len <= UINTPTR_MAX-(uintptr_t)addr && (uintptr_t)addr + len <= r->end;
+}
+void nvn_dirty_mark_gpu_written(const void *addr,size_t len) {
+    uintptr_t start=(uintptr_t)addr;
+    if(!len||len>UINTPTR_MAX-start)return;
+    int n=atomic_load(&g_nr);
+    for(int i=0;i<n;i++){range_t *r=&g_r[i];if(atomic_load_explicit(&r->live,memory_order_acquire)&&start<r->end&&r->base<start+len){
+        uintptr_t low=start>r->base?start:r->base,high=start+len<r->end?start+len:r->end;
+        for(uintptr_t p=(low-r->base)>>g_shift;p<=((high-1-r->base)>>g_shift);p++)
+            if(!atomic_load_explicit(&r->gpu_written[p],memory_order_acquire))atomic_store_explicit(&r->gpu_written[p],1,memory_order_release);
+    }}
 }
 // 设只读：先把页标成 BUSY，mprotect 落地后才标 PROT（次序与不变式见文件头的状态说明）
 // Set read-only: mark the page BUSY first, and mark it PROT only after mprotect has landed (for the order and the invariant see the state notes at the top of the file)
 void nvn_dirty_protect(const void *addr, size_t len) {
-    if (!len || !nvn_dirty_tracked(addr, len)) return;
+    if (!len || len > UINTPTR_MAX - (uintptr_t)addr) return;
     range_t *r = find((uintptr_t)addr);
+    if (!r || (uintptr_t)addr + len > r->end) return;
     uintptr_t a = (uintptr_t)addr, p = (a - r->base) >> g_shift, q = (a + len - 1 - r->base) >> g_shift;
     // 连续置成 PROT 的页合成一次 mprotect（逐页调用在首传大贴图时一帧上千次；选角页启动帧 5：4888 次）。
     // 已是 PROT / BUSY 的页断开连续段：不重复保护，也不碰别的线程正在改的页
@@ -182,7 +215,7 @@ void nvn_dirty_protect(const void *addr, size_t len) {
     uintptr_t run = 0; int open = 0;
     for (uintptr_t i = p; i <= q + 1; i++) {
         uint8_t st = PG_NONE;
-        int took = i <= q && atomic_compare_exchange_strong(&r->state[i], &st, PG_BUSY);
+        int took = i <= q && atomic_load_explicit(&r->state[i], memory_order_relaxed) == PG_NONE && atomic_compare_exchange_strong(&r->state[i], &st, PG_BUSY);
         if (took && !open) { run = i; open = 1; }
         if (!took && open) { mp(r->base + (run << g_shift), (i - run) << g_shift, PROT_READ); for (uintptr_t k = run; k < i; k++) atomic_store(&r->state[k], PG_PROT); open = 0; }
     }
@@ -190,8 +223,8 @@ void nvn_dirty_protect(const void *addr, size_t len) {
 uint64_t nvn_dirty_now(void) { return atomic_load(&g_now); }
 int nvn_dirty_since(const void *addr, size_t len, uint64_t stamp) {
     if (!len) return 0;
-    if (!nvn_dirty_tracked(addr, len)) return 1;   // 未跟踪时保守视为脏，宁可多传也不显示旧内容 | When untracked, conservatively treat as dirty: better to upload more than to show stale content
     range_t *r = find((uintptr_t)addr);
+    if (!r || len > UINTPTR_MAX - (uintptr_t)addr || (uintptr_t)addr + len > r->end) return 1;
     uintptr_t a = (uintptr_t)addr, p = (a - r->base) >> g_shift, q = (a + len - 1 - r->base) >> g_shift;
     for (uintptr_t i = p; i <= q; i++) if (atomic_load(&r->gen[i]) > stamp) return 1;   // 上传前最后一次写的代号 ≤ 戳；之后的写必 > 戳 | The generation of the last write before upload is <= the stamp; any later write must be > the stamp
     return 0;
@@ -207,13 +240,14 @@ static int g_test_fail_protect_read;
 void nvn_dirty_test_fail_next_protect(void) { g_test_fail_protect_read = 1; }
 #endif
 static int snapshot_mp_checked(uintptr_t address, size_t size, int prot) {
-    uint64_t started = mach_absolute_time();
+    int diagnose = dm_diagnostics_enabled();
+    uint64_t started = diagnose ? mach_absolute_time() : 0;
 #ifdef DM_NVN_DIRTY_TEST
     if (g_test_fail_protect_read && prot == PROT_READ) { g_test_fail_protect_read = 0; errno = EACCES; return -1; }
 #endif
     int result = mprotect((void *)address, size, prot), error = errno;
-    atomic_fetch_add(&g_mp_ticks, mach_absolute_time() - started);
-    atomic_fetch_add(&g_mp_calls, 1); atomic_fetch_add(&g_mp_pages, size >> g_shift);
+    if (diagnose) { atomic_fetch_add(&g_mp_ticks, mach_absolute_time() - started);
+        atomic_fetch_add(&g_mp_calls, 1); atomic_fetch_add(&g_mp_pages, size >> g_shift); }
     errno = error; return result;
 }
 static int snapshot_protect_run(range_t *r, uintptr_t first, uintptr_t end, nvn_dirty_snapshot_plan *plan) {

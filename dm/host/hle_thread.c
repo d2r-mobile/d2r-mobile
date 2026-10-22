@@ -21,6 +21,9 @@
 #include "dm.h"
 #include <errno.h>
 #include <sched.h>
+#ifdef __ANDROID__
+#include <sys/system_properties.h>
+#endif
 #include <signal.h>
 #include <sys/mman.h>
 #include <time.h>
@@ -59,6 +62,36 @@ typedef struct thr {
 static thr_t *g_all;
 
 static pthread_mutex_t G = PTHREAD_MUTEX_INITIALIZER;
+static pthread_once_t g_spin_once = PTHREAD_ONCE_INIT;
+static unsigned g_lock_spin_us;
+static void lock_spin_init(void) {
+    const char *value = getenv("DM_LOCK_SPIN_US");
+#ifdef __ANDROID__
+    char property[PROP_VALUE_MAX];
+    if (__system_property_get("debug.d2r.lock_spin", property) > 0) value = property;
+#endif
+    if (value && *value) {
+        char *end; errno = 0; unsigned long parsed = strtoul(value, &end, 10);
+        if (!errno && end != value && !*end && *value != '-' && parsed <= 200) g_lock_spin_us = (unsigned)parsed;
+    }
+    LOG("[guest-lock-spin] budget_us=%u scope=ArbitrateLock before_G=1",g_lock_spin_us);
+}
+static inline uint32_t ld32(uint64_t a);
+static int lock_changed(uint64_t address, uint32_t wanted) {
+    if (ld32(address) != wanted) return 1;
+    pthread_once(&g_spin_once, lock_spin_init);
+    if (!g_lock_spin_us) return 0;
+    uint64_t begin = now_ns();
+    do {
+#if defined(__aarch64__)
+        __asm__ volatile("yield");
+#elif defined(__x86_64__)
+        __asm__ volatile("pause");
+#endif
+        if (ld32(address) != wanted) return 1;
+    } while (now_ns() - begin < g_lock_spin_us * 1000ull);
+    return 0;
+}
 #define MAX_H 4096
 static struct { int type; void *obj; } g_h[MAX_H];
 static pthread_key_t g_keythr;
@@ -470,7 +503,7 @@ int svc_thread(int num, uint64_t *regs) {
         } else if (ns > 0) { struct timespec ts = {ns / 1000000000, ns % 1000000000}; nanosleep(&ts, 0); }
         else {   // 让出（0 / -1 / -2）。主线程的让出次数与耗时记账：游戏渲染任务图「等全部做完」是纯轮询 + 让出（main+0x15ee898），量它占一帧多少 | Yield (0 / -1 / -2). Count and time of the main thread's yields are recorded: the game's render task graph "wait for everything to finish" is pure polling + yield (main+0x15ee898); measure how much of a frame it takes
             thr_t *me = pthread_getspecific(g_keythr);
-            if (me && me->handle == 0x1001) { uint64_t y0 = now_ns(); sched_yield(); g_main_yield_ns += now_ns() - y0; g_main_yield_n++; }
+            if (me && me->handle == 0x1001 && dm_diagnostics_enabled()) { uint64_t y0 = now_ns(); sched_yield(); g_main_yield_ns += now_ns() - y0; g_main_yield_n++; }
             else sched_yield();
         }
         if (g_flag.bootprof) { uint64_t d = now_ns() - t0; dm_prof_add(PROF_SLEEP, d, 0); thr_t *me = pthread_getspecific(g_keythr); if (me && me->handle == 0x1001) dm_prof_add(PROF_MAIN_WAIT, d, 0); }
@@ -490,6 +523,9 @@ int svc_thread(int num, uint64_t *regs) {
 
     case 0x1A: {  // ArbitrateLock(w0 持有者句柄, x1 地址, w2 本线程标签) | ArbitrateLock(w0 owner handle, x1 address, w2 this thread's tag)
         thr_t *t = cur(); uint64_t addr = regs[1];
+        // 不持 G 等短暂交接；超时后仍在 G 下重查，不能遗漏入睡前的解锁。
+        // Wait outside G for a short handoff; recheck under G before sleeping to avoid lost unlocks.
+        if (lock_changed(addr, (uint32_t)regs[0] | WAITERS_BIT)) { regs[0] = 0; return 1; }
         pthread_mutex_lock(&G);
         int64_t r = 0;
         if (ld32(addr) == ((uint32_t)regs[0] | WAITERS_BIT)) { t->waddr = addr; t->wtag = (uint32_t)regs[2]; r = block(t, 1, -1); }

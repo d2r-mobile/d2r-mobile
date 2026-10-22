@@ -11,7 +11,8 @@ typedef struct shader_entry {
 } shader_entry;
 static void graphics_probe_cs_inputs(const struct shader_entry *shader,const VkWriteDescriptorSet *writes,uint32_t count,const uint32_t *dynamic_offsets,unsigned dynamic_count);
 static void graphics_probe_cs_outputs(const struct shader_entry *shader);
-static shader_entry *shader_list;
+#include "../../gfx/nvn/nvn_hmap.h"
+static nvn_hmap shader_index = {.klen = 17};
 // 提交线程与预热线程共享着色器/通道/布局表；这把锁串行化表的增查，预热对象因此直接进入运行期缓存。
 // The submit and warm threads share the shader/pass/layout tables; this lock serializes table access so warmed objects land directly in the runtime caches.
 static pthread_mutex_t graphics_object_lock=PTHREAD_MUTEX_INITIALIZER;
@@ -111,7 +112,8 @@ static VkResult shader_module_create_dispatch(VkDevice device, const VkShaderMod
 
 static shader_entry *shader_load_by_key(const char *key,int stats,int fatal) {
     pthread_mutex_lock(&graphics_object_lock);
-    for(shader_entry *s=shader_list;s;s=s->next)if(!strcmp(s->key,key)){pthread_mutex_unlock(&graphics_object_lock);return s;}
+    shader_entry *cached = nvn_hm_get(&shader_index, key);
+    if(cached){pthread_mutex_unlock(&graphics_object_lock);return cached;}
     resource_create_start creation=resource_create_begin();
     size_t bytes;uint32_t *meta=fatal?read_shader_file(key,"meta",&bytes):read_shader_file_opt(key,"meta",&bytes);
     if(!meta){pthread_mutex_unlock(&graphics_object_lock);return NULL;}
@@ -205,7 +207,7 @@ static shader_entry *shader_load_by_key(const char *key,int stats,int fatal) {
     {unsigned dynamic_sum=0;
      for(unsigned i=0;i<s->count;i++)if(s->binding_plan[i].type==VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC)dynamic_sum+=s->bindings[i].count;
      if(s->dynamic_count!=dynamic_sum)die("Vulkan dynamic uniform placement: shader=%s placed=%u expected=%u",s->key,s->dynamic_count,dynamic_sum);}
-    VkDescriptorSetLayoutCreateInfo li={.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,.bindingCount=s->count,.pBindings=bindings};VK_CHECK(vkCreateDescriptorSetLayout(device,&li,NULL,&s->layout));s->next=shader_list;shader_list=s;
+    VkDescriptorSetLayoutCreateInfo li={.sType=VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,.bindingCount=s->count,.pBindings=bindings};VK_CHECK(vkCreateDescriptorSetLayout(device,&li,NULL,&s->layout));nvn_hm_put(&shader_index,s->key,s);
     pthread_mutex_unlock(&graphics_object_lock);
     if(stats)resource_create_end(0,creation,s->key,NULL);LOG("[vulkan] shader %s stage=%u bindings=%u dynamic_uniforms=%u",s->key,s->stage,s->count,s->dynamic_count);return s;
 }

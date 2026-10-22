@@ -304,6 +304,7 @@ static void image_source_baseline(image_entry *e,const uint8_t *source,uint64_t 
 }
 static void image_gpu_written(image_entry *e) {
     const tex_t *t=&e->texture;
+    if(!e->gpu_written&&t->has_layout&&t->mem)nvn_dirty_mark_gpu_written(t->mem,t->L.size);
     // 已存在的基线代表真正读过的 CPU 版本，重复 GPU 标记不能吞掉尚未读的 CPU 脏写。
     // Existing baselines represent CPU versions actually read; repeated GPU marking cannot consume unread CPU changes.
     if(t->has_layout&&t->mem&&!e->source_valid){nvn_dirty_protect(t->mem,t->L.size);image_source_baseline(e,t->mem,nvn_dirty_now());}

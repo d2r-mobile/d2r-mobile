@@ -25,7 +25,7 @@ static int run(uint32_t klen, int ops) {
     return bad;
 }
 int main(void) {
-    int fail = run(8, 190000) + run(20, 190000);
-    printf("== 2 项，失败 %d ==\n", fail);
+    int fail = run(8, 190000) + run(17, 190000) + run(20, 190000);
+    printf("== 3 项，失败 %d ==\n", fail);
     return fail != 0;
 }

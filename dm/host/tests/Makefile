@@ -18,6 +18,7 @@ run: \
 	$(B)/t_cloudsync \
 	$(B)/t_condvar \
 	$(B)/t_condvar_old \
+	$(B)/t_lock_spin \
 	$(B)/t_doorspot \
 	$(B)/t_fs \
 	$(B)/t_fs_case \
@@ -83,6 +84,9 @@ run: \
 	$(B)/t_movie
 	$(B)/t_condvar
 	$(B)/t_condvar_old
+	$(B)/t_lock_spin 0
+	$(B)/t_lock_spin 20
+	$(B)/t_lock_spin 200
 	$(B)/t_target_rank 2>/dev/null
 	$(B)/t_hud_dead
 	$(B)/t_namegen
@@ -151,6 +155,8 @@ tsan: $(B)/t_audio_spsc_tsan
 	$(B)/t_audio_spsc_tsan
 $(B)/t_condvar: t_condvar.c t_condvar_stub.c ../hle_thread.c ../dm.h | $(B)
 	clang -O1 -Wno-unused-function -DDM_TEST_HOOKS -I.. -o $@ t_condvar.c t_condvar_stub.c ../hle_thread.c
+$(B)/t_lock_spin: t_lock_spin.c t_condvar_stub.c ../hle_thread.c ../dm.h | $(B)
+	clang -O1 -Wall -DDM_TEST_HOOKS -I.. -o $@ t_lock_spin.c t_condvar_stub.c
 $(B)/t_condvar_old: t_condvar.c t_condvar_stub.c ../hle_thread.c ../dm.h | $(B)
 	clang -O1 -Wno-unused-function -DDM_TEST_HOOKS -DDM_TEST_CV_OLD_ORDER -I.. -o $@ t_condvar.c t_condvar_stub.c ../hle_thread.c
 
