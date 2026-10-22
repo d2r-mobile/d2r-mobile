@@ -89,6 +89,12 @@ VKAPI_ATTR void VKAPI_CALL vkCmdEndRenderPass(VkCommandBuffer c){(void)c;pass_en
 
 CHECKS = r'''
 int main(void){
+ configure(NULL,NULL);assert(attachment_clear_candidate&&narrow_image_candidate);
+ configure("","");assert(attachment_clear_candidate&&narrow_image_candidate);
+ configure("0","1");assert(!attachment_clear_candidate&&narrow_image_candidate);
+ configure("1","0");assert(attachment_clear_candidate&&!narrow_image_candidate);
+ configure("invalid","0");assert(!attachment_clear_candidate&&!narrow_image_candidate);
+ configure(NULL,NULL);
  memory_properties.memoryTypeCount=1;memory_properties.memoryTypes[0].propertyFlags=VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
  tex_t t={.serial=1,.d={.target=2,.format=VK_FORMAT_R8G8B8A8_UNORM,.width=16,.height=8,.depth=1,.levels=3},.L={3}};
  image_entry *e=image_get(&t);assert(!(usage_seen&VK_IMAGE_USAGE_STORAGE_BIT));e->populated=1;
@@ -124,9 +130,15 @@ def main():
     root = Path(__file__).resolve().parents[1]
     texture = (root / "native/nvn_vulkan_tex.inc").read_text()
     passes = (root / "native/nvn_vulkan_pass.inc").read_text()
+    initialization = function((root / "native/nvn_vulkan.c").read_text(), "initialize")
+    defaults = re.findall(r"^    (?:attachment_clear_candidate|narrow_image_candidate)=[^;]+;", initialization, re.M)
+    if len(defaults) != 2:
+        raise RuntimeError("missing render policy defaults")
     definitions = "\n".join(function(texture, n) for n in (
         "dimension", "image_allocate", "image_get", "image_require_storage", "image_destroy", "image_retire_completed", "image_release_serial"))
-    code = PREFIX + definitions + function(passes, "graphics_clear_attachment") + CHECKS
+    code = (PREFIX + definitions + function(passes, "graphics_clear_attachment")
+            + "\nstatic void configure(const char *clear_candidate,const char *usage_candidate){\n"
+            + "\n".join(defaults) + "\n}\n" + CHECKS)
     with tempfile.TemporaryDirectory() as directory:
         source = Path(directory) / "test.c"
         source.write_text(code)

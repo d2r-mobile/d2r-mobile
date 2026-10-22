@@ -211,7 +211,7 @@ static uint32_t dimension(uint32_t v, unsigned level) { v >>= level; return v ? 
 static image_entry *image_find(uint64_t serial) {
     for(image_entry *e=image_index[serial&4095];e;e=e->hash_next)if(e->serial==serial)return e;return NULL;
 }
-static void image_allocate(image_entry *e,VkImageUsageFlags usage,VkCommandBuffer initial_command) {
+static void image_allocate(image_entry *e,VkImageUsageFlags usage,VkCommandBuffer allocation_command) {
     const tex_t *t=&e->texture;e->usage=usage;
     int is3d=t->d.target==NVN_TEXTURE_TARGET_3D,is1d=t->d.target==NVN_TEXTURE_TARGET_1D||t->d.target==NVN_TEXTURE_TARGET_1D_ARRAY;
     VkImageType image_type=is3d?VK_IMAGE_TYPE_3D:is1d?VK_IMAGE_TYPE_1D:VK_IMAGE_TYPE_2D;
@@ -230,7 +230,7 @@ static void image_allocate(image_entry *e,VkImageUsageFlags usage,VkCommandBuffe
     VkImageViewCreateInfo vi={.sType=VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,.image=e->image,.viewType=view,.format=e->format,.subresourceRange={e->aspect,0,t->d.levels,0,t->L.layers}};
     VK_CHECK(vkCreateImageView(device,&vi,NULL,&e->view));
     VkImageMemoryBarrier b={.sType=VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,.oldLayout=VK_IMAGE_LAYOUT_UNDEFINED,.newLayout=VK_IMAGE_LAYOUT_GENERAL,.dstAccessMask=VK_ACCESS_MEMORY_READ_BIT|VK_ACCESS_MEMORY_WRITE_BIT,.srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,.image=e->image,.subresourceRange=vi.subresourceRange};
-    vkCmdPipelineBarrier(initial_command,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,0,0,NULL,0,NULL,1,&b);
+    vkCmdPipelineBarrier(allocation_command,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,0,0,NULL,0,NULL,1,&b);
 }
 static image_entry *image_get(const tex_t *t) {
     unsigned bucket=t->serial&4095;for(image_entry *e=image_index[bucket];e;e=e->hash_next)if(e->serial==t->serial)return e;
@@ -263,8 +263,7 @@ static void image_require_storage(image_entry *e) {
     }
     // Earlier descriptors/framebuffers may still be in flight; retire once, reclaim only after texture release drains the GPU.
     e->retired_image=e->image;e->retired_view=e->view;e->retired_memory=e->memory;e->retired_views=e->views;
-    e->image=upgraded.image;e->view=upgraded.view;e->memory=upgraded.memory;e->usage=upgraded.usage;e->views=NULL;
-    e->allocation_bytes+=upgraded.allocation_bytes;
+    e->image=upgraded.image;e->view=upgraded.view;e->memory=upgraded.memory;e->usage=upgraded.usage;e->allocation_bytes+=upgraded.allocation_bytes;e->views=NULL;
     e->last_stage=VK_PIPELINE_STAGE_TRANSFER_BIT;e->last_access=VK_ACCESS_TRANSFER_WRITE_BIT;
     storage_promotion_count++;
     LOG("[vulkan-render-policy] storage promotion serial=%llu",(unsigned long long)e->serial);
@@ -500,8 +499,7 @@ static void image_destroy(image_entry *e) {
     while(e->views){cached_image_view *v=e->views;e->views=v->next;vkDestroyImageView(device,v->view,NULL);free(v);}
     vkDestroyImageView(device,e->view,NULL);vkDestroyImage(device,e->image,NULL);vkFreeMemory(device,e->memory,NULL);
     while(e->retired_views){cached_image_view *v=e->retired_views;e->retired_views=v->next;vkDestroyImageView(device,v->view,NULL);free(v);}
-    if(e->retired_image){vkDestroyImageView(device,e->retired_view,NULL);vkDestroyImage(device,e->retired_image,NULL);vkFreeMemory(device,e->retired_memory,NULL);}
-    free(e);
+    if(e->retired_image){vkDestroyImageView(device,e->retired_view,NULL);vkDestroyImage(device,e->retired_image,NULL);vkFreeMemory(device,e->retired_memory,NULL);}free(e);
 }
 static void image_retire_completed(uint64_t ticket) {
     image_entry **link=&image_retired;

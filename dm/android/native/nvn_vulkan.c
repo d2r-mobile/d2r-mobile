@@ -395,8 +395,8 @@ static void initialize(void) {
     if(!clear_candidate)clear_candidate=clear_property;
     if(!usage_candidate)usage_candidate=usage_property;
 #endif
-    attachment_clear_candidate=clear_candidate&&!strcmp(clear_candidate,"1");
-    narrow_image_candidate=usage_candidate&&!strcmp(usage_candidate,"1");
+    attachment_clear_candidate=!clear_candidate||!*clear_candidate||!strcmp(clear_candidate,"1");
+    narrow_image_candidate=!usage_candidate||!*usage_candidate||!strcmp(usage_candidate,"1");
     LOG("[vulkan-render-policy] attachment_clear=%d narrow_image=%d",attachment_clear_candidate,narrow_image_candidate);
     present_format_count=0; present_filter_logged=0;
     const char *present_filter_env=getenv("DM_PRESENT_FILTER");
@@ -1100,7 +1100,7 @@ uint64_t mtl_present(const tex_t *t, double period, const int crop[4]) {
     uint64_t previous_acquire_ns=dm_android_clock_ns(CLOCK_MONOTONIC)-previous_start;
     dm_cpu_phase_end(DM_CPU_PHASE_WAIT_PRIOR,previous_start);
     uint64_t ticket=++presents;graphics_probe_capture(ticket);frame_trace_present(ticket);texture_upload_report(ticket);
-    if(!(ticket%60))LOG("[vulkan-render-policy] frame=%llu clears=%llu narrow=%llu promotions=%llu",(unsigned long long)ticket,(unsigned long long)attachment_clear_count,(unsigned long long)narrow_image_count,(unsigned long long)storage_promotion_count);
+    if(dm_diagnostics_enabled()&&!(ticket%60))LOG("[vulkan-render-policy] frame=%llu clears=%llu narrow=%llu promotions=%llu",(unsigned long long)ticket,(unsigned long long)attachment_clear_count,(unsigned long long)narrow_image_count,(unsigned long long)storage_promotion_count);
     if(!(ticket%60))LOG("[vulkan-prior-acquire] frame=%llu queued=%llu prior_consumer=%llu wait=%.3f ms scope=prior_binary_acquire_consumer current_guest_publication=async",(unsigned long long)ticket,(unsigned long long)completion_ticket,(unsigned long long)previous_acquire,previous_acquire_ns/1e6);
     if (swapchain) {
         // 前次 blit 已消费 acquire token；当前帧通过独立返回的真实票号追踪完成。

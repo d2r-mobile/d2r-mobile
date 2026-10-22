@@ -28,7 +28,7 @@ PREFIX = r'''
 #define die(...) abort()
 #define VK_CHECK(call) assert((call)==VK_SUCCESS)
 typedef struct cached_image_view {VkImageView view;struct cached_image_view *next;} cached_image_view;
-typedef struct image_entry {uint64_t serial,release_ticket,allocation_bytes;VkImage image;VkImageView view;VkDeviceMemory memory;cached_image_view *views,*retired_views;VkImage retired_image;VkImageView retired_view;VkDeviceMemory retired_memory;struct image_entry *next,*hash_next;} image_entry;
+typedef struct image_entry {uint64_t serial,release_ticket,allocation_bytes;VkImage image,retired_image;VkImageView view,retired_view;VkDeviceMemory memory,retired_memory;cached_image_view *views,*retired_views;struct image_entry *next,*hash_next;} image_entry;
 static image_entry *image_list,*image_retired,*image_index[4096];
 static uint64_t image_retired_bytes,image_deferred_releases;
 static _Atomic uint64_t submitted,completed;
