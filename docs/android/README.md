@@ -10,7 +10,7 @@ An experimental Android port of [the project-ops/d2r-mobile](https://github.com/
 
 ## Current status
 
-Updated **2026-10-22**. Follow the project board for current work and acceptance boundaries.
+Updated **2026-10-22**. Follow the [Android roadmap](ROADMAP.md) for current work and acceptance boundaries.
 
 | Area | Verified progress | Remaining work |
 |---|---|---|
@@ -85,7 +85,7 @@ The game-free tools use CMake 3.22+, a C compiler and Capstone 5; native ARM64 c
 
 The playable-APK entry is `dm/android/tools/build.py` with `--game-run`. It needs the reference toolchain, SDK/build tools, JDK, shader tooling and locally prepared resources; its `--turnip` and `--touch-art` inputs must be supplied as appropriate. Each build recreates the disposable `assets`, `res`, `java-classes` and `dex` staging directories; keep source inputs outside those directories. Dependency caches are retained. `--no-turnip` excludes cached driver libraries too, and `--install` uses the package declared in the manifest. A generic APK can import game modules on the phone. Do not publish builds embedding game code or derived game artwork. `dm/android/app/build.sh` builds the older synthetic diagnostic APK; `setup.sh` is the upstream Apple preparation flow.
 
-Start contributions from , agree on a bounded issue and submit a topic PR to `main`. Report the exact source commit, tests and actual device conditions. Keep unsupported paths explicit, preserve scanning/W^X/ownership/failure checks, and separate implementation from device acceptance. Keep game content, credentials, saves and raw device logs out of GitHub. See [CONTRIBUTING.md](../../CONTRIBUTING.md).
+Start contributions from the [Android roadmap](ROADMAP.md), agree on a bounded issue and submit a topic PR to `main`. Report the exact source commit, tests and actual device conditions. Keep unsupported paths explicit, preserve scanning/W^X/ownership/failure checks, and separate implementation from device acceptance. Keep game content, credentials, saves and raw device logs out of GitHub. See [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
 At each task closeout, the coordinator reviews the exact PR head and required evidence, closes only issues whose acceptance scope is satisfied, and merges only accepted changes. Remove topic branches only after confirming their work is preserved and no active worktree or worker needs them; keep pending candidates and unfinished PRs. Update both English and Chinese READMEs when behavior, limitations or verified progress changes, distinguishing merged source from local device candidates.
 
