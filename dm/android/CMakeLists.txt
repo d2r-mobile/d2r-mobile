@@ -1076,6 +1076,12 @@ if(NOT ANDROID)
     add_test(NAME nvn_shader_feature_decisions COMMAND dm_nvn_shader_feature_decisions_test)
     set_tests_properties(nvn_shader_feature_decisions PROPERTIES TIMEOUT 30)
 
+    add_executable(dm_shader_reflection_test tests/shader_reflection_test.c)
+    target_include_directories(dm_shader_reflection_test PRIVATE native)
+    target_compile_options(dm_shader_reflection_test PRIVATE -Wall -Wextra -Werror -UNDEBUG)
+    add_test(NAME shader_reflection COMMAND dm_shader_reflection_test)
+    set_tests_properties(shader_reflection PROPERTIES TIMEOUT 30)
+
     add_executable(dm_texture_flat_probe_test tests/texture_flat_probe_test.c)
     target_include_directories(dm_texture_flat_probe_test PRIVATE native)
     target_compile_options(dm_texture_flat_probe_test PRIVATE -Wall -Wextra -Werror)
