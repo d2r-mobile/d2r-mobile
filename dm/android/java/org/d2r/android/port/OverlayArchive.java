@@ -19,6 +19,7 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 final class OverlayArchive {
+    static final String BUNDLED_ASSET = "interface.zip";
     static final String MANIFEST = PackageArchive.OVERLAY_UPDATE_MANIFEST;
     private static final long MAX_BYTES = 2L << 30;
     private static final int MAX_FILES = 64;
@@ -88,6 +89,26 @@ final class OverlayArchive {
         try (InputStream in = new FileInputStream(file)) { return new Manifest(read(in, 16384)).version; }
     }
 
+    private static byte[] readManifest(ZipInputStream zip) throws IOException {
+        ZipEntry entry = zip.getNextEntry();
+        if (entry == null || entry.isDirectory() || !MANIFEST.equals(entry.getName()))
+            throw new IOException("Not an interface update ZIP");
+        return read(zip, 16384);
+    }
+
+    static synchronized boolean bundledNeedsUpdate(InputStream raw, File assets) throws IOException {
+        Manifest bundled;
+        try (ZipInputStream zip = new ZipInputStream(raw)) { bundled = new Manifest(readManifest(zip)); }
+        if (!bundled.baseHash.equals(baseHash(assets))) throw new IOException("APK interface is for different game data");
+        File installed = new File(new File(assets, PackageArchive.OVERLAY), MANIFEST);
+        if (!installed.isFile()) return true;
+        try (InputStream in = new FileInputStream(installed)) {
+            Manifest current = new Manifest(read(in, 16384));
+            return !bundled.version.equals(current.version) || !bundled.baseHash.equals(current.baseHash)
+                    || !bundled.contentHash.equals(current.contentHash);
+        } catch (IOException invalidInstalledMetadata) { return true; }
+    }
+
     static synchronized void recover(File assets) throws IOException {
         File target = new File(assets, PackageArchive.OVERLAY), previous = new File(assets, "overlay.replaced");
         if (previous.exists()) {
@@ -115,12 +136,11 @@ final class OverlayArchive {
             Set<String> names = new HashSet<>();
             long total = 0;
             try (ZipInputStream zip = new ZipInputStream(raw)) {
-                ZipEntry entry = zip.getNextEntry();
-                if (entry == null || entry.isDirectory() || !MANIFEST.equals(entry.getName())) throw new IOException("Not an interface update ZIP");
-                manifestBytes = read(zip, 16384);
+                manifestBytes = readManifest(zip);
                 manifest = new Manifest(manifestBytes);
                 if (!manifest.baseHash.equals(baseHash(assets))) throw new IOException("Interface update is for different game data");
                 byte[] buffer = new byte[65536];
+                ZipEntry entry;
                 while ((entry = zip.getNextEntry()) != null) {
                     if (sink.cancelled()) throw new IOException("Interface update cancelled");
                     String name = entry.getName();

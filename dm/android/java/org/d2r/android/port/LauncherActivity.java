@@ -57,7 +57,6 @@ public final class LauncherActivity extends Activity {
     private static final int EXPORT_SAVE = 2;
     private static final int IMPORT_SAVE = 3;
     private static final int PICK_DRIVER = 4;
-    private static final int PICK_OVERLAY = 5;
 
     private static final int GOLD = 0xffe8c078;
     private static final int PARCHMENT = 0xffe8e0d0;
@@ -66,7 +65,7 @@ public final class LauncherActivity extends Activity {
 
     private Switch overlaySwitch;
     private Switch collectionSwitch;
-    private TextView resolutionItem, frameLimitItem, driverItem, importItem, statusView, startItem, interfaceItem;
+    private TextView resolutionItem, frameLimitItem, driverItem, importItem, statusView, startItem;
     private int resolutionIndex;
     private int frameLimitIndex;
     private String saveRecoveryError;
@@ -354,7 +353,6 @@ public final class LauncherActivity extends Activity {
         startItem.setEnabled(ready);
         startItem.setTextColor(0xff17130e);
         startItem.setAlpha(ready ? 1f : 0.45f);
-        if (interfaceItem != null) interfaceItem.setEnabled(packageReady() && !importing && !D2RActivity.hostRunning);
     }
 
     // 把当前内存里的设置反映到界面上。点一下之后只调这个，**绝不重新读盘** ——
@@ -367,13 +365,6 @@ public final class LauncherActivity extends Activity {
         if (frameLimitItem != null) frameLimitItem.setText(frameLimitChoices()[frameLimitIndex]);
         if (driverItem != null) driverItem.setText(driverLabel());
         if (importItem != null) importItem.setText(importLabel());
-        if (interfaceItem != null) {
-            try {
-                String version = OverlayArchive.version(packageDirectory());
-                interfaceItem.setText(text("dmAndroidInterfaceUpdate") + "\n" +
-                        (version == null ? text("dmAndroidInterfaceBundled") : version));
-            } catch (IOException error) { interfaceItem.setText(text("dmAndroidInterfaceUpdate")); }
-        }
         if (startItem != null) updateStartState();
     }
 
@@ -533,9 +524,6 @@ public final class LauncherActivity extends Activity {
         pressFeedback(importItem);
         TextView dataNote=item(text("dmAndroidLaunchDataNote"),12,MUTED,false,false);
         dataNote.setGravity(Gravity.START); data.addView(dataNote);
-        interfaceItem=item("",15,PARCHMENT,false,true); interfaceItem.setGravity(Gravity.START);
-        interfaceItem.setMinHeight(dp(56)); interfaceItem.setOnClickListener(v->pickInterface());
-        data.addView(interfaceItem); pressFeedback(interfaceItem);
         startItem=new android.widget.Button(this); startItem.setText(text("dmAndroidLaunchStart"));
         ((android.widget.Button)startItem).setAllCaps(false); startItem.setTextSize(19);
         startItem.setTypeface(Typeface.DEFAULT_BOLD); startItem.setGravity(Gravity.CENTER);
@@ -612,6 +600,7 @@ public final class LauncherActivity extends Activity {
         if (stepAsideForRunningGame()) return;
         recoverInterface(); recoverSave();
         refreshFromDisk();
+        prepareInterface();
     }
 
     // 选包用系统文件选择器：应用不需要任何存储权限，也不必知道文件放在哪。
@@ -727,7 +716,6 @@ public final class LauncherActivity extends Activity {
         if (request == PICK_DRIVER) { importDriver(data.getData()); return; }
         if (request == EXPORT_SAVE) { writeSaveArchive(data.getData()); return; }
         if (request == IMPORT_SAVE) { readSaveArchive(data.getData()); return; }
-        if (request == PICK_OVERLAY) { importInterface(data.getData()); return; }
         if (request == PICK_PACKAGE) beginImport(data.getData());
     }
 
@@ -740,42 +728,40 @@ public final class LauncherActivity extends Activity {
         }
     }
 
-    private void pickInterface() {
-        if (importing || D2RActivity.hostRunning || !packageReady()) return;
-        new AlertDialog.Builder(this).setTitle(text("dmAndroidInterfaceUpdate"))
-                .setMessage(text("dmAndroidInterfaceHelp"))
-                .setPositiveButton(android.R.string.ok, (dialog, button) -> {
-                    Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-                    intent.addCategory(Intent.CATEGORY_OPENABLE); intent.setType("*/*");
-                    try { startActivityForResult(intent, PICK_OVERLAY); }
-                    catch (RuntimeException error) { setStatus(text("dmAndroidInterfaceFailed") + ": " + error.getMessage(), WARNING); }
-                }).setNegativeButton(android.R.string.cancel, null).show();
-    }
-
-    private void importInterface(Uri uri) {
-        if (importing || D2RActivity.hostRunning || !packageReady()) return;
+    private boolean prepareInterface() {
+        if (importing || D2RActivity.hostRunning || !packageReady()) return false;
+        try (InputStream raw = getAssets().open(OverlayArchive.BUNDLED_ASSET)) {
+            if (!OverlayArchive.bundledNeedsUpdate(raw, packageDirectory())) {
+                interfaceRecoveryError = null; updateStartState(); return true;
+            }
+        } catch (IOException | RuntimeException error) {
+            interfaceRecoveryError = error.getMessage(); updateStartState();
+            setStatus(text("dmAndroidInterfaceFailed") + ": " + interfaceRecoveryError, WARNING);
+            return false;
+        }
         importing = true; cancelImport = false; updateStartState();
         setStatus(String.format(text("dmAndroidInterfaceUpdating"), 0), MUTED);
         new Thread(() -> {
-            try (InputStream raw = getContentResolver().openInputStream(uri)) {
-                if (raw == null) throw new IOException("Cannot open interface update ZIP");
-                String version = OverlayArchive.install(raw, packageDirectory(), packageGameDirectory(), new PackageArchive.Sink() {
+            String version = null, failure = null;
+            try (InputStream raw = getAssets().open(OverlayArchive.BUNDLED_ASSET)) {
+                version = OverlayArchive.install(raw, packageDirectory(), packageGameDirectory(), new PackageArchive.Sink() {
                     @Override public void progress(int percent) {
                         runOnUiThread(() -> setStatus(String.format(text("dmAndroidInterfaceUpdating"), percent), MUTED));
                     }
                     @Override public boolean cancelled() { return cancelImport; }
                 });
-                runOnUiThread(() -> {
-                    interfaceRecoveryError = null; applyLabels();
-                    setStatus(String.format(text("dmAndroidInterfaceUpdated"), version), PARCHMENT);
-                });
-            } catch (IOException | RuntimeException error) {
-                runOnUiThread(() -> setStatus(text("dmAndroidInterfaceFailed") + ": " + error.getMessage(), WARNING));
-            } finally {
-                importing = false;
-                runOnUiThread(() -> { recoverInterface(); updateStartState(); });
-            }
-        }, "d2r-interface-update").start();
+            } catch (IOException | RuntimeException error) { failure = error.toString(); }
+            final String installedVersion = version, installFailure = failure;
+            runOnUiThread(() -> {
+                importing = false; recoverInterface();
+                if (installFailure != null) interfaceRecoveryError = installFailure;
+                updateStartState();
+                if (interfaceRecoveryError != null)
+                    setStatus(text("dmAndroidInterfaceFailed") + ": " + interfaceRecoveryError, WARNING);
+                else setStatus(String.format(text("dmAndroidInterfaceUpdated"), installedVersion), PARCHMENT);
+            });
+        }, "d2r-interface-prepare").start();
+        return false;
     }
 
     private void beginImport(Uri uri) {
@@ -799,7 +785,7 @@ public final class LauncherActivity extends Activity {
                 runOnUiThread(() -> setStatus(String.format(text("dmAndroidLaunchImportFailed"), failureText(error)), WARNING));
             } finally {
                 importing = false;
-                runOnUiThread(this::updateStartState);
+                runOnUiThread(() -> { prepareInterface(); updateStartState(); });
             }
         }, "d2r-package-import").start();
     }
@@ -869,6 +855,7 @@ public final class LauncherActivity extends Activity {
         if (interfaceRecoveryError != null) {
             setStatus(text("dmAndroidInterfaceFailed") + ": " + interfaceRecoveryError, WARNING); return;
         }
+        if (!prepareInterface()) return;
         if (saveRecoveryError != null) {
             setStatus(String.format(text("dmAndroidSaveImportFailed"), saveRecoveryError), WARNING);
             return;
