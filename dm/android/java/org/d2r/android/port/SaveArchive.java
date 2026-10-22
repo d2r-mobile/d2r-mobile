@@ -53,7 +53,7 @@ final class SaveArchive {
 
     private static int addTree(ZipOutputStream zip, File dir, String prefix) throws IOException {
         File[] children = dir.listFiles();
-        if (children == null) return 0;
+        if (children == null) throw new IOException("无法读取存档目录：" + dir);
         // 固定顺序：导出文件的内容稳定，便于比较两次导出 | fixed order so two exports compare cleanly
         Arrays.sort(children, (left, right) -> left.getName().compareTo(right.getName()));
         int count = 0;
@@ -70,6 +70,8 @@ final class SaveArchive {
                 }
                 zip.closeEntry();
                 count++;
+            } else {
+                throw new IOException("无法读取存档文件：" + child);
             }
         }
         return count;

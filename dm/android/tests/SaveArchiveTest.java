@@ -62,6 +62,25 @@ public final class SaveArchiveTest {
         check(read(new File(restored, "sub/b.bin")).equals("beta"), "子目录内容一致");
         check(!new File(restored, SaveArchive.MARKER).exists(), "说明文件不进入存档");
 
+        File unreadable = new File(save.getPath()) {
+            @Override public File[] listFiles() { return null; }
+        };
+        check(fails(() -> SaveArchive.zip(unreadable, new ByteArrayOutputStream(), 0)),
+                "无法读取根目录时导出报错，不生成假成功的空备份");
+        File unreadableChild = new File(save, "sub") {
+            @Override public File[] listFiles() { return null; }
+        };
+        File unreadableTree = new File(save.getPath()) {
+            @Override public File[] listFiles() { return new File[]{unreadableChild}; }
+        };
+        check(fails(() -> SaveArchive.zip(unreadableTree, new ByteArrayOutputStream(), 0)),
+                "无法读取子目录时导出报错，不静默遗漏子目录");
+        File disappearingTree = new File(save.getPath()) {
+            @Override public File[] listFiles() { return new File[]{new File(save, "missing.d2s")}; }
+        };
+        check(fails(() -> SaveArchive.zip(disappearingTree, new ByteArrayOutputStream(), 0)),
+                "枚举后消失的文件导致导出失败，不静默跳过");
+
         // 截断包：有说明文件和一个完整条目、但没有中央目录，必须拒绝，不能把半包当成存档。
         // A truncated archive with the marker and one complete entry but no central directory must be rejected;
         // a partial package must not be treated as a save.
