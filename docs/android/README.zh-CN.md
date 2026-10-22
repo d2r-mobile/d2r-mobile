@@ -10,7 +10,7 @@ English: [README.md](README.md)
 
 ## 当前状态
 
-更新于 **2026-10-22**。当前任务与验收边界以总任务板 为准。
+更新于 **2026-10-22**。当前任务与验收边界见 [Android 路线与任务入口](ROADMAP.md)。
 
 | 方向 | 已验证的进展 | 剩余工作 |
 |---|---|---|
@@ -85,7 +85,7 @@ python3 dm/android/tools/build.py --help
 
 可玩 APK 的入口是 `dm/android/tools/build.py` 的 `--game-run` 模式，需要对应参考工具链、SDK／build tools、JDK、着色器工具和本地准备的资源；按实际构建提供 `--turnip`、`--touch-art` 输入。每次构建重建可丢弃的 `assets`、`res`、`java-classes`、`dex` 打包目录，源输入请放在这些目录之外；依赖缓存保留。`--no-turnip` 也排除缓存中的驱动库，`--install` 使用清单中声明的包名。通用 APK 可在手机导入游戏模块。不要发布嵌入游戏代码或游戏派生美术的构建。`dm/android/app/build.sh` 构建的是较早的合成诊断 APK；`setup.sh` 是上游 Apple 准备流程。
 
-参与开发请从  确定边界明确的任务，以 topic PR 提交到 `main`，报告准确源码提交、测试与实际设备条件。明确拒绝不支持的路径，保留扫描、W^X、所有权和失败检查，并区分实现与实机验收。游戏内容、凭据、存档及原始设备日志不进入 GitHub。另见 [CONTRIBUTING.zh-CN.md](../../CONTRIBUTING.zh-CN.md)。
+参与开发请从 [Android 路线与任务入口](ROADMAP.md) 确定边界明确的任务，以 topic PR 提交到 `main`，报告准确源码提交、测试与实际设备条件。明确拒绝不支持的路径，保留扫描、W^X、所有权和失败检查，并区分实现与实机验收。游戏内容、凭据、存档及原始设备日志不进入 GitHub。另见 [CONTRIBUTING.zh-CN.md](../../CONTRIBUTING.zh-CN.md)。
 
 每项任务收尾时，由协调者核对精确 PR head 和必要证据，仅关闭验收范围已满足的 issue，仅合并通过验收的修改。确认工作已保留、且没有活跃工作区或 worker 需要分支后，再删除任务分支；待测候选和未完成 PR 继续保留。行为、限制或已验证进度变化时同步更新中英文 README，并区分已合并源码与本地实机候选。
 
