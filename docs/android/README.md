@@ -66,6 +66,8 @@ Only a prepared Android package is accepted by this import flow; an arbitrary Sw
 
 ## Development
 
+Save-directory snapshot copies reject directory read/close errors instead of committing a partial tree; host fault injection covers cleanup and retry with synthetic saves.
+
 ```sh
 git clone --branch main https://github.com/d2r-mobile/d2r-mobile.git
 cd d2r-mobile
