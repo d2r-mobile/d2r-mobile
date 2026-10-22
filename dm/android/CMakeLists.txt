@@ -764,6 +764,8 @@ if(NOT ANDROID)
         add_test(NAME shader_pair_contract
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/shader_pair_contract_test.py)
         set_tests_properties(shader_pair_contract PROPERTIES TIMEOUT 30)
+        add_test(NAME map_goal_art COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/map_goal_art_test.py)
+        set_tests_properties(map_goal_art PROPERTIES TIMEOUT 30)
         add_test(NAME save_clone_failure_host
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/save_clone_failure_host.py
                 ${CMAKE_C_COMPILER})
@@ -1085,6 +1087,10 @@ if(NOT ANDROID)
     set_tests_properties(nvn_shader_feature_decisions PROPERTIES TIMEOUT 30)
 
     add_executable(dm_shader_reflection_test tests/shader_reflection_test.c)
+    add_executable(dm_world_hud_snapshot_test tests/world_hud_snapshot_test.c)
+    target_include_directories(dm_world_hud_snapshot_test PRIVATE native)
+    target_compile_options(dm_world_hud_snapshot_test PRIVATE -Wall -Wextra -Werror -UNDEBUG)
+    add_test(NAME world_hud_snapshot COMMAND dm_world_hud_snapshot_test)
     target_include_directories(dm_shader_reflection_test PRIVATE native)
     target_compile_options(dm_shader_reflection_test PRIVATE -Wall -Wextra -Werror -UNDEBUG)
     add_test(NAME shader_reflection COMMAND dm_shader_reflection_test)
