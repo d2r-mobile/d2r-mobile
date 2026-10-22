@@ -43,6 +43,7 @@ final class D2RTouchOverlay extends View {
     private final D2RWorldHud worldHud;
     private String[] worldLabels;
     private int worldLanguage = -1;
+    private int worldTitleRevision = -1;
     private final int[] atlasInfo = new int[45];
     private final Bitmap[] atlases = new Bitmap[TouchGlyph.ATLAS_COUNT];
     private final Bitmap[] glyphCache = new Bitmap[TouchGlyph.ATLAS_COUNT * 128];
@@ -135,8 +136,9 @@ final class D2RTouchOverlay extends View {
         float[] v = values;
         if (TouchOverlayGeometry.frontend(v)) return; // original front-end pages have no combat controls
         if (activity.readWorldHud(world) != 0) {
-            if (worldLabels == null || worldLanguage != (int)world[30]) {
+            if (worldLabels == null || worldLanguage != (int)world[30] || worldTitleRevision != (int)world[71]) {
                 worldLabels = activity.readWorldHudLabels(); worldLanguage = (int)world[30];
+                worldTitleRevision = (int)world[71];
             }
             worldHud.draw(canvas, v, world, worldLabels);
         }
