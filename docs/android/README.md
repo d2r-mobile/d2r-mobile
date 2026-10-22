@@ -68,6 +68,8 @@ Only a prepared Android package is accepted by this import flow; an arbitrary Sw
 
 Save-directory snapshot copies reject directory read/close errors instead of committing a partial tree; host fault injection covers cleanup and retry with synthetic saves.
 
+The [production shader boundary](shader-boundary.md) records supported stages, reflection limits and remaining validation gaps.
+
 ```sh
 git clone --branch main https://github.com/d2r-mobile/d2r-mobile.git
 cd d2r-mobile

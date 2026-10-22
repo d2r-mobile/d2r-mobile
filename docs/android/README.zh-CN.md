@@ -68,6 +68,8 @@ ADPF 已接入翻译线程的完整帧周期及实际限帧预算，接口不可
 
 存档目录快照复制遇到目录读取／关闭错误会明确失败，避免提交缺文件的目录；宿主故障注入通过合成存档覆盖清理和重试。
 
+[生产着色器边界](shader-boundary.md)列明支持阶段、反射限制及尚未覆盖的验证项。
+
 ```sh
 git clone --branch main https://github.com/d2r-mobile/d2r-mobile.git
 cd d2r-mobile
