@@ -77,6 +77,7 @@ typedef struct {
     dm_live_touch_geometry live_geometry;
     uint64_t live_visual_signature;
     float world_hud[DM_WORLD_HUD_VALUES];
+    int audio_focus_allowed;
     int live_bind_state;
     unsigned map_world_seq, tap_move_seen, world_tap_seen;
     uint32_t selected_point;
@@ -1051,6 +1052,11 @@ static int32_t touch_axis(jint value) {return value>DM_STICK_MAX?DM_STICK_MAX:va
 __attribute__((visibility("default"))) void Java_org_d2r_android_port_D2RActivity_setOverlayEnabled(JNIEnv *env,jclass klass,jboolean enabled) {
     (void)env;(void)klass;atomic_store(&debug_overlay_enabled,enabled?1:0);
 }
+__attribute__((visibility("default"))) void Java_org_d2r_android_port_D2RActivity_setAudioFocusAllowed(JNIEnv *env,jclass klass,jboolean allowed) {
+    (void)env;(void)klass;game_app *s=application;if(!s)return;
+    s->audio_focus_allowed=allowed!=0;
+    dm_audio_suspend(!s->audio_focus_allowed||!atomic_load(&s->activity_resumed));
+}
 __attribute__((visibility("default"))) void Java_org_d2r_android_port_D2RActivity_setQualityPreset(JNIEnv *env,jclass klass,jint preset) {
     (void)env;(void)klass;
     // The current host supports exactly auto (-1) and high quality (0). Reject
@@ -1465,7 +1471,7 @@ static void input_destroyed(ANativeActivity *a,AInputQueue *q) {game_app *s=a->i
 // first seconds back are recovery (surface rebuild, cold caches), and without telling the controller they are read
 // as GPU pressure and the internal 3D ratio is scaled down; ② lifting the guest clock freeze, pairing with the
 // freeze taken when going to the background.
-static void resumed(ANativeActivity *a) {game_app *s=a->instance;atomic_store(&s->activity_resumed,1);dm_android_performance_resume();if(atomic_load(&s->started)){dm_3d_scale_resumed();dm_gfx_suspend(0);guest_clock_freeze_for(1,0);dm_audio_suspend(0);dm_focus_set(1);}live_touch_refresh_geometry(s);touch_timer_start(s);}
+static void resumed(ANativeActivity *a) {game_app *s=a->instance;atomic_store(&s->activity_resumed,1);dm_android_performance_resume();if(atomic_load(&s->started)){dm_3d_scale_resumed();dm_gfx_suspend(0);guest_clock_freeze_for(1,0);dm_audio_suspend(!s->audio_focus_allowed);dm_focus_set(1);}live_touch_refresh_geometry(s);touch_timer_start(s);}
 static void paused(ANativeActivity *a) {game_app *s=a->instance;atomic_store(&s->activity_resumed,0);live_touch_cancel_sources_all(s);touch_timer_stop(s);dm_touch_pointer_clear(&s->touch_map);dm_touch_set(NULL,0);pad_clear(s);if(s->padmode_requested==1)padmode_request_touch(s);if(atomic_load(&s->started)){dm_focus_set(3);dm_audio_suspend(1);}dm_android_performance_close();}
 static void focus_changed(ANativeActivity *a,int focused) {game_app *s=a->instance;if(focused){touch_timer_start(s);return;}
     live_touch_cancel_sources_all(s);touch_timer_stop(s);dm_touch_pointer_clear(&s->touch_map);dm_touch_set(NULL,0);
@@ -1497,6 +1503,7 @@ __attribute__((visibility("default"))) void ANativeActivity_onCreate(ANativeActi
         {"getLiveTouchGlyphSnapshot","([I)I",(void*)Java_org_d2r_android_port_D2RActivity_getLiveTouchGlyphSnapshot},
         {"getLiveTouchAtlasInfo","([I)I",(void*)Java_org_d2r_android_port_D2RActivity_getLiveTouchAtlasInfo},
         {"setOverlayEnabled","(Z)V",(void*)Java_org_d2r_android_port_D2RActivity_setOverlayEnabled},
+        {"setAudioFocusAllowed","(Z)V",(void*)Java_org_d2r_android_port_D2RActivity_setAudioFocusAllowed},
         {"setQualityPreset","(I)V",(void*)Java_org_d2r_android_port_D2RActivity_setQualityPreset},
         {"setMenuOpen","(Z)V",(void*)Java_org_d2r_android_port_D2RActivity_setMenuOpen},
         {"setVirtualControllerEnabled","(Z)V",(void*)Java_org_d2r_android_port_D2RActivity_setVirtualControllerEnabled},
