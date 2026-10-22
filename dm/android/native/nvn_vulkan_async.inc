@@ -130,6 +130,8 @@ static uint64_t pending_index_oracle_queries,pending_index_oracle_nodes;
 // Register only completed fields; unknown outputs are visible before encoding, while known CPU copies retain the original publication chain.
 static void post_register_range(post_op *p) {
     if(!recording||!async_current||!p||!p->order||p->range_registered)die("Vulkan pending range registration state");
+    if(p->kind==0&&!p->source.buffer&&p->destination&&p->size)nvn_dirty_mark_gpu_written(p->destination,(size_t)p->size);
+    else if(p->kind==2&&p->destination)nvn_dirty_mark_gpu_written(p->destination,16);
     dm_pending_kind kind;uintptr_t address;uint64_t bytes;
     if(p->kind==0&&!p->source.buffer&&p->destination&&p->size){kind=DM_PENDING_UNKNOWN;address=(uintptr_t)p->destination;bytes=p->size;}
     else if(p->kind==1){kind=DM_PENDING_HOST_EFFECT;address=(uintptr_t)p->event;bytes=4;}
