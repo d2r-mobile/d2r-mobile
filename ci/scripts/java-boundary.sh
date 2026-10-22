@@ -91,6 +91,23 @@ else
     fail "driver archive regression"
 fi
 
+# Drop-haptic lifecycle and tier policy share the production classes only.
+# The native AAudio/HUD path is device-owned; this host gate covers the
+# single-slot queue semantics that otherwise replay a paused drop on resume.
+haptic_java=$work/java/haptic
+mkdir -p "$haptic_java"
+if "$javac" --release 8 -classpath "$jar" -d "$haptic_java" \
+        "$root/dm/android/java/org/d2r/android/port/DropHaptic.java" \
+        "$root/dm/android/java/org/d2r/android/port/DropHapticPoller.java" \
+        "$root/dm/android/tests/DropHapticTest.java" \
+        "$root/dm/android/tests/DropHapticPollerTest.java" >> "$log" 2>&1 \
+    && "$(dirname "$javac")/java" -cp "$jar:$haptic_java" org.d2r.android.port.DropHapticTest >> "$log" 2>&1 \
+    && "$(dirname "$javac")/java" -cp "$jar:$haptic_java" org.d2r.android.port.DropHapticPollerTest >> "$log" 2>&1; then
+    log_line "PASS drop haptic tier and pause/resume queue lifecycle"
+else
+    fail "drop haptic lifecycle regression"
+fi
+
 
 app_java=$root/dm/android/app/java
 stubs=$root/dm/android/tests/java-stubs

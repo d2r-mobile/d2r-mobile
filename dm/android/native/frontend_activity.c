@@ -107,6 +107,7 @@ void dm_vk_ui_ghost_request(int on, float px, float py, const float grid[4],
 void dm_padmode_request(int pad);
 int dm_padmode_current(void);
 int dm_padmode_busy(void);
+int dm_drop_haptic_take(void);
 static void live_touch_cursor_update(game_app *s);
 static _Atomic int display_hz;
 // 运行时可切的调试浮层（游戏内菜单的「帧率显示」）：UI 线程写，调试线程每拍读。启动初值见 debug_overlay 的读取处。
@@ -1077,6 +1078,12 @@ __attribute__((visibility("default"))) void Java_org_d2r_android_port_D2RActivit
 __attribute__((visibility("default"))) jboolean Java_org_d2r_android_port_D2RActivity_isLiveTouchReady(JNIEnv *env,jclass klass) {
     (void)env;(void)klass;return application&&application->live_touch&&application->live_provider_available&&live_touch_mode_enabled()?JNI_TRUE:JNI_FALSE;
 }
+// Host drop-haptic tier (1 heavy / 2 medium / 3 light, 0 none). This is the
+// same dm_drophaptic.c queue consumed by the iOS front end; no visual state or
+// game data is invented here.
+__attribute__((visibility("default"))) jint Java_org_d2r_android_port_D2RActivity_takeDropHaptic(JNIEnv *env,jclass klass) {
+    (void)env;(void)klass;return (jint)dm_drop_haptic_take();
+}
 // Read-only visual snapshot for the draw-only Java overlay. The array layout is
 // documented in D2RTouchOverlay; no gesture state is modified here.
 __attribute__((visibility("default"))) jint Java_org_d2r_android_port_D2RActivity_getLiveTouchOverlaySnapshot(JNIEnv *env,jclass klass,jfloatArray values,jlongArray state) {
@@ -1462,6 +1469,7 @@ __attribute__((visibility("default"))) void ANativeActivity_onCreate(ANativeActi
         {"onTextResult","(JLjava/lang/String;Z)V",(void*)Java_org_d2r_android_port_D2RActivity_onTextResult},
         {"onTouchPad","(JIIII)V",(void*)Java_org_d2r_android_port_D2RActivity_onTouchPad},
         {"isLiveTouchReady","()Z",(void*)Java_org_d2r_android_port_D2RActivity_isLiveTouchReady},
+        {"takeDropHaptic","()I",(void*)Java_org_d2r_android_port_D2RActivity_takeDropHaptic},
         {"getLiveTouchOverlaySnapshot","([F[J)I",(void*)Java_org_d2r_android_port_D2RActivity_getLiveTouchOverlaySnapshot},
         {"getLiveTouchGlyphSnapshot","([I)I",(void*)Java_org_d2r_android_port_D2RActivity_getLiveTouchGlyphSnapshot},
         {"getLiveTouchAtlasInfo","([I)I",(void*)Java_org_d2r_android_port_D2RActivity_getLiveTouchAtlasInfo},
