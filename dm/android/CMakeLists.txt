@@ -756,6 +756,10 @@ endif()
 if(NOT ANDROID)
     find_package(Python3 COMPONENTS Interpreter QUIET)
     if(Python3_Interpreter_FOUND)
+        add_test(NAME save_clone_failure_host
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/save_clone_failure_host.py
+                ${CMAKE_C_COMPILER})
+        set_tests_properties(save_clone_failure_host PROPERTIES TIMEOUT 30)
         add_test(NAME vulkan_buffer_cache_host
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/vulkan_buffer_cache_host.py
                 ${CMAKE_CURRENT_SOURCE_DIR}/native/nvn_vulkan.c
