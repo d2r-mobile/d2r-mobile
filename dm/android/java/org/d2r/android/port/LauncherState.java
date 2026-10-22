@@ -29,4 +29,10 @@ final class LauncherState {
         if (current != null && !current.isEmpty()) return current.trim();
         return saved == null ? "" : saved.trim();
     }
+
+    // A failed save recovery leaves the sole backup in place and must keep the game from starting.
+    // 存档恢复失败时唯一备份仍在原位，必须阻止启动。
+    static boolean startAllowed(boolean ready, boolean importing, String recoveryError) {
+        return ready && !importing && recoveryError == null;
+    }
 }

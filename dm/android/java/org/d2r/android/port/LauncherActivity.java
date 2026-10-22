@@ -68,6 +68,7 @@ public final class LauncherActivity extends Activity {
     private TextView resolutionItem, frameLimitItem, driverItem, importItem, statusView, startItem;
     private int resolutionIndex;
     private int frameLimitIndex;
+    private String saveRecoveryError;
     private static final String[] FRAME_LIMITS = {"0", "60", "30"};
     private int driverIndex;
     private String packageSummary = "";
@@ -346,7 +347,7 @@ public final class LauncherActivity extends Activity {
     // 没有数据包就把"启动游戏"置灰：点了会失败的事不该看起来能点。
     // Without a package the start entry greys out: something that would fail should not look available.
     private void updateStartState() {
-        boolean ready = packageReady() && !importing;
+        boolean ready = LauncherState.startAllowed(packageReady(), importing, saveRecoveryError);
         startItem.setEnabled(ready);
         startItem.setTextColor(0xff17130e);
         startItem.setAlpha(ready ? 1f : 0.45f);
@@ -588,12 +589,14 @@ public final class LauncherActivity extends Activity {
             page.addView(options,optionSize); ScrollView scroll=new ScrollView(this); scroll.addView(page);
             root.addView(scroll,new FrameLayout.LayoutParams(-1,-1));
         }
+        recoverSave();
         refreshFromDisk(); setContentView(root);
     }
 
     @Override protected void onResume() {
         super.onResume();
         if (stepAsideForRunningGame()) return;
+        recoverSave();
         refreshFromDisk();
     }
 
@@ -626,12 +629,27 @@ public final class LauncherActivity extends Activity {
     // existing save (the old directory is still there until the swap).
     private File saveDirectory() { return new File(getFilesDir(), "save"); }
 
+    // 启动/回前台/导出前恢复上次中断的替换；失败时保留 .replaced 备份并阻止启动。
+    // Recover an interrupted replacement before launch/resume/export; on failure keep the .replaced backup and block start.
+    private void recoverSave() {
+        try {
+            SaveArchive.recover(saveDirectory());
+            saveRecoveryError = null;
+        } catch (IOException error) {
+            saveRecoveryError = error.getMessage() == null ? String.valueOf(error) : error.getMessage();
+            if (statusView != null)
+                setStatus(String.format(text("dmAndroidSaveImportFailed"), saveRecoveryError), WARNING);
+        }
+    }
+
     // 文件名带时间戳，方便留多份；玩家仍可在选择器里改名。| Timestamped so several copies are easy; renameable in the picker.
     private String saveArchiveName() {
         return "d2r-save-" + new SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(new Date()) + ".zip";
     }
 
     private void exportSave() {
+        recoverSave();
+        if (saveRecoveryError != null) return;
         if (!saveDirectory().isDirectory()) { setStatus(text("dmAndroidSaveNone"), WARNING); return; }
         Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
@@ -783,6 +801,10 @@ public final class LauncherActivity extends Activity {
     }
 
     private void startGame() {
+        if (saveRecoveryError != null) {
+            setStatus(String.format(text("dmAndroidSaveImportFailed"), saveRecoveryError), WARNING);
+            return;
+        }
         if (importing) {
             setStatus(String.format(text("dmAndroidLaunchImporting"), 0), WARNING);
             return;
@@ -850,6 +872,10 @@ public final class LauncherActivity extends Activity {
     }
 
     private void startPreparedGame() {
+        if (saveRecoveryError != null) {
+            setStatus(String.format(text("dmAndroidSaveImportFailed"), saveRecoveryError), WARNING);
+            return;
+        }
         setStatus("", PARCHMENT);
         StringBuilder content = new StringBuilder();
         content.append("# 由启动界面写入 | written by the launcher\n");

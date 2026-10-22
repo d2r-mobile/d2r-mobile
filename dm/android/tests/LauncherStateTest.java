@@ -32,6 +32,11 @@ public final class LauncherStateTest {
         check("new".equals(LauncherState.retainedSummary("new", "old")),
                 "current summary wins over stale saved text");
 
+        check(LauncherState.startAllowed(true, false, null), "ready package with no recovery error may start");
+        check(!LauncherState.startAllowed(true, false, "recovery failed"),
+                "save recovery failure blocks start even when the package is ready");
+        check(!LauncherState.startAllowed(true, true, null), "importing still blocks start");
+
         if (failures != 0) throw new AssertionError(failures + " launcher-state failures");
         System.out.println("PASS: launcher status uses verified readiness and retains display summary");
     }
