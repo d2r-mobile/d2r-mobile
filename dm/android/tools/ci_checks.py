@@ -140,6 +140,40 @@ def main():
                                 REPO / "dm/host/dm_i18n.c"], workspace / "android_ui_text_test",
                             tuple(android_flags))
 
+        # #38 text dialog: production name/numeric rules and actual SpanWatcher
+        # callbacks for composition-only changes (finishComposingText /
+        # setComposingRegion), compiled against the public android.jar.
+        text_rules = workspace / "text-entry-rules"
+        text_rules.mkdir()
+        android_jar = Path(os.environ.get("ANDROID_JAR", ""))
+        if not android_jar.is_file():
+            for candidate in (TOOLS / "platform/android.jar",
+                              TOOLS / "sdk/platforms/android-35/android.jar"):
+                if candidate.is_file():
+                    android_jar = candidate
+                    break
+        rules_sources = [
+            ROOT / "java/org/d2r/android/port/TextEntryRules.java",
+            ROOT / "java/org/d2r/android/port/TextEntryComposition.java",
+            ROOT / "tests/TextEntryRulesTest.java",
+            ROOT / "tests/TextEntryCompositionTest.java",
+        ]
+        if not (JAVAC.exists() and JAVA.exists()):
+            skipped.append("文本输入规则（TextEntryRules/Composition）：没有项目 JDK（%s）" % JAVAC)
+        elif not android_jar.is_file():
+            skipped.append("文本输入规则（TextEntryRules/Composition）：没有 android.jar（%s）" % android_jar)
+        else:
+            result = run([JAVAC, "--release", "8", "-encoding", "UTF-8", "-cp", android_jar,
+                          "-d", text_rules, *rules_sources])
+            if result.returncode != 0:
+                report("文本输入规则（编译）", False, (result.stdout or "").strip()[-400:])
+            else:
+                for test in ("TextEntryRulesTest", "TextEntryCompositionTest"):
+                    result = run([JAVA, "-cp", str(text_rules) + os.pathsep + str(android_jar),
+                                  "org.d2r.android.port." + test])
+                    report("文本输入规则（%s）" % test, result.returncode == 0,
+                           (result.stdout or "").strip().splitlines()[-1] if result.stdout else "")
+
         # 存档的压缩/解压/原子替换、数据包导入的规则与验收都是纯 Java（不碰 Android API），用项目 JDK 在宿主机上跑。
         # 数据包这一支是补上来的：导入曾经只检查"每个类别至少一个文件"，一个残缺的包能通过并让游戏开不了机。
         # Save archive (zip/unzip/atomic swap) and package import (its rules and acceptance check) are both plain

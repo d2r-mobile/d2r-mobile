@@ -17,6 +17,7 @@ import android.text.Editable;
 import android.text.InputFilter;
 import android.text.TextWatcher;
 import android.text.InputType;
+import android.view.inputmethod.BaseInputConnection;
 import android.view.WindowManager;
 import android.view.Display;
 import android.view.InputDevice;
@@ -39,7 +40,6 @@ import java.util.Locale;
 import android.view.Gravity;
 import android.graphics.Typeface;
 import android.graphics.drawable.ColorDrawable;
-import java.nio.charset.StandardCharsets;
 
 public final class D2RActivity extends NativeActivity {
     private AlertDialog textDialog;
@@ -653,35 +653,30 @@ public final class D2RActivity extends NativeActivity {
             dialog.setOnCancelListener(d -> finishText(request, "", false));
             dialog.setOnDismissListener(d -> finishText(request, "", false));
             dialog.setOnShowListener(d -> {
+                final boolean[] validNow = {true};
                 Runnable validate = () -> {
                     String text = input.getText().toString();
-                    boolean valid = true;
-                    if (nameRule && !text.isEmpty()) {
-                        int bytes = text.getBytes(StandardCharsets.UTF_8).length;
-                        int separators = 0;
-                        for (int i = 0; i < text.length(); i++) {
-                            char c = text.charAt(i);
-                            if (c == '-' || c == '_') separators++;
-                            else if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
-                                (c >= '\u4e00' && c <= '\u9fff') || (c >= '\u3400' && c <= '\u4dbf'))) valid = false;
-                        }
-                        valid &= bytes >= 2 && bytes <= 15 && separators <= 1 &&
-                            text.charAt(0) != '-' && text.charAt(0) != '_' &&
-                            text.charAt(text.length() - 1) != '-' && text.charAt(text.length() - 1) != '_';
+                    boolean composing = BaseInputConnection.getComposingSpanStart(input.getText()) >= 0;
+                    boolean valid = TextEntryRules.valid(text, nameRule, numericMax, composing);
+                    validNow[0] = valid;
+                    String detail = message == null ? "" : message;
+                    if (nameRule && composing) {
+                        detail = detail.isEmpty() ? text("dmNamePickIme")
+                            : detail + "\n" + text("dmNamePickIme");
                     }
-                    if (numericMax >= 0) {
-                        try { long value = Long.parseLong(text); valid = !text.isEmpty() && value >= 0 && value <= numericMax; }
-                        catch (NumberFormatException e) { valid = false; }
-                    }
+                    dialog.setMessage(detail);
                     dialog.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(valid);
                 };
+                TextEntryComposition.observe(input.getText(), validate);
                 input.addTextChangedListener(new TextWatcher() {
                     public void beforeTextChanged(CharSequence s, int start, int count, int after) {}
                     public void onTextChanged(CharSequence s, int start, int before, int count) { validate.run(); }
-                    public void afterTextChanged(Editable s) {}
+                    public void afterTextChanged(Editable s) { validate.run(); }
                 });
-                dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v ->
-                    finishText(request, input.getText().toString(), true));
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+                    validate.run();   // composition may have changed without a text edit since the last callback
+                    if (validNow[0]) finishText(request, input.getText().toString(), true);
+                });
                 validate.run();
                 input.requestFocus();
                 dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE |
