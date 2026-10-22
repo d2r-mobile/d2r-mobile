@@ -2,11 +2,11 @@
 
 中文：[README.zh-CN.md](README.zh-CN.md)
 
-## Current playable branch (2026-10-21)
+## Current playable branch (2026-10-22)
 
 The development build now starts the real game, enters camp and saves/exits on the target phone. Turnip is the rendering baseline. Combat, skills, pickup and inventory/stash dragging have user verification; complete touch parity, broad lifecycle/device coverage, sustained 60 fps and energy savings are not established. Current priorities and known limitations are in the [fork README](../../docs/android/README.md#current-status) and project board.
 
-The Android implementation is included on both `main` and `dev`. Build the playable APK with `python3 dm/android/tools/build.py --game-run`; `app/build.sh` is the synthetic diagnostic build.
+Use `main` as the accepted Android baseline. The former integration branch is consolidated through PR; new topic PRs target `main`. The current APK builder is `tools/build.py --game-run`, with reference toolchain and local resources. Android game-data ZIP import and driver choices are described in the [current user instructions](../../README.md#trying-a-development-build).
 
 **Historical tooling below:** the remaining sections document the earlier standalone runtime, fixtures and synthetic diagnostic milestones. Their counts, blockers and old device results apply to those checkpoints, not to the current game frontend. In particular, `app/build.sh` builds the synthetic diagnostic, not the playable APK; `paths.sh` workspace conventions below describe those tools. Archived contract tasks are not claimed as proven by the reference runtime first run. Preserve strict validation and failure boundaries.
 

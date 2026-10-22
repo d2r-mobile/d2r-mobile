@@ -6,11 +6,11 @@ An experimental Android port of [the project-ops/d2r-mobile](https://github.com/
 
 **The development build now runs the game on the target phone.** Startup, character selection, entering camp and normal save/exit have been tested. The user has also verified combat, skills, pickup, inventory dragging and stash dragging. Full device compatibility, complete iOS touch parity and sustained 60 fps remain work in progress.
 
-> **Use `main` for the current playable source.** The default `main` branch still contains the earlier implementation; the overall integration is under review in PR. Updating this README does not merge that implementation into `main`.
+> **`main` is this fork's accepted Android development baseline.** The former Android integration is consolidated through PR. Use short-lived topic branches for changes; fetch the original project as `upstream/main` and review applicable updates before merging them into our `main`.
 
 ## Current status
 
-Updated **2026-10-21**, based on device observations through October 20. Follow the project board for current work and acceptance boundaries.
+Updated **2026-10-22**. Follow the project board for current work and acceptance boundaries.
 
 | Area | Verified progress | Remaining work |
 |---|---|---|
@@ -26,15 +26,19 @@ Android skill buttons use transparent silver silhouettes following the upstream 
 
 Performance varies by scene and over time. Reaching about 60 fps in some camp samples is not evidence of stable 60 fps in combat or a long session. Energy savings have not been established. Apple performance measurements apply to the Apple build.
 
-The performance overlay reports a rolling two-second presented FPS and P95/worst presentation interval when the driver exposes display timing. Without that data it explicitly reports submitted FPS instead. For uniform 60/30 fps, intervals should stay near 16.7/33.3 ms; an average FPS alone cannot establish smoothness. The limiter offers Uncapped, 60 and 30; a cap cannot speed up a frame that already exceeds its time budget. Both caps request refresh-aligned present times (`debug.d2r.display_pacing=0` disables this), so a late frame on a 120 Hz panel is no longer followed by an 8.3 ms catch-up frame.
+The performance overlay reports a rolling two-second presented FPS and P95/worst presentation interval when the driver exposes display timing. Without that data it explicitly reports submitted FPS instead. For uniform 60/30 fps, intervals should stay near 16.7/33.3 ms; an average FPS alone cannot establish smoothness. The limiter offers Uncapped, 60 and 30; a cap cannot speed up a frame that already exceeds its time budget. Both caps request refresh-aligned present times (`debug.d2r.display_pacing=0` disables this), reducing 8.3 ms catch-up intervals after late frames on a 120 Hz panel.
 
 The launcher's Debug collection switch is off by default and applies on the next game launch. FPS display is independent: with collection off it only shows FPS and presentation intervals. Detailed timing, battery/memory sampling, slow-frame files, optional captures and input traces require collection; fatal errors and gameplay synchronization remain active. With collection on, abnormal-frame logging uses a cap-aware threshold and normally samples at most once per second; per-draw timing still requires its advanced diagnostic flag. Disabling diagnostics does not establish sustained 60 fps.
 
-The CPU candidate combines single-pass descriptor encoding/hash, reuse of identical compute bindings, and a shared sampler/texture lookup lock. Local checks and short stationary camp runs pass. In the measured sequence the combined60fps candidate averaged56.2FPS versus54.2/50.6FPS for baseline runs, but P95 remained25ms and temperature/order differed; stable60 and repeatable power savings remain unproven. The30fps candidate averaged30.0FPS with P95 33.3ms.
+The accepted CPU changes combine single-pass descriptor encoding/hash, reuse of identical compute bindings, and a shared sampler/texture lookup lock. Local checks and short stationary camp runs pass. In the measured sequence the combined60fps candidate averaged56.2FPS versus54.2/50.6FPS for baseline runs, but P95 remained25ms and temperature/order differed; stable60 and repeatable power savings remain unproven. The30fps candidate averaged30.0FPS with P95 33.3ms.
 
 Fullscreen Medium and Low keep the UI/output at720 high and render internal3D at640 and480 high respectively. On a1600×720 output, Medium's nominal3D pixel count is about99% of1280×720; similar pixel counts do not guarantee equal frame times.
 
 ADPF now receives paired translation-thread frame work and the actual capped frame budget; unavailable APIs fall back normally, and uncapped work retires any previous capped session. Vulkan keeps the conservative three-slot/256-draw defaults and the 32 MiB temporary-memory limit. A short six-slot camp trial reduced ring waits but did not establish higher FPS; eight-slot and larger-draw-limit comparisons remain pending. This is not a stable-60-FPS or power-saving claim.
+
+Merged CPU work includes the thread-context cache collision fix, small guest reads under the existing heap permission lease with safe-read fallback, and coalesced host-write unprotection. The latter preserves exact page coverage and generations; an earlier six-minute camp run reduced protection calls from about 300 to 28–36 per frame and cumulative protection time from 1.25–1.35 to 0.42–0.50 ms/frame. These are work-reduction measurements, not proof of higher FPS or lower power. The user also confirmed that camp-boundary movement interruption and the transient question-mark skill icons no longer reproduce. Lock spinning, attachment-clear folding and narrower image usage are not enabled in the accepted build.
+
+Read diagnostic values within their scope: CPU time covers NVN command translation, GPU time covers measured command batches, and snapshot MiB/frame counts guest-memory snapshot reads. They are not whole-frame CPU time, complete GPU time or total GPU bandwidth. The watts estimate uses battery current and voltage; while charging, it cannot establish game or whole-device power consumption. Compare repeated runs under matching scene, temperature and charging conditions.
 
 ## Trying a development build
 
@@ -52,9 +56,9 @@ Only a prepared Android package is accepted by this import flow; an arbitrary Sw
 
 ## Known limitations and priorities
 
-- Holding movement across a camp/area transition can stop movement until the finger is lifted and pressed again.
+- The user has verified the camp-transition movement fix in a local candidate; integration and broader area-transition checks remain open. Skill buttons can still briefly flash question marks during transitions.
 - The complete iOS touch presentation is still being adapted. Remaining map-goal/rift HUD art and haptic integration, shop icon appearance and full interaction/device coverage stay open; working combat and dragging do not close all touch tasks.
-- Sustained performance is the current priority: profile the CPU translation path and improve measured hotspots while preserving GPU synchronization, resource ownership and validation. A working ADPF API experiment did not demonstrate a repeatable FPS improvement and was not adopted.
+- Sustained performance is the current priority: profile the CPU translation path and improve measured hotspots while preserving GPU synchronization, resource ownership and validation. ADPF frame wiring is present, but successful API calls have not established a repeatable FPS or power benefit.
 - Background/resume, keyboard, controllers, audio, save recovery and a complete playthrough require broader acceptance. Historical diagnostic or contract tasks archived during cleanup are not claimed as proven by the real-game first run.
 
 ## Development
@@ -77,6 +81,8 @@ The game-free tools use CMake 3.22+, a C compiler and Capstone 5; native ARM64 c
 The playable-APK entry is `dm/android/tools/build.py` with `--game-run`. It needs the reference toolchain, SDK/build tools, JDK, shader tooling and locally prepared resources; its `--turnip` and `--touch-art` inputs must be supplied as appropriate. A generic APK can import game modules on the phone. Do not publish builds embedding game code or derived game artwork. `dm/android/app/build.sh` builds the older synthetic diagnostic APK; `setup.sh` is the upstream Apple preparation flow.
 
 Start contributions from , agree on a bounded issue and submit a topic PR to `main`. Report the exact source commit, tests and actual device conditions. Keep unsupported paths explicit, preserve scanning/W^X/ownership/failure checks, and separate implementation from device acceptance. Keep game content, credentials, saves and raw device logs out of GitHub. See [CONTRIBUTING.md](../../CONTRIBUTING.md).
+
+At each task closeout, the coordinator reviews the exact PR head and required evidence, closes only issues whose acceptance scope is satisfied, and merges only accepted changes. Remove topic branches only after confirming their work is preserved and no active worktree or worker needs them; keep pending candidates and unfinished PRs. Update both English and Chinese READMEs when behavior, limitations or verified progress changes, distinguishing merged source from local device candidates.
 
 ## Credits and license
 

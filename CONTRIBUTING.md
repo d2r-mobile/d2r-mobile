@@ -2,6 +2,12 @@
 
 中文: [CONTRIBUTING.zh-CN.md](CONTRIBUTING.zh-CN.md)
 
+## Android fork workflow
+
+This fork develops Android on `main`. Create short-lived topic branches from the current `origin/main` and target PRs there. Track the original project through the `upstream` remote; review useful updates on a separate synchronization branch before merging them into our `main`. Preserve upstream code and license notices rather than deleting other platforms to rename the project.
+
+For game-free Android checks use `bash ci/scripts/ci.sh host` and the Android/Java jobs documented in [ci/README.md](ci/README.md). Build the playable APK with `dm/android/tools/build.py --game-run` as described in [README.md](README.md). The Apple preparation and device commands below are upstream references, not prerequisites for every Android-only change. Do not include game files, keys, saves or private device logs in commits.
+
 This page covers three things: what you must be able to run before changing anything, the three rules of this repository, and what to attach when reporting a problem. How the parts work is not repeated here; see [dm/README.md](dm/README.md) and [dm/verify/README.md](dm/verify/README.md).
 
 ## Before you change anything: get the tests passing
