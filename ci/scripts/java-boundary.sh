@@ -91,6 +91,17 @@ else
     fail "driver archive regression"
 fi
 
+save_java=$work/java/save
+mkdir -p "$save_java"
+if "$javac" --release 11 -d "$save_java" \
+        "$root/dm/android/java/org/d2r/android/port/SaveArchive.java" \
+        "$root/dm/android/tests/SaveArchiveTest.java" >> "$log" 2>&1 \
+    && "$(dirname "$javac")/java" -cp "$save_java" org.d2r.android.port.SaveArchiveTest >> "$log" 2>&1; then
+    log_line "PASS save archive integrity, export failures and recovery"
+else
+    fail "save archive integrity regression"
+fi
+
 # Drop-haptic lifecycle and tier policy share the production classes only.
 # The native AAudio/HUD path is device-owned; this host gate covers the
 # single-slot queue semantics that otherwise replay a paused drop on resume.
