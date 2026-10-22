@@ -72,6 +72,39 @@ int main(void) {
     h_au_Stop(&guest);
     CHECK(atomic_load(&a.null_run) == 0);
 
-    puts("PASS: actual suspend/Stop/Start/Close keep one consumer across failed and confirmed AAudio stops");
+    // 7) A transient start failure must not permanently silence output: the next resume reopens a fresh stream.
+    reset(&a, 0);
+    fake_aaudio.start_result = -1; fake_aaudio.open_calls = 0; fake_aaudio.close_calls = 0;
+    g_suspended = 0; a.state = STATE_STOPPED;
+    h_au_Start(&guest);
+    CHECK(a.au == NULL && atomic_load(&a.null_run) == 1);
+    fake_aaudio.start_result = 0;
+    dm_audio_suspend(1);
+    dm_audio_suspend(0);
+    CHECK(a.au != NULL && atomic_load(&a.au_active) == 1 && atomic_load(&a.null_run) == 0);
+    CHECK(fake_aaudio.open_calls >= 1);
+    h_au_Stop(&guest);
+
+    // 8) A route/disconnect state must close the stale stream and open a fresh one before start.
+    reset(&a, 0);
+    fake_aaudio.open_calls = 0; fake_aaudio.close_calls = 0;
+    g_suspended = 0; a.state = STATE_STOPPED; fake_aaudio.state = AAUDIO_STREAM_STATE_DISCONNECTED;
+    h_au_Start(&guest);
+    CHECK(a.au != NULL && atomic_load(&a.au_active) == 1 && atomic_load(&a.null_run) == 0);
+    CHECK(fake_aaudio.close_calls >= 1 && fake_aaudio.open_calls >= 1);
+    h_au_Stop(&guest);
+
+    // 9) Disconnect while playing: suspend hands off to the sink; resume replaces the stale handle.
+    reset(&a, 0);
+    fake_aaudio.open_calls = 0; fake_aaudio.close_calls = 0;
+    g_suspended = 0; a.state = STATE_STARTED; fake_aaudio.state = AAUDIO_STREAM_STATE_DISCONNECTED;
+    dm_audio_suspend(1);
+    CHECK(atomic_load(&a.null_run) == 1 && atomic_load(&a.au_active) == 0);
+    dm_audio_suspend(0);
+    CHECK(a.au != NULL && atomic_load(&a.au_active) == 1 && atomic_load(&a.null_run) == 0);
+    CHECK(fake_aaudio.close_calls >= 1 && fake_aaudio.open_calls >= 1);
+    h_au_Stop(&guest);
+
+    puts("PASS: actual suspend/Stop/Start/Close keep one consumer across failed and confirmed AAudio stops; reopen after transient start failure and disconnect");
     return 0;
 }

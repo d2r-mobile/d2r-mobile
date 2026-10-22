@@ -323,6 +323,25 @@ static int real_audio(void) {
 #endif
 }
 
+// Drop a stream only after the caller has established that its callback is retired (or that it is already
+// disconnected). The AAudio handle is not reusable after CLOSE/DISCONNECTED, so the next start must open a
+// fresh stream instead of treating the stale handle as a valid sink.
+static void au_release(aout *a) {
+    if (!a->au) return;
+    AudioUnitUninitialize(a->au);
+    AudioComponentInstanceDispose(a->au);
+    a->au = NULL;
+    atomic_store_explicit(&a->au_active, 0, memory_order_release);
+}
+static int au_prepare(aout *a) {
+#ifdef DM_AUDIO_ANDROID
+    if (a->au && !atomic_load_explicit(&a->au_active, memory_order_acquire) &&
+        AAudioStream_getState(a->au) == AAUDIO_STREAM_STATE_DISCONNECTED) au_release(a);
+    if (!a->au && real_audio()) (void)au_open(a);
+#endif
+    return a->au != NULL;
+}
+
 // AudioOutParameter = { int32 sampleRate; uint16 channelCount; uint16 _r; ... }，0 = 系统默认（48 kHz / 2 声道）
 // AudioOutParameter = { int32 sampleRate; uint16 channelCount; uint16 _r; ... }, 0 = system default (48 kHz / 2 channels)
 HLE_FORCE("_ZN2nn5audio27InitializeAudioOutParameterEPNS0_17AudioOutParameterE", "音频输出参数默认值", void, h_au_InitParam, uint8_t *p) { memset(p, 0, 8); }
@@ -359,12 +378,14 @@ HLE_FORCE("_ZN2nn5audio12OpenAudioOutEPNS0_8AudioOutEPNS_2os11SystemEventEPKcRKN
 HLE_FORCE("_ZN2nn5audio13StartAudioOutEPNS0_8AudioOutE", "开始播放", Result, h_au_Start, void *g) {
     aout *a = ao(g);
     pthread_mutex_lock(&a->m); int was = atomic_load_explicit(&a->state, memory_order_relaxed); atomic_store_explicit(&a->state, STATE_STARTED, memory_order_release); pthread_mutex_unlock(&a->m);
-    if (was == STATE_STARTED) return RES_OK;
+    if (was == STATE_STARTED && (atomic_load_explicit(&a->au_active, memory_order_acquire) ||
+                                 atomic_load_explicit(&a->null_run, memory_order_acquire))) return RES_OK;
     if (atomic_load_explicit(&a->au_active, memory_order_acquire)) return RES_OK;   // old callback is still the sole consumer
     if (atomic_load_explicit(&a->null_run, memory_order_acquire)) return RES_OK;   // single consumer already owns the queues
+    if (!g_suspended) (void)au_prepare(a);
     if (a->au && !g_suspended) {
         OSStatus st = AudioOutputUnitStart(a->au);
-        if (st) { LOG("【红】AudioUnit 启动失败：这一路改用静音接收端（不出声）"); AudioUnitUninitialize(a->au); AudioComponentInstanceDispose(a->au); a->au = NULL; }
+        if (st) { LOG("【红】AudioUnit 启动失败：这一路改用静音接收端（不出声）"); au_release(a); }
         else atomic_store_explicit(&a->au_active, 1, memory_order_release);
     }
     if (!a->au || g_suspended) null_start(a);
@@ -447,6 +468,9 @@ void dm_audio_suspend(int on) {
                 null_start(a);
             } else {
                 null_stop(a);
+#ifdef DM_AUDIO_ANDROID
+                (void)au_prepare(a);
+#endif
                 if (!a->au) { null_start(a); continue; }
                 if (atomic_load_explicit(&a->au_active, memory_order_acquire)) continue;   // 暂停停止未确认：旧回调从未停，继续由它消费
                 OSStatus st = AudioOutputUnitStart(a->au);
@@ -454,8 +478,7 @@ void dm_audio_suspend(int on) {
 #ifdef DM_AUDIO_ANDROID
                     // AAudio start failure must quiesce the stream before sink handoff.
                     LOG("【红】AAudio 恢复失败（状态 %d）：先关闭流，再由静音接收端顶住", (int)st);
-                    AudioUnitUninitialize(a->au); AudioComponentInstanceDispose(a->au); a->au = NULL;
-                    atomic_store_explicit(&a->au_active, 0, memory_order_release);
+                    au_release(a);
 #else
                     // Preserve AudioUnit's existing retry on the next interruption-end notification.
                     LOG("【红】AudioUnit 恢复失败（状态 %d）：保持静音接收端，等下次恢复重试", (int)st);

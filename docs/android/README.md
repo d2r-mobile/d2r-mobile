@@ -24,6 +24,8 @@ Updated **2026-10-22**. Follow the project board for current work and acceptance
 
 Android skill buttons use transparent silver silhouettes following the upstream iOS mask. Normal and pressed frames are converted once and cached. The bound arrow and fist icons, pressed state and empty slots have been visually checked on the test phone; other class skills still need individual verification.
 
+Android audio can reopen a failed or disconnected AAudio stream on a later start/resume, while retaining the single-consumer fallback. Production-code failure regressions pass; phone call/focus, headset/Bluetooth changes and audible recovery still require device checks. Immediate recovery from a route change without a resume is not established.
+
 Performance varies by scene and over time. Reaching about 60 fps in some camp samples is not evidence of stable 60 fps in combat or a long session. Energy savings have not been established. Apple performance measurements apply to the Apple build.
 
 The performance overlay reports a rolling two-second presented FPS and P95/worst presentation interval when the driver exposes display timing. Without that data it explicitly reports submitted FPS instead. For uniform 60/30 fps, intervals should stay near 16.7/33.3 ms; an average FPS alone cannot establish smoothness. The limiter offers Uncapped, 60 and 30; a cap cannot speed up a frame that already exceeds its time budget. Both caps request refresh-aligned present times (`debug.d2r.display_pacing=0` disables this), reducing 8.3 ms catch-up intervals after late frames on a 120 Hz panel.
