@@ -124,6 +124,10 @@ static shader_entry *shader_load_by_key(const char *key,int stats,int fatal) {
     }
     void *code=fatal?read_shader_file(key,"spv",&bytes):read_shader_file_opt(key,"spv",&bytes);
     if(!code){free(meta);pthread_mutex_unlock(&graphics_object_lock);return NULL;}
+    if(!dm_nvn_shader_entry_valid(code,bytes,meta[2])){
+        if(fatal)die("Invalid Vulkan shader entry/stage %s",key);
+        free(code);free(meta);pthread_mutex_unlock(&graphics_object_lock);return NULL;
+    }
 #ifdef __ANDROID__
     // 只有实际采用该 capability 的模块才要求功能已启用；未使用路径不因
     // 无关 feature 失败，不支持时在加载该模块处准确拒绝。
