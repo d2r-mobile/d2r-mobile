@@ -1,4 +1,5 @@
 // 预编译 SPIR-V、描述符绑定及计算提交。| Precompiled SPIR-V, descriptor binding and compute submission.
+#include "nvn_vulkan_reflection.h"
 typedef struct { uint32_t kind,binding,slot,cb_slot,cb_offset,handle,type,count,flags,separate; } shader_binding;
 typedef struct { VkDescriptorType type; uint32_t offset; int storage_slot,uniform_pointer,dynamic_index; } shader_binding_plan;
 typedef struct shader_entry {
@@ -117,7 +118,7 @@ static shader_entry *shader_load_by_key(const char *key,int stats,int fatal) {
     resource_create_start creation=resource_create_begin();
     size_t bytes;uint32_t *meta=fatal?read_shader_file(key,"meta",&bytes):read_shader_file_opt(key,"meta",&bytes);
     if(!meta){pthread_mutex_unlock(&graphics_object_lock);return NULL;}
-    if(bytes<28||memcmp(meta,"DMVK",4)||meta[1]!=1||meta[4]>256||meta[5]>65536||meta[6]!=32||bytes!=28+meta[4]*40+meta[5]+128){
+    if(!dm_nvn_shader_reflection_valid(meta,bytes)){
         if(fatal)die("Invalid Vulkan reflection %s",key);
         free(meta);pthread_mutex_unlock(&graphics_object_lock);return NULL;
     }
