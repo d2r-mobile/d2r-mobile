@@ -98,7 +98,7 @@ What it cannot do yet:
 - No sound: at launch the log has a line `audio：输出设备「…」…，系统缺省输出「…」…` (the output device in use and the system default output; a mismatch is marked red), and on exit a line `声卡回调累计 N` — N = 0 means no sound was played this time. (These log lines are in Chinese.)
 - The older-API build (`D2R Mobile M3.app`) uses a separate pair of directories with M3 in the name.
 
-**iCloud save sync: not available in an App you build from this repository.** The program has the same sync as on iPhone / iPad wired in, but it needs the App to carry the iCloud signing entitlement; an App you build yourself is signed locally without it, so saves stay on this Mac, the log records one line saying iCloud is unavailable and only local saves are used, and the game runs as usual. To bring your phone's progress over, import it by hand as below.
+**iCloud save sync: off by default in an App you build from this repository; a paid developer account can turn it on.** The program has the same sync as on iPhone / iPad wired in, but it needs the App to carry the iCloud signing entitlement. By default the App is signed locally without it, so saves stay on this Mac, the log records one line saying iCloud is unavailable and only local saves are used, and the game runs as usual. With a paid developer account, download a Mac provisioning profile that carries iCloud, put the `.provisionprofile` into `~/dm-work/mac-sign` (or point `DM_MAC_SIGN_DIR` at its folder) and build with `DM_MAC_ICLOUD=1 dm/tools/mac_app.sh`: the script reads the team, bundle identifier and entitlements from the profile and signs with the matching certificate in your keychain. The bundle identifier in the profile decides the iCloud container, so a profile for your iOS App's identifier syncs with your iPhone / iPad. Contributed by [@xielh96](https://github.com/xielh96). Without a paid account, bring your phone's progress over by importing it by hand as below.
 
 ### Importing saves from an iPhone / iPad
 
@@ -144,5 +144,5 @@ After a forced quit or a crash, the system's "reopen windows?" dialog no longer 
 - "Prompts switch back to gamepad letters when a gamepad is used" was verified by simulation; no physical gamepad has been connected.
 - The free town portal on ZR + Space of a gamepad is not there.
 - The quest bar on the left in rifts is not there.
-- An App you build yourself has no iCloud save sync and does no update check (it does not go online).
+- An App you build yourself does no update check (it does not go online), and has iCloud save sync only when built with `DM_MAC_ICLOUD=1` and a paid account's profile (see "Saves, logs and iCloud").
 - The older-API build was played on macOS 15 by one player in our test group (Mac mini M4, macOS 15.7, using a package built elsewhere); building it from this repository on a Mac running macOS 15 has not been operated by a person.
