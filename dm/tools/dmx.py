@@ -36,7 +36,8 @@ def index():
     global _IDX
     if _IDX is None:
         _IDX = {}
-        with open(os.path.join(ROOT, "build_manifest.psv"), encoding="utf-8") as f:
+        # 3.3.94012 的清单在文字索引之后带二进制数据：解不开的字节替换掉，前面合法的竖线分隔行照常可用
+        with open(os.path.join(ROOT, "build_manifest.psv"), encoding="utf-8", errors="replace") as f:
             next(f)
             for line in f:
                 if line.startswith("#"):

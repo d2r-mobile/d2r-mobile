@@ -1,11 +1,14 @@
 """现有自定义页中两位置换组开关的跨语言契约。 | Cross-language contract for the two-position switch in the existing Custom page. | Cross-language contract for the two-position switch in the existing Custom page."""
+import importlib
 import json
+import os
 from pathlib import Path
 import re
 import sys
 
 root = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(root / 'ios/tools'))
+os.environ.pop('MOVIE_FFMPEG', None)   # 缺省包的自定义页（「配音」行只在 MOVIE_FFMPEG=1 时有，下面另核）
 import touch_layout as layout
 
 out, _ = layout._custom_page('"name": "VideoOptionsPanel", "name": "OptionsTable"')
@@ -28,10 +31,20 @@ for name in ('TouchCustom_touch_swap_above', 'TouchCustom_touch_swap_above_near'
 assert nodes['TouchCustom_touch_swap_above_Text']['fields']['rect']['height'] == 360
 for suffix in ('Near', 'Far'):
     assert any(n.get('fields', {}).get('text') == '@dmCustomTouchSwap' + suffix for n in nodes.values())
-host = (root / 'host/dm_custom.c').read_text()
-keys = re.findall(r'"([a-z_0-9]+)"', re.search(r'k_keys\[\].*?=\s*\{(.*?)\}', host, re.S)[1])
-assert keys == [key for key, _ in layout._CUSTOM_ALL]
-defaults = [int(x) for x in re.search(r'k_def\[NK\].*?=\s*\{(.*?)\}', host, re.S)[1].split(',')]
-assert len(defaults) == len(keys) and defaults[keys.index('touch_swap_above')] == 0
+host_src = (root / 'host/dm_custom.c').read_text()
+def host_variant(voice):   # 宿主按 VOICE_ROW（DM_MOVIE_FFMPEG）条件编译的两份键表：缺省去掉 #if VOICE_ROW 块，开关包只去掉预处理行
+    keep = re.sub(r'#if VOICE_ROW\n(.*?)#endif\n', (lambda m: m[1]) if voice else '', host_src, flags=re.S)
+    return re.sub(r'(?m)^#.*\n', '', keep)
+for voice in (False, True):
+    if voice:
+        os.environ['MOVIE_FFMPEG'] = '1'; layout = importlib.reload(layout)
+    host = host_variant(voice)
+    keys = re.findall(r'"([a-z_0-9]+)"', re.search(r'k_keys\[\].*?=\s*\{(.*?)\}', host, re.S)[1])
+    assert keys == [key for key, _ in layout._CUSTOM_ALL], (voice, keys)
+    assert ('voice' in keys) == voice
+    defaults = [int(x) for x in re.search(r'k_def\[NK\].*?=\s*\{(.*?)\}', host, re.S)[1].split(',')]
+    assert len(defaults) == len(keys) and defaults[keys.index('touch_swap_above')] == 0
+os.environ.pop('MOVIE_FFMPEG'); layout = importlib.reload(layout)
+host = host_src
 assert 'TouchCustom_touch_swap_above_near' in host
-print('PASS touch layout options: generated radio pair, labels, defaults, host order and scrolling row extent')
+print('PASS touch layout options: generated radio pair, labels, defaults, host order (default and MOVIE_FFMPEG=1) and scrolling row extent')
