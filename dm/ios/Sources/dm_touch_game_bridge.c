@@ -8,7 +8,18 @@ static dm_tg_group group;
 static dm_tg_hud_cohort hud_cohort;
 static int scene_game;
 static uint64_t scene_epoch,world_epoch;
+static uint64_t ui_generation;
 static const module_t *main_module;
+void dm_touch_game_set_layout(uint64_t generation) {
+    pthread_mutex_lock(&lock);
+    if(ui_generation!=generation) {
+        ui_generation=generation;dm_tg_hud_reset(&hud_cohort,world_epoch);
+        memset(&group,0,sizeof group);
+        int supported=latest.supported;memset(&latest,0,sizeof latest);latest.supported=supported;
+        latest.scene_epoch=scene_epoch;latest.world_epoch=world_epoch;latest.portal.slot=-1;
+    }
+    pthread_mutex_unlock(&lock);
+}
 void dm_touch_game_set_scene(int game,uint64_t scene,uint64_t world) {
     pthread_mutex_lock(&lock);
     if(world_epoch!=world)dm_tg_hud_reset(&hud_cohort,world);

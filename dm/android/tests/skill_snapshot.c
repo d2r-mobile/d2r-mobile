@@ -12,7 +12,7 @@
 #include <unistd.h>
 
 #define CHECK(expr) do { if (!(expr)) { \
-    fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #expr); return 1; } } while (0)
+    fprintf(stderr, "FAIL %s:%d: %s\n", __FILE__, __LINE__, #expr); exit(1); } } while (0)
 
 module_t g_mod[MAX_MOD];
 int g_nmod;
@@ -138,11 +138,56 @@ static int test_attach(void) {
     return 1;
 }
 
+static void emit_hud(unsigned char widget[6][0xc98], uint64_t regs[32], uint64_t frame[3]) {
+    for(uint32_t slot=0;slot<6;slot++) {
+        memcpy(widget[slot]+0xb18,&slot,4);
+        frame[0]=(uint64_t)(uintptr_t)widget[slot];
+        regs[19]=regs[23]=slot;regs[8]=(uint64_t)slot*DM_TG_STRIDE;
+        gate6_callback(regs);
+    }
+}
+
+static int test_layout_rebuild(void) {
+    const size_t size=0x2d5f0c0+32*DM_TG_STRIDE;
+    unsigned char *image=calloc(1,size);
+    CHECK(image!=NULL);
+    g_nmod=1;strcpy(g_mod[0].name,"main");g_mod[0].base=image;g_mod[0].size=size;
+    fill_mapping(image+0x2d13cbc);
+    for(uint32_t i=0;i<32;i++)memcpy(image+0x2d5f0c0+i*DM_TG_STRIDE,&i,4);
+    gate6_present=1;CHECK(dm_touch_game_attach());
+    dm_touch_game_set_scene(1,10,10);dm_touch_game_set_layout(100);
+    uint64_t frame[3]={0,0,(uint64_t)(uintptr_t)image+0x3e2f74},regs[32]={0};
+    regs[10]=(uint64_t)(uintptr_t)image+0x2d5f0c0;regs[29]=(uint64_t)(uintptr_t)&frame[1];
+    unsigned char before[6][0xc98]={{0}},after[6][0xc98]={{0}};
+    dm_tg_snapshot s;
+    emit_hud(before,regs,frame);CHECK(!dm_touch_game_snapshot(&s));
+    emit_hud(before,regs,frame);CHECK(dm_touch_game_snapshot(&s)&&s.ready);
+    uint64_t old_identity=s.hud_identity,old_capture=s.captured_ns;
+    dm_touch_game_set_layout(100);
+    CHECK(dm_touch_game_snapshot(&s)&&s.captured_ns==old_capture);
+    emit_hud(after,regs,frame);
+    CHECK(dm_touch_game_snapshot(&s)&&s.hud_identity==old_identity&&s.captured_ns==old_capture);
+    dm_touch_game_set_layout(101);dm_touch_game_set_scene(1,11,10);
+    CHECK(!dm_touch_game_snapshot(&s)&&!s.ready&&s.world_epoch==10);
+    emit_hud(after,regs,frame);CHECK(!dm_touch_game_snapshot(&s));
+    emit_hud(after,regs,frame);
+    CHECK(dm_touch_game_snapshot(&s)&&s.ready&&s.group_seen==63&&s.hud_identity!=old_identity);
+    CHECK(s.scene_epoch==11&&s.world_epoch==10);
+    old_capture=s.captured_ns;emit_hud(before,regs,frame);
+    CHECK(dm_touch_game_snapshot(&s)&&s.captured_ns==old_capture);
+    dm_touch_game_set_layout(102);dm_touch_game_set_scene(1,12,10);
+    emit_hud(before,regs,frame);CHECK(!dm_touch_game_snapshot(&s));
+    emit_hud(before,regs,frame);CHECK(dm_touch_game_snapshot(&s)&&s.ready&&s.hud_identity==old_identity);
+    free(image);g_nmod=0;
+    return 1;
+}
+
 int main(void) {
     CHECK(test_safe_reader());
     CHECK(test_parse_and_group());
     CHECK(test_identity());
     CHECK(test_attach());
+    CHECK(test_layout_rebuild());
     puts("PASS: shared skill snapshot parses/binds identity, safe-reader rejects invalid/protected spans, and bridge attach/scene fail closed");
     return 0;
 }

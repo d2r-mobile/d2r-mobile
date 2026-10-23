@@ -616,6 +616,7 @@ static void live_touch_sync(game_app *s) {
         return;
     }
     s->live_observation=snapshot;
+    dm_touch_game_set_layout(snapshot.ui_identity);
     { void dm_touch_game_set_scene(int,uint64_t,uint64_t);
       dm_touch_game_set_scene(snapshot.scene==DM_LIVE_TOUCH_SCENE_GAME,
                               snapshot.scene_epoch,snapshot.world_epoch); }
