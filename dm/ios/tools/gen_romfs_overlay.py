@@ -66,6 +66,15 @@ with tempfile.TemporaryDirectory() as t:
         nm=os.path.basename(f[9]); src={'ButtonRight.sprite':'ButtonBottom.sprite','ButtonBottom.sprite':'ButtonRight.sprite'}.get(nm,nm)
         o=os.path.join(t,'xbox_'+nm); open(o,'wb').write(romfs_art.read(romfs,'data/hd/global/ui/Controller/ControllerButtons/xbox/'+src))
         REPL['data/hd/global/ui/ztouch_controller_buttons_ui/switchx'+nm.lower()]=o
+    # PlayStation 手柄的键位图标（dm_gamepad.m 认出 DualSense / DualShock 4 时宿主自动换）：原版 ControllerButtons/ps5/ 那套，文件名「<平台>p<名字>」（宿主 dm_padmode.c 的 Ztouch_controller_buttons_ui/%sP%s）。
+    # 图标按游戏键取名（switch/ButtonRight = 游戏 A）；PS 手柄系统按菱形位置给（下 ✕ = A、右 ○ = B、左 □ = X、上 △ = Y，dm_padmap.h），所以四个面键换位取图；
+    # ps5 没有的取它不带 Rectangle 的同名图，再没有的（十字键、刷新小图标）用原图
+    man=[l.rstrip('\n').split('|') for l in open(os.path.join(romfs,'data','build_manifest.psv'),encoding='utf-8') if not l.startswith('#')]
+    have={f[9].lower().split(':',1)[-1] for f in man if len(f)>=11}; cb='data/hd/global/ui/controller/controllerbuttons/'
+    face={'buttonright':'buttonbottom','buttonbottom':'buttonright','buttontop':'buttonleft','buttonleft':'buttontop'}
+    for nm in sorted(p[len(cb)+7:] for p in have if p.startswith(cb+'switch/')):
+        src=face.get(nm[:-7],nm[:-7])+'.sprite'; q=next(p for p in (cb+'ps5/'+src, cb+'ps5/'+src.replace('rectangle',''), cb+'switch/'+nm) if p in have)
+        o=os.path.join(t,'ps_'+nm); open(o,'wb').write(romfs_art.read(romfs,q)); REPL['data/hd/global/ui/ztouch_controller_buttons_ui/switchp'+nm]=o
     if os.environ.get('DM_OVERLAY_MAC'):   # Mac App：再出一套键盘键帽，放在触屏键帽同一个目录、文件名「<平台>k<名字>」（宿主 dm_padmode.c 的键盘键帽路径 Ztouch_controller_buttons_ui/%sK%s） | Mac App: additionally produce a set of keyboard key caps, placed in the same directory as the touch key caps with file names "<platform>k<name>" (the keyboard key-cap path of the host's dm_padmode.c is Ztouch_controller_buttons_ui/%sK%s)
         import kbd_glyphs; REPL.update({'data/hd/global/ui/ztouch_controller_buttons_ui/switchk'+os.path.basename(k):v for k,v in kbd_glyphs.build(romfs,t).items()})
     REPL.update(touch_layout.build_profile(romfs,t))   # 大字号 | Large font size
@@ -220,6 +229,7 @@ with tempfile.TemporaryDirectory() as t:
         with open(os.path.join(dst,'touch_strings.tsv'),'w',encoding='utf-8') as f:   # 键 \t 原文校验（SHA-1 前 8 位） \t 触摸说法（\\ \\n \\t 转义）；宿主 dm_padmode.c 读 | key <TAB> source checksum (first 8 hex digits of SHA-1) <TAB> touch wording (backslash, newline and tab are escaped); read by the host's dm_padmode.c
             for k,o,v in TS: f.write('%s\t%s\t%s\n' % (k,o,v.replace('\\','\\\\').replace('\n','\\n').replace('\t','\\t')))
         open(os.path.join(dst,'xbox_glyphs'),'w').write('ztouch_controller_buttons_ui/switchx*.sprite\n')   # 标记文件：覆盖层带 Xbox 键帽，宿主 dm_padmode.c 见到它才在 Xbox 手柄输入时换 | Marker file: the overlay carries Xbox glyphs; the host dm_padmode.c switches to them on Xbox controller input only when it sees this file
+        open(os.path.join(dst,'ps_glyphs'),'w').write('ztouch_controller_buttons_ui/switchp*.sprite\n')   # 标记文件：覆盖层带 PlayStation 键帽，宿主 dm_padmode.c 见到它才在 PS 手柄输入时换
         if os.environ.get('DM_OVERLAY_MAC'): open(os.path.join(dst,'kbd_glyphs'),'w').write('ztouch_controller_buttons_ui/switchk*.sprite\n')   # 标记文件：覆盖层带键盘键帽，宿主 dm_padmode.c 见到它才用 | marker file: the overlay carries keyboard key caps; the host's dm_padmode.c uses them only when it sees this
         open(os.path.join(dst,'ctrl_touch'),'w').write('触屏版布局在 layouts/xtouch_lay、ztouch_console_lay、0touch_console_switch_lay（dm_padmode.c 见到本文件才改写前缀）\n')
         GENERATED_OVERLAYS.append(dst)
