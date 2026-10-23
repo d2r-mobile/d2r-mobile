@@ -180,6 +180,13 @@ target_include_directories(dm_live_touch_belt_test PRIVATE native ../ios/Sources
 target_compile_options(dm_live_touch_belt_test PRIVATE -Wall -Wextra -Werror)
 add_test(NAME live_touch_belt COMMAND dm_live_touch_belt_test)
 set_tests_properties(live_touch_belt PROPERTIES TIMEOUT 30)
+# #361 touch_swap_above production setting -> the existing live-touch layout.
+add_executable(dm_live_touch_swap_above_test tests/live_touch_swap_above_test.c)
+target_link_libraries(dm_live_touch_swap_above_test PRIVATE dm_android_touch_core m)
+target_include_directories(dm_live_touch_swap_above_test PRIVATE native ../ios/Sources ../host)
+target_compile_options(dm_live_touch_swap_above_test PRIVATE -Wall -Wextra -Werror)
+add_test(NAME live_touch_swap_above COMMAND dm_live_touch_swap_above_test)
+set_tests_properties(live_touch_swap_above PROPERTIES TIMEOUT 30)
 # #33 difficulty selector request consumer through the production live-touch seam.
 add_executable(dm_live_touch_difficulty_test tests/live_touch_difficulty_test.c)
 target_link_libraries(dm_live_touch_difficulty_test PRIVATE dm_android_touch_core m)
@@ -905,7 +912,7 @@ if(ANDROID)
                 "${CMAKE_READELF}" "${CMAKE_OBJDUMP}" "$<TARGET_FILE:dm_android_app>"
             VERBATIM)
     endif()
-    foreach(target dm_android_probe dm_texture_test dm_nso_inspect dm_nso_test dm_image_test dm_runtime_test dm_system_patch_test dm_input_test dm_touch_adapter_test dm_live_touch_belt_test dm_live_touch_difficulty_test dm_live_touch_portal_test dm_live_touch_skill_empty_test dm_live_touch_bind_tap_test dm_live_touch_bind_tap_items_test dm_live_touch_glyph_test dm_live_touch_glyph_race_test dm_skill_snapshot_test dm_touch_bridge_test dm_touch_game_bridge_test dm_view_policy_test dm_input_policy_test dm_app_lifecycle_test dm_app_diagnostic_scene_test dm_app_present_policy_test dm_app_wsi_test dm_wsi_bridge_test dm_wsi_report_test dm_module_inspect dm_module_test dm_x18_patch_test dm_x18_control_test dm_x18_regions_test dm_image_code_test dm_artifact_inspect dm_artifact_test dm_romfs_test dm_sync_test dm_arbiter_test dm_thread_test dm_bootstrap_test dm_memory_test dm_mutex_test dm_exclusive_return_test)
+    foreach(target dm_android_probe dm_texture_test dm_nso_inspect dm_nso_test dm_image_test dm_runtime_test dm_system_patch_test dm_input_test dm_touch_adapter_test dm_live_touch_belt_test dm_live_touch_swap_above_test dm_live_touch_difficulty_test dm_live_touch_portal_test dm_live_touch_skill_empty_test dm_live_touch_bind_tap_test dm_live_touch_bind_tap_items_test dm_live_touch_glyph_test dm_live_touch_glyph_race_test dm_skill_snapshot_test dm_touch_bridge_test dm_touch_game_bridge_test dm_view_policy_test dm_input_policy_test dm_app_lifecycle_test dm_app_diagnostic_scene_test dm_app_present_policy_test dm_app_wsi_test dm_wsi_bridge_test dm_wsi_report_test dm_module_inspect dm_module_test dm_x18_patch_test dm_x18_control_test dm_x18_regions_test dm_image_code_test dm_artifact_inspect dm_artifact_test dm_romfs_test dm_sync_test dm_arbiter_test dm_thread_test dm_bootstrap_test dm_memory_test dm_mutex_test dm_exclusive_return_test)
         target_link_options(${target} PRIVATE "-Wl,-z,max-page-size=16384")
     endforeach()
     foreach(target dm_gate_test dm_gate_vectors)
