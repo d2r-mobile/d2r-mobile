@@ -833,10 +833,11 @@ static void live_touch_frontend_tick(game_app *s) {
     }
     float nx=0,ny=0;
     int map=dm_live_touch_take_map_request(s->live_touch,&nx,&ny);
-    if(map==2){s->map_world_seq=0;dm_ui_map_full(0);}
+    if(map==3){s->map_world_seq=0;dm_ui_map_full(0);dm_ui_map_hidden(!dm_ui_map_is_hidden());}
+    else if(map==2){s->map_world_seq=0;dm_ui_map_full(0);}
     else if(map==1)s->map_world_seq=dm_world_tap(nx,ny);
     if(s->map_world_seq){int hit=dm_world_tap_result(s->map_world_seq);
-        if(hit>=0){s->map_world_seq=0;if(!hit&&!c->navigation_mode)dm_ui_map_full(1);}}
+        if(hit>=0){s->map_world_seq=0;if(!hit&&!c->navigation_mode){dm_ui_map_hidden(0);dm_ui_map_full(1);}}}
     if(c->navigation_mode)s->map_world_seq=0;
     dm_tc_finger *f=c->pointer_slot>=0?&c->finger[c->pointer_slot]:NULL;
     if(f&&f->active&&f->ui_drag&&dm_live_touch_items_pointer_ready(s->live_items)){
@@ -1141,8 +1142,10 @@ __attribute__((visibility("default"))) jobjectArray Java_org_d2r_android_port_D2
         "dmRiftHudGuard","dmRiftHudNext","dmRiftHudTop","dmRiftHudOver","dmRiftHudKillWave",
         "dmRiftHudKillN","dmRiftHudOverKill","dmRiftHudOverKillN","dmRiftHudSame","dmRiftHudKill","dmRiftHudGoal"};
     jclass string=(*env)->FindClass(env,"java/lang/String");if(!string)return NULL;
-    jobjectArray out=(*env)->NewObjectArray(env,15,string,NULL);(*env)->DeleteLocalRef(env,string);if(!out)return NULL;
+    jobjectArray out=(*env)->NewObjectArray(env,16,string,NULL);(*env)->DeleteLocalRef(env,string);if(!out)return NULL;
     for(int i=0;i<15;i++){jstring text=java_text(env,dm_ui(keys[i]));if(!text)return NULL;(*env)->SetObjectArrayElement(env,out,i,text);(*env)->DeleteLocalRef(env,text);if((*env)->ExceptionCheck(env))return NULL;}
+    char title[128];dm_ui_map_title(title);jstring text=java_text(env,title);if(!text)return NULL;
+    (*env)->SetObjectArrayElement(env,out,15,text);(*env)->DeleteLocalRef(env,text);if((*env)->ExceptionCheck(env))return NULL;
     return out;
 }
 // Read-only skill glyph indices for the draw-only overlay. The array layout is

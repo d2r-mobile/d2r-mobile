@@ -32,6 +32,9 @@ static uint64_t now_ns(void){return clock_ns;}
 static int hit,bind,ready=1,stat_adds,skill_adds,full,map_calls,world_result,ingame;
 static int drag_begins,drag_moves,drag_ends,last_drag,touches,fe_ok=1;
 static int world_taps;
+static int map_hidden;
+void dm_ui_map_hidden(int hidden){map_hidden=hidden;}
+int dm_ui_map_is_hidden(void){return map_hidden;}
 void dm_ui_world_tap(float ux,float uy,float wx,float wy){assert(ux==wx&&uy==wy);assert(wx>=0&&wx<=1&&wy>=0&&wy<=1);world_taps++;}
 static uint32_t hit_id;
 static dm_points_info points;
@@ -145,6 +148,13 @@ int main(void){
     tick(&a,7300000000);assert(world_taps==1);
     dm_live_touch_set_context(a.live_touch,1,0,1,1,1,0);
     c->world_tap_seq++;tick(&a,7400000000);assert(world_taps==1);
+    dm_live_touch_set_context(a.live_touch,0,target_mask(0,0),1,1,1,0);
+    event(&a,DM_LIVE_ACTION_DOWN,460,15,8000000000);
+    event(&a,DM_LIVE_ACTION_UP,460,15,8700000000);
+    tick(&a,8710000000);assert(map_hidden&&!full);
+    event(&a,DM_LIVE_ACTION_DOWN,460,15,8800000000);
+    event(&a,DM_LIVE_ACTION_UP,460,15,8810000000);
+    tick(&a,8820000000);assert(!map_hidden&&full);
     dm_live_touch_destroy(a.live_touch);
     puts("PASS actual frontend: stat hold/repeat, skill select/add/bind, scroll lifecycle, map world priority");
 }

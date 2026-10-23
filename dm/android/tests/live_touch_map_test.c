@@ -47,6 +47,23 @@ int main(void){
     event(t,DM_LIVE_ACTION_DOWN,16,mx,my,8000000000);
     event(t,DM_LIVE_ACTION_UP,16,mx,my,8100000000);
     assert(dm_live_touch_take_map_request(t,&x,&y)==1);
+    event(t,DM_LIVE_ACTION_DOWN,17,mx,my,9000000000);
+    event(t,DM_LIVE_ACTION_UP,17,mx,my,9700000000);
+    assert(dm_live_touch_take_map_request(t,&x,&y)==3);
+    assert(!dm_live_touch_take_map_request(t,&x,&y));
+    event(t,DM_LIVE_ACTION_DOWN,18,mx,my,10000000000);
+    event(t,DM_LIVE_ACTION_MOVE,18,mx-30,my,10100000000);
+    event(t,DM_LIVE_ACTION_MOVE,18,mx,my,10200000000);
+    event(t,DM_LIVE_ACTION_UP,18,mx,my,10700000000);
+    assert(!dm_live_touch_take_map_request(t,&x,&y));
+    event(t,DM_LIVE_ACTION_DOWN,19,mx,my,11000000000);
+    event(t,DM_LIVE_ACTION_CANCEL,19,mx,my,11700000000);
+    assert(!dm_live_touch_take_map_request(t,&x,&y));
+    dm_live_touch_set_context(t,0,((1u<<DM_TC_COUNT)-1)&~(1u<<DM_TC_MAP),2,2,2,0);
+    dm_live_touch_set_minimap(t,edge_rect,1);
+    event(t,DM_LIVE_ACTION_DOWN,20,400,180,12000000000);
+    event(t,DM_LIVE_ACTION_UP,20,400,180,12100000000);
+    assert(dm_live_touch_take_map_request(t,&x,&y)==2);
     dm_live_touch_destroy(t);
     puts("PASS map: title tap/move, full-map return, skill priority, cancel and context");
 }
