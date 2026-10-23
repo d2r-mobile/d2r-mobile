@@ -66,7 +66,7 @@ Only a prepared Android package is accepted by this import flow; an arbitrary Sw
 
 ## Development
 
-Save-directory snapshot copies reject directory read/close errors instead of committing a partial tree; host fault injection covers cleanup and retry with synthetic saves.
+Save-directory snapshot copies reject directory/file read, write, flush and close errors instead of committing an incomplete copy. Synthetic host faults cover partial writes, out-of-space errors, interrupted I/O, cleanup, original preservation and retry.
 
 The [production shader boundary](shader-boundary.md) records supported stages, reflection limits and remaining validation gaps.
 

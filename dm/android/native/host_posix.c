@@ -210,11 +210,11 @@ static int clone_node(const char *source, const char *destination) {
         int in = open(source, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
         if (in < 0) return -1;
         int out = open(destination, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
-        if (out < 0) { close(in); return -1; }
+        if (out < 0) { int saved = errno; close(in); errno = saved; return -1; }
         // 游戏工作线程栈很小；递归层和文件缓冲都不能放大数组。
         // Guest worker stacks are small; recursion frames and file buffers must not contain large arrays.
         created = 1; char *buffer = malloc(65536); ssize_t n;
-        if (!buffer) { close(in); close(out); error = -1; goto done; }
+        if (!buffer) { int saved = errno; close(in); close(out); errno = saved; error = -1; goto done; }
         for (;;) {
             n = read(in, buffer, 65536);
             if (n < 0 && errno == EINTR) continue;
@@ -222,13 +222,17 @@ static int clone_node(const char *source, const char *destination) {
             for (ssize_t offset = 0; offset < n;) {
                 ssize_t wrote = write(out, buffer + offset, n - offset);
                 if (wrote < 0 && errno == EINTR) continue;
-                if (wrote <= 0) { error = -1; break; }
+                if (wrote <= 0) { if (!wrote) errno = EIO; error = -1; break; }
                 offset += wrote;
             }
             if (error) break;
         }
         if (!error && fsync(out)) error = -1;
-        free(buffer); close(in); close(out);
+        int saved_errno = errno;
+        free(buffer);
+        if (close(in) && !error) { error = -1; saved_errno = errno; }
+        if (close(out) && !error) { error = -1; saved_errno = errno; }
+        errno = saved_errno;
     } else if (S_ISLNK(st.st_mode)) {
         char *value = malloc(PATH_MAX); if (!value) return -1;
         ssize_t n = readlink(source, value, PATH_MAX - 1);
