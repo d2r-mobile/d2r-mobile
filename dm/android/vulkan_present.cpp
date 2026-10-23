@@ -301,6 +301,10 @@ extern "C" int dm_android_vk_initialize(const char *path,char *error,size_t byte
     std::lock_guard<std::mutex> render_lock(render_mutex);
     auto fail=[&](const char *what,VkResult r)->int{if(error&&bytes)snprintf(error,bytes,"%s: VkResult %d",what,int(r));if(!ready)cleanup_initialization();return int(r?r:VK_ERROR_INITIALIZATION_FAILED);};
     if(ready||!path||!*path)return fail("Initialization requires an external shader directory and an uninitialized renderer",VK_ERROR_INITIALIZATION_FAILED);
+    const char *selection=getenv("DM_PORT_DRIVER");
+    bool turnip=!selection||!strcmp(selection,"turnip");
+    if(!turnip&&strcmp(selection,"system"))return fail("Unknown selected Vulkan driver",VK_ERROR_INITIALIZATION_FAILED);
+    if(turnip){
     using OpenDriver=void *(*)(int,int,const char *,const char *,const char *,const char *,const char *,void **);
     const char *hooks=getenv("DM_TURNIP_HOOK_DIR"),*driver=getenv("DM_TURNIP_DIR");
     if(!hooks||!driver)return fail("Turnip test paths missing",VK_ERROR_INITIALIZATION_FAILED);
@@ -311,6 +315,7 @@ extern "C" int dm_android_vk_initialize(const char *path,char *error,size_t byte
     auto gipa=loader?reinterpret_cast<PFN_vkGetInstanceProcAddr>(dlsym(loader,"vkGetInstanceProcAddr")):nullptr;
     if(!gipa)return fail("Turnip test loader failed",VK_ERROR_INITIALIZATION_FAILED);
     volkInitializeCustom(gipa);
+    }else if(volkInitialize()!=VK_SUCCESS)return fail("System Vulkan loader failed",VK_ERROR_INITIALIZATION_FAILED);
     // 每次初始化从缺省的 120 Hz 重新读标记。 | Each initialization starts again from the 120 Hz default before the marker.
     frame_rate_vote=120;
     {std::string dir=path;size_t cut=dir.find_last_of('/');if(FILE *m=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-frame-rate").c_str(),"rb")){float v=0;frame_rate_vote=fscanf(m,"%f",&v)==1 && v>=0 && v<=240?v:0;fclose(m);}}
@@ -323,8 +328,8 @@ extern "C" int dm_android_vk_initialize(const char *path,char *error,size_t byte
     VkPhysicalDeviceDriverProperties identity{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
     VkPhysicalDeviceProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};properties.pNext=&identity;
     vkGetPhysicalDeviceProperties2(physical,&properties);
-    __android_log_print(ANDROID_LOG_INFO,"dm-vulkan","Test driver id=%u name=%s device=%s",identity.driverID,identity.driverName,properties.properties.deviceName);
-    if(identity.driverID!=VK_DRIVER_ID_MESA_TURNIP)return fail("Selected driver is not Turnip",VK_ERROR_INCOMPATIBLE_DRIVER);
+    __android_log_print(ANDROID_LOG_INFO,"dm-vulkan","Selected %s driver id=%u name=%s device=%s",turnip?"Turnip":"system",identity.driverID,identity.driverName,properties.properties.deviceName);
+    if(turnip&&identity.driverID!=VK_DRIVER_ID_MESA_TURNIP)return fail("Selected driver is not Turnip",VK_ERROR_INCOMPATIBLE_DRIVER);
     // 启动期间也可能旋转/切后台；等待新窗口，不把瞬时撤回误报为启动失败。
     // Rotation/backgrounding can race startup too; wait for a live window instead of failing boot.
     for(;;){wait_window();r=VkResult(create_surface());if(r==VK_NOT_READY)continue;if(r==VK_ERROR_SURFACE_LOST_KHR){uint64_t bad=active_generation;destroy_swap();wait_window_change(bad);continue;}if(r)return fail("Android surface",r);break;}
