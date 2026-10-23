@@ -8,6 +8,7 @@
 #include "dm_actions.h"
 #include "dm_cursor_item.h"
 #include "dm_i18n.h"
+#include "dm_widget.h"
 #include "ui_trace.h"
 #include "fe_selection.h"
 #include <stdatomic.h>
@@ -18,6 +19,7 @@
 #include <TargetConditionals.h>
 #include <stdatomic.h>
 #include <math.h>
+#include <pthread.h>
 
 static module_t *main_module(void) {
     for (int i = 0; i < g_nmod; ++i)
@@ -1937,6 +1939,44 @@ static void ui_bind_pump(uint64_t root, uint64_t fr) {
 static _Atomic int g_map_req = -1, g_map_full_now;
 void dm_ui_map_full(int on) { atomic_store(&g_map_req, on != 0); }
 int dm_ui_map_is_full(void) { return atomic_load(&g_map_full_now); }
+static _Atomic int g_map_hidden_req = -1, g_map_hidden_now;
+void dm_ui_map_hidden(int hidden) { atomic_store(&g_map_hidden_req, !!hidden); }
+int dm_ui_map_is_hidden(void) { return atomic_load(&g_map_hidden_now); }
+static void ui_map_visibility_pump(module_t *m, uint64_t root) {
+    static uint64_t owner;
+    int dm_padmode_current(void), dm_padmode_busy(void);
+    int request = atomic_exchange(&g_map_hidden_req, -1);
+    int previous = atomic_load(&g_map_hidden_now);
+    int hidden = request < 0 ? previous : request;
+    if (!dm_uiscreen_ingame()) { owner = 0; atomic_store(&g_map_hidden_now, 0); return; }
+    if (dm_padmode_current() || dm_padmode_busy()) hidden = 0;
+    if (!hidden && !previous) return;
+    uint64_t am = ui_panel(root, "AutoMap");
+    if (am && *(uint64_t *)am != (uint64_t)m->base + 0x20c58a0) am = 0;
+    if (!am) return;
+    if ((hidden != previous || owner != am) && !!*(uint8_t *)(am + 0x50) == hidden)
+        dm_ui_key_pulse(DM_BTN_MINUS, 9);
+    owner = am;
+    atomic_store(&g_map_hidden_now, hidden);
+}
+static pthread_mutex_t g_map_title_lock = PTHREAD_MUTEX_INITIALIZER;
+static char g_map_title[128];
+static _Atomic unsigned g_map_title_revision;
+unsigned dm_ui_map_title_revision(void) { return atomic_load(&g_map_title_revision); }
+void dm_ui_map_title(char out[128]) {
+    pthread_mutex_lock(&g_map_title_lock); memcpy(out, g_map_title, 128); pthread_mutex_unlock(&g_map_title_lock);
+}
+static void ui_map_title_pump(module_t *m, uint64_t root) {
+    if (!dm_ui_map_is_hidden()) return;
+    uint64_t label = ui_find(ui_panel(root, "HUDLevelNames"), "NameText", 0);
+    if (!label || *(uint64_t *)label != (uint64_t)m->base + DM_VT_TEXT) return;
+    const char *text = *(const char **)(label + 0x88); uint64_t length = *(uint64_t *)(label + 0x90);
+    if (!text || !length || length >= sizeof g_map_title) return;
+    char copy[128] = {0}; memcpy(copy, text, length);
+    pthread_mutex_lock(&g_map_title_lock);
+    if (memcmp(copy, g_map_title, sizeof copy)) { memcpy(g_map_title, copy, sizeof copy); atomic_fetch_add(&g_map_title_revision, 1); }
+    pthread_mutex_unlock(&g_map_title_lock);
+}
 // 真全屏局内，全屏地图的线条要盖在世界上：游戏把地图中心放在「屏幕高的一半」（它读到的是我们写的 16:9 界面高），画出来在 界面矩形 y + 界面高 ÷ 2；
 // 世界的中心在真实画面高的一半，两者差 界面矩形 y −（真实高 − 界面高）÷ 2（贴底时 = 留边高度的一半，地图标记比人低约 128 点）。
 // 地图有一对卷动量 [main+0x2d5e910 / 914]（单位 = 地图格；中心 = 玩家所在格 + 卷动量，main+0x413354 / 0x4133d8；游戏只在切档等处清零，触摸 / 手柄下没有别的写入方），
@@ -2351,8 +2391,10 @@ static void ui_safe_pump(module_t *m, uint64_t root, uint64_t fr) {
 // Open or not is read from the AutoMap widget's visible flag (+0x50); fullscreen / mini from [main+0x2d5c748] (0 = fullscreen, same as ui_map_pump); the mini map's player point is at the center of the minimap frame and its zoom uses the other level (+0x15ac). Written once per frame by the main thread
 static _Atomic uint64_t g_mapgeom;   // 高 32 位 = 模式（0 没开 / 1 微缩 / 2 全屏），低 32 位 = 每格像素（float 的位） | High 32 bits = mode (0 not open / 1 mini / 2 fullscreen), low 32 bits = pixels per cell (bits of a float)
 static void ui_map_geom_pump(module_t *m, uint64_t root) {
+    ui_map_visibility_pump(m, root);
+    ui_map_title_pump(m, root);
     uint64_t am = ui_panel(root, "AutoMap"); int mode = 0; float cell = 0;
-    if (am && *(uint64_t *)am == (uint64_t)m->base + 0x20c58a0 && *(uint8_t *)(am + 0x50)) {
+    if (am && !dm_ui_map_is_hidden() && *(uint64_t *)am == (uint64_t)m->base + 0x20c58a0 && *(uint8_t *)(am + 0x50)) {
         mode = *(volatile int32_t *)(m->base + 0x2d5c748) == 0 ? 2 : 1;
         float q = ceilf(((float (*)(uint64_t))(m->base + 0x390b38))(am) * *(float *)(am + (mode == 2 ? 0x15a8 : 0x15ac)) * 8) / 8; if (q < 0.125f) q = 0.125f;   // 全屏 / 微缩各一档缩放（0xc0df58 / 0xc0de54；实测 1.0 / 0.5） | One zoom level each for fullscreen / mini (0xc0df58 / 0xc0de54; measured 1.0 / 0.5)
         cell = q * *(float *)(m->base + 0x2d5e918); }

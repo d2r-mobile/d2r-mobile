@@ -16,7 +16,7 @@ Updated **2026-10-22**. Follow the [Android roadmap](ROADMAP.md) for current wor
 |---|---|---|
 | Game startup and saves | Real game startup, character selection, camp and normal save/exit | Full game progression, failure recovery and lifecycle matrix |
 | Rendering | Actual NVN-to-Vulkan game rendering; user reports normal character-selection and camp images with Turnip | Other scenes, resource lifetime and graphics conformance |
-| Touch | Original D2R touch core connected; movement/release, attack, skills, pickup, inventory and stash dragging tested; map entry uses the original top-right minimap title, without an extra MAP circle over the mercenary portrait | UI/art finishing, complete shop-drag icon verification, remaining gestures, IME and physical-controller transitions |
+| Touch | Original D2R touch core connected; movement/release, attack, skills, pickup, inventory and stash dragging tested; tap the minimap title to switch map size, hold it to hide/show map content while keeping the title; no extra MAP circle over the mercenary portrait | UI/art finishing, complete shop-drag icon verification, remaining gestures, IME and physical-controller transitions |
 | Launcher and drivers | Imported-data status, FPS/power display toggle, driver selection, custom ZIP import/delete and incompatible-driver rejection tested | Broader device/driver compatibility and release packaging |
 | Performance | Reduced repeated buffer allocations, upload commands, range queries and inactive diagnostic work | CPU translation/command encoding, binding and copy costs; sustained frame times and energy measurement |
 

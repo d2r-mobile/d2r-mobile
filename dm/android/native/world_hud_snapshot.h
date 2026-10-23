@@ -20,6 +20,10 @@ static inline void dm_world_hud_capture(float out[DM_WORLD_HUD_VALUES], int visi
     }
     out[30] = dm_lang_group();
     out[31] = dm_lang_index() == 8 && dm_custom_get("item_notes") != 0;
+    float title_rect[4];
+    out[70] = dm_ui_map_is_hidden() && dm_ui_minimap_rect(title_rect);
+    out[71] = dm_ui_map_title_revision();
+    if (out[70]) memcpy(out + 72, title_rect, sizeof title_rect);
     dm_map_goal_view m = {0};
     int n = dm_map_goals(&m), w = 0, h = 0;
     float cell = 0, mini[4] = {0};

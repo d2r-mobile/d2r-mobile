@@ -5,6 +5,9 @@
 static dm_rift_hud_t rift;
 static dm_map_goal_view goals;
 static int active = 1, mode = 2, have_mini = 1, calls;
+static int hidden;
+int dm_ui_map_is_hidden(void) { return hidden; }
+unsigned dm_ui_map_title_revision(void) { return 7; }
 int dm_rift_hud(dm_rift_hud_t *out) { calls++; *out = rift; return active; }
 int dm_map_goals(dm_map_goal_view *out) { *out = goals; return goals.n; }
 int dm_ui_map_geom(float *cell) { *cell = 2; return mode; }
@@ -18,6 +21,7 @@ int dm_custom_get(const char *key) { return !strcmp(key, "item_notes"); }
 
 int main(void) {
     float out[DM_WORLD_HUD_VALUES];
+    hidden=1;dm_world_hud_capture(out,1);assert(out[70]==1&&out[71]==7&&out[72]==.8f);hidden=0;calls=0;
     rift = (dm_rift_hud_t){.tier=99,.progress=.75f,.secs_left=42,.guardian=1,.next=100,.goal=2,.gdead=1,.gtotal=2};
     goals = (dm_map_goal_view){.n=2,.px=100,.py=200,.sx=.5f,.sy=.5f,.x={102,104},.y={203,205},.art={3,66}};
     dm_world_hud_capture(out, 1);

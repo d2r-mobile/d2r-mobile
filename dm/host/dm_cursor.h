@@ -116,6 +116,10 @@ int dm_ui_bind_active(void); uint64_t dm_ui_auto_release(void);   /* 取手柄�
 void dm_ui_bind_cancel(void);
 void dm_ui_map_full(int on);
 int dm_ui_map_is_full(void);
+void dm_ui_map_hidden(int hidden);
+int dm_ui_map_is_hidden(void);
+unsigned dm_ui_map_title_revision(void);
+void dm_ui_map_title(char out[128]);
 void dm_ui_text_entered(const char *text);   // 系统键盘返回时调：text = 写回给游戏的最终文本（UTF-8）；取消 / 空串传 NULL | Called when the system keyboard returns: text = final text written back to the game (UTF-8); pass NULL for cancel / empty string
 // 延迟读数（诊断，DM_LAT_LOG=1）：关键时刻打一行「LAT <毫秒时刻> <事件>」，量手指落下 / 松手到游戏生效的延迟
 // Latency readout (diagnostic, DM_LAT_LOG=1): at key moments print a line 「LAT <毫秒时刻> <事件>」(LAT <millisecond timestamp> <event>), to measure the latency from finger down / release to the game taking effect

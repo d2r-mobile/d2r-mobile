@@ -31,7 +31,19 @@ final class D2RWorldHud {
         if (h == null || h.length < WorldHudState.VALUES || view[23] != 0 || view[89] != 0) return;
         int saved = canvas.save();
         canvas.clipRect(view[0], view[1], view[0] + view[2], view[1] + view[3]);
-        if (h[0] != 0 && labels != null && labels.length == 15) rift(canvas, view, h, labels);
+        if (h[0] != 0 && labels != null && labels.length >= 15) rift(canvas, view, h, labels);
+        if (h[70] != 0 && labels != null && labels.length >= 16) {
+            String title = labels[15].isEmpty() ? "MAP" : labels[15];
+            float u = view[3] / 614f, width = (h[74] - h[72]) * view[2];
+            float size = 16 * u, right = view[0] + h[74] * view[2] - 8 * u;
+            float height = (h[75] - h[73]) * view[3], band = height / 4;
+            float minimum = 30 * view[3] / view[5];
+            if (band < minimum) band = Math.min(minimum, height * .4f);
+            paint.setTextSize(size);
+            float titleWidth = Math.min(paint.measureText(title), width);
+            text(canvas, title, right - titleWidth, view[1] + h[73] * view[3] + band / 2 + size * .35f,
+                 size, GOLD, width);
+        }
         for (int i = 0; i < Math.min(12, (int)h[25]); i++) goal(canvas, view, h, i);
         canvas.restoreToCount(saved);
     }

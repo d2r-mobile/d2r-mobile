@@ -38,7 +38,7 @@ void dm_live_touch_set_mode(dm_live_touch *touch, int navigation, uint32_t mask)
 void dm_live_touch_set_holding(dm_live_touch *touch, int holding, int targeting);
 // iOS frontend map gestures: rect is the host's normalized minimap rectangle.
 void dm_live_touch_set_minimap(dm_live_touch *touch, const float rect[4], int full);
-// 1 = query world at nx/ny, then open full map only if no target; 2 = return mini.
+// 1 = query world then open full map if no target; 2 = return mini; 3 = toggle map content.
 int dm_live_touch_take_map_request(dm_live_touch *touch, float *nx, float *ny);
 // Owner-thread access for the original frontend's continuous gesture hooks.
 dm_tc_state *dm_live_touch_controls(dm_live_touch *touch);

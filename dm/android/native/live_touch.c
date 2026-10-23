@@ -27,7 +27,7 @@ struct dm_live_touch {
     void *tap_context;
     float minimap[4], map_x, map_y;
     int minimap_valid, map_full, map_request;
-    struct { int kind; float x, y; double began; } map_finger[DM_TC_MAX_TOUCH];
+    struct { int kind, moved; float x, y; double began; } map_finger[DM_TC_MAX_TOUCH];
     struct {
         int active;
         int pointer_slot;
@@ -539,6 +539,7 @@ int dm_live_touch_event(dm_live_touch *touch, int action, int action_index,
         }
         if (touch->have_context && minimap_title_hit(touch, px, py)) {
             touch->map_finger[slot].kind = 1;
+            touch->map_finger[slot].moved = 0;
             touch->map_finger[slot].x = px; touch->map_finger[slot].y = py;
             touch->map_finger[slot].began = t;
             return 1;
@@ -565,6 +566,7 @@ int dm_live_touch_event(dm_live_touch *touch, int action, int action_index,
         if (!touch->state.navigation_mode && touch->map_full &&
             touch->state.finger[slot].target == DM_TC_NONE && touch->state.joy_slot != slot) {
             touch->map_finger[slot].kind = 2;
+            touch->map_finger[slot].moved = 0;
             touch->map_finger[slot].x = px; touch->map_finger[slot].y = py;
             touch->map_finger[slot].began = t;
         }
@@ -596,7 +598,13 @@ int dm_live_touch_event(dm_live_touch *touch, int action, int action_index,
         for (int i = 0; i < pointer_count; ++i) {
             int slot = dm_touch_pointer_slot(&touch->pointers, ids[i]);
             if (slot < 0) continue;
-            if (touch->map_finger[slot].kind == 1) { changed = 1; continue; }
+            if (touch->map_finger[slot].kind == 1) {
+                float px = point_x(touch, x_px[i], picture_left, picture_width);
+                float py = point_y(touch, y_px[i], picture_top, picture_height);
+                if (hypotf(px-touch->map_finger[slot].x, py-touch->map_finger[slot].y) > 14)
+                    touch->map_finger[slot].moved = 1;
+                changed = 1; continue;
+            }
             if (touch->skill_bind[slot].active) {
                 touch->skill_bind[slot].x = point_x(touch, x_px[i], picture_left, picture_width);
                 touch->skill_bind[slot].y = point_y(touch, y_px[i], picture_top, picture_height);
@@ -620,10 +628,11 @@ int dm_live_touch_event(dm_live_touch *touch, int action, int action_index,
             int kind = touch->map_finger[slot].kind;
             float px = point_x(touch, x_px[action_index], picture_left, picture_width);
             float py = point_y(touch, y_px[action_index], picture_top, picture_height);
-            if (!touch->state.navigation_mode && t - touch->map_finger[slot].began < .6 &&
+            double held = t - touch->map_finger[slot].began;
+            if (!touch->state.navigation_mode && !touch->map_finger[slot].moved &&
                 hypotf(px-touch->map_finger[slot].x, py-touch->map_finger[slot].y) <= 14 &&
-                (kind == 1 || touch->map_full)) {
-                touch->map_request = touch->map_full ? 2 : 1;
+                (kind == 1 || (touch->map_full && held < .6))) {
+                touch->map_request = kind == 1 && held >= .6 ? 3 : touch->map_full ? 2 : 1;
                 touch->map_x = px/touch->width; touch->map_y = py/touch->height;
             }
             touch->map_finger[slot].kind = 0;
