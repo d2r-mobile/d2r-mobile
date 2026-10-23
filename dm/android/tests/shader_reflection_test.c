@@ -4,6 +4,19 @@
 #include <stdlib.h>
 
 int main(int argc, char **argv) {
+    uint32_t code[] = {0x07230203, 0x10000, 0, 2, 0, (5u << 16) | 15, 0, 1, 0x6e69616d, 0};
+    assert(dm_nvn_shader_entry_valid(code, sizeof code, 0));
+    assert(!dm_nvn_shader_entry_valid(code, sizeof code, 1));
+    assert(!dm_nvn_shader_entry_valid(code, sizeof code, 5));
+    for (size_t n = 0; n < sizeof code; n++) assert(!dm_nvn_shader_entry_valid(code, n, 0));
+    for (unsigned i = 0; i < sizeof code / sizeof *code; i++) {
+        uint32_t old = code[i]; code[i] = UINT32_MAX;
+        if (i != 2 && i != 3) assert(!dm_nvn_shader_entry_valid(code, sizeof code, 0));
+        code[i] = old;
+    }
+    code[6] = 4; assert(dm_nvn_shader_entry_valid(code, sizeof code, 1));
+    code[6] = 5; assert(dm_nvn_shader_entry_valid(code, sizeof code, 5));
+    code[6] = 0;
     size_t capacity = 28 + 256 * 40 + 65536 + 128;
     uint32_t *meta = calloc(1, capacity);
     assert(meta);

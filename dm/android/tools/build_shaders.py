@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(ROOT / "tools"), str(ROOT / "verify"), str(ROOT / "gfx/tools")]
 import casc_overlay
 import dmsh_facts
+from shader_pair_contract import write_metadata
 
 
 def extract_packages(romfs, output):
@@ -336,7 +337,8 @@ def main():
         for kind, b in entries:
             values = [kind, b["binding"], b.get("slot", 0), b.get("cb_slot", b.get("cbuf_slot", 0)), b.get("cb_offset", 0), b.get("handle", 0), b.get("type", 0), b.get("array", 1), b.get("flags", 0), b.get("separate", 0)]
             binary += struct.pack("<10I", *(v & 0xffffffff for v in values))
-        (output / (job["key"] + ".meta")).write_bytes(binary + c1 + struct.pack("<32I", *attrs)); good += 1
+        write_metadata(output / (job["key"] + ".spv"), output / (job["key"] + ".meta"),
+                       binary + c1 + struct.pack("<32I", *attrs)); good += 1
     print(f"SPIR-V reflection pairs={good}/{len(jobs)}", flush=True)
     if any(results) or good != len(jobs): sys.exit(1)
     # 将 host profile 随缓存一起保存，设备安装/对照时可明确区分32与64版本。

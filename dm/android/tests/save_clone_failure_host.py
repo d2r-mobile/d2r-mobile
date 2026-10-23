@@ -39,7 +39,9 @@ static int test_open(const char *path, int flags, ...) {
 }
 static ssize_t test_read(int fd, void *buffer, size_t size) {
     if (fd == input_fd && io_mode == 6) { errno = EIO; return -1; }
-    if (fd == input_fd && io_mode == 5 && !interrupted++) { errno = EINTR; return -1; }
+    if (fd == input_fd && io_mode == 5 && !(interrupted & 1)) {
+        interrupted |= 1; errno = EINTR; return -1;
+    }
     return read(fd, buffer, size);
 }
 static ssize_t test_write(int fd, const void *buffer, size_t size) {
@@ -49,7 +51,9 @@ static ssize_t test_write(int fd, const void *buffer, size_t size) {
             errno = ENOSPC; return -1;
         }
         if (io_mode == 4) { errno = 0; return 0; }
-        if (io_mode == 5 && interrupted++ == 1) { errno = EINTR; return -1; }
+        if (io_mode == 5 && !(interrupted & 2)) {
+            interrupted |= 2; errno = EINTR; return -1;
+        }
     }
     return write(fd, buffer, size);
 }
@@ -121,6 +125,7 @@ int main(int argc, char **argv) {
         io_mode = mode; interrupted = 0;
         int result = clone_node("source", "candidate");
         if (mode == 5) {
+            assert(interrupted == 3);
             assert(!result && !remove_created("candidate"));
         } else {
             assert(result == -1 && errno == (mode <= 2 ? ENOSPC : EIO));
