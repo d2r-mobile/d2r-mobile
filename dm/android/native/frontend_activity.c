@@ -111,6 +111,7 @@ void dm_padmode_request(int pad);
 int dm_padmode_current(void);
 int dm_padmode_busy(void);
 int dm_drop_haptic_take(void);
+int dm_custom_get(const char *key);
 static void live_touch_cursor_update(game_app *s);
 static _Atomic int display_hz;
 // 运行时可切的调试浮层（游戏内菜单的「帧率显示」）：UI 线程写，调试线程每拍读。启动初值见 debug_overlay 的读取处。
@@ -622,6 +623,14 @@ static void live_touch_sync(game_app *s) {
       dm_touch_game_set_scene(snapshot.scene==DM_LIVE_TOUCH_SCENE_GAME,
                               snapshot.scene_epoch,snapshot.world_epoch); }
     live_touch_set_available(s,1);
+    // The iOS front end refreshes this custom layout option on every tick and
+    // cancels the current controls before resizing. Apply the same setting here
+    // before publishing the new layout; an active gesture is retired rather
+    // than left mapped to the old button position.
+    if (dm_live_touch_set_swap_above(s->live_touch, dm_custom_get("touch_swap_above") != 0)) {
+        live_touch_cancel_sources_all(s);
+        s->live_visual_signature = 0;
+    }
     { float rect[4]; dm_live_touch_set_minimap(s->live_touch,
         dm_ui_minimap_rect(rect)?rect:NULL,dm_ui_map_is_full()); }
     // Match tickTouchControls: item gestures need authoritative host state,

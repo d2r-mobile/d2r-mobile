@@ -28,6 +28,9 @@ void dm_live_touch_destroy(dm_live_touch *touch);
 // The real picture can change between centered front-end 16:9 and in-run
 // phone aspect. Resizing cancels core ownership and the pointer table.
 void dm_live_touch_resize(dm_live_touch *touch, float width_pt, float height_pt);
+// Apply touch_swap_above and rebuild the one production layout. Returns 1 only
+// when the value changed; every owned gesture is retired before the rebuild.
+int dm_live_touch_set_swap_above(dm_live_touch *touch, int above);
 // navigation = menu/front-end/panel state supplied by the real host.
 // mask is the core target mask; callers use dm_tc_nav_mask/game mode mask.
 void dm_live_touch_set_mode(dm_live_touch *touch, int navigation, uint32_t mask);
