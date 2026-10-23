@@ -54,7 +54,8 @@ def need(cond, msg):
 
 
 def parse(path):
-    data = open(path, "rb").read()
+    with open(path, "rb") as source:
+        data = source.read()
     need(len(data) >= 20 and len(data) % 4 == 0, "模块长度 %d 不是 5 字头的 4 字节倍数" % len(data))
     words = struct.unpack("<%dI" % (len(data) // 4), data)
     need(words[0] == MAGIC, "魔数 %#x 不是 SPIR-V" % words[0])
