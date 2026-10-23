@@ -6,3 +6,25 @@
 
 # Local upstream synchronization and migration tools
 /.local-sync/
+# 安卓构建产物与本机配置 | Android build outputs and local configuration
+dm/android/local.properties
+dm/android/.gradle/
+dm/android/build/
+dm/android/app/build/
+dm/android/.kotlin/
+dm/android/app/.cxx/
+dm/android/.cxx/
+# 本地交付、游戏派生文件与签名材料不入库 | Keep local deliverables, game-derived files, and signing material out of Git.
+*.apk
+*.aab
+*.hap
+*.xgs
+*.d2s
+*.d2i
+*.keystore
+*.jks
+*.p12
+*.pfx
+/private/
+/artifacts/
+dm/android/local.env

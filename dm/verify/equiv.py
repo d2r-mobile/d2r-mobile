@@ -4,12 +4,18 @@
 # 射程：两边都访存异常的试验只比异常地址，不算「有效」；每处至少 min-eff 次有效试验，不够就补抽（≤max-extra 次），仍不够的列名。
 # 变异自检：抽 mutate 个普通改写块，一半把替换后的那条指令改成 nop、一半把跳板出口 b 的目标 +4，都必须被判出分歧（判据能区分的负对照）。
 # 宿主门（svc / cntpct / cntvct）语义由宿主定，这里不跑，由 structck.py 做结构核对；已登记剪口（cuts.tsv）是有意的语义改动，同样只由 structck 核字节。
+# 两种目标都验（表头 TARGET）：安卓的块经 [tpidr_el0 - 8] 找槽表。另记「低于 sp 读」：改写映像读了比当时 sp 低、原指令没读的地址，
+# 即块把还要用的东西留在了 sp 下方；安卓没有红区（信号帧会盖掉），判红；苹果有 128 字节红区，只报数。
 # Per-site equivalence verification: original instruction (original image, x18 is a real register) vs patch block (rewritten image, x18 lives in a TSD slot).
 # Several random states per site; compares x0-x30 (x18 compared against the slot value), sp, nzcv, v0-v31, all memory writes, final PC, memory access faults.
 # Usage: equiv.py <rewrite build output dir> <module> <NSO> [--seed 1] [--jobs N] [--min-eff 2] [--max-extra 16] [--mutate 300] [--tsv file]
 # Coverage: a trial where both sides take a memory access fault only compares the fault address and does not count as "effective"; each site needs at least min-eff effective trials, extra draws are made if short (≤max-extra), and sites still short are listed by name.
 # Mutation self-check: draw mutate ordinary rewrite blocks; in half the replaced instruction is changed to nop, in half the target of the trampoline exit b gets +4; all must be judged divergent (a negative control showing the criterion can discriminate).
 # Host gate (svc / cntpct / cntvct) semantics are defined by the host and are not run here, structck.py does the structural check; registered cuts (cuts.tsv) are intentional semantic changes and likewise only have their bytes checked by structck.
+# Both targets are checked (header TARGET): Android blocks find the slot table through [tpidr_el0 - 8]. Below-sp reads are also
+# counted: addresses the rewritten image read below the sp of the moment and the original instruction did not, i.e. the block
+# left something it still needed below sp. Android has no red zone (a signal frame would overwrite it), so they fail there;
+# Apple has a 128-byte red zone, so they are only reported.
 import sys, os, struct, random, argparse, multiprocessing as mp
 from unicorn import *
 from unicorn.arm64_const import *
@@ -35,6 +41,14 @@ KEY_IDX = {k[4:-4]: v for k, v in hdr.items() if k.startswith('KEY_') and k.ends
 KEY_SLOT = {k: 300 + i for i, k in enumerate(sorted(KEY_IDX, key=KEY_IDX.get))}
 SLOT18, SLOTTLS, SLOTTLR = (KEY_SLOT[k] for k in ('K18', 'KTLS', 'KTLR'))
 KEY_PAGE_OFF = hdr['KEY_PAGE_OFF']
+# 安卓目标（表头 TARGET 1）：线程槽基址 = [tpidr_el0 - 8]（bionic_tls），改写块里多一条 ldur。试验里改写映像的 tpidr_el0 指向假 TCB，TCB[-1] = TSD。
+# 安卓的改写块不许把还要用的东西留在 sp 下方（信号帧会盖掉），所以改写映像在比 sp 低的地址读数据记为「低于 sp 读」，安卓判红。
+# Android target (header TARGET 1): the thread slot base is [tpidr_el0 - 8] (bionic_tls), and rewrite blocks have one more ldur. In the
+# trials the rewritten image's tpidr_el0 points to a fake TCB whose TCB[-1] = TSD.
+# Android rewrite blocks must not leave anything they still need below sp (a signal frame would overwrite it), so a read by the
+# rewritten image from an address below sp counts as a below-sp read, and fails on Android.
+ANDROID = hdr.get('TARGET', 0) == 1
+TCB = TSD + 0x8000
 pat = bytearray(open(f'{DIR}/{MOD}.patched.bin', 'rb').read())
 orig = nsoimg.load(A.nso)
 ncut = sum(1 for l in open(f'{DIR}/{MOD}.cuts.tsv') if not l.startswith('#'))
@@ -79,10 +93,20 @@ def btarget(b, o):
 def plain_block(a):
     """普通改写块（stp; 键页间接读槽; 替换指令; 键页间接写槽; ...）→ 替换指令偏移。 | Ordinary rewrite block (stp; indirect slot read via key page; replaced instruction; indirect slot write via key page; ...) → offset of the replaced instruction."""
     s = btarget(pat, a); w0 = struct.unpack_from('<I', pat, s)[0]
-    if w0 & 0xFFC003E0 != 0xA90003E0: return None          # stp xS, xT, [sp, #off]
-    ins = list(md.disasm(bytes(pat[s:s + 36]), s))
+    # stp xS, xT, [sp, #off]；安卓为 stp xS, xT, [sp, #-16]!，紧跟 mrs 后多一条 ldur xT, [xT, #-8]（核过后去掉，余下与苹果同形）。
+    # stp xS, xT, [sp, #off]; on Android stp xS, xT, [sp, #-16]!, with one more ldur xT, [xT, #-8] after the mrs (checked, then
+    # dropped, so the rest has the Apple shape).
+    if w0 & 0xFFC003E0 not in (0xA90003E0, 0xA98003E0): return None
+    ins = list(md.disasm(bytes(pat[s:s + 40]), s))
+    if ANDROID:
+        if len(ins) < 9 or ins[1].mnemonic != 'mrs' or 'tpidr_el0' not in ins[1].op_str or ins[2].mnemonic != 'ldur': return None
+        if ins[2].operands[0].reg != ins[1].operands[0].reg or ins[2].operands[1].mem.disp != -8: return None
+        ins = ins[:2] + ins[3:]
+        return plain_tail(ins)
     if len(ins) < 8 or ins[1].mnemonic != 'mrs' or 'tpidrro_el0' not in ins[1].op_str:
         return None
+    return plain_tail(ins)
+def plain_tail(ins):
     if ins[2].mnemonic != 'adrp' or ins[2].operands[1].imm != KEY_PAGE_OFF: return None
     if ins[3].mnemonic != 'ldr' or ins[3].operands[1].mem.base != ins[2].operands[0].reg: return None
     T = ins[1].operands[0].reg
@@ -102,9 +126,10 @@ def cond_target(w, pc):
     return None
 win_br = {}
 for a0, hi0 in winend.items():
-    gate = btarget(pat, a0); pre = list(md.disasm(bytes(pat[gate:gate + 24]), gate))
-    assert [x.mnemonic for x in pre] == ['stp', 'mrs', 'adrp', 'ldr', 'add', 'ldr'], f'窗口块前导不是预期形状 {a0:#x}'
-    copy0 = gate + 24; lst = []
+    want = ['stp', 'mrs', 'ldur', 'adrp', 'ldr', 'add', 'ldr'] if ANDROID else ['stp', 'mrs', 'adrp', 'ldr', 'add', 'ldr']
+    gate = btarget(pat, a0); pre = list(md.disasm(bytes(pat[gate:gate + 4 * len(want)]), gate))
+    assert [x.mnemonic for x in pre] == want, f'窗口块前导不是预期形状 {a0:#x}'
+    copy0 = gate + 4 * len(want); lst = []
     for c in range(a0, hi0, 4):
         wo = struct.unpack_from('<I', orig, c)[0]; to = cond_target(wo, c)
         if to is None: continue
@@ -143,17 +168,25 @@ def mk(image, arena0):
     u.mem_map(ARENA, ARENA_SZ); u.mem_write(ARENA, arena0)
     u.mem_map(TSD, 0x10000)
     u.reg_write(UC_ARM64_REG_TPIDRRO_EL0, TSD)
-    st = {'w': [], 'fault': None, 'arena': arena0}
+    st = {'w': [], 'fault': None, 'arena': arena0, 'below': set(), 'r': set(), 'sp': SP0}
     def wr(uc, acc, addr, size, val, d): st['w'].append((addr, size, val & ((1 << (8 * size)) - 1)))
     def bad(uc, acc, addr, size, val, d): st['fault'] = (acc, addr); return False
     u.hook_add(UC_HOOK_MEM_WRITE, wr)
+    # 栈窗口里的读：两份映像都记地址；改写映像另记读时比当前 sp 低的（当前 sp 由改写映像的逐条钩子更新）。
+    # Reads in the stack window: both images record the address; the rewritten image also records those below the current sp
+    # (the current sp is updated by the rewritten image's per-instruction hook).
+    def rd(uc, acc, addr, size, val, d):
+        if SP0 - 0x1000 <= addr < SP0:
+            st['r'].add(addr)
+            if addr < st['sp']: st['below'].add(addr)
+    u.hook_add(UC_HOOK_MEM_READ, rd)
     u.hook_add(UC_HOOK_MEM_INVALID, bad)
     return u, st
 
 def restore(u, st):
     for a, s, v in st['w']:
         if ARENA <= a < ARENA + ARENA_SZ: u.mem_write(a, st['arena'][a:a + s])
-    st['w'].clear(); st['fault'] = None
+    st['w'].clear(); st['fault'] = None; st['r'] = set(); st['below'] = set(); st['sp'] = SP0
 
 def state(u, st, patched):
     g = [u.reg_read(r) for r in GP]
@@ -177,10 +210,12 @@ def run(u, st, start, patched, init):
         u.mem_write(TSD + 8 * SLOTTLS, struct.pack('<Q', init['tls']))
         u.mem_write(TSD + 8 * SLOTTLR, struct.pack('<Q', init['tlr']))
         u.reg_write(GP[18], 0xDEADBEEFDEADBEEF)
+        if ANDROID: u.reg_write(UC_ARM64_REG_TPIDR_EL0, TCB); u.mem_write(TCB - 8, struct.pack('<Q', TSD))
     end = {'pc': None}
     if patched:
         seen = {'patch': False}
         def hk(uc, addr, size, d):
+            st['sp'] = uc.reg_read(UC_ARM64_REG_SP)
             if addr >= IB + PATCH_OFF: seen['patch'] = True
             elif seen['patch']: end['pc'] = addr; uc.emu_stop()
         h = u.hook_add(UC_HOOK_CODE, hk)
@@ -220,7 +255,10 @@ def trial(UO, SO, UP, SP, a, init):
     sp_ = sp_[:4] + ([x for x in sp_[4] if not (SP0 - 128 <= x[0] < SP0 and x[0] not in ow)],) + sp_[5:]
     both = bool(so[5] and sp_[5])
     same = (so[5] == sp_[5]) if (so[5] or sp_[5]) else (so == sp_)
-    return same, both, [k for k, (x, y) in enumerate(zip(so, sp_)) if x != y]
+    # 低于 sp 读：改写映像读了比当时 sp 低、而原映像这次没读的地址（原指令自己经随机指针读到栈窗口的不算）。
+    # Below-sp reads: addresses the rewritten image read below the sp of the moment and the original did not read this time (the
+    # original instruction's own reads through a random pointer into the stack window do not count).
+    return same, both, [k for k, (x, y) in enumerate(zip(so, sp_)) if x != y], len(SP['below'] - SO['r'])
 
 def work(job):
     idx, chunk, mutated = job
@@ -229,14 +267,14 @@ def work(job):
     UO, SO = mk(orig, arena0); UP, SP = mk(pat_mut if mutated else pat, arena0)
     out = []
     for a in chunk:
-        n = eff = 0; diffs = []
+        n = eff = below = 0; diffs = []
         kinds = [0, 1] + ([] if a in brinfo else [2])
         extra = 0
         while kinds or (eff < A.min_eff and extra < A.max_extra):
             if kinds: kind = kinds.pop(0)
             else: kind = (1, 0)[extra % 2]; extra += 1
-            same, both, fl = trial(UO, SO, UP, SP, a, init_state(rng, kind, brinfo.get(a)))
-            n += 1; eff += not both
+            same, both, fl, bel = trial(UO, SO, UP, SP, a, init_state(rng, kind, brinfo.get(a)))
+            n += 1; eff += not both; below += bel
             if not same: diffs.append((kind, fl))
             if mutated and diffs: break
         if not mutated:
@@ -246,12 +284,12 @@ def work(job):
                     UP.mem_write(IB + cp, struct.pack('<I', 0xD503201F if mode == '不跳' else enc_b(cp, tp_)))
                     UO.ctl_remove_cache(IB + c, IB + c + 4); UP.ctl_remove_cache(IB + cp, IB + cp + 4)
                     for kind in (0, 1, 0, 1):
-                        same, both, fl = trial(UO, SO, UP, SP, a, init_state(rng, kind))
-                        n += 1; eff += not both
+                        same, both, fl, bel = trial(UO, SO, UP, SP, a, init_state(rng, kind))
+                        n += 1; eff += not both; below += bel
                         if not same: diffs.append((f'窗口分支 {c:#x} 强制{mode}', fl))
                     UO.mem_write(IB + c, struct.pack('<I', wo)); UP.mem_write(IB + cp, struct.pack('<I', wp))
                     UO.ctl_remove_cache(IB + c, IB + c + 4); UP.ctl_remove_cache(IB + cp, IB + cp + 4)
-        out.append((a, n, eff, diffs))
+        out.append((a, n, eff, diffs, below))
     return out
 
 def runall(lst, mutated):
@@ -266,27 +304,30 @@ if __name__ == '__main__':
     T = sum(r[1] for r in res); E = sum(r[2] for r in res)
     zero = [r for r in res if r[2] == 0]; low = [r for r in res if r[2] < A.min_eff]
     bad = [r for r in res if r[3]]
-    for a, n, eff, diffs in bad:
+    for a, n, eff, diffs, _ in bad:
         i = ins_of(a)
         for kind, fl in diffs: print(f'DIFF {a:#x} {i.mnemonic} {i.op_str} kind={kind} fields={fl}', flush=True)
-    for a, n, eff, _ in zero:
+    for a, n, eff, *_ in zero:
         i = ins_of(a); print(f'NOEFF {a:#x} {i.mnemonic} {i.op_str} trials={n}')
     caught = miss = 0; mut_by = '-'
     if mut_sites:
         mres = runall(mut_sites, 1)
         caught = sum(1 for r in mres if r[3])
-        for a, n, eff, d in mres:
+        for a, n, eff, d, _ in mres:
             if not d: i = ins_of(a); print(f'MUTMISS {a:#x} {mut_kind[a]} {i.mnemonic} {i.op_str} trials={n} eff={eff}')
         miss = len(mres) - caught
         mk_ = {}
-        for a, n, eff, d in mres: c = mk_.setdefault(mut_kind[a], [0, 0]); c[0] += 1; c[1] += bool(d)
+        for a, n, eff, d, _ in mres: c = mk_.setdefault(mut_kind[a], [0, 0]); c[0] += 1; c[1] += bool(d)
         mut_by = ' '.join(f'{k}:{v[1]}/{v[0]}' for k, v in sorted(mk_.items()))
     if A.tsv:
         with open(A.tsv, 'w') as f:
             f.write('site\ttrials\teff\tdiffs\n')
-            for a, n, eff, d in res: f.write(f'{a:#x}\t{n}\t{eff}\t{len(d)}\n')
-    ok = not bad and not zero and not miss   # 变异漏抓 = 判据分不出坏改写，判红（早先漏抓只打印不判） | A missed mutation = the criterion cannot tell a bad rewrite apart, so fail (earlier a miss was only printed, not judged)
+            for a, n, eff, d, _ in res: f.write(f'{a:#x}\t{n}\t{eff}\t{len(d)}\n')
+    below = [r for r in res if r[4]]
+    for a, n, eff, d, bel in below[:20]:
+        i = ins_of(a); print(f'BELOWSP {a:#x} {i.mnemonic} {i.op_str} reads={bel} trials={n}')
+    ok = not bad and not zero and not miss and not (ANDROID and below)   # 变异漏抓 = 判据分不出坏改写，判红（早先漏抓只打印不判） | A missed mutation = the criterion cannot tell a bad rewrite apart, so fail (earlier a miss was only printed, not judged)
     print(f'EQUIV {MOD} {"OK" if ok else "FAIL"} 站点={len(res)} 试验={T} 有效试验={E} 双异常={T - E} '
           f'有效≥1站点={len(res) - len(zero)} 有效≥{A.min_eff}站点={len(res) - len(low)} 零有效={len(zero)} 分歧站点={len(bad)} '
-          f'窗口={len(winend)} 其中含条件分支={len(win_br)}（{sum(len(v) for v in win_br.values())} 条×2 向强制） 门站点(结构核对)={ngate} 已登记剪口(结构核对)={ncut} 观测门(结构核对)={nobs} 变异={len(mut_sites)}（{mut_by}） 抓到={caught} 漏抓={miss} seed={A.seed}', flush=True)
+          f'窗口={len(winend)} 其中含条件分支={len(win_br)}（{sum(len(v) for v in win_br.values())} 条×2 向强制） 门站点(结构核对)={ngate} 已登记剪口(结构核对)={ncut} 观测门(结构核对)={nobs} 变异={len(mut_sites)}（{mut_by}） 抓到={caught} 漏抓={miss} 低于sp读站点={len(below)}{"（安卓判红）" if ANDROID and below else ""} 目标={"安卓" if ANDROID else "苹果"} seed={A.seed}', flush=True)
     sys.exit(0 if ok else 1)

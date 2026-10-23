@@ -33,6 +33,8 @@ The App contains only our own program. The rewritten game program, the shader li
 
 Version and build number can be set: `DM_MAC_VERSION` (default 1.0) and `DM_MAC_BUILD` (default: the current month-day-hour-minute).
 
+The App gets the project's own icon (`dm/ios/Assets.xcassets/AppIcon.appiconset/AppIcon1024.png`). Use your own picture with `DM_MAC_ICON_SOURCE=<image>` (an opaque square that fills the whole picture; macOS 26 and later round the corners themselves, and a picture with transparent margins is shown shrunk inside a gray frame), or build without an icon with `DM_MAC_ICON_SOURCE=none`.
+
 ## First launch
 
 Double-click the App. The first launch asks you to choose the **game resource folder**: pick `~/dm-work/data/switch/3.3.94012/Update` (or the `RomFS` inside it); it must contain a `data` folder. Choosing the folder that directly holds the `.data` files and `build_manifest.psv` also works. A wrong choice is explained and you are asked again; a correct one is remembered.
@@ -62,6 +64,8 @@ With a keyboard, the button prompts on screen (the hint bar at the bottom, skill
 **Creating a character, start to finish**: on the main menu press `=` (or click "New Character") → choose a class with the arrow keys and press Return (or click that class's figure) → on the mode page press Return or Space → on the naming page press Return to open the input box, type, Return → press Return once more to create.
 
 A gamepad works as soon as it is connected, alongside the keyboard. The menu bar has View → Full Screen (⌃⌘F) and Quit (⌘Q). The window can be resized freely. In game the picture fills the window or screen at its own aspect ratio (on a 16:10 MacBook both windowed and full screen are filled, with the interface along the bottom, centred while a large panel is open); the front-end pages such as the main menu and character select stay 16:9 with bars above and below.
+
+The mouse pointer hides itself after it has rested over the game window for 3 seconds (handy when playing with the keyboard or a gamepad) and comes back the moment the mouse moves. It never hides over the menu bar, other windows or a dialog. To change the delay: `defaults write org.d2rmobile.mac CursorHideSeconds -float 5` (seconds; `0` turns it off; the older-API build uses `org.d2rmobile.mac.m3`), then restart the App.
 
 ## Mouse
 

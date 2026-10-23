@@ -16,7 +16,7 @@ English: [DEPENDENCIES.md](DEPENDENCIES.md)
 
 | 工具 | 版本 | 用来做什么 | 官方地址 | 安装 |
 |---|---|---|---|---|
-| Xcode（含 Metal 编译器） | 26.6 | 编译 App、把着色器编成 Metal 库 | <https://developer.apple.com/xcode/> | 从 App Store 或开发者网站安装 |
+| Xcode（含 Metal 编译器） | 26.6（要在 iPhone Duo 的内屏上铺满，用 27.1） | 编译 App、把着色器编成 Metal 库；用 27.1 时 `./setup.sh` 会用它的编译器重新编着色器 | <https://developer.apple.com/xcode/> | 从 App Store 或开发者网站安装 |
 | Homebrew | — | 安装下面几个命令行工具 | <https://brew.sh> | 按官网首页的一行命令 |
 | XcodeGen | 2.45.4 | 由 `project.yml` 生成 Xcode 工程 | <https://github.com/yonaskolb/XcodeGen> | `brew install xcodegen` |
 | .NET SDK | 10.0 | 编译着色器翻译工具 | <https://dotnet.microsoft.com/download> | `brew install dotnet` |
@@ -34,6 +34,20 @@ English: [DEPENDENCIES.md](DEPENDENCIES.md)
 | unicorn | 2.1.4 | 逐处核对改写前后行为等价 | <https://pypi.org/project/unicorn/> |
 
 一次装齐：`python3 -m pip install pillow numpy lz4 capstone unicorn`（`./setup.sh` 会自动建独立环境并装好，不用手动执行）
+
+## 安卓版另外需要
+
+玩家装安卓版不用构建：装发布页的 APK，再用 `dm/tools/d2rm_android.py` 做导入包（它要 Python 包、.NET SDK 和 Vulkan SDK 里的 `spirv-opt` / `spirv-val` / `glslc`，见该脚本开头）。要自己编 APK 才需要下面这些工具（合作者在 Linux / WSL2 上构建验证过），版本与 [dm/android/README.zh-CN.md](../dm/android/README.zh-CN.md) 一致；Linux / WSL 上也可以直接用 `dm/android/docker/` 里版本都钉死的构建环境，就不用自己装下面这些。
+
+| 工具 | 版本 | 用来做什么 | 官方地址 |
+|---|---|---|---|
+| JDK | 17 或更新 | 跑 Gradle | <https://adoptium.net> |
+| Gradle | 9.8.1 | 构建 APK | <https://gradle.org> |
+| Android SDK | 36 | 编译与打包 | <https://developer.android.com/studio> |
+| Android NDK | 29.0.14206865 | 编译宿主与 Vulkan 图形层 | <https://developer.android.com/ndk> |
+| CMake | 3.31.6 | 原生代码的构建脚本 | <https://cmake.org> |
+| adb | 随 Android SDK | 开发调试时看日志、推文件（玩家不需要） | <https://developer.android.com/tools/adb> |
+| Docker（可选） | — | 用 `dm/android/docker/` 的现成构建环境 | <https://www.docker.com> |
 
 ## 可选
 
@@ -61,6 +75,8 @@ English: [DEPENDENCIES.md](DEPENDENCIES.md)
 | `dm/third_party/bcdec` | BC 贴图解压 | MIT 或 Unlicense（任选） | <https://github.com/iOrange/bcdec> |
 | `dm/third_party/flip` | 画面差异度量 | BSD 3-Clause | <https://github.com/NVlabs/flip> |
 | `dm/third_party/libdeflate` | 解压 | MIT | <https://github.com/ebiggers/libdeflate> |
+| `dm/gfx/vulkan/engine/third_party/bcdec` | 安卓 Vulkan 图形层里解压 BC 贴图（与上面的 bcdec 同源，单独固定了版本） | MIT 或 Unlicense（任选） | <https://github.com/iOrange/bcdec> |
+| `dm/gfx/vulkan/engine/third_party/pillow_reference` | Pillow 的 BC6 解码参考表，只用于 Vulkan 图形层的测试 | HPND（Pillow 的许可证） | <https://github.com/python-pillow/Pillow> |
 | `dm/third_party/ryujinx` | Ryujinx 1.3.2 的着色器翻译库（三个项目，未修改），把 Switch 原版着色器翻译成 SPIR-V | MIT | <https://github.com/Ryubing> |
 | `dm/gfx/nvn/include/nvn.h` | 图形接口声明 | MIT | 文件头注明作者 |
 | `dm/gfx/nvn/nvn_tex.c` 中的排布尺寸算法 | 移植自 deko3d | zlib | <https://github.com/devkitPro/deko3d> |

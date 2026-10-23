@@ -4,7 +4,7 @@
 #import <Metal/Metal.h>
 #include "nvn_deswizzle.h"
 #ifndef DM_NVN_M3
-#define DM_NVN_M3 0   // 见 nvn_mtl.m：1 = 图形后端走老接口 | see nvn_mtl.m: 1 = the graphics backend uses the older API
+#define DM_NVN_M3 0   // 见 nvn_mtl.m：1 = 图形后端走旧接口 | see nvn_mtl.m: 1 = the graphics backend uses the older API
 #endif
 
 int nvn_deswz_gpu_init(id<MTLDevice> dev);

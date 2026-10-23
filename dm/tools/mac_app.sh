@@ -17,7 +17,7 @@ set -eu
 HERE=$(cd "$(dirname "$0")" && pwd); DM=$HERE/..; ROOT=${DM_ROOT:-$HOME/dm-work}
 OUT=${1:-$ROOT/out/macapp}; KIND=${DM_MAC_PRODUCT:-touch}; BID=${DM_MAC_BUNDLE_ID:-org.d2rmobile.mac}
 P=$(bash "$HERE/product.sh" path "$KIND"); [ -f "$P/main.patched.bin" ] || { echo "🔴 没有产物 ${P}（先跑 product.sh build）"; exit 2; }
-# DM_MAC_M3=1：老接口版（图形后端不用 Metal 4，最低系统 host/Makefile 的 MACOS_MIN_M3）。包名、显示名、包标识都带 M3，能和正式包并存；存档与日志目录也是另一个
+# DM_MAC_M3=1：旧接口版（图形后端不用 Metal 4，最低系统 host/Makefile 的 MACOS_MIN_M3）。包名、显示名、包标识都带 M3，能和正式包并存；存档与日志目录也是另一个
 # DM_MAC_M3=1: older-API build (the graphics backend does not use Metal 4; minimum system is MACOS_MIN_M3 in host/Makefile). Package name, display name and bundle identifier all carry M3 so it can coexist with the regular package; the save and log directory is a separate one as well
 M3=${DM_MAC_M3:-}; NAME="D2R Mobile${M3:+ M3}"; [ -z "$M3" ] || BID=${DM_MAC_BUNDLE_ID:-org.d2rmobile.mac.m3}
 make -C "$DM/host" ${M3:+dmhost_m3} > /dev/null
@@ -32,7 +32,7 @@ cp "$DM/gfx/nvn/pso_manifest.tsv" "$APP/Contents/Resources/pso_manifest.tsv"   #
 # 编好的着色器库（Mac 版，dmsh_build.py 出的）：只带运行要用的 .metallib 与反射 .json，源码 .metal 不带
 # The compiled shader library (Mac variant, produced by dmsh_build.py): only the .metallib and reflection .json needed at run time are included, not the .metal sources
 V=$(sed -n 's/.*DMSH_CHAIN "\(.*\)".*/\1/p' "$DM/gfx/nvn/dmsh_chain.h")
-# 老接口版：着色器库也要按它的最低系统重编一份（缓存里那份记的目标是编译机的系统版本，老系统上加载不了）；DM_MSL_DIR 给了就用给的
+# 旧接口版：着色器库也要按它的最低系统重编一份（缓存里那份记的目标是编译机的系统版本，老系统上加载不了）；DM_MSL_DIR 给了就用给的
 # Older-API build: the shader libraries must also be recompiled for its minimum system (the ones in the cache record the system version of the build machine as target and cannot be loaded on an older system); DM_MSL_DIR is used when given
 [ -z "$M3" ] || [ -n "${DM_MSL_DIR:-}" ] || { bash "$DM/gfx/tools/msl_retarget.sh" "$MIN" "$OUT/msl_min$MIN" > /dev/null || { echo "🔴 着色器库按 macOS ${MIN} 重编失败"; exit 2; }; DM_MSL_DIR=$OUT/msl_min$MIN; }
 MSL=${DM_MSL_DIR:-$ROOT/build/cache/metal_shader_cache}/b-$V
@@ -62,18 +62,27 @@ if [ "${DM_MAC_ROMFS_COPY:-0}" = 1 ]; then
   [ -f "$ROM/data/build_manifest.psv" ] || { echo "🔴 DM_MAC_ROMFS_COPY=1 但资源里没有清单：$ROM/data/build_manifest.psv"; exit 2; }
   ditto "$ROM" "$RES/romfs"
 fi
-# DM_MAC_ICON_SOURCE=<图>：用自己给的图出 App 图标（仓库不带美术）
-# DM_MAC_ICON_SOURCE=<image>: build the App icon from an image you provide (the repository carries no artwork)
-if [ -n "${DM_MAC_ICON_SOURCE:-}" ]; then
-  [ -f "$DM_MAC_ICON_SOURCE" ] || { echo "🔴 DM_MAC_ICON_SOURCE 指的图不存在：$DM_MAC_ICON_SOURCE"; exit 2; }
+# DM_MAC_ICON_SOURCE=<图>：App 图标用的图，缺省是仓库自带的 iOS 图标（ios/Assets.xcassets/AppIcon.appiconset/AppIcon1024.png）；=none 不带图标。
+# 图要是不透明、铺满的正方形：macOS 26 起圆角由系统自己裁；四周留透明边的图（macOS 25 以前的画法）在 macOS 27 上实测会被缩小放进灰色底框里显示
+# DM_MAC_ICON_SOURCE=<image>: the picture for the App icon, by default the repository's own iOS icon (ios/Assets.xcassets/AppIcon.appiconset/AppIcon1024.png); =none builds without an icon.
+# Use an opaque, full-bleed square: from macOS 26 on the system rounds the corners itself; a picture with transparent margins (the pre-macOS 26 way of drawing) was shown shrunk inside a gray frame on macOS 27
+ICON_SRC=${DM_MAC_ICON_SOURCE:-$DM/ios/Assets.xcassets/AppIcon.appiconset/AppIcon1024.png}; ICON_KEY=
+# 没设 DM_MAC_ICON_SOURCE、仓库里又没有缺省图（比如只拷了部分源码的目录）：照常出包、不带图标，只提示一句；设了却找不到图才算错
+# DM_MAC_ICON_SOURCE not set and the repository's default image is missing (e.g. a tree with only part of the sources): build as usual without an icon and just say so; only a set but missing image is an error
+if [ -z "${DM_MAC_ICON_SOURCE:-}" ] && [ ! -f "$ICON_SRC" ]; then
+  echo "提示：仓库里没有缺省图标 ${ICON_SRC}，这个包不带图标 | note: the repository's default icon ${ICON_SRC} is missing; building without an icon"; ICON_SRC=none
+fi
+if [ "$ICON_SRC" != none ]; then
+  [ -f "$ICON_SRC" ] || { echo "🔴 DM_MAC_ICON_SOURCE 指的图不存在：$ICON_SRC"; exit 2; }
   ICONSET="$RES/AppIcon.iconset"; mkdir "$ICONSET"
   for size in 16 32 128 256 512; do
-    sips -s format png -z "$size" "$size" "$DM_MAC_ICON_SOURCE" --out "$ICONSET/icon_${size}x${size}.png" > /dev/null
+    sips -s format png -z "$size" "$size" "$ICON_SRC" --out "$ICONSET/icon_${size}x${size}.png" > /dev/null
     twice=$((size * 2))
-    sips -s format png -z "$twice" "$twice" "$DM_MAC_ICON_SOURCE" --out "$ICONSET/icon_${size}x${size}@2x.png" > /dev/null
+    sips -s format png -z "$twice" "$twice" "$ICON_SRC" --out "$ICONSET/icon_${size}x${size}@2x.png" > /dev/null
   done
   iconutil -c icns "$ICONSET" -o "$RES/AppIcon.icns"
   rm -r "$ICONSET"
+  ICON_KEY="<key>CFBundleIconFile</key><string>AppIcon</string>"
 fi
 if [ -z "$LINK" ] && [ -n "$(find "$RES" -type l -print -quit)" ]; then
   echo "🔴 自带资源的包里不许有符号链接（换到别的机器就断）"; exit 3
@@ -89,7 +98,7 @@ cat > "$APP/Contents/Info.plist" <<PL
 <key>CFBundleDisplayName</key><string>$NAME</string>
 <key>CFBundleIdentifier</key><string>$BID</string>
 <key>CFBundleExecutable</key><string>D2RMobile</string>
-${DM_MAC_ICON_SOURCE:+<key>CFBundleIconFile</key><string>AppIcon</string>}
+${ICON_KEY}
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>$VER</string>
 <key>CFBundleVersion</key><string>$BUILD</string>
@@ -103,9 +112,9 @@ PL
 # 自检：管线预热的种子清单在包里、与映射表同目录、不是空的
 # Self-check: the seed list for pipeline warm-up is in the package, in the same directory as the mapping table, and not empty
 [ -s "$RES/pso_manifest.tsv" ] && [ -s "$RES/shader_map.tsv" ] || { echo "🔴 包里缺管线预热种子清单或着色器映射表（Resources/pso_manifest.tsv、shader_map.tsv）"; exit 3; }
-# 老接口版另核：程序本体里不许引用任何 Metal 4 符号
+# 旧接口版另核：程序本体里不许引用任何 Metal 4 符号
 # Extra check for the older-API build: the executable must not reference any Metal 4 symbol
-[ -z "$M3" ] || { N4=$(nm "$APP/Contents/MacOS/D2RMobile" | grep -c MTL4 || true); [ "$N4" = 0 ] || { echo "🔴 老接口版的程序本体里还有 ${N4} 个 Metal 4 符号"; exit 3; }; }
+[ -z "$M3" ] || { N4=$(nm "$APP/Contents/MacOS/D2RMobile" | grep -c MTL4 || true); [ "$N4" = 0 ] || { echo "🔴 旧接口版的程序本体里还有 ${N4} 个 Metal 4 符号"; exit 3; }; }
 # 自检：带进包的着色器库记的目标系统不许高于包声明的最低系统（抽查头、中、尾各一个与一个 _bf；链接式的包不带库，不查）
 # Self-check: the target system recorded in the shader libraries carried in the package must not be higher than the minimum system the package declares (spot-check one each from the head, middle and tail plus one _bf; a link-style package carries no libraries and is not checked)
 if [ -z "$LINK" ]; then ( cd "$RES/msl/b-$V" && for f in $(ls | grep '_b\.metallib$' | sed -n '1p;1000p;$p') $(ls | grep '_bf\.metallib$' | head -1); do
@@ -120,4 +129,4 @@ ARCHS=$(lipo -archs "$APP/Contents/MacOS/D2RMobile"); [ "$ARCHS" = arm64 ] || { 
 python3 "$HERE/mac_bundle.py" "$APP/Contents/MacOS/D2RMobile" "$DM/host/dmhost${M3:+_m3}"
 codesign --force -s - "$APP" > /dev/null 2>&1 || { echo "🔴 本地签名失败"; exit 3; }
 codesign --verify --deep --strict "$APP"
-echo "MACAPP ${APP}（${M3:+老接口版，}版本 ${VER} 构建 ${BUILD}，最低系统 macOS ${MIN}，产物 $(basename "$P")，$(du -sh "$APP" | cut -f1)${LINK:+，不带派生物：只能在本机跑}）"
+echo "MACAPP ${APP}（${M3:+旧接口版，}版本 ${VER} 构建 ${BUILD}，最低系统 macOS ${MIN}，产物 $(basename "$P")，$(du -sh "$APP" | cut -f1)${LINK:+，不带派生物：只能在本机跑}）"

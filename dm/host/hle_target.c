@@ -62,7 +62,7 @@ static void target_rank_obs(const uint64_t *regs) {
 
 void target_rank_install(void) {
     if (!gate_obs_present(OBS_TARGET_RANK)) {          // native 规则域（Mac 对原版真值的闸门）没有这个门：原版选目标不变 | The native rule domain (the Mac gate check against the original game's ground truth) does not have this gate: the original target selection is unchanged
-#if TARGET_OS_IPHONE
+#if DM_PHONE
         LOG("【红】产物没有观测门 OBS_TARGET_RANK：自动选怪（Boss > 精英 > 普通）不工作，退回原版选目标");   // iOS 包一定是 touch 规则域，缺门 = 出错包，不许静默 | An iOS app is always in the touch rule domain; a missing gate = a broken package, must not be silent
 #endif
         return;

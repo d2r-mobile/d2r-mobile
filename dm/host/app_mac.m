@@ -17,7 +17,7 @@
 #define T(k) (@(dm_ui(k)))
 
 #ifndef APP_NAME
-#define APP_NAME "D2R Mobile"   // 存档与日志目录名；老接口版构建时另给（host/Makefile CFLAGS_M3），两个包不共用存档 | name of the save and log directory; given separately when building the older-API version (host/Makefile CFLAGS_M3), so the two packages do not share saves
+#define APP_NAME "D2R Mobile"   // 存档与日志目录名；旧接口版构建时另给（host/Makefile CFLAGS_M3），两个包不共用存档 | name of the save and log directory; given separately when building the older-API version (host/Makefile CFLAGS_M3), so the two packages do not share saves
 #endif
 static NSString *const kRomfsKey = @"RomfsDir";
 

@@ -432,7 +432,7 @@ def read_prebuilt(filename):
     return result
 
 
-def rewrite_tvfs(source, output, replacements, prebuilt=None):
+def rewrite_tvfs(source, output, replacements, prebuilt=None, link_source=True):
     data_dir = source / "data"
     config = data_dir / ".build.config"
     lines, values = config_values(config)
@@ -515,23 +515,30 @@ def rewrite_tvfs(source, output, replacements, prebuilt=None):
             new_config = replace_config(new_config, key, root_value)
             new_config = replace_config(new_config, key + "-size", f"{new_root_decoded} {new_root_encoded}")
     (output / "data" / ".build.config").write_text("".join(new_config), encoding="utf-8")
-    for entry in data_dir.iterdir():
-        if entry.name not in {".build.config", data_name}:
-            (output / "data" / entry.name).symlink_to(entry.resolve())
+    if link_source:
+        for entry in data_dir.iterdir():
+            if entry.name not in {".build.config", data_name}:
+                (output / "data" / entry.name).symlink_to(entry.resolve())
     print(f"overlay: {len(updates)} replacement(s), {len(adds)} addition(s), {len(prebuilt_pos)} prebuilt, TVFS rewritten, data={data_name}")
 
 
-def make_overlay(source, output, replacements, prebuilt=None):
+def make_overlay(source, output, replacements, prebuilt=None, link_source=True):
     if output.exists():
         die(f"output already exists: {output}")
-    link_tree(source, output, {"data"})
+    # App 的薄覆盖层由宿主回落到原资源，无需创建原档符号链接（Windows 可能无此权限）。
+    # The App's thin overlay falls back to base resources at runtime and needs no symlink privileges.
+    if link_source: link_tree(source, output, {"data"})
+    else: output.mkdir(parents=True)
     (output / "data").mkdir()
     if not replacements and not prebuilt:
-        for entry in (source / "data").iterdir():
-            (output / "data" / entry.name).symlink_to(entry.resolve())
-        print("empty replacement table: linked all source files")
+        if link_source:
+            for entry in (source / "data").iterdir():
+                (output / "data" / entry.name).symlink_to(entry.resolve())
+        else:
+            (output / "data" / ".build.config").write_bytes((source / "data" / ".build.config").read_bytes())
+        print("empty replacement table: linked base" if link_source else "empty replacement table: thin base config")
         return
-    rewrite_tvfs(source, output, replacements, prebuilt)
+    rewrite_tvfs(source, output, replacements, prebuilt, link_source)
 
 
 def main(argv):
@@ -539,12 +546,14 @@ def main(argv):
         chunk, archive = (int(x) for x in argv[5].split("-"))
         write_pack(Path(argv[2]).resolve(), Path(argv[3]).resolve(), read_replacements(argv[4]), (chunk, archive))
         return
+    link_source = "--thin" not in argv
+    argv = [a for a in argv if a != "--thin"]
     prebuilt = None
     if len(argv) == 6 and argv[4] == "--prebuilt":
         prebuilt = read_prebuilt(argv[5]); argv = argv[:4]
     if len(argv) != 4:
-        die("usage: casc_overlay.py <RomFS> <output-dir> <replacements.tsv> [--prebuilt pack_index.tsv] | pack <RomFS> <out> <replacements.tsv> <chunk-archive>")
-    make_overlay(Path(argv[1]).resolve(), Path(argv[2]).resolve(), read_replacements(argv[3]), prebuilt)
+        die("usage: casc_overlay.py <RomFS> <output-dir> <replacements.tsv> [--prebuilt pack_index.tsv] [--thin] | pack <RomFS> <out> <replacements.tsv> <chunk-archive>")
+    make_overlay(Path(argv[1]).resolve(), Path(argv[2]).resolve(), read_replacements(argv[3]), prebuilt, link_source)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,11 @@
 # Android 原生移植起点：设备探针与现有纹理代码，依据 NDK / Vulkan 接口。
 # Android native port starting point: device probe and existing texture code, based on NDK / Vulkan APIs.
 cmake_minimum_required(VERSION 3.22)
+# Game app builds supply private generated headers; other builds use the checks below.
+if(DEFINED DM_GEN_DIR)
+    include("${CMAKE_CURRENT_LIST_DIR}/app.cmake")
+    return()
+endif()
 project(dm_android C)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)

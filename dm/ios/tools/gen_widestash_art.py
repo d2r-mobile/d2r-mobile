@@ -32,10 +32,14 @@ class Desc(C.Structure): _fields_ = [('target', C.c_int), ('format', C.c_int), (
 class Layout(C.Structure): _fields_ = [('size', C.c_uint64), ('layer_size', C.c_uint64), ('align', C.c_uint32), ('layers', C.c_uint32), ('bpb', C.c_uint32), ('tileH', C.c_uint), ('tileD', C.c_uint)]
 
 def lib():
-    t = tempfile.mkdtemp(); p = os.path.join(t, 'bl.dll' if os.name == 'nt' else 'bl.dylib')
+    # 同 romfs_art：允许用本仓源码预编的库，Windows 不必另装系统 clang。
+    # As in romfs_art: allow a library built from this tree, without system clang on Windows.
+    p = os.environ.get('DM_DESWIZZLE_LIB')
     win = ['-Wl,/EXPORT:nvn_tex_layout', '-Wl,/EXPORT:nvn_deswizzle', '-Wl,/EXPORT:nvn_swizzle'] if os.name == 'nt' else ['-fPIC']   # 同 romfs_art.py | same as romfs_art.py
-    subprocess.run(['clang', '-O2', '-shared', *win, '-I' + os.path.join(DM, 'gfx', 'nvn'), '-I' + os.path.join(DM, 'gfx', 'tex'), '-o', p,
-                    os.path.join(DM, 'gfx', 'tex', 'nvn_deswizzle.c'), os.path.join(DM, 'gfx', 'nvn', 'nvn_tex.c')], check=True)
+    if not p:
+        t = tempfile.mkdtemp(); p = os.path.join(t, 'bl.dll' if os.name == 'nt' else 'bl.dylib')
+        subprocess.run(['clang', '-O2', '-shared', *win, '-I' + os.path.join(DM, 'gfx', 'nvn'), '-I' + os.path.join(DM, 'gfx', 'tex'), '-o', p,
+                        os.path.join(DM, 'gfx', 'tex', 'nvn_deswizzle.c'), os.path.join(DM, 'gfx', 'nvn', 'nvn_tex.c')], check=True)
     L = C.CDLL(p); L.nvn_tex_layout.argtypes = [C.POINTER(Desc), C.POINTER(Layout)]
     L.nvn_deswizzle.argtypes = [C.POINTER(Desc), C.c_uint, C.c_uint, C.c_void_p, C.c_void_p, C.c_size_t]
     L.nvn_swizzle.argtypes = [C.POINTER(Desc), C.c_uint, C.c_uint, C.c_void_p, C.c_size_t, C.c_void_p]

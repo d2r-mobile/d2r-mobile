@@ -1,7 +1,9 @@
 // 手柄接入（原版 Switch 本来就是手柄操作，恢复手柄支持；复用原版手柄交互，不自己设计）。
 // iOS GameController（MFi / Xbox / PS / Switch Pro）的扩展手柄 → 原版手柄输入（宿主 dm_pad_set，与触屏输入在游戏取手柄时合并）。
-// 四个面键按键帽上印的字母对应：提示条写哪个字母，就按手柄上印着那个字母的键（提示条画的是 Switch 键帽，不跟手柄型号换图）。
-//   系统给的 buttonA/B/X/Y 直接发游戏的 A/B/X/Y，不认手柄类型：系统对任天堂手柄按键帽字母给（印 A 的右键 = buttonA），Xbox 字母与位置一致，
+// 四个面键按键帽上印的字母对应：提示条写哪个字母，就按手柄上印着那个字母的键（提示条画的是 Switch 键帽）。
+// Xbox 手柄（GCXboxGamepad / 产品类别含 Xbox）自动换成 PC / Xbox 版的键位：按物理位置，下确认、右返回、上 = 放进堆叠仓库、左 = Y 功能，
+//   提示条换成原版的 Xbox 键帽（dm_padmap.h dm_padmap_face_xbox、dm_padmode.c 键帽样式）。哪只手柄有明确输入就按哪只的类型换键帽，设置里不用开关。
+//   其余手柄：系统给的 buttonA/B/X/Y 直接发游戏的 A/B/X/Y，不再按型号细分：系统对任天堂手柄按键帽字母给（印 A 的右键 = buttonA），Xbox 字母与位置一致，
 //   没字母的（PS 等）按菱形位置给（下方键 = buttonA = 确认）。规则在 host/dm_padmap.h（纯函数，宿主单测 t_padmap 核）；连接时记一行厂商名与产品类别。
 //   （先前一律按 Switch 的位置排——右键确认——Xbox 手柄玩家照提示条「A 选择」按印着 A 的下方键，实际发的是 B，选角页选不了人。）
 //   （之后按 GCExtendedGamepad.h 的菱形约定认类型再翻译：任天堂手柄被换了两次，A/B、X/Y 全反——公开 日志。）玩家在系统设置里改过键位的，系统已先换好再给我们。
@@ -19,8 +21,10 @@
 // 失活 / 进后台 / 来电（前端 front_ios_focus_event → dm_gamepad_reset）：所有手柄的键和摇杆清零。回调只在值变化时来，按着键切走、在后台松开，回来不会补一次「松开」。
 // Controller support (the original Switch game is played with a controller, so controller support is restored, reusing the original controller interaction rather than designing our own).
 // iOS GameController extended gamepads (MFi / Xbox / PS / Switch Pro) → original controller input (host dm_pad_set, merged with touch input when the game reads the controller).
-// The four face buttons follow the letters printed on the keycaps: whatever letter the prompt shows, press the button printed with that letter (the prompt draws Switch keycaps and does not change with the controller model).
-//   The system's buttonA/B/X/Y are sent directly as the game's A/B/X/Y regardless of controller type: the system reports Nintendo controllers by keycap letter (the right button printed A = buttonA), Xbox letters match positions,
+// The four face buttons follow the letters printed on the keycaps: whatever letter the prompt shows, press the button printed with that letter (the prompt draws Switch keycaps).
+// An Xbox controller (GCXboxGamepad / product category containing Xbox) switches automatically to the PC / Xbox layout: by physical position, bottom confirms, right goes back, top = into the stack stash, left = the Y function,
+//   and the prompt strip shows the original Xbox glyphs (dm_padmap.h dm_padmap_face_xbox, the glyph styles in dm_padmode.c). Whichever controller gives clear input decides the glyphs; there is no setting to turn on.
+//   For other controllers, the system's buttonA/B/X/Y are sent directly as the game's A/B/X/Y, with no further distinction by model: the system reports Nintendo controllers by keycap letter (the right button printed A = buttonA), Xbox letters match positions,
 //   and controllers without letters (PS etc.) by diamond position (bottom button = buttonA = confirm). The rule lives in host/dm_padmap.h (pure function, checked by the host unit test t_padmap); the vendor name and product category are logged on connect.
 //   (Previously everything followed the Switch layout — right button confirms — so Xbox players pressing the bottom button printed A per the prompt "A Select" actually sent B and could not pick a character.)
 //   (Later the type was recognized and translated per the diamond convention in GCExtendedGamepad.h: Nintendo controllers were swapped twice and A/B, X/Y were all reversed — a public log.) If the player remapped buttons in system settings, the system has already applied that before reporting.
@@ -49,7 +53,8 @@ int dm_gamepad_mode(void) { return g_pad_mode; }
 // 各手柄各存各的（槽 0、1 留给触点脚本的两个虚拟手柄，其余给实体手柄）
 // Each controller is stored separately (slots 0 and 1 are reserved for the touch script's two virtual controllers, the rest are for physical controllers)
 enum { NSLOT = 6 };
-static struct { const void *who; uint64_t b; int32_t ax[4]; } g_s[NSLOT];
+static struct { const void *who; uint64_t b; int32_t ax[4]; int xbox; } g_s[NSLOT];
+static int g_glyph = DM_GLYPH_PAD;   // 最近一次明确输入来自哪种手柄 → 键帽样式 | Which kind of controller the latest clear input came from -> glyph style
 static int slot_of(const void *who, int make) { int fr = -1; for (int i = 0; i < NSLOT; i++) { if (g_s[i].who == who) return i; if (fr < 0 && !g_s[i].who) fr = i; }
     if (make && fr >= 0) { memset(&g_s[fr], 0, sizeof g_s[fr]); g_s[fr].who = who; return fr; } return -1; }
 
@@ -64,11 +69,7 @@ static void apply(void) {
     static int on[2]; static uint64_t prev_b;
     on[0] = stick_on(on[0], ax[0], ax[1]); on[1] = stick_on(on[1], ax[2], ax[3]);
     if (!on[0] && !on[1]) g_need_center = 0;   // 碰过屏幕后摇杆回过中了：之后再推出来算数 | The stick has returned to center since the screen was touched: pushing it out again from now on counts
-    if ((b & ~prev_b) || ((on[0] || on[1]) && !g_need_center)) { set_mode(1);
-#if TARGET_OS_OSX
-        { void dm_padmode_request_kbd(int kbd); dm_padmode_request_kbd(0); }   // Mac App：实体手柄有输入，键位图标换回手柄键帽 | Mac App: a physical gamepad had input, switch the key icons back to gamepad key caps
-#endif
-    }
+    if ((b & ~prev_b) || ((on[0] || on[1]) && !g_need_center)) { dm_padmode_request_glyph(g_glyph); set_mode(1); }   // 先报键帽样式再要手柄版：同一次切换里就换成这只手柄的键帽（Mac App 上也是从键盘键帽换回手柄键帽） | Report the glyph style before asking for the controller layout, so the same switch already uses this controller's glyphs (on the Mac App this is also the switch from keyboard glyphs back to controller glyphs)
     prev_b = b;
     if (!g_pad_mode || !on[0]) ax[0] = ax[1] = 0; if (!g_pad_mode || !on[1]) ax[2] = ax[3] = 0;   // 触屏模式不交摇杆；手柄模式下没推出来的给 0 | Sticks are not delivered in touch mode; in controller mode a stick that is not pushed out gives 0
     // ZR：原版六个技能格之一。这一格空着（没绑技能）时按它 = 免费回城（手柄玩家也免费回城，与触屏回城钮一致）；绑了技能就整颗交还原版（不再整颗占用）。
@@ -86,8 +87,10 @@ static void apply(void) {
       prev = b; if (mine) b &= ~(uint64_t)DM_BTN_ZR; if (!(b & DM_BTN_ZR) && !(prev & DM_BTN_ZR)) mine = 0; }
     dm_pad_set(b, ax[0], ax[1], ax[2], ax[3]);
 }
-static void put(const void *who, uint64_t b, int32_t lx, int32_t ly, int32_t rx, int32_t ry) {
-    int i = slot_of(who, 1); if (i < 0) return; g_s[i].b = b; g_s[i].ax[0] = lx; g_s[i].ax[1] = ly; g_s[i].ax[2] = rx; g_s[i].ax[3] = ry; apply();
+static void put(const void *who, uint64_t b, int32_t lx, int32_t ly, int32_t rx, int32_t ry, int xbox) {
+    int i = slot_of(who, 1); if (i < 0) return;
+    if ((b & ~g_s[i].b) || hypot(lx, ly) >= 0.25 * DM_STICK_MAX || hypot(rx, ry) >= 0.25 * DM_STICK_MAX) g_glyph = xbox ? DM_GLYPH_XBOX : DM_GLYPH_PAD;   // 这只手柄有明确输入：键帽跟它的类型 | This controller gave clear input: the glyphs follow its type
+    g_s[i].b = b; g_s[i].ax[0] = lx; g_s[i].ax[1] = ly; g_s[i].ax[2] = rx; g_s[i].ax[3] = ry; g_s[i].xbox = xbox; apply();
 }
 static void drop(const void *who) {   // 这个手柄没了：只拿掉它那一份；一个手柄都不剩才回触屏模式 | This controller is gone: remove only its share; return to touch mode only when no controller is left
     int i = slot_of(who, 0); if (i < 0) return; memset(&g_s[i], 0, sizeof g_s[i]); apply();
@@ -102,21 +105,23 @@ void dm_gamepad_reset(void) {   // 前端：失活 / 进后台 / 来电 | Front 
 // 测试（触点脚本 pad / pad2 / padoff / padoff2 步）：没有实体手柄时走同一条路，只少了 GameController 回调那一层。n = 1 或 2：两个虚拟手柄
 // Test (touch script pad / pad2 / padoff / padoff2 steps): without a physical controller the same path is taken, minus only the GameController callback
 // layer. n = 1 or 2: two virtual controllers
-void dm_gamepad_inject_n(int n, uint64_t b, int32_t lx, int32_t ly, int32_t rx, int32_t ry) { put((const void *)(intptr_t)(n == 2 ? 2 : 1), b, lx, ly, rx, ry); }
+void dm_gamepad_inject_n(int n, uint64_t b, int32_t lx, int32_t ly, int32_t rx, int32_t ry) { put((const void *)(intptr_t)(n == 2 ? 2 : 1), b, lx, ly, rx, ry, 0); }
 void dm_gamepad_drop_n(int n) { LOG("手柄：断开（虚拟手柄 %d）", n == 2 ? 2 : 1); drop((const void *)(intptr_t)(n == 2 ? 2 : 1)); }
 void dm_gamepad_inject(uint64_t b, int32_t lx, int32_t ly, int32_t rx, int32_t ry) { dm_gamepad_inject_n(1, b, lx, ly, rx, ry); }
+static int is_xbox(GCController *c) { return [c.extendedGamepad isKindOfClass:[GCXboxGamepad class]] || [c.productCategory ?: @"" containsString:@"Xbox"]; }
 static void publish(GCController *c, GCExtendedGamepad *g) {
-    uint64_t b = 0;
-    b |= dm_padmap_face(g.buttonA.pressed, g.buttonB.pressed, g.buttonX.pressed, g.buttonY.pressed);   // 系统给哪个字母发哪个字母（dm_padmap.h） | Send whichever letter the system reports (dm_padmap.h)
+    uint64_t b = 0; int xb = is_xbox(c);
+    if (xb) b |= dm_padmap_face_xbox(g.buttonA.pressed, g.buttonB.pressed, g.buttonX.pressed, g.buttonY.pressed, 0);   // Xbox 手柄：按物理位置（dm_padmap.h） | Xbox controller: by physical position (dm_padmap.h)
+    else b |= dm_padmap_face(g.buttonA.pressed, g.buttonB.pressed, g.buttonX.pressed, g.buttonY.pressed);   // 其余：系统给哪个字母发哪个字母（dm_padmap.h） | Others: send whichever letter the system reports (dm_padmap.h)
     if (g.leftShoulder.pressed) b |= DM_BTN_L; if (g.rightShoulder.pressed) b |= DM_BTN_R; if (g.leftTrigger.pressed) b |= DM_BTN_ZL; if (g.rightTrigger.pressed) b |= DM_BTN_ZR;
     if (g.leftThumbstickButton.pressed) b |= DM_BTN_LS; if (g.rightThumbstickButton.pressed) b |= DM_BTN_RS;
     if (g.buttonMenu.pressed) b |= DM_BTN_PLUS; if (g.buttonOptions.pressed) b |= DM_BTN_MINUS;
     if (g.dpad.left.pressed) b |= DM_BTN_LEFT; if (g.dpad.up.pressed) b |= DM_BTN_UP; if (g.dpad.right.pressed) b |= DM_BTN_RIGHT; if (g.dpad.down.pressed) b |= DM_BTN_DOWN;
-    put((__bridge const void *)c, b, axis(g.leftThumbstick.xAxis.value), axis(g.leftThumbstick.yAxis.value), axis(g.rightThumbstick.xAxis.value), axis(g.rightThumbstick.yAxis.value));
+    put((__bridge const void *)c, b, axis(g.leftThumbstick.xAxis.value), axis(g.leftThumbstick.yAxis.value), axis(g.rightThumbstick.xAxis.value), axis(g.rightThumbstick.yAxis.value), xb);
 }
 static void attach(GCController *c) {
     GCExtendedGamepad *g = c.extendedGamepad; if (!g) { LOG("手柄：%s 不是扩展手柄，不接", c.vendorName.UTF8String ?: "?"); return; }
-    LOG("手柄：连上 %s，类别 %s → 面键 buttonA/B/X/Y 直接发 A/B/X/Y", c.vendorName.UTF8String ?: "?", c.productCategory.UTF8String ?: "?");
+    LOG("手柄：连上 %s，类别 %s → %s", c.vendorName.UTF8String ?: "?", c.productCategory.UTF8String ?: "?", is_xbox(c) ? "Xbox 手柄：面键按位置排（下 A 右 B 上 X 左 Y）、Xbox 键帽" : "面键 buttonA/B/X/Y 直接发 A/B/X/Y");
     __weak GCController *wc = c;
     g.valueChangedHandler = ^(GCExtendedGamepad *gp, GCControllerElement *el) { (void)el; GCController *sc = wc; if (sc) publish(sc, gp); };
 }

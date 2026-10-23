@@ -39,6 +39,7 @@ run: \
 	$(B)/t_rift_oldrun \
 	$(B)/t_rift_wave \
 	$(B)/t_interaction_diag \
+	$(B)/t_loader_weak \
 	$(B)/t_map_diag \
 	$(B)/t_warp_diag \
 	$(B)/t_romfs_validate \
@@ -64,6 +65,7 @@ run: \
 	$(B)/t_rift_next
 	$(B)/t_rift_oldrun
 	$(B)/t_interaction_diag
+	$(B)/t_loader_weak
 	$(B)/t_map_diag
 	$(B)/t_warp_diag
 	$(B)/t_rift_wave
@@ -97,7 +99,7 @@ run: \
 	$(B)/t_widget
 	$(B)/t_doorspot
 	TMPDIR="$(abspath $(B))" $(B)/t_cloudsync 2>/dev/null
-	for m in en zh none sysen syses systw sysru tags game; do TMPDIR="$(abspath $(B))" $(B)/t_i18n $$m || exit 1; done
+	for m in en zh none sysen syses systw sysru sysko tags game; do TMPDIR="$(abspath $(B))" $(B)/t_i18n $$m || exit 1; done
 	$(PY) movie_cut.py $(B)/main.orig.bin $(B)/subsdk0.orig.bin
 	$(PY) oe_notify.py $(B)/main.orig.bin
 $(B)/t_i18n: t_i18n.c ../dm_i18n.c ../dm_i18n.h ../dm_i18n_tab.h | $(B)
@@ -190,6 +192,9 @@ $(B)/t_thread_leak: t_thread_leak.c ../thread.c ../dm.h | $(B)
 
 $(B)/t_interaction_diag: t_interaction_diag.c ../dm_world.c ../dm_unit.h ../touch_mac.h | $(B)
 	clang -O1 -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_interaction_diag.c
+
+$(B)/t_loader_weak: t_loader_weak.c ../loader.c ../hle.c ../dm.h ../hle.h | $(B)
+	clang -O1 -Wno-deprecated-declarations -I.. -Wl,-dead_strip -o $@ t_loader_weak.c ../hle.c
 
 $(B)/t_map_diag: t_map_diag.c ../dm_cursor.c ../dm_unit.h | $(B)
 	clang -O1 -Wno-unused-function -Wl,-dead_strip -I.. -o $@ t_map_diag.c

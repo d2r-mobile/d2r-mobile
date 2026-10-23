@@ -2,6 +2,7 @@
 # devbattery.sh 单测：假读数（DEVBATTERY_FAKE）+ 临时目录，不碰设备。期望值按规则手算：不在充时 < 30 拒并落标记、标记在时 < 60 拒、≥ 60 撤标记放行；接电且在充时 ≥ 20 放行（撤标记）、< 20 拒；读不到拒
 # Unit test for devbattery.sh: fake readings (DEVBATTERY_FAKE) + a temporary directory, never touching a device. Expected values computed by hand from the rules: not charging < 30 refuses and drops the marker, with the marker < 60 refuses, >= 60 removes the marker and releases; plugged in and charging >= 20 releases (removing the marker), < 20 refuses; unreadable refuses
 cd "$(dirname "$0")"; T=$(mktemp -d); export DEVBATTERY_DIR=$T;   # 单测一律写临时目录，不碰 $DM_ROOT/run/ios 的真日志与告警 | Unit tests always write to a temporary directory and never touch the real logs and alerts in $DM_ROOT/run/ios
+: > $T/empty.env   # 空的本机配置：DM_LOCAL_ENV 要指向存在的普通文件才算数（/dev/null 不算，会落到 dm/ios/local.env） | An empty local configuration: DM_LOCAL_ENV only counts when it names an existing regular file (/dev/null does not, and would fall through to dm/ios/local.env)
  source ./devbattery.sh; bad=0
 ck() { local want=$1 got; shift; DEVBATTERY_FAKE="$*" devbattery_gate 2>/dev/null; got=$?; [ "$got" = "$want" ] && echo "通 $* → $got" || { echo "不通 $* → ${got}（期望 ${want}）"; bad=1; }; }
 ck 0 80 0 1 1          # 80%：放行 | 80%: pass
@@ -27,7 +28,7 @@ out=$(DEVBATTERY_FAKE="50 0 1 0" devbattery_gate 2>&1); case "$out" in *供电�
 out=$(DEVBATTERY_FAKE="99 0 1 0" devbattery_gate 2>&1); case "$out" in *供电跟不上*) echo "不通 99% 停充被当成供电跟不上"; bad=1;; *) echo "通 99% 停充不记红";; esac
 DEVBATTERY_FAKE= DM_IOS_UDID=00000000-0000000000000000 devbattery_gate 2>/dev/null && { echo "不通 读不到却放行"; bad=1; } || echo "通 读不到拒"
 grep -q '读不到' $T/battery.log && echo "通 读不到记「读不到」" || { echo "不通 读不到没记对"; bad=1; }
-DEVBATTERY_FAKE= DM_IOS_UDID= DM_LOCAL_ENV=/dev/null HOME=$T devbattery_gate 2>/dev/null && { echo "不通 没配 UDID 却放行"; bad=1; } || echo "通 没配 UDID 拒"
+DEVBATTERY_FAKE= DM_IOS_UDID= DM_LOCAL_ENV=$T/empty.env HOME=$T devbattery_gate 2>/dev/null && { echo "不通 没配 UDID 却放行"; bad=1; } || echo "通 没配 UDID 拒"
 grep -q '没配 UDID' $T/battery.log && echo "通 没配 UDID 记「没配 UDID」" || { echo "不通 没配 UDID 没分开记"; bad=1; }
 # 拔电走网络：ideviceinfo 换成必失败的假命令；App 读数文件新鲜按它判，过期且声明局内判 → 放行（有暂停标记仍拒），过期不声明 → 读不到拒
 # Unplugged over the network: ideviceinfo replaced with a command that always fails; a fresh App reading file is used, stale with an in-run check declared -> released (still refused with the pause marker), stale without -> unreadable, refused
@@ -52,4 +53,7 @@ L2=$T/device2.lock; rm -f $T/device_low_battery
 ( unset DM_DEVBATTERY; DM_DEVBATTERY_LOCKS="$T/x.lock $L2" DEVBATTERY_FAKE="25 0 1 0" DM_DEVBATTERY_WAIT_S=1 DM_DEVBATTERY_POLL_S=1 DM_DEVLOCK_DIR=$L2 bash -c 'source ./devlock.sh; devlock_acquire 单测 2>/dev/null; echo 不该走到这' >/dev/null ); r=$?
 [ $r = 4 ] && [ ! -d $L2 ] && [ -f $T/device_low_battery ] && echo "通 名单内锁 不在充 25% → 暂停（退出 4、落标记）" || { echo "不通 名单内锁 不在充 25% → $r"; bad=1; }
 ( unset DM_DEVBATTERY; DM_DEVBATTERY_LOCKS="$T/x.lock" DEVBATTERY_FAKE="25 0 1 0" DM_DEVLOCK_DIR=$L2 bash -c 'source ./devlock.sh; devlock_acquire 单测 2>/dev/null; [ -d "$DEVLOCK_DIR" ] && devlock_release' ) && echo "通 名单外锁不过闸" || { echo "不通 名单外锁被闸住"; bad=1; }
+# DM_DEVBATTERY=0（run.sh install 装包时用）：真机锁不过闸，电量低也直接取到锁
+# DM_DEVBATTERY=0 (used by run.sh install): the device lock skips the gate and is taken even with a low battery
+DM_DEVBATTERY=0 DEVBATTERY_FAKE="10 0 1 0" DM_DEVBATTERY_WAIT_S=1 DM_DEVBATTERY_POLL_S=1 DM_DEVLOCK_DIR=$L bash -c 'source ./devlock.sh; devlock_acquire 单测 2>/dev/null; [ -d "$DEVLOCK_DIR" ] && devlock_release' && echo "通 DM_DEVBATTERY=0 电量低也取到锁" || { echo "不通 DM_DEVBATTERY=0 仍被闸住"; bad=1; }
 rm -rf "$T"; [ $bad = 0 ] && echo "devbattery 单测全过" || { echo "devbattery 单测有不通"; exit 1; }

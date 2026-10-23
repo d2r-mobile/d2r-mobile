@@ -1,0 +1,1 @@
+{ "name": "libdm.so", "types": "./index.d.ts", "version": "1.0.0", "description": "D2R Mobile native host" }

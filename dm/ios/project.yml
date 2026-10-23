@@ -152,7 +152,7 @@ targets:
       CODE_SIGN_STYLE: Automatic
       GENERATE_INFOPLIST_FILE: YES
       TEST_TARGET_NAME: DmIOS
-  DmTV:   # Apple TV 版（社区移植，作者 yinqingyan；dm/tvos/README.md）：共用宿主 / 图形层 / 手柄，独立的入口与 Info，不带触屏、iCloud、资源下载扩展；iOS 目标一处不动 | Apple TV version (community port by yinqingyan; dm/tvos/README.md): shares the host / graphics layer / gamepad, with its own entry and Info, without touch, iCloud, or the resource download extension; the iOS target is untouched
+  DmTV:   # Shared platform implementation.
     type: application
     platform: tvOS
     deploymentTarget: "26.0"

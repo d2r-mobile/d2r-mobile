@@ -14,22 +14,26 @@
 #  ⑩ 跳板出口：每个跳进补丁区的 b，补丁块回 text 的出口只能是 原处+4 / 吸收段尾 / 窗口尾 / 段内原指令的分支目标（已登记剪口放行并列出）
 #  ⑪ 剪口引入的分支门（hle.h 登记「分支门」行）：块逐字 = 模板、两路恢复 x8、gates.tsv 对上
 #  ⑥ 线程槽：表头四个键号互不相同且 < 512；补丁区每条 mrs xN, tpidrro_el0 之后（跳过不写 xN 的 adrp/add）都是 ldr/str xM,[xN,#键号×8]
-# Rewrite structural check: no code is run, the rewriter's build output is checked word by word. Denominators are recounted with an independent disassembler (llvm-objdump), not relying on the rewriter's own capstone scan.
-# Usage: structck.py <rewrite build output dir> <module> <NSO>     last output line STRUCT <module> OK|FAIL ..., exit code 0/1
+# 两种目标都核（表头 TARGET，patch_nso.py DM_TARGET）：安卓的线程槽基址 = [tpidr_el0 - 8]，取槽序列是 mrs xN, tpidr_el0 后多一条 ldur xN,[xN,#-8]；
+#   安卓没有红区，块先移 sp 再存（[sp,#-16]! / [sp],#16），⑨ 的存取配对按块入口 sp 算实际地址。
+# Rewrite structure check: runs no code, checks the rewriter's products word by word. The denominators are recounted with an independent disassembler (llvm-objdump), not the rewriter's own capstone scan.
+# Usage: structck.py <rewrite product directory> <module> <NSO>     last output line STRUCT <module> OK|FAIL ..., exit code 0/1
 # Checks:
-#  ⓪ Registered cuts (cuts.tsv): build ID matches, original image at that site == original bytes, rewritten image == new bytes, reason non-empty, no overlap with rewrite sites / windows; host-call gates introduced by cuts (svc #N≥0x80) have number, offset and form checked against the hle.h registry row (entry form svc;ret at a function entry / call-site form where the original instruction is bl and the target matches the registration)
-#  ① Non-text segments are byte-for-byte identical to the original image except for cuts; everything from the end of the image to the patch area is 0
-#  ② Changed words in text == rewrite site heads (non-J rows of sites.tsv + window starts) ∪ cuts inside text; all rewrite site heads are a B into the patch area
-#  ③ Independent denominator: llvm-objdump reads the original text; x18/w18 operands, tpidr_el0 reads/writes, tpidrro_el0 reads, svc, cntpct/cntvct
-#     all fall within rewrite sites or windows; conversely, every rewrite site is in the independent set (except window starts)
-#  ④ The patch area no longer contains x18/w18, tpidr_el0, svc, cntpct/cntvct
-#  ⑤ Host gate (svc / timer) blocks equal the template word for word, and match gates.tsv one to one (return point, kind, svc number / destination register, original address)
-#  ⑧ Parameter gates (params.tsv): the two original words build a constant with 64-bit movz/movk, the two new words = mrs tpidrro / ldr key slot, the register is not touched in between, no branch target in the range, key number registered, a unique original value per key
-#  ⑦ Registered observation gates (obs.tsv): original image at that site == the registered original instruction word; the original instruction is relocatable (not PC-relative / not a branch / does not involve x18 / does not read or write system registers, judged by capstone);
-#     may be in the middle of a function (the gate ABI saves and restores everything, checked by gatefn); no overlap with rewrite sites / windows / cuts; the gate block = the template word for word (the same first half as an svc gate + original instruction + b back to off+4), gates.tsv records an obs row
-#  ⑩ Trampoline exits: for every b jumping into the patch area, the patch block's exits back to text may only be original site+4 / end of the absorbed span / end of the window / a branch target of an original instruction within the span (registered cuts are let through and listed)
-#  ⑪ Branch gates introduced by cuts (hle.h registry 「分支门」(branch gate) rows): block = template word for word, x8 restored on both paths, matches gates.tsv
-#  ⑥ Thread slots: the four key numbers in the header are mutually distinct and < 512; every mrs xN, tpidrro_el0 in the patch area is followed (skipping adrp/add that do not write xN) by ldr/str xM,[xN,#key number×8]
+#  ⓪ registered cuts (cuts.tsv): build ID matches, original image == original bytes and rewritten image == new bytes at each, reason not empty, no overlap with rewrite sites / windows; host call gates a cut introduces (svc #N≥0x80) are checked against the hle.h registry for number, offset and form (entry form svc;ret at a function entry / call-site form where the original is a bl to the registered target)
+#  ① non-text segments equal the original image byte for byte except the cuts; all zero between the image end and the patch area
+#  ② words changed in text == rewrite site heads (non-J lines of sites.tsv + window starts) ∪ cuts inside text, and every site head is a B into the patch area
+#  ③ independent denominators: llvm-objdump reads the original text; every x18/w18 operand, tpidr_el0 read/write, tpidrro_el0 read, svc, cntpct/cntvct
+#     falls on a rewrite site or inside a window; conversely every rewrite site is in the independent set (window starts excepted)
+#  ④ no x18/w18, tpidr_el0, svc or cntpct/cntvct left in the patch area
+#  ⑤ host gate (svc / timer) blocks equal the template word for word and match gates.tsv one to one (return point, kind, svc number / target register, original address)
+#  ⑧ parameter gates (params.tsv): the two original words are a 64-bit movz/movk constant, the two new words = mrs tpidrro / ldr key slot, nothing in between touches the register, no branch target in the range, key registered, one original value per key
+#  ⑦ registered observation gates (obs.tsv): original image == registered original word there; the original instruction is movable (not PC-relative / not a branch / no x18 / no system register access, judged by capstone);
+#     may be mid-function (the gate ABI saves everything back, checked by gatefn); no overlap with sites / windows / cuts; gate block == template word for word (first half as the svc gate + original instruction + b back to off+4), gates.tsv has an obs line
+#  ⑩ trampoline exits: for every b into the patch area, the patch block's exits back to text may only be original+4 / end of an absorbed run / end of a window / a branch target of an original instruction in the run (registered cuts are allowed and listed)
+#  ⑪ branch gates introduced by cuts ("branch gate" lines in hle.h): block == template word for word, x8 restored on both paths, gates.tsv matches
+#  ⑥ thread slots: the four key numbers in the header are distinct and < 512; after every mrs xN, tpidrro_el0 in the patch area (skipping adrp/add that do not write xN) comes ldr/str xM,[xN,#key×8]
+# Both targets are checked (header TARGET, patch_nso.py DM_TARGET): on Android the thread-slot base is [tpidr_el0 - 8], so the slot fetch has one more ldur xN,[xN,#-8] after mrs xN, tpidr_el0;
+#   Android has no red zone, so blocks move sp before saving ([sp,#-16]! / [sp],#16), and ⑨ pairs saves and restores by their actual address relative to the block-entry sp.
 import sys, os, re, struct, subprocess, tempfile
 sys.path.insert(0, os.path.dirname(__file__))
 import nsoimg
@@ -40,6 +44,8 @@ out_dir, mod, nso = sys.argv[1:4]
 orig = nsoimg.load(nso)
 h = nsoimg.header(out_dir, mod)
 PO, TE = h['PATCH_OFF'], h['TEXT_END']
+ANDROID = h.get('TARGET', 0) == 1
+KEYREAD = 'tpidr_r' if ANDROID else 'tpidrro_r'   # 补丁区里取线程槽基址的那种读（其余系统寄存器读写不许留） | the kind of read that fetches the thread-slot base in the patch area (no other system register read or write may remain)
 pat = open(f'{out_dir}/{mod}.patched.bin', 'rb').read()
 W = lambda b, o: struct.unpack_from('<I', b, o)[0]
 fails = []
@@ -226,7 +232,7 @@ nwin_ref = sum(1 for o in ind if o in inwin)
 # ④ 补丁区干净
 # ④ Patch area is clean
 P = llvm_dis(pat[PO:], PO)
-left = sorted(o for o, t in P.items() if RX18.search(t) or sysk(t) not in (None, 'tpidrro_r'))
+left = sorted(o for o, t in P.items() if RX18.search(t) or sysk(t) not in (None, KEYREAD))   # 留下的取基址读都要是键页间接序列，⑥ 逐条核 | the base reads left must all be key-page indirect sequences; ⑥ checks each one
 if left: bad(f'补丁区残留 x18/系统寄存器/svc：{len(left)} 例 {[(hex(x), P[x]) for x in left[:5]]}')
 
 # ⑤ 宿主门
@@ -234,9 +240,16 @@ if left: bad(f'补丁区残留 x18/系统寄存器/svc：{len(left)} 例 {[(hex(
 KEY = {k[4:-4]: v for k, v in h.items() if k.startswith('KEY_') and k.endswith('_IDX')}
 from capstone import Cs, CS_ARCH_ARM64, CS_MODE_ARM
 _md = Cs(CS_ARCH_ARM64, CS_MODE_ARM); _md.detail = True
+def tpseq(q):
+    """取线程槽基址的开头：苹果 mrs xN, tpidrro_el0；安卓 mrs xN, tpidr_el0 ; ldur xN,[xN,#-8]。核过后安卓去掉 ldur，余下两边同形。 | Start of a thread-slot base fetch: Apple mrs xN, tpidrro_el0; Android mrs xN, tpidr_el0 ; ldur xN,[xN,#-8]. Once checked, the Android ldur is dropped and the rest has the same shape on both."""
+    if not q or q[0].mnemonic != 'mrs': return None
+    if not ANDROID: return q if 'tpidrro_el0' in q[0].op_str else None
+    if 'tpidr_el0' not in q[0].op_str or len(q) < 2 or q[1].mnemonic != 'ldur' or q[1].operands[0].reg != q[0].operands[0].reg \
+            or q[1].operands[1].mem.base != q[0].operands[0].reg or q[1].operands[1].mem.disp != -8: return None
+    return q[:1] + q[2:]
 def keyseq(at):
-    q = list(_md.disasm(pat[at:at + 20], at))
-    if len(q) < 5 or q[0].mnemonic != 'mrs' or 'tpidrro_el0' not in q[0].op_str \
+    q = tpseq(list(_md.disasm(pat[at:at + 24], at)))
+    if not q or len(q) < 5 \
             or q[1].mnemonic != 'adrp' or q[1].operands[1].imm != h['KEY_PAGE_OFF'] \
             or q[2].mnemonic != 'ldr' or q[2].operands[1].mem.base != q[1].operands[0].reg \
             or q[3].mnemonic != 'add' or q[3].operands[0].reg != q[0].operands[0].reg \
@@ -245,9 +258,21 @@ def keyseq(at):
     d = q[2].operands[1].mem.disp
     return (q[3].address + 4, d // 8) if d % 8 == 0 and 0 <= d // 8 < 8 else None
 def paramseq(at, r):
-    q = list(_md.disasm(pat[at:at + 40], at))
+    q = list(_md.disasm(pat[at:at + 44], at))
     tmp = 17 if r == 16 else 16
     rn = lambda ins, i: ins.reg_name(ins.operands[i].reg)
+    if ANDROID:   # str xT,[sp,#-16]! ; 取槽 ; ldr xR,[xR] ; ldr xT,[sp],#16 ; b（patch_nso.py 参数门的安卓排法） | str xT,[sp,#-16]! ; slot fetch ; ldr xR,[xR] ; ldr xT,[sp],#16 ; b (the Android layout of patch_nso.py's parameter gates)
+        t = tpseq(q[1:])
+        if len(q) < 9 or not t or q[0].mnemonic != 'str' or rn(q[0], 0) != f'x{tmp}' or not q[0].writeback \
+                or q[0].operands[1].mem.base != capstone.arm64_const.ARM64_REG_SP or q[0].operands[1].mem.disp != -16 \
+                or rn(t[0], 0) != f'x{r}' or t[1].mnemonic != 'adrp' or t[1].operands[1].imm != h['KEY_PAGE_OFF'] \
+                or t[2].mnemonic != 'ldr' or t[2].operands[1].mem.base != t[1].operands[0].reg or t[3].mnemonic != 'add' \
+                or t[3].operands[0].reg != t[0].operands[0].reg or t[3].operands[1].reg != t[0].operands[0].reg \
+                or t[4].mnemonic != 'ldr' or t[4].operands[0].reg != t[0].operands[0].reg or t[4].operands[1].mem.base != t[3].operands[0].reg \
+                or t[5].mnemonic != 'ldr' or rn(t[5], 0) != f'x{tmp}' or not getattr(t[5], 'post_index', False) \
+                or t[5].operands[1].mem.base != capstone.arm64_const.ARM64_REG_SP or t[6].mnemonic != 'b':
+            return None
+        return (t[5].address + 4, t[2].operands[1].mem.disp // 8)
     if len(q) < 8 or q[0].mnemonic not in ('stur', 'str') or rn(q[0], 0) != f'x{tmp}' \
             or q[0].operands[1].mem.base != capstone.arm64_const.ARM64_REG_SP or q[0].operands[1].mem.disp not in (-16, -24) \
             or q[1].mnemonic != 'mrs' or rn(q[1], 0) != f'x{r}' \
@@ -342,10 +367,10 @@ if set(KEY) != {'K18', 'KTLS', 'KTLR', 'KGATE', 'KRES0', 'KRES1', 'KASPECT', 'KA
 kv = {v: k for k, v in KEY.items()}; nk = {}
 for o in range(PO, len(pat) - 4, 4):
     w = W(pat, o)
-    if w & 0xFFFFFFE0 != 0xD53BD060: continue           # mrs xN, tpidrro_el0
+    if w & 0xFFFFFFE0 != (0xD53BD040 if ANDROID else 0xD53BD060): continue   # mrs xN, tpidr_el0（安卓）/ tpidrro_el0（苹果） | mrs xN, tpidr_el0 (Android) / tpidrro_el0 (Apple)
     n = w & 31; ks = keyseq(o); k = kv.get(ks[1]) if ks else None
     if not ks or k is None:
-        bad(f'补丁区 {o:#x} 读 tpidrro 后不是键页间接槽序列'); continue
+        bad(f'补丁区 {o:#x} 读线程槽基址后不是键页间接槽序列'); continue
     nk[k] = nk.get(k, 0) + 1
 expected = {}
 for kind in sites.values():
@@ -441,21 +466,26 @@ if params:
                     if isimm: const[x] = ins.operands[1].imm
                     else: const.pop(x, None)
 
-# ⑨ 临时寄存器静态检查：每个补丁块的非原指令目的寄存器必须有同偏移红区存取配对。
-# ⑨ Static check of temporary registers: every non-original-instruction destination register in a patch block must have a matching red-zone save/restore pair at the same offset.
+# ⑨ 临时寄存器静态检查：每个补丁块的非原指令目的寄存器必须有同地址的栈存取配对（地址按块入口 sp 算：前 / 后变址会移动 sp，安卓的块全这么写）。
+# ⑨ Static temporary-register check: every destination register of a patch block that is not the original instruction's must have a stack save and restore at the same address (addresses relative to the block-entry sp: pre- / post-indexing moves sp, and Android blocks are all written that way).
 import capstone
 def _writes(ins):
     _, ww = ins.regs_access()
     return {'x29' if ins.reg_name(r) == 'fp' else 'x30' if ins.reg_name(r) == 'lr' else re.sub(r'^[wx]', 'x', ins.reg_name(r))
             for r in ww if ins.reg_name(r) not in ('sp', 'pc')}
-def _mem_sp(ins, load):
-    if (load and not ins.mnemonic.startswith('ld')) or (not load and not ins.mnemonic.startswith('st')):
-        return None
-    for op in ins.operands:
-        if op.type == capstone.arm64_const.ARM64_OP_MEM and ins.reg_name(op.mem.base) == 'sp':
-            if op.mem.disp < 0: return op.mem.disp
-            if load and ins.mnemonic == 'ldp' and op.mem.disp == 0: return -16
-    return None
+def _sp_regs(ins, cur):
+    """以 sp 为基址的访存 → ([(寄存器名, 相对块入口 sp 的地址)], 执行后的 sp 偏移)；不是这类访存返回 (None, cur)。 | A memory access based on sp → ([(register name, address relative to the block-entry sp)], sp offset after it runs); other instructions return (None, cur)."""
+    mem = next((op for op in ins.operands if op.type == capstone.arm64_const.ARM64_OP_MEM and ins.reg_name(op.mem.base) == 'sp'), None)
+    if mem is None or not ins.mnemonic.startswith(('ld', 'st')): return None, cur
+    if getattr(ins, 'post_index', False):
+        addr = cur; cur += next((op.imm for op in ins.operands if op.type == capstone.arm64_const.ARM64_OP_IMM), 0)
+    elif ins.writeback: cur += mem.mem.disp; addr = cur
+    else: addr = cur + mem.mem.disp
+    out = []
+    for k, op in enumerate(x for x in ins.operands[:2] if x.type == capstone.arm64_const.ARM64_OP_REG):
+        name = ins.reg_name(op.reg); size = 4 if name.startswith('w') else 8
+        out.append(('x29' if name == 'fp' else 'x30' if name == 'lr' else re.sub(r'^[wx]', 'x', name), addr + k * size))
+    return out, cur
 def _block(start):
     out = []
     for ins in _md.disasm(pat[start:start + 256], start):
@@ -479,22 +509,15 @@ for a, allowed in static_entries:
             allowed.update(('x0', 'x1'))
     saved = {}
     restored = {}
+    loads = set(); cur = 0
     for i, ins in enumerate(block):
-        d = _mem_sp(ins, False)
-        if d is not None:
-            regs = [op.reg for op in ins.operands[:2] if op.type == capstone.arm64_const.ARM64_OP_REG]
-            for reg in regs:
-                name = ins.reg_name(reg); name = 'x29' if name == 'fp' else 'x30' if name == 'lr' else re.sub(r'^[wx]', 'x', name)
-                saved.setdefault(name, []).append((d, i))
-        d = _mem_sp(ins, True)
-        if d is not None:
-            regs = [op.reg for op in ins.operands[:2] if op.type == capstone.arm64_const.ARM64_OP_REG]
-            for reg in regs:
-                name = ins.reg_name(reg); name = 'x29' if name == 'fp' else 'x30' if name == 'lr' else re.sub(r'^[wx]', 'x', name)
-                restored.setdefault(name, []).append((d, i))
+        regs, cur = _sp_regs(ins, cur)
+        if regs is None: continue
+        if ins.mnemonic.startswith('ld'): loads.add(i)
+        for name, addr in regs: (restored if ins.mnemonic.startswith('ld') else saved).setdefault(name, []).append((addr, i))
     writes = set().union(*(_writes(ins) for ins in block)) if block else set()
     for reg in sorted(writes - allowed):
-        wi = [i for i, ins in enumerate(block) if reg in _writes(ins) and not (i > 0 and _mem_sp(ins, True) is not None)]
+        wi = [i for i, ins in enumerate(block) if reg in _writes(ins) and not (i > 0 and i in loads)]
         dead = any(ins.mnemonic in ('br', 'blr') and ins.operands and ins.reg_name(ins.operands[0].reg) in (reg, reg[1:]) for ins in block)
         ok = dead or any(sd == rd and si < min(wi, default=10**9) and ri > max(wi, default=-1)
                  for sd, si in saved.get(reg, []) for rd, ri in restored.get(reg, []))

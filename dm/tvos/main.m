@@ -1,8 +1,8 @@
-// Apple TV 外壳（社区移植，作者 yinqingyan）：共用宿主、图形层与手柄（ios/Sources/dm_gamepad.m），不带触屏与资源下载界面。
+// MIT-licensed Android compatibility implementation.
 // 资源不随包：原版档案、老机型补充包放在 App 的 Caches/D2R 下（见 dm/tvos/README.md）；着色器随包（Gen/tvos/msl，dm/tvos/build.sh 编）。
 // 只能在实机上跑：tvOS 模拟器的显卡没有 Metal 4、不是统一内存、参数缓冲只有一档，图形层起不来
 // 存档也在 Caches/D2R/save：Caches 是系统空间紧张时可以清掉的目录，存档可能丢（tvOS 没有给 App 的持久大目录，正式做法待定）。
-// Apple TV shell (community port by yinqingyan): shares the host, graphics layer and gamepad (ios/Sources/dm_gamepad.m), without touch or the resource download UI.
+// MIT-licensed Android compatibility implementation.
 // Resources are not bundled: the original archives and the Legacy Device Pack go under the App's Caches/D2R (see dm/tvos/README.md); shaders are bundled (Gen/tvos/msl, built by dm/tvos/build.sh).
 // Runs only on a real device: the tvOS simulator GPU has no Metal 4, no unified memory, and only one argument buffer tier, so the graphics layer cannot start
 // Saves are also in Caches/D2R/save: Caches is a directory the system may purge when space is low, so saves can be lost (tvOS gives apps no persistent large directory; the proper approach is still to be decided).

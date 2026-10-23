@@ -1,3 +1,6 @@
+#ifdef __OHOS__
+#include "hle_audio_ohos.inc"
+#else
 // nn::audio AudioOut：游戏（FMOD nx 输出层）按块追加 PCM 缓冲，播完由系统放回「已释放」队列并触发事件。
 // 宿主：真出声 = CoreAudio AudioUnit（Mac DefaultOutput / iOS RemoteIO）；静音接收端 = 按真实时间消耗缓冲（不出声，节奏与真机一致）。
 //       iOS 缺省真出声（产品必须有声音），测试要静音显式 DM_AUDIO=0；Mac 命令行宿主缺省静音接收端（回放 / 闸门不出声），DM_AUDIO=1 真出声；
@@ -492,3 +495,5 @@ void dm_audio_suspend(int on) {
     }
     pthread_mutex_unlock(&g_aos_lock);
 }
+
+#endif

@@ -16,7 +16,7 @@ Everything the build needs is on this page: what each item is, what it is for, w
 
 | Tool | Version | Used for | Official site | Install |
 |---|---|---|---|---|
-| Xcode (with the Metal compiler) | 26.6 | Building the app and compiling shaders into Metal libraries | <https://developer.apple.com/xcode/> | App Store or the developer site |
+| Xcode (with the Metal compiler) | 26.6 (27.1 to fill the iPhone Duo inner screen) | Building the app and compiling shaders into Metal libraries; with 27.1, `./setup.sh` recompiles the shaders with its compiler | <https://developer.apple.com/xcode/> | App Store or the developer site |
 | Homebrew | — | Installing the command-line tools below | <https://brew.sh> | The one-line command on its home page |
 | XcodeGen | 2.45.4 | Generating the Xcode project from `project.yml` | <https://github.com/yonaskolb/XcodeGen> | `brew install xcodegen` |
 | .NET SDK | 10.0 | Building the shader translation tool | <https://dotnet.microsoft.com/download> | `brew install dotnet` |
@@ -34,6 +34,20 @@ Everything the build needs is on this page: what each item is, what it is for, w
 | unicorn | 2.1.4 | Checking, site by site, that rewritten code behaves the same | <https://pypi.org/project/unicorn/> |
 
 All at once: `python3 -m pip install pillow numpy lz4 capstone unicorn` (`./setup.sh` creates an isolated environment and installs them for you)
+
+## Additionally for Android
+
+Players do not build the Android version: they install the APK from the release page and make the import pack with `dm/tools/d2rm_android.py` (which needs Python packages, the .NET SDK and `spirv-opt` / `spirv-val` / `glslc` from the Vulkan SDK; see the top of the script). Building the APK yourself needs the tools below (the port's authors build and test it on Linux / WSL2), with the versions listed in [dm/android/README.md](../dm/android/README.md); on Linux / WSL you can instead use the build environment in `dm/android/docker/`, which pins every version, and skip installing the tools below.
+
+| Tool | Version | What it is for | Official site |
+|---|---|---|---|
+| JDK | 17 or later | Running Gradle | <https://adoptium.net> |
+| Gradle | 9.8.1 | Building the APK | <https://gradle.org> |
+| Android SDK | 36 | Compiling and packaging | <https://developer.android.com/studio> |
+| Android NDK | 29.0.14206865 | Compiling the host and the Vulkan graphics layer | <https://developer.android.com/ndk> |
+| CMake | 3.31.6 | Build scripts for the native code | <https://cmake.org> |
+| adb | Ships with the Android SDK | Logs and pushing files while developing (players do not need it) | <https://developer.android.com/tools/adb> |
+| Docker (optional) | — | Using the ready-made build environment in `dm/android/docker/` | <https://www.docker.com> |
 
 ## Optional
 
@@ -61,6 +75,8 @@ These are already in the repository; nothing to download. Each keeps its license
 | `dm/third_party/bcdec` | BC texture decompression | MIT or Unlicense (your choice) | <https://github.com/iOrange/bcdec> |
 | `dm/third_party/flip` | Image difference metric | BSD 3-Clause | <https://github.com/NVlabs/flip> |
 | `dm/third_party/libdeflate` | Decompression | MIT | <https://github.com/ebiggers/libdeflate> |
+| `dm/gfx/vulkan/engine/third_party/bcdec` | BC texture decompression in the Android Vulkan graphics layer (same project as the bcdec above, pinned separately) | MIT or Unlicense (your choice) | <https://github.com/iOrange/bcdec> |
+| `dm/gfx/vulkan/engine/third_party/pillow_reference` | Pillow's BC6 decoding reference tables, used only by the Vulkan graphics layer's tests | HPND (Pillow's license) | <https://github.com/python-pillow/Pillow> |
 | `dm/third_party/ryujinx` | The shader translator from Ryujinx 1.3.2 (three projects, unmodified), which translates the original Switch shaders to SPIR-V | MIT | <https://github.com/Ryubing> |
 | `dm/gfx/nvn/include/nvn.h` | Graphics interface declarations | MIT | Author named in the file header |
 | Layout size algorithm in `dm/gfx/nvn/nvn_tex.c` | Ported from deko3d | zlib | <https://github.com/devkitPro/deko3d> |

@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """原版技能图集 / HUD 小图 → TouchArt PNG，原版 Skills / Skilldesc → 纯 C 索引 dm_touch_native_art.c。构建时从玩家自己的游戏文件生成，不进仓库。
 来源与指纹冻结在仓库里的 Sources/TouchArt/native_art_manifest.json（只有原版路径与哈希）：读包后先核原件 SHA-256 / MD5 与两张表的 SHA-256，
-解码后核 PNG 的 SHA-256（解码只解块、不重绘像素）；对不上就报错（游戏版本不对）。
-用法：generate.py <原版 RomFS（Update）>   产物生成在原位置、git 忽略（dm/ios/.gitignore）：Sources/TouchArt/dm_native_*.png、Sources/dm_touch_native_art.c
-（.c 里按 Sources/ 写了相对 include，PNG 由 DmTouchOverlay.m / 工程 / 测试按 Sources/TouchArt 引用，所以不挪目录）
+解码后核尺寸与 RGBA 像素 SHA-256（不依赖 PNG 压缩编码）；对不上仍报错。
+用法：generate.py <原版 RomFS（Update）> [--output-dir 仓外目录]。默认生成在被git忽略的Sources/；指定仓外目录则生成dm_touch_native_art.c及TouchArt/。
+安卓编译时给索引添加公共头搜索路径，PNG仅作为外部overlay导入，不进安装包。
 Original game skill atlas / HUD small images → TouchArt PNG, original game Skills / Skilldesc → pure C index dm_touch_native_art.c. Generated at build time from the player's own game files, not kept in the repository.
 Sources and fingerprints are frozen in Sources/TouchArt/native_art_manifest.json in the repository (only original game paths and hashes): after reading the package, first verify the SHA-256 / MD5 of the original files and the SHA-256 of the two tables,
-after decoding verify the SHA-256 of the PNGs (decoding only decodes blocks, it does not redraw pixels); on a mismatch report an error (wrong game version).
-Usage: generate.py <original game RomFS (Update)>   The build output is generated in place and git-ignored (dm/ios/.gitignore): Sources/TouchArt/dm_native_*.png, Sources/dm_touch_native_art.c
-(the .c has a relative include written against Sources/, and the PNGs are referenced by DmTouchOverlay.m / the project / the tests via Sources/TouchArt, so the directory is not moved)"""
-import csv, hashlib, io, json, sys
+after decoding verify dimensions and RGBA pixel SHA-256, independently of PNG compression; a mismatch remains fatal.
+Usage: generate.py <original game RomFS (Update)> [--output-dir external-directory]. The default remains git-ignored Sources/; an external directory receives dm_touch_native_art.c and TouchArt/.
+Android adds public header search paths for the index; PNGs are imported only as an external overlay and never packaged in the APK."""
+import argparse, csv, hashlib, io, json, sys
 from pathlib import Path
 HERE = Path(__file__).resolve().parent; IOS = HERE.parent.parent
 sys.path.insert(0, str(HERE.parent))
@@ -22,20 +22,33 @@ classes_by_code = {v: i for i, v in enumerate(codes)}
 COMMON_ICON = {357: 20, 358: 22, 360: 24, 361: 30, 362: 32, 363: 34, 364: 36, 370: 38}
 
 
-def main(romfs):
+def validate_rgba(image, asset):
+    """冻结的是像素，PNG 压缩器可以不同。 | Freeze pixels, not a PNG compressor's bytes. | rgba = image.convert('RGBA') if rgba.size != tuple(asset['atlas_px']):"""
+    rgba = image.convert('RGBA')
+    if rgba.size != tuple(asset['atlas_px']):
+        raise SystemExit('native_art：%s 解出的尺寸与冻结的不一致' % asset['asset'])
+    if sha(rgba.tobytes()) != asset['decoded_rgba_sha256']:
+        raise SystemExit('native_art：%s 解出的 RGBA 像素与冻结的不一致' % asset['asset'])
+    return rgba
+
+
+def main(romfs, output=None):
     mpath = IOS / 'Sources/TouchArt/native_art_manifest.json'; man = json.loads(mpath.read_text())
     tables = {}
     for t in man['official_tables']:
         raw = romfs_art.read(romfs, 'global/excel/' + t['file'])
         if sha(raw) != t['sha256']: raise SystemExit('native_art：游戏文件里的 %s 和冻结的不一样（游戏版本不对？要 3.3.94012）' % t['file'])
         tables[t['file']] = list(csv.DictReader(io.StringIO(raw.decode('utf-8')), delimiter='\t'))
-    art = IOS / 'Sources/TouchArt'; atlases = {}
+    # 安卓可把所有生成物放仓外；苹果默认目录保持原样。
+    # Android can keep every generated file outside the checkout; Apple retains its default directories.
+    destination = Path(output) if output else IOS / 'Sources'
+    art = destination / 'TouchArt'; art.mkdir(parents=True, exist_ok=True); atlases = {}
     for a in man['assets']:
         raw = romfs_art.read(romfs, a['official_path'].split('data:data/', 1)[-1])
         if sha(raw) != a['official_sprite_sha256'] or hashlib.md5(raw).hexdigest() != a['official_sprite_md5']:
             raise SystemExit('native_art：%s 的原件和冻结的不一样（游戏版本不对？）' % a['official_path'])
-        b = io.BytesIO(); romfs_art.sprite(romfs, a['official_path'].split('data:data/', 1)[-1]).save(b, 'PNG')
-        if sha(b.getvalue()) != a['decoded_png_sha256']: raise SystemExit('native_art：%s 解出的 PNG 与冻结的不一致（Pillow 版本？）' % a['asset'])
+        image = validate_rgba(romfs_art.sprite(romfs, a['official_path'].split('data:data/', 1)[-1]), a)
+        b = io.BytesIO(); image.save(b, 'PNG')
         (art / a['asset']).write_bytes(b.getvalue()); atlases[a['asset']] = a
     atl = [atlases['dm_native_skill_%d.png' % i] for i in range(len(classes))]
     desc = {r['skilldesc']: r for r in tables['skilldesc.txt']}; rows = []
@@ -52,16 +65,20 @@ def main(romfs):
     assert len({r[0] for r in rows}) == len(rows)
     if sha(canonical(rows)) != man['descriptor_index_sha256']: raise SystemExit('native_art：技能索引和冻结的不一致')
     gpath = IOS / 'docs/native_art_v1_geometry.json'; binding = IOS / 'docs/touch_layout_spec_native_binding_v5.json'
-    out = ['/* Generated from frozen official Skills/Skilldesc; do not hand-edit rows. */', '#include "dm_touch_native_art.h"', '#include "../../host/dm_input.h"', '#include <stddef.h>',
+    out = ['/* 从冻结原版表生成，不手改。 | Generated from frozen official tables; do not hand-edit. */', '#include "dm_touch_native_art.h"', '#include "dm_input.h"' if output else '#include "../../host/dm_input.h"', '#include <stddef.h>',
            'const dm_ta_atlas dm_ta_atlases[DM_TA_ATLASES]={']
     for a in atl: out.append(' {"%s",%d,%d,%d,%d,%d},' % (a['asset'][:-4], *a['atlas_px'], a['frame_width'], a['frame_pitch'], a['frame_count']))
     out += ['};', f'const char dm_ta_manifest_sha[]="{sha(mpath.read_bytes())}";', f'const char dm_ta_geometry_sha[]="{sha(gpath.read_bytes())}";',
             f'const char dm_ta_binding_sha[]="{sha(binding.read_bytes())}";', 'static const struct { uint32_t id; int atlas,frame; } rows[]={']
     out += [' {%d,%d,%d},' % tuple(row) for row in rows]; out += ['};']
     out += [(HERE / 'implementation.c.inc').read_text()]
-    (IOS / 'Sources/dm_touch_native_art.c').write_text('\n'.join(out) + '\n')
-    print(f'native_art：{len(rows)} 条技能索引、{len(atlases)} 张 PNG（原件 SHA256 + MD5、PNG SHA256 都核过）→ {art}')
+    (destination / 'dm_touch_native_art.c').write_text('\n'.join(out) + '\n', encoding='utf-8', newline='\n')
+    print(f'native_art：{len(rows)} 条技能索引、{len(atlases)} 张 PNG（原件 SHA256 + MD5、尺寸与 RGBA SHA256 都核过）→ {art}')
 
 
 if __name__ == '__main__':
-    main(sys.argv[1])
+    parser = argparse.ArgumentParser(description='Generate verified native art from your own RomFS')
+    parser.add_argument('romfs')
+    parser.add_argument('--output-dir', help='External generated-source directory; contains TouchArt/')
+    args = parser.parse_args()
+    main(args.romfs, args.output_dir)
