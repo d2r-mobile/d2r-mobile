@@ -7,7 +7,7 @@
 #include <sys/stat.h>
 
 static int root_allowed(const char *name) {
-    static const char *allowed[]={"data","ctrl_touch","touch_strings.tsv","kbd_glyphs","features.txt","pack.json","pack_index.tsv","dm_textbox_plain.tsv"};
+    static const char *allowed[]={"data","ctrl_touch","touch_strings.tsv","kbd_glyphs","features.txt","pack.json","pack_index.tsv","dm_textbox_plain.tsv","android-update.properties"};
     for(unsigned i=0;i<sizeof allowed/sizeof *allowed;i++)if(!strcmp(name,allowed[i]))return 1;
     return 0;
 }

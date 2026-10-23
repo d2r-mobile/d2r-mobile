@@ -50,6 +50,15 @@ int main(void) {
     CHECK(getenv("DM_ROMFS_OVERLAY") && !strcmp(getenv("DM_ROMFS_OVERLAY"), root));
 
     char path[PATH_MAX];
+    snprintf(path, sizeof path, "%s/android-update.properties", root);
+    write_file(path, "format=1\n");
+    CHECK(dm_touch_overlay_apply(root, why, sizeof why) == 1);
+    remove(path);
+    snprintf(path, sizeof path, "%s/unrecognized.txt", root);
+    write_file(path, "not part of the contract");
+    CHECK(dm_touch_overlay_apply(root, why, sizeof why) == -1);
+    CHECK(getenv("DM_ROMFS_OVERLAY") == NULL);
+    remove(path);
     snprintf(path, sizeof path, "%s/touch_strings.tsv", root);
     write_file(path, "A\tNOTHEX\tB\n");
     CHECK(dm_touch_overlay_apply(root, why, sizeof why) == -1);

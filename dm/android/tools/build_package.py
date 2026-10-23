@@ -39,7 +39,7 @@ OVERLAY_DATA = "data"
 OVERLAY_BUILD_CONFIG = ".build.config"
 OVERLAY_ROOT_FILES = frozenset((OVERLAY_MARKER, OVERLAY_STRINGS, "kbd_glyphs",
                                 "features.txt", "pack.json", "pack_index.tsv",
-                                "dm_textbox_plain.tsv"))
+                                "dm_textbox_plain.tsv", "android-update.properties"))
 CHECKSUM = re.compile(r"^[0-9a-fA-F]{8}$")
 
 
@@ -95,7 +95,7 @@ def _overlay_strings_ok(path):
             continue
         fields = line.split("\t")
         # An empty third field intentionally hides an original controller hint.
-        if len(fields) != 3 or not fields[0] or not CHECKSUM.match(fields[1]):
+        if len(line.encode("utf-8")) > 4094 or len(fields) != 3 or not fields[0] or not CHECKSUM.match(fields[1]):
             raise PackageError(f"overlay touch_strings.tsv line {number} is not key<TAB>8-hex<TAB>value")
     return len(lines)
 

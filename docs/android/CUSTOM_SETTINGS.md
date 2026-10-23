@@ -29,12 +29,14 @@ The playable APK links `host/*.c` through `dm/android/tools/host_link.py`. Its r
 
 ## Follow-up / 后续
 
-On the Xiaomi 15 Ultra, the installed imported overlay still shows only Chinese/English and ends at auto-buff;
-it lacks the new skill-switch-position row. The current host language handler expects all four language widgets,
-so this older two-language row also cannot be considered fully wired. Updating an APK does not replace imported
-game overlay files. This is an additional resource-version mismatch, not proof that the upstream language code is absent.
-实机旧覆盖层只有中／英两项，末尾到自动增益，缺少换组位置行；当前宿主要求四语言控件齐全，旧语言行不能算完整接通。
-APK 更新不会自动替换已导入的游戏覆盖层，需要单独处理资源版本兼容。
+Older imported overlays show only Chinese/English and end at auto-buff, while the current host expects four
+language widgets and includes a skill-switch-position row. An APK alone does not replace imported game overlays.
+The [independent interface updater](OVERLAY_UPDATES.md) now delivers these resources separately. The Xiaomi 15 Ultra
+passed update/rejection/version-persistence and game/camp checks; the new Custom page shows all four language choices
+and both skill-switch-position choices. Language labels use a compact font to avoid wrapping Spanish/Russian names.
+This fixes the resource-version mismatch; it does not itself fix the three host-wiring gaps below.
+旧覆盖层只有中英两项、缺少换组位置行。独立更新已在测试手机通过，四语言与换组位置选项完整显示；
+语言标签字号已调整以避免西语、俄语折行。资源版本升级不代表以下三项功能已接通。
 
 The iCloud row was absent on the actual Custom page, the item-notes/potion-pick rows were adjacent without a gap,
 and scrolling/reopening the page retained the compact layout. Local ASan/UBSan tests cover hidden visibility flags,

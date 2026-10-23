@@ -39,6 +39,7 @@ final class PackageArchive {
     static final String OVERLAY_STRINGS = "touch_strings.tsv";
     static final String OVERLAY_DATA = "data";
     static final String OVERLAY_BUILD_CONFIG = ".build.config";
+    static final String OVERLAY_UPDATE_MANIFEST = "android-update.properties";
     static final String[] PREFIXES = {"game/", "romfs/", "shaders/", "overlay/"};
 
     // 启动时游戏按名字打开这些文件，缺一个就在启动时崩（实测：FATAL open .../game/sdk.fixups.tsv）。
@@ -161,7 +162,7 @@ final class PackageArchive {
     // archive. A marker-only directory would make the host rewrite layout prefixes without any layouts, so refuse it.
     static final String[] OVERLAY_ROOT_FILES = {
         OVERLAY_MARKER, OVERLAY_STRINGS, "kbd_glyphs", "features.txt", "pack.json",
-        "pack_index.tsv", "dm_textbox_plain.tsv"
+        "pack_index.tsv", "dm_textbox_plain.tsv", OVERLAY_UPDATE_MANIFEST
     };
 
     private static boolean checksum8(String text) {
@@ -183,7 +184,7 @@ final class PackageArchive {
                 if (line.isEmpty()) continue;
                 String[] fields = line.split("\t", -1);
                 // Empty replacement text hides a hint in the original touch UI.
-                if (fields.length != 3 || fields[0].isEmpty() || !checksum8(fields[1]))
+                if (line.getBytes(StandardCharsets.UTF_8).length > 4094 || fields.length != 3 || fields[0].isEmpty() || !checksum8(fields[1]))
                     throw new Failure("dmAndroidLaunchImportOverlay", "touch_strings.tsv line " + lines);
             }
             if (lines == 0) throw new Failure("dmAndroidLaunchImportOverlay", "touch_strings.tsv empty");
@@ -307,11 +308,11 @@ final class PackageArchive {
         File manifest = new File(assets, MANIFEST);
         deleteTree(staging);
         deleteTree(overlayStaging);
-        if (manifest.isFile() && !manifest.delete()) throw new IOException("cannot clear " + manifest);
 
         byte[] manifestBytes = null;
         int romfs = 0, shaders = 0, game = 0, overlay = 0, entries = 0;
         long written = 0, lastReported = 0;
+        boolean started = false;
         byte[] buffer = new byte[1 << 20];
         try {
             try (ZipInputStream zip = new ZipInputStream(raw)) {
@@ -320,6 +321,11 @@ final class PackageArchive {
                     if (sink.cancelled()) throw new Failure("dmAndroidLaunchImportCancelled");
                     String name = entry.getName();
                     if (entry.isDirectory()) continue;
+                    if (!started) {
+                        if (name.equals(OVERLAY_UPDATE_MANIFEST)) throw new Failure("dmAndroidInterfaceUseUpdater");
+                        if (manifest.isFile() && !manifest.delete()) throw new IOException("cannot clear " + manifest);
+                        started = true;
+                    }
                     if (++entries > MAX_ENTRIES) throw new Failure("dmAndroidLaunchImportTooBig");
                     if (name.equals(MANIFEST)) {
                         // 读进内存，最后再落盘；顺序说明见函数上方。
