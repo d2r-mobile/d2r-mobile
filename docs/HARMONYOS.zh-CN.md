@@ -1,6 +1,6 @@
 # 在鸿蒙手机上玩
 
-鸿蒙版由 Android implementation 移植，与安卓共用宿主和 Vulkan 引擎。鸿蒙壳是不含游戏内容的预编译 HAP：玩家用自己的调试证书重签，再导入由自己游戏文件生成的运行包，不必重新编译应用。
+鸿蒙版与安卓共用宿主和 Vulkan 引擎。按[开发者构建说明](../dm/harmony/README.zh-CN.md)构建 HAP，用自己的开发者证书签名，再导入用自己的游戏文件生成的运行包。
 
 English: [HARMONYOS.md](HARMONYOS.md)
 

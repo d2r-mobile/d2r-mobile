@@ -1,6 +1,6 @@
 # Playing on an Android phone
 
-The Android version works like the iOS shell: the release page has an **APK that contains no game content**, you make an **import pack** on a computer from your own game files, copy it to the phone, and the App imports it when you open it. No adb, no Android Studio, and no need to build the APK yourself.
+Build the APK using the [Android build guide](../dm/android/README.md), prepare an import pack from your own game files on a computer, then copy it to the phone and import it in the app. Build the APK and import pack from the same source revision.
 
 中文：[ANDROID.zh-CN.md](ANDROID.zh-CN.md)
 
@@ -62,7 +62,7 @@ The 18 archives are listed in [GAME_FILES.md](GAME_FILES.md) in the section The 
 
 ## Step 3: install the APK and open it
 
-1. Download `D2RMobile-android.apk` from the [release page](https://github.com/d2r-mobile/d2r-mobile/releases), copy it to the phone and tap it in the file manager to install. The phone may first ask you to allow "install unknown apps" or show a security check; confirm as it asks.
+1. Build the APK using the [Android build guide](../dm/android/README.md), copy it to the phone and install it. Allow installation from your file manager when prompted.
 2. Open the App. It needs "All files access" to read the game resources in `Download`: tap the screen to open the system setting, turn it on and come back.
 3. The App finds the `android` import pack and imports it into its internal storage with a progress screen (a minute or two the first time; stay on that screen), then starts the game.
 

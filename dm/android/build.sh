@@ -11,7 +11,7 @@ if [[ ! -f "$ndk/build/cmake/android.toolchain.cmake" ]]; then
 fi
 build=${DM_ANDROID_BUILD_DIR:-$DM_ROOT/build/android/arm64-v8a}
 mkdir -p "$TMPDIR"
-cmake -S "$here" -B "$build" \
+cmake -S "$here" -B "$build" -DDM_ANDROID_CHECKS=ON \
     -DCMAKE_TOOLCHAIN_FILE="$ndk/build/cmake/android.toolchain.cmake" \
     -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-29 \
     -DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON -DCMAKE_BUILD_TYPE=Release "$@"

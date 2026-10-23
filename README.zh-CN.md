@@ -1,4 +1,4 @@
-# D2R Mobile · 在 iPhone、iPad 和 Mac 上玩《暗黑破坏神 II：狱火重生》
+# D2R Mobile · 暗黑破坏神 II：重制版，支持 iPhone、iPad、Mac、安卓与鸿蒙
 
 **用你自己的 Nintendo Switch 版游戏文件，在 iPhone、iPad、Apple 芯片 Mac、安卓和鸿蒙设备上离线玩《暗黑破坏神 II：狱火重生》。** 包含「术士君临」资料片，原版 ARM 程序原生执行，苹果图形走 Metal，安卓与鸿蒙图形走 Vulkan，支持触屏和手柄。
 
@@ -31,10 +31,6 @@ MIT · 中文 / English / Español / Русский / 한국어 · iOS 26+ / mac
 ```
 
 它会检查你的电脑、准备工作区、签名装机，再把游戏资源拷进手机。只有两件事会停下来问你：Apple 签名信息，以及需要 `sudo` 的安装要不要做。skill 在 [skills/d2r-mobile/SKILL.md](skills/d2r-mobile/SKILL.md)，两个助手都会通过 `.claude/skills/` 和 `.agents/skills/` 自己找到它。手动构建与安装步骤见[开始使用](#开始使用)。
-
-## Android
-
-Android 开发版包含原生运行时、Vulkan 渲染器、启动器与触屏操作。已测试机型、构建命令和当前限制见 [Android 构建与安装指南](docs/android/README.zh-CN.md)。
 
 ## 为什么玩起来像原生游戏
 
@@ -206,7 +202,7 @@ flowchart LR
 
 ## 安卓版（v2.0 新增）
 
-安卓手机和 Switch 一样是 ARM64 处理器，所以和苹果上一样，游戏自己的程序直接在手机上执行，没有模拟 CPU。这一版把整套宿主——系统调用、文件系统、音频、输入、存档——原样带到了安卓上，图形层换成 Vulkan：NVN→Vulkan 的回放引擎来自 Android implementation 的鸿蒙移植，安卓 App、触屏、Vulkan 呈现和一整轮在真机上逐项测量的性能优化由 Android implementation 完成。苹果版和安卓版用的是同一份宿主代码，以后的改动两边一起受益。
+安卓手机直接执行游戏的 ARM64 程序，无需模拟 CPU。安卓版与苹果版共用系统调用、文件系统、音频、输入和存档代码，图形通过 NVN→Vulkan 引擎呈现。
 
 合作者的真机实测（产品缺省设置：3D 渲染比例上限 0.85，按掉帧动态调低）：
 
@@ -217,15 +213,15 @@ flowchart LR
 
 最低要求：ARM64，Android 12（API 31）及以上，显卡支持 Vulkan 1.1。
 
-**现在怎么用**：装发布页的 `D2RMobile-android.apk`（不含任何游戏内容），在电脑上用你自己的游戏文件跑 `python3 dm/tools/d2rm_android.py <Update 目录> <输出目录>` 做出导入包（`android` 文件夹：改写后的游戏程序、全部 Vulkan 着色器包、触屏覆盖层与几张数据表），把它和游戏资源（`data` 文件夹）一起拷到手机的 `Download/S2X/D2R Mobile/`，打开 App 会带进度条自己导入。不用 adb，也不用自己编 APK。完整步骤见 [docs/ANDROID.zh-CN.md](docs/ANDROID.zh-CN.md)。触屏控件和 iPhone 版同一套画法（按钮底座、银灰技能剪影、摇杆），面板打开时不再压着虚拟手柄圆钮。和 iOS 版相比，还没做完的是几处触屏细节：空技能格菜单、加点浮层、商店拖动时跟着手指的物品图。
+**现在怎么用**：按 [Android 构建说明](dm/android/README.zh-CN.md)生成 APK，再用 `python3 dm/tools/d2rm_android.py <Update 目录> <输出目录>` 准备自己的游戏内容。将生成的 `android` 文件夹和游戏资源 `data` 文件夹拷到手机的 `Download/S2X/D2R Mobile/`，打开 App 导入。完整步骤见 [安装指南](docs/ANDROID.zh-CN.md)。
 
 开发进度、每一轮的实测记录与待办在 [docs/ANDROID_COLLABORATION.zh-CN.md](docs/ANDROID_COLLABORATION.zh-CN.md) 和 [docs/android-notes/](docs/android-notes/)。鸿蒙版见下一节。
 
 ## 鸿蒙版（v2.0 新增）
 
-鸿蒙 NEXT 应用（`dm/harmony`）由 Android implementation 完成，和安卓用同一份宿主和同一套 Vulkan 引擎。作者在 Mate 90 Pro Max（马良 955）上实测：罗格营地按住摇杆 59.7 帧，上屏间隔 p50 16.6 / p99 18.1 ms。
+鸿蒙 NEXT 应用（`dm/harmony`）与安卓共用宿主和 Vulkan 引擎。Mate 90 Pro Max 上的安装、导入和存档验证见构建说明。
 
-**怎么用**：和 iOS 的壳一个思路。发布页有一个**不含任何游戏内容的未签名安装包**（`D2RMobile-harmony-shell-unsigned.hap`）；鸿蒙 NEXT 只装用你自己的开发者证书签名的应用，所以你用自己的调试证书把它重签、装上，不用自己编应用。再在电脑上用你自己的游戏文件跑 `python3 dm/tools/d2rm_android.py --target ohos <Update 目录> <输出目录>` 做出运行包，和游戏资源一起放进手机上的「D2R Mobile」文件夹，打开应用选它导入。完整步骤见 [docs/HARMONYOS.zh-CN.md](docs/HARMONYOS.zh-CN.md)。作者在 Mate 90 Pro Max 上把「重签 → 安装 → 首次导入 → 进局 → 保存退出」整条走通，连续三次冷启动都正常；需要华为开发者账号（DevEco Studio 能自动生成调试证书与登记设备）。
+**怎么用**：按 [HarmonyOS 构建说明](dm/harmony/README.zh-CN.md)构建应用，用自己的开发者证书签名并安装。运行 `python3 dm/tools/d2rm_android.py --target ohos <Update 目录> <输出目录>` 准备运行包，再与自己的游戏资源一起导入。完整步骤见 [安装指南](docs/HARMONYOS.zh-CN.md)。
 
 ## 支持哪些设备
 
@@ -240,9 +236,9 @@ flowchart LR
 | **A14 芯片、6 GB 及以上内存**（如 iPhone 12 Pro / 12 Pro Max） | 尚无报告 | 同 A16 及更早那一行 | 欢迎试过的人开 Issue 告诉我们结果 |
 | **A13 及更早的芯片**（如 iPhone 11 系列、2020 年的 iPad Pro） | 不支持 | — | 图形芯片不支持 Metal 3（玩家在 iPad Pro A12Z 上实测；苹果依据见表上方）；App 启动时会直接提示，不会闪退 |
 | **Mac，Apple 芯片** | 直接玩（原生 macOS App） | macOS 26 及以上用默认出法；macOS 15 – 25 用[旧接口出法](docs/OLDER_SYSTEMS.zh-CN.md)。键盘、鼠标、手柄都能玩，各自能做什么见 [docs/MAC.zh-CN.md](docs/MAC.zh-CN.md) | 已有玩家在 macOS 15.7.7 上实际玩过旧接口版 |
-| **Apple TV 4K（第三代 A15）** | 社区移植（Android implementation，经作者同意按 MIT 许可贡献），开发者预览 | 照 [dm/tvos/README.md](dm/tvos/README.md) 构建并把游戏文件、老机型补充包拷进 App；只能在实机上跑，模拟器跑不了；存档放在系统可清理的 Caches 目录里 | 已在实机上到达职业选择画面；进游戏、手柄全键位、存档尚未验证，维护者没有实机测试过 |
-| **鸿蒙手机**（HarmonyOS NEXT，API 26） | 能玩（社区移植） | 发布页的未签名壳用自己的调试证书重签 + 用自己的游戏文件做的运行包，见 [docs/HARMONYOS.zh-CN.md](docs/HARMONYOS.zh-CN.md) | 作者实测：Mate 90 Pro Max 上重签、安装、导入、进局、保存退出走通 |
-| **安卓手机**（ARM64，Android 12 起，Vulkan 1.1） | 可以玩（社区移植） | 发布页的 APK + 用自己的游戏文件做的导入包，见 [docs/ANDROID.zh-CN.md](docs/ANDROID.zh-CN.md) | 合作者实测：Redmi K50 Ultra 中位 60 帧；OnePlus 13 能玩，偶有一瞬的小黑块；vivo X200 Ultra 上试玩过 |
+| **Apple TV 4K（第三代 A15）** | 开发者预览，采用 MIT 许可 | 照 [dm/tvos/README.md](dm/tvos/README.md) 构建并把游戏文件、老机型补充包拷进 App；只能在实机上跑，模拟器跑不了；存档放在系统可清理的 Caches 目录里 | 已在实机上到达职业选择画面；进游戏、手柄全键位、存档尚未验证，维护者没有实机测试过 |
+| **鸿蒙手机**（HarmonyOS NEXT，API 26） | 能玩（社区移植） | 本地构建并用自己的调试证书签名的应用 + 用自己的游戏文件做的运行包，见 [docs/HARMONYOS.zh-CN.md](docs/HARMONYOS.zh-CN.md) | 作者实测：Mate 90 Pro Max 上重签、安装、导入、进局、保存退出走通 |
+| **安卓手机**（ARM64，Android 12 起，Vulkan 1.1） | 可以玩（社区移植） | 本地构建的 APK + 用自己的游戏文件做的导入包，见 [docs/ANDROID.zh-CN.md](docs/ANDROID.zh-CN.md) | 合作者实测：Redmi K50 Ultra 中位 60 帧；OnePlus 13 能玩，偶有一瞬的小黑块；vivo X200 Ultra 上试玩过 |
 | **Intel 芯片的 Mac** | 不支持 | — | — |
 
 **App 里弹的框是什么意思**
@@ -322,43 +318,7 @@ DM_MAC_M3=1 dm/tools/mac_app.sh      # macOS 15 – 25：产出 D2R Mobile M3.ap
 
 界面用原版的手柄版界面。键盘：空格确认、Esc 返回、回车、`=` 键开菜单 / 新角色，W A S D 移动，其余手柄键各有对应。鼠标：点怪、NPC、物件会走过去交互，底部的技能格、药水格、按键提示、面板里的按钮和页签、建角时的职业、小地图都能点；点空地会走过去、按住一直走，点怪是攻击，物品的双击和拖放也认鼠标。用键盘时屏上的按键提示直接显示键盘键名。存档在这台 Mac 上（自己构建的 App 没有 iCloud 同步），可以从 iPhone / iPad 手工导入。键位表、建角怎么按、鼠标能做什么、导入步骤和已知不足，见 [docs/MAC.zh-CN.md](docs/MAC.zh-CN.md)。键盘、实体手柄这几项还未经真人操作，你试过的话，请告诉我们结果。
 
-### 安卓
-
-不用 Mac、不用 adb、不用自己编 APK，Windows / Linux / Mac 电脑都行（目前在 Mac 上走通）。完整步骤、要装的工具和出错时怎么办见 [docs/ANDROID.zh-CN.md](docs/ANDROID.zh-CN.md)。
-
-1. 准备游戏文件，和苹果版相同（[docs/GAME_FILES.zh-CN.md](docs/GAME_FILES.zh-CN.md)）。
-2. 在电脑上做导入包：
-
-   ```
-   python3 dm/tools/d2rm_android.py <游戏文件的 Update 目录> <输出目录>
-   ```
-
-3. 用 USB 把做出来的 `android` 文件夹和游戏资源 `data` 文件夹拷到手机的 `Download/S2X/D2R Mobile/`。
-4. 从[发布页](https://github.com/d2r-mobile/d2r-mobile/releases)下载 `D2RMobile-android.apk` 装上，打开后允许「所有文件访问」，App 自己导入并进游戏。
-
-源码要与 APK 同一个发布版本；换新版本时 APK 和导入包一起换，存档保留。想自己从源码编 APK 的，见 [dm/android/README.zh-CN.md](dm/android/README.zh-CN.md)。
-
-### 鸿蒙
-
-不用自己编应用。要有华为开发者账号和 DevEco Studio（用它带的签名工具与 `hdc`，也能自动生成调试证书、登记手机）。完整步骤、命令和出错时怎么办见 [docs/HARMONYOS.zh-CN.md](docs/HARMONYOS.zh-CN.md)。
-
-1. 准备游戏文件，和苹果版相同（[docs/GAME_FILES.zh-CN.md](docs/GAME_FILES.zh-CN.md)）。
-2. 从[发布页](https://github.com/d2r-mobile/d2r-mobile/releases)下载未签名壳 `D2RMobile-harmony-shell-unsigned.hap`，用自己的调试证书和 profile 重签（`hap-sign-tool sign-app`），再 `hdc install -r` 装到手机。
-3. 在电脑上做运行包：
-
-   ```
-   python3 dm/tools/d2rm_android.py --target ohos <游戏文件的 Update 目录> <输出目录>
-   ```
-
-4. 在手机上建「D2R Mobile」文件夹，`data/` 放游戏资源、`dm/` 放上一步做出的运行包，打开应用点「导入」选这个文件夹。
-
-源码要与壳是同一个发布版本；换新版本时用同一套签名重签新壳覆盖安装，存档保留。这几步由作者在 Mate 90 Pro Max 上走通。
-
-### 没有 Mac：壳 + 做包工具
-
-从本仓库的[发布页](https://github.com/d2r-mobile/d2r-mobile/releases)下载我们预先做好的、不含游戏内容的「壳」安装包（`D2RMobile-shell-build-input.zip`；iOS 18 – 25 用 `D2RMobile-shell-ios18-build-input.zip`），加上你自己的游戏文件，在 Windows 或 Linux 上做出安装包，再用自签工具签名装机。壳是做安装包的原料，不能直接装来玩（直接装上去只会弹框说明、不会进游戏）；换新版本时要用新版的壳重新做一次安装包。只有走这条路时，因为做包的电脑上没有苹果的着色器编译器，手机**第一次启动**要花约 7 分钟把着色器编完（一次性，带进度条）；用 Xcode 构建的包没有这一步。步骤与每一步的验证现状见 [docs/NO_XCODE.zh-CN.md](docs/NO_XCODE.zh-CN.md)。
-
-## 已知限制
+### 已知限制
 
 | 项 | 现状 |
 |---|---|

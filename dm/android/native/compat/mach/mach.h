@@ -15,7 +15,7 @@ typedef size_t vm_size_t;
 typedef int kern_return_t;
 typedef unsigned mach_msg_type_number_t;
 typedef unsigned mach_port_t;
-enum { KERN_SUCCESS = 0, KERN_INVALID_ADDRESS = 1, KERN_NOT_SUPPORTED = 46 };
+enum { KERN_SUCCESS = 0, KERN_INVALID_ADDRESS = 1, KERN_FAILURE = 5, KERN_NOT_SUPPORTED = 46 };
 typedef struct { int seconds, microseconds; } time_value_t;
 typedef struct { time_value_t user_time, system_time; } thread_basic_info_data_t;
 typedef thread_basic_info_data_t *thread_info_t;
