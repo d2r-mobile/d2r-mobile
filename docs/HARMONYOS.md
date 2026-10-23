@@ -1,6 +1,6 @@
 # Playing on a HarmonyOS phone
 
-The HarmonyOS port by Android implementation shares the host and Vulkan engine with Android. The shell is a precompiled HAP without game content. Re-sign it with your own debug credentials, then import a pack generated from your own game files; rebuilding the application is unnecessary.
+HarmonyOS shares the host and Vulkan engine with Android. Follow the [developer build guide](../dm/harmony/README.md) to build the HAP, sign it with your own developer certificate, then import a runtime pack generated from your own game files.
 
 中文：[HARMONYOS.zh-CN.md](HARMONYOS.zh-CN.md)
 

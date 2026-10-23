@@ -1,6 +1,6 @@
 # 在安卓手机上玩
 
-安卓版的做法和 iOS 的「壳」一样：我们在发布页放一个**不含任何游戏内容的 APK**，你用自己的游戏文件在电脑上做一个**导入包**，拷进手机，App 打开时自己导入。不用 adb，不用 Android Studio，也不用自己编 APK。
+按 [Android 构建说明](../dm/android/README.zh-CN.md)生成 APK，再用自己的游戏文件在电脑上制作导入包，拷到手机并在 App 中导入。APK 与导入包必须来自同一份源码。
 
 English: [ANDROID.md](ANDROID.md)
 
@@ -62,7 +62,7 @@ Download/S2X/D2R Mobile/data/      游戏资源：你游戏文件 RomFS/data 里
 
 ## 第三步：装 APK、打开
 
-1. 从[发布页](https://github.com/d2r-mobile/d2r-mobile/releases)下载 `D2RMobile-android.apk`，拷进手机，在「文件管理」里点它安装。手机可能先要你允许「安装未知应用」，也可能弹安全检测页，按提示确认即可。
+1. 按 [Android 构建说明](../dm/android/README.zh-CN.md)生成 APK，拷到手机安装；按系统提示允许文件管理器安装应用。
 2. 打开 App。它要「所有文件访问」权限才能读 `Download` 里的游戏资源：点屏幕进系统设置，打开后返回。
 3. App 发现 `android` 导入包，会带进度条把它导入到自己的内部目录（第一次一两分钟，留在这个页面），然后进游戏。
 

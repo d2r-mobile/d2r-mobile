@@ -1017,7 +1017,11 @@ static void *x_thread(void *a) {
 #else
     // 安卓命名接口要求线程句柄，优先级在目标线程设置。
     // Android naming takes a thread handle; apply priority on the target thread.
+#if defined(__ANDROID__) && !defined(DM_ANDROID_NATIVE_APP)
+    pthread_setname_np("nvn-translate");
+#else
     pthread_setname_np(pthread_self(), "nvn-translate");
+#endif
     pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
 #ifdef __OHOS__
     { void front_pin_fast(const char *who); void front_gtx_register(int); front_pin_fast("nvn-translate"); front_gtx_register(1); }   // 鸿蒙：翻译线程绑到最高频的核（调度器一直放在中核）| HarmonyOS: pin the translation thread to the fastest cores (the scheduler kept it on mid cores)

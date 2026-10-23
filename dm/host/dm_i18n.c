@@ -7,7 +7,7 @@
 //   没有设置文件 = 首次安装，按 iOS 系统语言（dm_sys_lang）。
 #include "dm_i18n.h"
 #include "dm_i18n_tab.h"
-#ifdef __ANDROID__
+#if defined(__ANDROID__) && !defined(DM_ANDROID_NATIVE_APP)
 #include "android_ui_text.h"
 #endif
 #include <TargetConditionals.h>

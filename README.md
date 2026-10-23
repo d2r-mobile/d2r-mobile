@@ -32,10 +32,6 @@ Use the d2r-mobile skill from https://github.com/d2r-mobile/d2r-mobile to build 
 
 The agent checks your machine, prepares the workspace, signs and installs the app, and copies the game resources to your phone. It stops to ask you for your Apple signing details and before any install that needs `sudo`. The skill lives at [skills/d2r-mobile/SKILL.md](skills/d2r-mobile/SKILL.md), and both agents find it on their own through `.claude/skills/` and `.agents/skills/`. For manual builds and installation, see [Getting started](#getting-started).
 
-## Android
-
-The Android development port includes the native runtime, Vulkan renderer, launcher and touch controls. See the [Android build and setup guide](docs/android/README.md) for the tested device, build commands and current limitations.
-
 ## Why it plays like a native game
 
 - **Your phone runs the original program.** iPhone and Switch use the same family of ARM processors. The rewriter changes only the instructions Apple's kernel rejects (thread-pointer registers, system calls, timers) and leaves every other byte as shipped. Classes, Runewords, Terror Zones, bosses, drop rules and quests match the original because they are the original code.
@@ -206,7 +202,7 @@ flowchart LR
 
 ## Android (new in v2.0)
 
-Android phones use ARM64 processors just like the Switch, so, as on Apple devices, the game's own program executes directly on the phone with no CPU emulation. This release brings the whole host — system calls, file system, audio, input, saves — to Android unchanged and swaps the graphics layer for Vulkan: the NVN-to-Vulkan replay engine comes from Android implementation's HarmonyOS port, and the Android app, touch controls, Vulkan presentation and a full round of performance work, each step measured on a phone, are by Android implementation. The Apple and Android versions share the same host code, so future changes benefit both.
+Android phones execute the game's ARM64 program directly. Android and Apple share the host code for system calls, files, audio, input and saves; Android uses the NVN-to-Vulkan engine for graphics.
 
 Measured by the port's authors on their phones (product defaults: 3D render scale capped at 0.85 and lowered dynamically when frames drop):
 
@@ -217,15 +213,15 @@ Measured by the port's authors on their phones (product defaults: 3D render scal
 
 Minimum: ARM64, Android 12 (API 31) or later, and a GPU with Vulkan 1.1.
 
-**How to use it today**: install `D2RMobile-android.apk` from the release page (it contains no game content). On a computer, run `python3 dm/tools/d2rm_android.py <Update directory> <output directory>` on your own game files to make the import pack (an `android` folder with the rewritten game program, every Vulkan shader bundle, the touch overlay and a few data tables), and copy it together with your game resources (the `data` folder) to `Download/S2X/D2R Mobile/` on the phone. The App imports it with a progress screen when you open it. No adb, and no need to build the APK yourself. The full steps are in [docs/ANDROID.md](docs/ANDROID.md). The touch controls are drawn the same way as on iPhone (button sockets, silver skill silhouettes, joystick), and no virtual pad buttons cover open panels. Compared with the iOS version, a few touch details are still unfinished: the empty-skill-slot menu, the stat-point overlay, and the item image that follows your finger while dragging in a shop.
+**Build and install**: follow the [Android build guide](dm/android/README.md) to build the APK. Run `python3 dm/tools/d2rm_android.py <Update directory> <output directory>` with your own game files, then copy the generated `android` folder and game resources (`data`) to `Download/S2X/D2R Mobile/` on the phone. Open the app to import them. See the [installation guide](docs/ANDROID.md) for the full steps.
 
 Progress, the measurements from every round and the remaining work are in [docs/ANDROID_COLLABORATION.md](docs/ANDROID_COLLABORATION.md) and [docs/android-notes/](docs/android-notes/). The HarmonyOS version is in the next section.
 
 ## HarmonyOS (new in v2.0)
 
-The HarmonyOS NEXT app (`dm/harmony`) is by Android implementation and uses the same host and the same Vulkan engine as Android. Measured by the author on a Mate 90 Pro Max (Maleoon 955): 59.7 fps holding the joystick in the Rogue Encampment, display interval p50 16.6 / p99 18.1 ms.
+The HarmonyOS NEXT app (`dm/harmony`) shares the host and Vulkan engine with Android. See the build guide for the recorded installation, import and save checks on a Mate 90 Pro Max.
 
-**How to use it**: the same idea as the iOS shell. The Releases page has an **unsigned install package that contains no game content** (`D2RMobile-harmony-shell-unsigned.hap`). HarmonyOS NEXT only installs apps signed with your own developer certificate, so you re-sign it with your own debug certificate and install it; you do not build the app yourself. Then, on a computer, run `python3 dm/tools/d2rm_android.py --target ohos <Update folder> <output folder>` on your own game files to make the runtime pack, put it with the game resources in a "D2R Mobile" folder on the phone, open the app and pick that folder to import. The full steps are in [docs/HARMONYOS.md](docs/HARMONYOS.md). The author ran the whole chain (re-sign → install → first import → into a game → save and exit) on a Mate 90 Pro Max, with three cold starts in a row working; you need a Huawei developer account (DevEco Studio can generate the debug certificate and register the device for you).
+**Build and install**: follow the [HarmonyOS build guide](dm/harmony/README.md), sign the app with your own developer certificate and install it. Run `python3 dm/tools/d2rm_android.py --target ohos <Update folder> <output folder>` to prepare the runtime pack, then import it with your own game resources. See the [installation guide](docs/HARMONYOS.md) for the full steps.
 
 ## Which devices are supported
 
@@ -240,9 +236,9 @@ Minimum: **an A14 / M1 chip or later** — the graphics layer needs Metal 3, whi
 | **A14 chips with 6 GB of RAM or more** (such as iPhone 12 Pro / 12 Pro Max) | No reports yet | Same as the A16-and-earlier row | If you have tried, please open an Issue and tell us |
 | **A13 and earlier chips** (such as the iPhone 11 series and the 2020 iPad Pro) | Not supported | — | The graphics chip does not support Metal 3 (tested by a player on an iPad Pro with A12Z; Apple's references are above the table); the app says so at launch instead of crashing |
 | **Mac, Apple silicon** | Yes (native macOS App) | macOS 26 or later: the default build; macOS 15 – 25: the [older-API build](docs/OLDER_SYSTEMS.md). Keyboard, mouse and gamepad all work; what each can do is in [docs/MAC.md](docs/MAC.md) | A player has played the older-API build on macOS 15.7.7 |
-| **Apple TV 4K (3rd generation, A15)** | Community port (Android implementation, contributed under the MIT License with the author's consent), developer preview | Build as in [dm/tvos/README.md](dm/tvos/README.md) and copy the game files and the Legacy Device Pack into the app; real hardware only, the Simulator cannot run it; saves live in the Caches directory, which the system may purge | Reached the character-selection screen on real hardware; entering the game, full controller mapping and saves are not verified yet, and the maintainers have not tested it on real hardware |
-| **HarmonyOS phones** (HarmonyOS NEXT, API 26) | Playable (community port) | The unsigned shell from the Releases page, re-signed with your own debug certificate, plus a runtime pack made from your own game files, see [docs/HARMONYOS.md](docs/HARMONYOS.md) | Verified by the author on a Mate 90 Pro Max: re-sign, install, import, into a game, save and exit |
-| **Android phones** (ARM64, Android 12 or later, Vulkan 1.1) | Playable (community port) | The release page's APK + an import pack made from your own game files, see [docs/ANDROID.md](docs/ANDROID.md) | Measured by the port's authors: Redmi K50 Ultra median 60 fps; OnePlus 13 playable, with occasional black squares flashing for an instant; played on a vivo X200 Ultra |
+| **Apple TV 4K (3rd generation, A15)** | Developer preview under the MIT License | Build as in [dm/tvos/README.md](dm/tvos/README.md) and copy the game files and the Legacy Device Pack into the app; real hardware only, the Simulator cannot run it; saves live in the Caches directory, which the system may purge | Reached the character-selection screen on real hardware; entering the game, full controller mapping and saves are not verified yet, and the maintainers have not tested it on real hardware |
+| **HarmonyOS phones** (HarmonyOS NEXT, API 26) | Playable (community port) | A locally built app signed with your own debug certificate, plus a runtime pack made from your own game files, see [docs/HARMONYOS.md](docs/HARMONYOS.md) | Verified by the author on a Mate 90 Pro Max: re-sign, install, import, into a game, save and exit |
+| **Android phones** (ARM64, Android 12 or later, Vulkan 1.1) | Playable (community port) | A locally built APK + an import pack made from your own game files, see [docs/ANDROID.md](docs/ANDROID.md) | Measured by the port's authors: Redmi K50 Ultra median 60 fps; OnePlus 13 playable, with occasional black squares flashing for an instant; played on a vivo X200 Ultra |
 | **Intel Macs** | Not supported | — | — |
 
 **What the dialogs in the App mean**
@@ -267,8 +263,8 @@ This project is implemented and verified on the Switch release 1.0.34.0 (which c
 | iPhone / iPad, with an Apple silicon Mac | A full build from source | "With a Mac: three steps" below |
 | iPhone / iPad, without a Mac | Download a shell with no game content and add your game content on Windows / Linux | "Without a Mac" below and [docs/NO_XCODE.md](docs/NO_XCODE.md) |
 | Mac (Apple silicon) | Build a native macOS App | "Playing directly on a Mac" below and [docs/MAC.md](docs/MAC.md) |
-| Android phone | Install the release page's APK and copy an import pack made on a computer to the phone | "Android" below and [docs/ANDROID.md](docs/ANDROID.md) |
-| HarmonyOS phone | Re-sign the unsigned shell from the Releases page with your own debug certificate, make a runtime pack on a computer and copy it to the phone | "HarmonyOS" below and [docs/HARMONYOS.md](docs/HARMONYOS.md) |
+| Android phone | Build and install the APK, then copy your import pack to the phone | "Android" below and [docs/ANDROID.md](docs/ANDROID.md) |
+| HarmonyOS phone | Build and sign the app with your own certificate, then prepare and copy your runtime pack | "HarmonyOS" below and [docs/HARMONYOS.md](docs/HARMONYOS.md) |
 
 The two routes for iPhone / iPad compared:
 
@@ -324,7 +320,7 @@ The interface is the original's gamepad interface. Keyboard: Space confirms, Esc
 
 ### Android
 
-No Mac, no adb and no building the APK yourself; any Windows / Linux / Mac computer will do (it has been run through on a Mac so far). The full steps, the tools to install and what to do when something goes wrong are in [docs/ANDROID.md](docs/ANDROID.md).
+Build the APK from source, then prepare your own game content on a computer. Import-pack generation has been verified on a Mac. The full steps, the tools to install and what to do when something goes wrong are in [docs/ANDROID.md](docs/ANDROID.md).
 
 1. Prepare your game files, the same as for Apple devices ([docs/GAME_FILES.md](docs/GAME_FILES.md)).
 2. Make the import pack on a computer:
@@ -334,16 +330,16 @@ No Mac, no adb and no building the APK yourself; any Windows / Linux / Mac compu
    ```
 
 3. Over USB, copy the `android` folder it made and the game resource folder `data` to `Download/S2X/D2R Mobile/` on the phone.
-4. Download `D2RMobile-android.apk` from the [Releases page](https://github.com/d2r-mobile/d2r-mobile/releases), install it, open it and allow "All files access"; the App imports the pack and starts the game.
+4. Build and install the APK using the [Android build guide](dm/android/README.md), open it and allow "All files access". The app imports your pack and starts the game.
 
 The source must be from the same release as the APK; for a new release, replace both the APK and the import pack, and your saves stay. To build the APK yourself from source, see [dm/android/README.md](dm/android/README.md).
 
 ### HarmonyOS
 
-You do not build the app yourself. You need a Huawei developer account and DevEco Studio (for its signing tool and `hdc`; it can also generate the debug certificate and register the phone). The full steps, commands and what to do when something fails are in [docs/HARMONYOS.md](docs/HARMONYOS.md).
+Build the app using the [HarmonyOS build guide](dm/harmony/README.md). You need a Huawei developer account and DevEco Studio (for its signing tool and `hdc`; it can also generate the debug certificate and register the phone). The full steps, commands and what to do when something fails are in [docs/HARMONYOS.md](docs/HARMONYOS.md).
 
 1. Prepare your game files, the same as for Apple devices ([docs/GAME_FILES.md](docs/GAME_FILES.md)).
-2. Download the unsigned shell `D2RMobile-harmony-shell-unsigned.hap` from the [Releases page](https://github.com/d2r-mobile/d2r-mobile/releases), re-sign it with your own debug certificate and profile (`hap-sign-tool sign-app`), then install it on the phone with `hdc install -r`.
+2. Build the HAP using the [HarmonyOS build guide](dm/harmony/README.md), sign it with your own debug certificate and profile, then install it with `hdc install -r`.
 3. Make the runtime pack on a computer:
 
    ```

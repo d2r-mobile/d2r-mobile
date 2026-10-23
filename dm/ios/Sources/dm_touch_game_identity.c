@@ -1,6 +1,6 @@
 #include "dm_touch_game_identity.h"
 #include <string.h>
-#if defined(__APPLE__) || defined(__ANDROID__) || defined(__OHOS__)
+#if defined(__APPLE__) || defined(__OHOS__) || (defined(__ANDROID__) && defined(DM_ANDROID_NATIVE_APP))
 #include <mach/mach.h>
 #ifdef __APPLE__
 #include <mach/vm_map.h>
@@ -8,7 +8,7 @@
 #endif
 int dm_tg_vm_read(uint64_t address,void *out,size_t bytes) {
     if(!out || !bytes || !address || address>UINT64_MAX-bytes)return 0;
-#if defined(__APPLE__) || defined(__ANDROID__) || defined(__OHOS__)
+#if defined(__APPLE__) || defined(__OHOS__) || (defined(__ANDROID__) && defined(DM_ANDROID_NATIVE_APP))
     vm_size_t copied=0;
     kern_return_t rc=vm_read_overwrite(mach_task_self(),(vm_address_t)address,(vm_size_t)bytes,(vm_address_t)out,&copied);
     return rc==KERN_SUCCESS && copied==bytes;
