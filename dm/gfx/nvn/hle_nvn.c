@@ -1453,6 +1453,10 @@ static int pace_adapt_enabled(void) {
     return g_pa;
 }
 static double present_auto_hz(double screen_hz) {
+#ifdef __ANDROID__
+    // Android has no Metal display-link pacer, so apply the power-saving target here.
+    if (mtl_fps_target() == 30) return dm_pace_hz(screen_hz, 30);
+#endif
     // 自适应目标是最高60，而旧Apple策略是至少60；两者不共用取整方向。首帧/刷新率改变也受上限约束。
     // Adaptive pacing caps at 60; the legacy Apple policy has a floor of 60. Cap the first frame and refresh changes too.
     if (pace_adapt_enabled() && screen_hz > 0) return screen_hz / nvn_adaptive_divisor(screen_hz, g_pa_k, g_pa_screen_hz);
@@ -1535,10 +1539,9 @@ static void pace_adapt_tick(double screen_hz) {
 }
 static uint64_t present_period(const win_t *o) {
     present_cfg(o);
-    int itv = g_display_mode ? 1 : o->interval > 0 ? o->interval : 1; double hz = g_hz_auto ? present_auto_hz(mtl_display_refresh()) : g_hz;   // 自适应档（见 pace_adapt_tick） | adaptive tier (see pace_adapt_tick)   // 省电模式的 30 帧由显示节拍决定，这里照旧按 60 档（60 / 120 Hz 屏与原先逐字相同） | Power saving 30 fps is determined by display pacing; here the 60 tier is used as before (identical to before on 60 / 120 Hz screens)
+    int itv = g_display_mode ? 1 : o->interval > 0 ? o->interval : 1; double hz = g_hz_auto ? present_auto_hz(mtl_display_refresh()) : g_hz;
 #if defined(__ANDROID__) && !defined(DM_ANDROID_NATIVE_APP)
-    // Android has no Metal display-link limiter; throttle actual guest frame production here.
-    int mtl_fps_target(void);
+    // Preserve the legacy renderer limit when explicit present pacing is configured.
     if (mtl_fps_target() == 30 && (!hz || hz > 30)) hz = 30;
 #endif
     return hz > 0 ? (uint64_t)(itv * 1e9 / hz) : 0;
