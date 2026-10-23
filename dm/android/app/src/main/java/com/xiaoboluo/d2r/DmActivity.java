@@ -11,6 +11,9 @@ import android.net.Uri;
 import android.hardware.display.DisplayManager;
 import android.os.Bundle;
 import android.os.Environment;
+import android.os.SystemClock;
+import android.graphics.Color;
+import android.view.Gravity;
 import android.provider.Settings;
 import android.system.ErrnoException;
 import android.system.Os;
@@ -45,6 +48,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     static native int nativeStart(String filesDir, String extDir, String romfsSrc, String lang);
     static native void nativeSurface(Object surface, int w, int h);
     static native void nativeRefresh(float hz);
+    static native long nativeSubmittedFrames();
     static native void nativeTouch(int n, int[] ids, float[] xs, float[] ys);
     static native void nativeFocus(int ev);
     static native void nativeTextResult(long id, boolean accepted, String text);
@@ -55,8 +59,21 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
 
     private SurfaceView view;
     private FrameLayout gameFrame;
+    private FrameLayout gameContainer;
+    private TextView fpsText;
+    private long fpsTime, fpsFrames;
+    private final Runnable fpsUpdate = new Runnable() {
+        @Override public void run() {
+            if (!resumed || !portSettingsReady || !AndroidPortSettings.fps(DmActivity.this)) return;
+            long now = SystemClock.elapsedRealtime(), frames = libraryLoaded ? nativeSubmittedFrames() : 0;
+            if (fpsTime != 0 && now > fpsTime) fpsText.setText(String.format(Locale.ROOT, "提交 FPS %.1f · Turnip", (frames - fpsFrames) * 1000.0 / (now - fpsTime)));
+            fpsTime = now; fpsFrames = frames;
+            fpsText.postDelayed(this, 1000);
+        }
+    };
     private TouchOverlay touchOverlay;
     private boolean started;
+    private boolean portSettingsReady;
     private boolean importing;
     private boolean libraryLoaded;
     private boolean resumed;
@@ -79,7 +96,30 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         view.getHolder().addCallback(this);
         gameFrame = new FrameLayout(this);
         gameFrame.addView(view, new FrameLayout.LayoutParams(-1, -1));
-        setContentView(gameFrame);
+        gameContainer = new FrameLayout(this);
+        gameContainer.setBackgroundColor(Color.BLACK);
+        gameContainer.addView(gameFrame, new FrameLayout.LayoutParams(-1, -1, Gravity.CENTER));
+        gameContainer.addOnLayoutChangeListener((v, l, t, r, bottom, oldL, oldT, oldR, oldB) -> {
+            if (r <= l || bottom <= t) return;
+            int[] size = AndroidPortSettings.wide(this) ? new int[] {r - l, bottom - t} : GameViewport.fit(r - l, bottom - t);
+            FrameLayout.LayoutParams layout = (FrameLayout.LayoutParams) gameFrame.getLayoutParams();
+            if (layout.width != size[0] || layout.height != size[1]) {
+                layout.width = size[0]; layout.height = size[1]; gameFrame.setLayoutParams(layout);
+            }
+        });
+        fpsText = new TextView(this);
+        fpsText.setText("提交 FPS — · Turnip"); fpsText.setTextColor(Color.WHITE);
+        fpsText.setTextSize(14); fpsText.setBackgroundColor(0x99000000);
+        int pad = (int) (8 * getResources().getDisplayMetrics().density);
+        fpsText.setPadding(pad, pad / 2, pad, pad / 2);
+        gameFrame.addView(fpsText, new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.CENTER_HORIZONTAL));
+        AndroidPortSettings.show(this, () -> {
+            portSettingsReady = true;
+            fpsText.setVisibility(AndroidPortSettings.fps(this) ? View.VISIBLE : View.GONE);
+            setContentView(gameContainer);
+            fpsTime = 0; fpsText.removeCallbacks(fpsUpdate); fpsText.post(fpsUpdate);
+            startHost();
+        });
         immersive();
     }
 
@@ -210,16 +250,21 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
 
     private void startHost() {
         if (bootFailure != 0) { showBootFailure(); return; }
-        if (started || importing || !resumed || !ensureFileAccess()) return;
+        if (!portSettingsReady || started || importing || !resumed || !ensureFileAccess()) return;
         File downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
         if (!libraryLoaded && !ensureImported(new File(downloads, "S2X/D2R Mobile/android"))) return;
-        if (gameFrame.getParent() == null) setContentView(gameFrame);
+        if (gameContainer.getParent() == null) setContentView(gameContainer);
         if (!libraryLoaded) {
             // 与 jni_android.c 选运行目录同一条规则：内部目录有主程序就用内部目录，否则用外部私有目录
             // Same rule as jni_android.c's choice of runtime directory: internal storage when it has the main module, otherwise external private storage
             File ext = getExternalFilesDir(null), internal = new File(getFilesDir(), "dm");
             File runtime = new File(internal, "out/main.patched.bin").canRead() || ext == null ? internal : new File(ext, "dm");
-            try { Os.setenv("DM_DERIVED", new File(runtime, "derived.tsv").getAbsolutePath(), true); } catch (ErrnoException e) { showStartError(getString(R.string.dmAndroidStorage)); return; }
+            try {
+                Os.setenv("DM_DERIVED", new File(runtime, "derived.tsv").getAbsolutePath(), true);
+                Os.setenv("DM_TURNIP_HOOK_DIR", getApplicationInfo().nativeLibraryDir + "/", true);
+                Os.setenv("DM_TURNIP_DIR", new File(runtime, "turnip").getAbsolutePath() + "/", true);
+                Os.setenv("DM_PORT_WIDESCREEN", AndroidPortSettings.wide(this) ? "1" : "0", true);
+            } catch (ErrnoException e) { showStartError(getString(R.string.dmAndroidStorage)); return; }
             try { System.loadLibrary("dm"); libraryLoaded = true; }
             catch (UnsatisfiedLinkError error) { showStartError(getString(R.string.dmAndroidLibrary)); return; }
         }
@@ -238,6 +283,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
                 return insets;
             });
             gameFrame.addView(touchOverlay, new FrameLayout.LayoutParams(-1, -1));
+            fpsText.bringToFront();
             touchOverlay.requestApplyInsets();
         }
         if (!view.getHolder().getSurface().isValid() || view.getWidth() <= 0 || view.getHeight() <= 0) return;
@@ -389,8 +435,8 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     @Override public void onDisplayAdded(int id) { updateRefresh(); }
     @Override public void onDisplayRemoved(int id) { updateRefresh(); }
     @Override public void onDisplayChanged(int id) { updateRefresh(); }
-    @Override protected void onResume() { super.onResume(); resumed = true; immersive(); startHost(); updateRefresh(); if (started) { nativeFocus(3); if (touchOverlay != null && bootFailure == 0) touchOverlay.setInputEnabled(true); } }
-    @Override protected void onPause() { resumed = false; if (inputDialog != null) inputDialog.dismiss(); releaseTouches(); if (touchOverlay != null) touchOverlay.setInputEnabled(false); if (started) nativeFocus(0); super.onPause(); }
+    @Override protected void onResume() { super.onResume(); resumed = true; fpsTime = 0; if (fpsText != null) { fpsText.removeCallbacks(fpsUpdate); fpsText.post(fpsUpdate); } immersive(); startHost(); updateRefresh(); if (started) { nativeFocus(3); if (touchOverlay != null && bootFailure == 0) touchOverlay.setInputEnabled(true); } }
+    @Override protected void onPause() { resumed = false; if (fpsText != null) fpsText.removeCallbacks(fpsUpdate); if (inputDialog != null) inputDialog.dismiss(); releaseTouches(); if (touchOverlay != null) touchOverlay.setInputEnabled(false); if (started) nativeFocus(0); super.onPause(); }
     @Override protected void onStart() { super.onStart(); if (started) nativeFocus(2); }
     @Override protected void onStop() { if (started) nativeFocus(1); com.xiaoboluo.d2r.widget.HeroWidgetProvider.requestUpdate(this); super.onStop(); }
     @Override protected void onDestroy() { if (displays != null) displays.unregisterDisplayListener(this); if (inputDialog != null) inputDialog.dismiss(); if (current.get() == this) current.clear(); super.onDestroy(); }

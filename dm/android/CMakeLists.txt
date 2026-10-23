@@ -28,6 +28,12 @@ foreach(map "${CMAKE_BINARY_DIR}=build" "${DM_GEN_DIR}=gen" "${CMAKE_ANDROID_NDK
   add_compile_options("-ffile-prefix-map=${map}")
 endforeach()
 add_subdirectory(../gfx/vulkan ${CMAKE_CURRENT_BINARY_DIR}/vulkan)
+add_library(dm_test_volk STATIC test-volk/volk.c)
+set_target_properties(dm_test_volk PROPERTIES POSITION_INDEPENDENT_CODE ON)
+target_compile_definitions(dm_test_volk PRIVATE VK_USE_PLATFORM_ANDROID_KHR)
+target_link_libraries(dm_test_volk PUBLIC dl)
+target_compile_options(dm_vulkan_engine PUBLIC "$<$<COMPILE_LANGUAGE:C,CXX>:SHELL:-include ${CMAKE_CURRENT_SOURCE_DIR}/test_dispatch.h>")
+target_link_libraries(dm_vulkan_engine PUBLIC dm_test_volk)
 
 set(DM ${CMAKE_CURRENT_SOURCE_DIR}/..)
 set(HOST ${DM}/host)

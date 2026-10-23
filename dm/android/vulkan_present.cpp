@@ -25,6 +25,8 @@ extern "C" double dm_present_period(void);
 // 错过上屏节拍的帧数（晚于「上次期望时刻 + 周期」2 ms 以上）；自适应出图档按它降档 / 试升
 // Frames that missed their display slot (more than 2 ms later than "previous desired time + period"); the adaptive present tier steps down / probes up by it
 static std::atomic<uint64_t> dm_present_late{0};
+static std::atomic<uint64_t> test_submitted_frames{0};
+extern "C" uint64_t dm_android_vk_submitted_frames(void){return test_submitted_frames.load(std::memory_order_relaxed);}
 extern "C" uint64_t dm_present_late_count(void){return dm_present_late.load(std::memory_order_relaxed);}
 namespace {
 std::mutex window_mutex;std::condition_variable window_cv;
@@ -276,6 +278,7 @@ int present(void*,void*,VkImage source,VkFormat source_format,uint32_t width,uin
       if(tgt&&now>tgt+p+2000000)dm_present_late.fetch_add(1,std::memory_order_relaxed);if(next<now)next=now;if(next>now+2*p)next=now+p;tgt=next;OH_NativeWindow_NativeWindowHandleOpt(active,SET_DESIRED_PRESENT_TIMESTAMP,next);}}
 #endif
     XTRACE_BEGIN("dm-queue-present");VkResult pr=vkQueuePresentKHR(queue,&pi);XTRACE_END();
+    if(pr==VK_SUCCESS||pr==VK_SUBOPTIMAL_KHR)test_submitted_frames.fetch_add(1,std::memory_order_relaxed);
     // 呈现失败时先排空，拆除路径要求队列空闲。
     // Drain a failed present before teardown, which requires an idle queue.
     if(overlap){flight^=1;if(pr!=VK_SUCCESS && pr!=VK_SUBOPTIMAL_KHR && (r=vkQueueWaitIdle(queue)))return r;}
@@ -298,14 +301,30 @@ extern "C" int dm_android_vk_initialize(const char *path,char *error,size_t byte
     std::lock_guard<std::mutex> render_lock(render_mutex);
     auto fail=[&](const char *what,VkResult r)->int{if(error&&bytes)snprintf(error,bytes,"%s: VkResult %d",what,int(r));if(!ready)cleanup_initialization();return int(r?r:VK_ERROR_INITIALIZATION_FAILED);};
     if(ready||!path||!*path)return fail("Initialization requires an external shader directory and an uninitialized renderer",VK_ERROR_INITIALIZATION_FAILED);
+    using OpenDriver=void *(*)(int,int,const char *,const char *,const char *,const char *,const char *,void **);
+    const char *hooks=getenv("DM_TURNIP_HOOK_DIR"),*driver=getenv("DM_TURNIP_DIR");
+    if(!hooks||!driver)return fail("Turnip test paths missing",VK_ERROR_INITIALIZATION_FAILED);
+    std::string adreno=std::string(hooks)+"libadrenotools.so";
+    static void *tools=dlopen(adreno.c_str(),RTLD_NOW|RTLD_LOCAL);
+    OpenDriver open=tools?reinterpret_cast<OpenDriver>(dlsym(tools,"adrenotools_open_libvulkan")):nullptr;
+    static void *loader=open?open(RTLD_NOW,1,nullptr,hooks,driver,"vulkan.purple.so",nullptr,nullptr):nullptr;
+    auto gipa=loader?reinterpret_cast<PFN_vkGetInstanceProcAddr>(dlsym(loader,"vkGetInstanceProcAddr")):nullptr;
+    if(!gipa)return fail("Turnip test loader failed",VK_ERROR_INITIALIZATION_FAILED);
+    volkInitializeCustom(gipa);
     // 每次初始化从缺省的 120 Hz 重新读标记。 | Each initialization starts again from the 120 Hz default before the marker.
     frame_rate_vote=120;
     {std::string dir=path;size_t cut=dir.find_last_of('/');if(FILE *m=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-frame-rate").c_str(),"rb")){float v=0;frame_rate_vote=fscanf(m,"%f",&v)==1 && v>=0 && v<=240?v:0;fclose(m);}}
 
     VkApplicationInfo ai{VK_STRUCTURE_TYPE_APPLICATION_INFO};ai.pApplicationName="dm-android";ai.apiVersion=VK_API_VERSION_1_1;
     const char *ext[]={VK_KHR_SURFACE_EXTENSION_NAME,VK_KHR_ANDROID_SURFACE_EXTENSION_NAME};VkInstanceCreateInfo ic{VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO};ic.pApplicationInfo=&ai;ic.enabledExtensionCount=2;ic.ppEnabledExtensionNames=ext;VkResult r=vkCreateInstance(&ic,nullptr,&instance);if(r)return fail("vkCreateInstance",r);
+    volkLoadInstance(instance);
     uint32_t n=0;vkEnumeratePhysicalDevices(instance,&n,nullptr);std::vector<VkPhysicalDevice> devices(n);vkEnumeratePhysicalDevices(instance,&n,devices.data());if(!n)return fail("No Vulkan device",VK_ERROR_INITIALIZATION_FAILED);
     physical=devices[0];
+    VkPhysicalDeviceDriverProperties identity{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRIVER_PROPERTIES};
+    VkPhysicalDeviceProperties2 properties{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};properties.pNext=&identity;
+    vkGetPhysicalDeviceProperties2(physical,&properties);
+    __android_log_print(ANDROID_LOG_INFO,"dm-vulkan","Test driver id=%u name=%s device=%s",identity.driverID,identity.driverName,properties.properties.deviceName);
+    if(identity.driverID!=VK_DRIVER_ID_MESA_TURNIP)return fail("Selected driver is not Turnip",VK_ERROR_INCOMPATIBLE_DRIVER);
     // 启动期间也可能旋转/切后台；等待新窗口，不把瞬时撤回误报为启动失败。
     // Rotation/backgrounding can race startup too; wait for a live window instead of failing boot.
     for(;;){wait_window();r=VkResult(create_surface());if(r==VK_NOT_READY)continue;if(r==VK_ERROR_SURFACE_LOST_KHR){uint64_t bad=active_generation;destroy_swap();wait_window_change(bad);continue;}if(r)return fail("Android surface",r);break;}
@@ -321,7 +340,8 @@ extern "C" int dm_android_vk_initialize(const char *path,char *error,size_t byte
     // Diagnostic (marker gfx-pipe-stats): the driver's per-pipeline statistics (VK_KHR_pipeline_executable_properties).
     VkPhysicalDevicePipelineExecutablePropertiesFeaturesKHR pef{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_EXECUTABLE_PROPERTIES_FEATURES_KHR};
     if(FILE *ps=[&]{std::string dir=path;size_t cut=dir.find_last_of('/');return fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-pipe-stats").c_str(),"rb");}()){fclose(ps);dext.push_back(VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME);pef.pipelineExecutableInfo=VK_TRUE;pef.pNext=draw.pNext;draw.pNext=&pef;}
-    float priority=1;VkDeviceQueueCreateInfo qc{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};qc.queueFamilyIndex=family;qc.queueCount=1;qc.pQueuePriorities=&priority;VkDeviceCreateInfo dc{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};dc.pNext=&draw;dc.pEnabledFeatures=&features.features;dc.queueCreateInfoCount=1;dc.pQueueCreateInfos=&qc;dc.enabledExtensionCount=uint32_t(dext.size());dc.ppEnabledExtensionNames=dext.data();if((r=vkCreateDevice(physical,&dc,nullptr,&device)))return fail("vkCreateDevice",r);vkGetDeviceQueue(device,family,0,&queue);
+    float priority=1;VkDeviceQueueCreateInfo qc{VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO};qc.queueFamilyIndex=family;qc.queueCount=1;qc.pQueuePriorities=&priority;VkDeviceCreateInfo dc{VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};dc.pNext=&draw;dc.pEnabledFeatures=&features.features;dc.queueCreateInfoCount=1;dc.pQueueCreateInfos=&qc;dc.enabledExtensionCount=uint32_t(dext.size());dc.ppEnabledExtensionNames=dext.data();if((r=vkCreateDevice(physical,&dc,nullptr,&device)))return fail("vkCreateDevice",r);
+    volkLoadDevice(device);vkGetDeviceQueue(device,family,0,&queue);
     for(;;){
         wait_window();
         if(!surface||window_changed()){

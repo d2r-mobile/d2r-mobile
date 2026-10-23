@@ -53,7 +53,8 @@ android {
     if (!prebuilt) externalNativeBuild { cmake { path '../CMakeLists.txt'; version '3.31.6' } }
     if (prebuilt) sourceSets { main { jniLibs.srcDirs = [prebuilt] } }
     sourceSets { main { res.srcDir(startupStrings.get().asFile); res.srcDir(launcherIcon.get().asFile) } }
-    packaging { jniLibs { useLegacyPackaging false; keepDebugSymbols += ['**/*.so'] } }
+    sourceSets { main { jniLibs.srcDirs += [project.property('dmTestDriverLibs')] } }
+    packaging { jniLibs { useLegacyPackaging true; keepDebugSymbols += ['**/*.so'] } }
     buildFeatures { buildConfig true }
     // 正式版签名：钥匙不进仓库，路径与密码从环境变量来（tools/shell_apk.sh release 读本机 ~/.config/dm-android/release.env）；没设就不签
     // Release signing: the key never goes into the repository; path and password come from the environment (tools/shell_apk.sh release reads the
