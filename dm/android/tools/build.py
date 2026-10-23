@@ -16,6 +16,8 @@ import zipfile
 import zlib
 import xml.etree.ElementTree as ET
 
+from build_overlay_update import assemble_overlay_update
+
 ROOT = Path(__file__).resolve().parents[1]
 REPO = ROOT.parents[1]
 PACKAGE_NAME = ET.parse(ROOT / "AndroidManifest.xml").getroot().attrib["package"]
@@ -177,8 +179,14 @@ def main():
     parser.add_argument("--touch-art", type=Path,
                         help="root-provided generated TouchArt directory (dm_native_skill_0..8.png); validated against the frozen manifest")
     parser.add_argument("--map-goal-art", type=Path, help="locally generated NativeHUD/mapgoal directory from gen_map_goal_art.py")
+    parser.add_argument("--interface-overlay", type=Path, help="locally generated complete interface overlay to bundle in the APK")
+    parser.add_argument("--interface-romfs", type=Path, help="matching original RomFS used to bind the bundled interface to its game build")
     args = parser.parse_args()
     if args.game_source and not args.game_run: parser.error("--game-source only makes sense with --game-run")
+    if args.game_run and (args.interface_overlay is None or args.interface_romfs is None):
+        parser.error("--game-run requires --interface-overlay and --interface-romfs; playable APKs must include their interface")
+    if not args.game_run and (args.interface_overlay is not None or args.interface_romfs is not None):
+        parser.error("interface resources require --game-run")
     if args.game_run and not args.game_source:
         # 没有游戏源码也照样出 APK：宿主与前端完整，**游戏模块由手机端导入的数据包提供**（启动界面本来就要
         # 先导入才能启动）。CI 用它产出可下载的通用 APK；本机带 --game-source 时照旧把游戏代码打进包里。
@@ -189,7 +197,8 @@ def main():
     build = Path(os.environ.get("DM_REFERENCE_BUILD", str(DEFAULT_BUILD)))
     build.mkdir(parents=True, exist_ok=True)
     staging_directories = [build / name for name in ("assets", "res", "java-classes", "dex")]
-    for source in (args.touch_art, args.map_goal_art, args.game_source, args.turnip, args.shader_cache):
+    for source in (args.touch_art, args.map_goal_art, args.game_source, args.turnip, args.shader_cache,
+                   args.interface_overlay, args.interface_romfs):
         if source is not None and any(source.resolve().is_relative_to(path.resolve()) for path in staging_directories):
             sys.exit("Build inputs must be outside the disposable APK staging directories: " + str(source))
     for staging in staging_directories:
@@ -264,6 +273,9 @@ def main():
              "-landroid", "-llog", "-ldl", "-o", build / "libdmdrivercheck.so"])
     assets = build / "assets"
     assets.mkdir(exist_ok=True)
+    if args.game_run:
+        assemble_overlay_update(args.interface_overlay, args.interface_romfs, assets / "interface.zip", args.version)
+        print("Interface resources bundled in APK", flush=True)
     licenses = assets / "licenses"
     licenses.mkdir(exist_ok=True)
     if args.touch_art:
