@@ -120,6 +120,9 @@ void dm_ui_map_hidden(int hidden);
 int dm_ui_map_is_hidden(void);
 unsigned dm_ui_map_title_revision(void);
 void dm_ui_map_title(char out[128]);
+// 面板态（前端判的：局内开着任何非常驻面板 / 对话菜单 / 死亡弹窗）：on = 1 时全屏地图先让成小地图，关掉面板回到玩家要的那档（触屏模式；任意线程调）
+// Panel state (judged by the front end: in a run, any non-resident panel / dialog menu / death dialog open): with on = 1 the full-screen map first steps aside to the minimap, and after the panels close it returns to what the player wants (touch mode; callable from any thread)
+void dm_ui_map_hold(int on);
 void dm_ui_text_entered(const char *text);   // 系统键盘返回时调：text = 写回给游戏的最终文本（UTF-8）；取消 / 空串传 NULL | Called when the system keyboard returns: text = final text written back to the game (UTF-8); pass NULL for cancel / empty string
 // 延迟读数（诊断，DM_LAT_LOG=1）：关键时刻打一行「LAT <毫秒时刻> <事件>」，量手指落下 / 松手到游戏生效的延迟
 // Latency readout (diagnostic, DM_LAT_LOG=1): at key moments print a line 「LAT <毫秒时刻> <事件>」(LAT <millisecond timestamp> <event>), to measure the latency from finger down / release to the game taking effect

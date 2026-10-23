@@ -153,7 +153,7 @@ static void navigation_mode(int n) {
         (((1u << DM_TC_COUNT) - 1) & ~(1u << DM_TC_MAP));   // 游戏态不要右上地图键 | No top-right map button in game mode
     dm_tc_enable_targets(&_controls, mask); ov_nav = n != 0; push_from();
     if (!n) item_labels_on();
-    if (n && dm_ui_map_is_full()) { dm_ui_map_full(0); LOG("前端：开了面板，全屏地图先收回小地图"); }
+    dm_ui_map_hold(n != 0);   // 同 iOS：面板开着全屏地图先让成小地图，关掉回到玩家要的那档 | as iOS: while a panel is open the full-screen map steps aside to the minimap, and after it closes it returns to what the player wants
 }
 // 游戏线程发来的状态在 UI 线程落地（dispatch_async 的替身）| Apply state from the game thread on the UI thread (stand-in for dispatch_async)
 static void apply_async(void) {
