@@ -25,7 +25,7 @@ final class AndroidPortSettings {
     }
     static boolean wide(Context context) { return preferences(context).getBoolean("wide_screen", true); }
     static boolean fps(Context context) { return preferences(context).getBoolean("show_fps", true); }
-    static boolean turnip(Context context) { return preferences(context).getBoolean("use_turnip", true); }
+    static boolean turnip(Context context) { return preferences(context).getBoolean("use_turnip", false); }
     static String driverLabel(Context context) { return turnip(context) ? "Turnip" : "系统Vulkan"; }
     private static final int GOLD = 0xffe8c078, TEXT = 0xffe8e0d0, MUTED = 0xffa2988c;
     private static int dp(Context c, int value) { return (int) (value * c.getResources().getDisplayMetrics().density); }
@@ -72,7 +72,7 @@ final class AndroidPortSettings {
         TextView driverTitle = text(activity, "显示驱动", 14, MUTED);
         driverTitle.setPadding(0, dp(activity, 16), 0, 0); settings.addView(driverTitle);
         RadioGroup drivers = new RadioGroup(activity);
-        RadioButton turnip = option(activity, drivers, "内置 Turnip（推荐）");
+        RadioButton turnip = option(activity, drivers, "Turnip");
         RadioButton system = option(activity, drivers, "系统高通 Vulkan");
         drivers.check(turnip(activity) ? turnip.getId() : system.getId()); settings.addView(drivers);
         settings.addView(text(activity, "驱动在下次启动游戏时生效；系统驱动可能出现黑块。", 12, MUTED));

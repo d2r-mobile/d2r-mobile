@@ -1,5 +1,5 @@
-// 安卓Vulkan呈现与窗口生命周期；依据原WSI桥及PR9/10的可回退呈现/钉核实验。
-// Android Vulkan presentation and window lifetimes, based on the original WSI bridge and reversible PR9/10 overlap/affinity experiments.
+// 安卓 Vulkan 呈现、窗口生命周期以及可选的呈现节拍与线程亲和性设置。
+// Android Vulkan presentation, window lifetimes and optional pacing/affinity controls.
 #define VK_USE_PLATFORM_ANDROID_KHR
 #include "vulkan_present.h"
 #include "../gfx/vulkan/nvn_vk.h"
@@ -302,7 +302,8 @@ extern "C" int dm_android_vk_initialize(const char *path,char *error,size_t byte
     auto fail=[&](const char *what,VkResult r)->int{if(error&&bytes)snprintf(error,bytes,"%s: VkResult %d",what,int(r));if(!ready)cleanup_initialization();return int(r?r:VK_ERROR_INITIALIZATION_FAILED);};
     if(ready||!path||!*path)return fail("Initialization requires an external shader directory and an uninitialized renderer",VK_ERROR_INITIALIZATION_FAILED);
     const char *selection=getenv("DM_PORT_DRIVER");
-    bool turnip=!selection||!strcmp(selection,"turnip");
+    if(!selection||!*selection)selection="system";
+    bool turnip=!strcmp(selection,"turnip");
     if(!turnip&&strcmp(selection,"system"))return fail("Unknown selected Vulkan driver",VK_ERROR_INITIALIZATION_FAILED);
     if(turnip){
     using OpenDriver=void *(*)(int,int,const char *,const char *,const char *,const char *,const char *,void **);
