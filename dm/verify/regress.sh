@@ -53,6 +53,6 @@ if cc -O1 -o "$GT" "$HERE/gatefn/gate_test.c" "$HERE/gatefn/gate_tramp.S" "$HERE
   "$GT" "${G[@]}" >> "$LOG" 2>&1 || rc=1; rm -f "$GT"
 else echo "FAIL 门功能测试台编译失败" >> "$LOG"; rc=1; fi
 echo "---- 汇总（${LOG}）"
-grep -E '^(FRESH|STRUCT|EQUIV|GATEFN|FAIL|DIFF|NOEFF|MUTMISS)' "$LOG" | grep -v '^FRESH.* 同$'
+grep -E '^(FRESH|STRUCT|EQUIV|GATEFN|FAIL|DIFF|NOEFF|MUTMISS|BELOWSP)' "$LOG" | grep -v '^FRESH.* 同$'
 [ $rc = 0 ] && echo "REGRESS OK $(basename "$OUT")" || echo "REGRESS FAIL $(basename "$OUT")"
 exit $rc

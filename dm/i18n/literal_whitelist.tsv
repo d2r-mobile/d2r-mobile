@@ -31,6 +31,9 @@ host/diag.c	主线程等	卡顿分类表（日志）
 host/diag.c	出图等	卡顿分类表（日志）
 host/diag.c	着色器/管线	卡顿分类表（日志）
 host/diag.c	TACT解码	卡顿分类表（日志）
+host/diag.c	BC软解	卡顿分类表（日志）
+host/diag.c	进局装载 墙钟	进局装载分段计时，只进日志（DM_BOOTPROF）
+host/diag.c	读 %.1f MiB	同上
 host/diag.c	=物	怪物血条后的抗性缩写：物品注释一系，只在简中显示（monres_on_setinfo 判 dm_lang_zh）
 host/diag.c	=魔	同上
 host/diag.c	=火	同上
@@ -104,3 +107,6 @@ host/dm_rift.c	（第 2 波）	同上
 host/dm_rift.c	（第 3 波）	同上
 ios/Sources/main.m	安装包自检没过	拦下原因只进日志（弹框文字走中英表）
 ios/Sources/main.m	图形芯片不支持 Metal 3	拦下原因只进日志（弹框文字走中英表）
+host/loader.c	苹果	改写产物目标平台名，只进装载器的错误日志
+host/loader.c	安卓	同上
+host/loader.c	鸿蒙	同上

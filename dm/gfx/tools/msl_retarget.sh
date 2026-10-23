@@ -1,7 +1,7 @@
 #!/bin/bash
 # 把 Mac 着色器库按指定的最低系统版本重编一份：msl_retarget.sh <最低系统，如 15.0> <输出根目录>   产出 <输出根目录>/b-<翻译链版本>/
 # 为什么要有：dmsh_build.py 编库时不带最低版本参数，库里记的目标是编译这台机器的 SDK（macOS 26）；老系统上加载这种库会直接失败
-# （同程序本体的最低系统版本是一回事，换了个地方）。老接口版的包（tools/mac_app.sh DM_MAC_M3=1）带的是这里重编出来的库。
+# （同程序本体的最低系统版本是一回事，换了个地方）。旧接口版的包（tools/mac_app.sh DM_MAC_M3=1）带的是这里重编出来的库。
 # 源码来源（共用缓存只读）：_b 库旁边的 .metal；_bf 库（可读 tile 版本）的源码在内容寻址缓存里，按库文件内容对上。
 # 编译命令与 dmsh_build.py 相同，只多一个 -mmacosx-version-min。约 7000 个库 3 分钟。
 # Recompile the Mac shader libraries for a given minimum system version: msl_retarget.sh <minimum system, e.g. 15.0> <output root>   produces <output root>/b-<translation chain version>/

@@ -1,9 +1,6 @@
-"""自定义页语言那一行：四项单选「中文 / English / Español / Русский」的跨语言契约。
-语言行的控件名、勾选框列位置、四个选项各自的正文字宽与宿主 dm_custom.c 的表必须一致——这一行挤不下第五项，
-所以位置是硬编码的，改一行字就要回来量这里。
-'''Language row of the Custom page: contract for the four-option radio "中文 / English / Español / Русский".
-The widget names, the checkbox column, the per-option text width and the host's dm_custom.c table must agree --
-this row has no room for a fifth option, so the geometry is hard-coded and any wording change has to re-check it here.'''"""
+"""自定义页语言那一行：五项单选「中文 / English / Español / Русский / 한국어」的跨语言契约。
+语言行的控件名、勾选框列位置、五个选项各自的正文字宽与宿主 dm_custom.c 的表必须一致——五项已占满这一行（标签字让掉了），
+所以位置是硬编码的，改一行字就要回来量这里。"""
 import json, re, sys
 from pathlib import Path
 
@@ -26,29 +23,29 @@ def walk(node):
             walk(child)
 walk(page)
 
-opts = (('zh', 'Zh', 'dmCustomLangZh'), ('en', 'En', 'dmCustomLangEnOpt'), ('es', 'Es', 'dmCustomLangEsOpt'), ('ru', 'Ru', 'dmCustomLangRuOpt'))
+opts = (('zh', 'Zh', 'dmCustomLangZh'), ('en', 'En', 'dmCustomLangEnOpt'), ('es', 'Es', 'dmCustomLangEsOpt'), ('ru', 'Ru', 'dmCustomLangRuOpt'), ('ko', 'Ko', 'dmCustomLangKoOpt'))
 for key, cap, label in opts:
     box = nodes['TouchCustom_lang_' + key]
     assert box['type'] == 'ToggleButtonWidget', key
     assert box['fields']['onClickMessage'].endswith('TouchCustom_lang_' + key), key
     assert nodes['TouchCustomLang%s_Text' % cap]['fields']['text'] == '@' + label, key
     assert nodes['TouchCustomLangHint%s' % cap]['fields']['text'] == '@dmCustomLangHint' + cap, key
-# 最右那一格（Русский）留在各行勾选框那一列：别的行也用它
-# The rightmost cell (Русский) stays in the checkbox column of the other rows: the other rows use it too
-assert nodes['TouchCustom_lang_ru']['fields']['rect']['x'] == 1315
-assert nodes['TouchCustomLangHintRu']['fields']['rect']['x'] > 10000, 'hint starts off screen and the host moves it'
-# 四个选项按顺序从左到右，文字框有正宽度且互不重叠
-# The four options run left to right in order; text boxes have positive width and do not overlap
-x = []
+assert nodes['TouchCustomLangHintKo']['fields']['rect']['x'] > 10000, 'hint starts off screen and the host moves it'
+# 每项勾选框在前、字在后（字在勾选框右边 10），五项从左到右不重叠，全在各行勾选框那一列的右沿（1385）以内
+# 文字框宽：实宽按俄语界面真包截图量（中文 99、English 166、Español 178、Русский 188；한국어按字体同比约 136），框比实宽多 30 不折行（180 宽时 English 折成「Englis h」）
+right = 0
 for key, cap, _ in opts:
     t = nodes['TouchCustomLang%s_Text' % cap]['fields']['rect']
     b = nodes['TouchCustom_lang_' + key]['fields']['rect']
-    assert t['width'] >= 195, (key, t)   # 180 宽时 English / Español / Русский 折成「Englis h」（真机截图） | At 180 wide English / Español / Русский wrap to "Englis h" (device screenshot)
-    assert t['x'] + t['width'] <= b['x'], (key, t, b)
-    x.append(t['x'])
-assert x == sorted(x) and len(set(x)) == 4, x
+    assert t['width'] >= {'zh': 129, 'en': 196, 'es': 208, 'ru': 218, 'ko': 166}[key], (key, t)
+    assert b['x'] >= right and t['x'] == b['x'] + 80, (key, b, t)
+    right = t['x'] + t['width']
+assert right <= 1385, right
+# 标签控件还在（宿主拿它定提示与手柄选中框），不写字、横跨整行
+lab = nodes['TouchCustom_lang_Text']['fields']
+assert lab['text'] == '' and lab['rect']['x'] == 0 and lab['rect']['width'] >= right, lab
 host = (root / 'host/dm_custom.c').read_text()
 boxes = re.findall(r'"(TouchCustom_lang_[a-z]+)"', re.search(r'k_lang_box\[LANG_N\].*?=\s*\{(.*?)\}', host, re.S)[1])
 assert boxes == ['TouchCustom_lang_' + k for k, _, _ in opts], boxes
-assert re.search(r'#define LANG_N 4\b', host), 'LANG_N must be 4'
-print('PASS touch layout language row: four-option radio, labels, hints, checkbox column and host order')
+assert re.search(r'#define LANG_N 5\b', host), 'LANG_N must be 5'
+print('PASS touch layout language row: five-option radio, labels, hints, checkbox column and host order')

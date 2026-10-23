@@ -1,0 +1,69 @@
+// 安卓 App。原生库两种来法：
+//   缺省：externalNativeBuild 用 dm/android/CMakeLists.txt 现编（要 -PdmGenDir=<由游戏文件生成的宿主表头目录>，见该文件头）；
+//   -PdmPrebuiltJni=<目录>：直接打包已编好的 <目录>/arm64-v8a/libdm.so（构建机上 CMake 不可用时）。
+//   -PdmAppId=<包名>：换一个包名装（与别人签名的同名包并排装来对照时用；缺省 com.xiaoboluo.d2r）。
+// Android App. Two ways to get the native library:
+//   default: externalNativeBuild builds it with dm/android/CMakeLists.txt (needs -PdmGenDir=<directory of host headers generated from the game files>, see that file's header);
+//   -PdmPrebuiltJni=<dir>: package the already built <dir>/arm64-v8a/libdm.so directly (when CMake is unavailable on the build machine).
+//   -PdmAppId=<id>: install under another application id (to sit beside a same-name package signed by someone else; default com.xiaoboluo.d2r).
+plugins { id 'com.android.application' }
+
+def prebuilt = project.findProperty('dmPrebuiltJni')
+
+// 启动文案取自统一中英表，生成目录只在 build 下，不入库。
+// Startup text comes from the shared table; generated resources stay under build.
+def startupStrings = layout.buildDirectory.dir('generated/androidStrings')
+def generateStartupStrings = tasks.register('generateStartupStrings', Exec) {
+    inputs.files('../tools/gen_strings.py', '../../i18n/ui_text.tsv', '../../ios/tools/dm_i18n.py')
+    outputs.dir(startupStrings)
+    commandLine(project.findProperty('dmPython') ?: 'python3', '../tools/gen_strings.py', '--output', startupStrings.get().asFile)
+}
+
+// 复用仓库现有 iOS 图标，生成安卓资源，不重复提交图片。
+// Reuse the existing iOS icon as a generated Android resource without duplicating the image.
+def launcherIcon = layout.buildDirectory.dir('generated/launcherIcon')
+def generateLauncherIcon = tasks.register('generateLauncherIcon', Copy) {
+    from('../../ios/Assets.xcassets/AppIcon.appiconset/AppIcon1024.png')
+    into(launcherIcon.map { it.dir('mipmap-nodpi') })
+    rename { 'ic_launcher.png' }
+}
+
+android {
+    namespace 'com.xiaoboluo.d2r'
+    compileSdk 36
+    ndkVersion '29.0.14206865'
+    defaultConfig {
+        applicationId project.findProperty('dmAppId') ?: 'com.xiaoboluo.d2r'
+        // 产物代号（dm/PRODUCT 首行）：导入包的 pack_info.txt 要与它相同（DmActivity.ensureImported）
+        // Product code (first line of dm/PRODUCT): an import pack's pack_info.txt must match it (DmActivity.ensureImported)
+        buildConfigField 'String', 'DM_PRODUCT', "\"${file('../../PRODUCT').readLines()[0].trim()}\""
+        minSdk 31
+        targetSdk 36
+        // 跟发布版本走：versionName = 发布版本号，versionCode = 主 × 10000 + 次 × 100 + 修订（2.0.0 → 20000），只增不减，旧版才能被覆盖升级
+        // Follows the release: versionName = release version, versionCode = major × 10000 + minor × 100 + patch (2.0.0 → 20000), only ever increasing so older installs upgrade in place
+        versionCode 20000
+        versionName '2.0.0'
+        ndk { abiFilters 'arm64-v8a' }
+        if (!prebuilt) externalNativeBuild { cmake {
+            arguments "-DDM_GEN_DIR=${project.findProperty('dmGenDir') ?: ''}"
+            if (project.findProperty('dmPython')) arguments "-DPython3_EXECUTABLE=${project.property('dmPython')}"
+            targets 'dm'
+        } }
+    }
+    if (!prebuilt) externalNativeBuild { cmake { path '../CMakeLists.txt'; version '3.31.6' } }
+    if (prebuilt) sourceSets { main { jniLibs.srcDirs = [prebuilt] } }
+    sourceSets { main { res.srcDir(startupStrings.get().asFile); res.srcDir(launcherIcon.get().asFile) } }
+    packaging { jniLibs { useLegacyPackaging false; keepDebugSymbols += ['**/*.so'] } }
+    buildFeatures { buildConfig true }
+    // 正式版签名：钥匙不进仓库，路径与密码从环境变量来（tools/shell_apk.sh release 读本机 ~/.config/dm-android/release.env）；没设就不签
+    // Release signing: the key never goes into the repository; path and password come from the environment (tools/shell_apk.sh release reads the
+    // local ~/.config/dm-android/release.env); unsigned when not set
+    def releaseKey = System.getenv('DM_ANDROID_KEYSTORE')
+    if (releaseKey) signingConfigs { release {
+        storeFile file(releaseKey); storeType 'pkcs12'
+        storePassword System.getenv('DM_ANDROID_KEY_PASS'); keyAlias System.getenv('DM_ANDROID_KEY_ALIAS'); keyPassword System.getenv('DM_ANDROID_KEY_PASS')
+    } }
+    buildTypes { release { minifyEnabled false; if (releaseKey) signingConfig signingConfigs.release } }
+    compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+}
+tasks.named('preBuild').configure { dependsOn(generateStartupStrings, generateLauncherIcon) }

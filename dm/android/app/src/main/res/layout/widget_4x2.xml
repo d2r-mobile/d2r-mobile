@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 原子组件候选：原生RemoteViews布局，无游戏美术、无示例私人角色。 | Candidate native RemoteViews layout without game art or sample private characters. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_card" android:layout_width="match_parent" android:layout_height="match_parent"
+    android:orientation="vertical" android:padding="8dp" android:background="@drawable/widget_background">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="28dp" android:orientation="horizontal" android:gravity="center_vertical">
+        <TextView android:id="@+id/widget_title" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+            android:text="@string/dmAndroidWidgetTitle" android:textColor="#E8C67A" android:textSize="11sp" android:maxLines="1" android:ellipsize="end" />
+        <TextView android:id="@+id/widget_refresh" android:layout_width="wrap_content" android:layout_height="match_parent" android:minWidth="36dp"
+            android:gravity="center" android:text="@string/dmAndroidWidgetRefresh" android:contentDescription="@string/dmAndroidWidgetRefresh"
+            android:textColor="#E8C67A" android:textSize="10sp" />
+    </LinearLayout>
+    <LinearLayout android:id="@+id/widget_content" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"
+        android:orientation="horizontal" android:gravity="center_vertical" android:visibility="gone">
+        <LinearLayout android:id="@+id/widget_hero_0" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:orientation="vertical" android:paddingEnd="4dp">
+            <TextView android:id="@+id/widget_name_0" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#E8C67A" android:textSize="14sp" android:textStyle="bold" android:maxLines="1" android:ellipsize="end" />
+            <TextView android:id="@+id/widget_stats_0" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#D9C9A6" android:textSize="10sp" android:maxLines="1" android:ellipsize="end" />
+            <TextView android:id="@+id/widget_exp_0" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#BFAE8A" android:textSize="10sp" android:maxLines="1" android:ellipsize="end" />
+            <TextView android:id="@+id/widget_gold_0" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#C9A85A" android:textSize="10sp" android:maxLines="1" android:ellipsize="end" />
+        </LinearLayout>
+        <LinearLayout android:id="@+id/widget_hero_1" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:orientation="vertical" android:paddingEnd="4dp">
+            <TextView android:id="@+id/widget_name_1" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#E8C67A" android:textSize="14sp" android:textStyle="bold" android:maxLines="1" android:ellipsize="end" />
+            <TextView android:id="@+id/widget_stats_1" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#D9C9A6" android:textSize="10sp" android:maxLines="1" android:ellipsize="end" />
+            <TextView android:id="@+id/widget_exp_1" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#BFAE8A" android:textSize="10sp" android:maxLines="1" android:ellipsize="end" />
+            <TextView android:id="@+id/widget_gold_1" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#C9A85A" android:textSize="10sp" android:maxLines="1" android:ellipsize="end" />
+        </LinearLayout>
+        <LinearLayout android:id="@+id/widget_hero_2" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:orientation="vertical" android:paddingEnd="4dp">
+            <TextView android:id="@+id/widget_name_2" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#E8C67A" android:textSize="14sp" android:textStyle="bold" android:maxLines="1" android:ellipsize="end" />
+            <TextView android:id="@+id/widget_stats_2" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#D9C9A6" android:textSize="10sp" android:maxLines="1" android:ellipsize="end" />
+            <TextView android:id="@+id/widget_exp_2" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#BFAE8A" android:textSize="10sp" android:maxLines="1" android:ellipsize="end" />
+            <TextView android:id="@+id/widget_gold_2" android:layout_width="match_parent" android:layout_height="wrap_content" android:textColor="#C9A85A" android:textSize="10sp" android:maxLines="1" android:ellipsize="end" />
+        </LinearLayout>
+    </LinearLayout>
+    <TextView android:id="@+id/widget_message" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"
+        android:gravity="center_vertical" android:text="@string/dmAndroidWidgetEmpty" android:textColor="#E8C67A" android:textSize="13sp" android:maxLines="2" android:ellipsize="end" />
+    <TextView android:id="@+id/widget_footer" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="@string/dmAndroidWidgetEmptyHint" android:textColor="#A99B84" android:textSize="9sp" android:maxLines="2" android:ellipsize="end" />
+</LinearLayout>

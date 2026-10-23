@@ -3,12 +3,10 @@
 #include "dm.h"
 #include "front.h"
 #include <stdatomic.h>
-#include <sys/time.h>
-#ifdef __ANDROID__
-#include <time.h>
-#else
+#ifdef __APPLE__
 #include <sys/sysctl.h>
 #endif
+#include <sys/time.h>
 #include <unistd.h>
 void probe_install(void); void ticks_install(void); void hid_keys_init(void); void tact_prefetch_start(const char *outdir); void tact_chk_init(void); void stubs_report(void); void crash_install(void); void guest_thread_init(void); uint32_t svc_thread_main_init(void);
 typedef void (*fn0)(void); typedef void (*fn2)(uint64_t, uint64_t); typedef void (*fnp)(void *);
@@ -93,27 +91,25 @@ static void flags_init(void) {
 
 // 启动时间线零点 = 进程创建时刻（sysctl KERN_PROC_PID 的 p_starttime，墙钟）换算到 now_ns 单调时基；Mac / iOS 同口径
 // Zero point of the boot timeline = process creation time (p_starttime from sysctl KERN_PROC_PID, wall clock) converted to the now_ns monotonic time base; same definition on Mac / iOS
+uint64_t g_proc_start_ns;
 static uint64_t proc_start_mono_ns(void) {
-    uint64_t mono = now_ns();
-#ifdef __ANDROID__
-    // /proc/self/stat field 22 is process start in clock ticks since boot; convert via CLOCK_BOOTTIME.
-    FILE *f = fopen("/proc/self/stat", "r");
+#ifndef __APPLE__
+    // 安卓 App 用 Java 交来的启动时刻：App 进程可能是系统预先分叉备用的（USAP 池），/proc/self/stat 记的是那次分叉，可早于本次启动数小时
+    // The Android App uses the start time handed over from Java: the App process may have been forked ahead of time by the system (USAP pool), and /proc/self/stat records that fork, which can be hours before this launch
+    if (g_proc_start_ns) return g_proc_start_ns;
+    // Linux：/proc/self/stat 第 22 字段 = 进程创建时刻（开机以来的时钟滴答），与 CLOCK_BOOTTIME 同一基准
+    // Linux: field 22 of /proc/self/stat = process creation time (clock ticks since boot), on the same basis as CLOCK_BOOTTIME
+    uint64_t mono = now_ns(); char buf[1024] = ""; FILE *f = fopen("/proc/self/stat", "r");
     if (!f) return mono;
-    char line[4096]; char *got = fgets(line, sizeof line, f); fclose(f);
-    char *end = got ? strrchr(line, ')') : NULL;
-    if (!end) return mono;
-    char *save = NULL, *tok = strtok_r(end + 1, " ", &save);
-    for (unsigned field = 3; tok && field < 22; ++field) tok = strtok_r(NULL, " ", &save);
-    long rate = sysconf(_SC_CLK_TCK);
-    if (!tok || rate <= 0) return mono;
-    uint64_t start = strtoull(tok, NULL, 10) * 1000000000ull / (uint64_t)rate;
-    struct timespec boot_ts; if (clock_gettime(CLOCK_BOOTTIME, &boot_ts)) return mono;
-    uint64_t boot = (uint64_t)boot_ts.tv_sec * 1000000000ull + (uint64_t)boot_ts.tv_nsec;
-    uint64_t age = boot >= start ? boot - start : 0;
-    return age < mono ? mono - age : 0;
+    size_t got = fread(buf, 1, sizeof buf - 1, f); fclose(f); buf[got] = 0;
+    const char *p = strrchr(buf, ')'); unsigned long long st = 0;
+    if (!p || sscanf(p + 2, "%*c %*d %*d %*d %*d %*d %*u %*u %*u %*u %*u %*u %*u %*d %*d %*d %*d %*d %*d %llu", &st) != 1) return mono;
+    long hz = sysconf(_SC_CLK_TCK); struct timespec bt; clock_gettime(CLOCK_BOOTTIME, &bt);
+    int64_t age = (int64_t)bt.tv_sec * 1000000000ll + bt.tv_nsec - (int64_t)(st * 1000000000ull / (unsigned long long)(hz > 0 ? hz : 100));
+    return age > 0 ? mono - (uint64_t)age : mono;
 #else
     struct kinfo_proc kp; size_t n = sizeof kp; int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()};
-    struct timeval tv; gettimeofday(&tv, NULL);
+    uint64_t mono = now_ns(); struct timeval tv; gettimeofday(&tv, NULL);
     if (sysctl(mib, 4, &kp, &n, NULL, 0) || !n) return mono;
     int64_t age = (int64_t)(tv.tv_sec - kp.kp_proc.p_starttime.tv_sec) * 1000000000ll + (tv.tv_usec - kp.kp_proc.p_starttime.tv_usec) * 1000ll;
     return age > 0 ? mono - (uint64_t)age : mono;

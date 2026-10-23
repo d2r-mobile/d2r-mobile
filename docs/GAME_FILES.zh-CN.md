@@ -31,6 +31,14 @@ Switch 版《暗黑破坏神 II：狱火重生》，**带「术士君临」资�
 dm/tools/extract_game.sh <你的游戏包> <你的 prod.keys>
 ```
 
+本体与更新是分开的两个包（比如本体一个 `.nsp`、更新一个 `.nsp`）时，都给上，密钥放最后：
+
+```
+dm/tools/extract_game.sh <本体 .nsp> <更新 .nsp> <你的 prod.keys>
+```
+
+eShop 格式的 `.nsp` 里带着放标题密钥的票据（`.tik`），脚本直接从票据取，不用另备 `title.keys`。**个人票据**绑定导出它的那台主机，这样取不出来；脚本会提示，你的 `~/.switch/title.keys` 里已有这个标题的密钥时照样能拆。追加内容（DLC）的包用不着：资料片的数据就在本体和更新里。
+
 它会拆包、认出本体与更新、取出上面说的两部分、核对版本，然后放到下一节说的位置。`prod.keys` 是从你自己的主机导出的密钥文件；游戏包和密钥都只在你的电脑上读，不会被拷贝或上传。
 
 需要先装好 **hactool**（开源的 Switch 文件解包工具）：<https://github.com/SciresM/hactool>，按它的说明编译出来，放进 `PATH` 或用 `HACTOOL=<路径>` 指给脚本。磁盘留出约 20 GB。

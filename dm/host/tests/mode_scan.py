@@ -45,7 +45,7 @@ AUTOKEY = {'host/dm_cursor.c': 38, 'host/dm_rift_ui.c': 8, 'host/hle_hid.c': 2, 
 def count(pat, skip_defs):
     out = {}
     for f in sorted(glob.glob(os.path.join(root, 'host', '*.c')) + glob.glob(os.path.join(root, 'ios', 'Sources', '*.m')) + glob.glob(os.path.join(root, 'ios', 'Sources', '*.c'))):
-        rel = os.path.relpath(f, root); s = strip_comments(open(f, encoding='utf-8').read()); n = 0
+        rel = os.path.relpath(f, root).replace(os.sep, "/"); s = strip_comments(open(f, encoding='utf-8').read()); n = 0
         for mm in re.finditer(pat, s):
             ls = s.rfind('\n', 0, mm.start()) + 1; head = s[ls:mm.start()]
             if skip_defs and re.search(r'(^|\s)(static\s+)?(void|int|uint64_t)\s+$', head): continue   # 函数定义 / 声明本身不算调用 | A function definition / declaration itself does not count as a call

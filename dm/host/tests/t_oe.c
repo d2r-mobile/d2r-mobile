@@ -98,6 +98,11 @@ static void test_scale3d(void) {
     CHECK(s3_n(299, D60) == 1 && s3_n(1, D60) == 2, "快降：停判后历史清空，再满 5 窗 → 降到 2 档");
     s3_hold_pass();
     CHECK(s3_n(3000, D60) == 2, "下限：已到第 2 档（max_level），再掉也不动");
+    // 档位表：配置 0.75 仍是 0.75 / 0.70 / 0.65 / 0.60（下限 0.60 时最深第 3 档）；配置 0.85 时中间多出 0.80 / 0.75
+    // Level table: with the configured 0.75 still 0.75 / 0.70 / 0.65 / 0.60 (deepest level 3 at floor 0.60); with 0.85, 0.80 / 0.75 in between
+    CHECK(s3_max_level(0.75f, 0.60f) == 3 && s3_level_scale(0.75f, 0) == 0.75f && s3_level_scale(0.75f, 1) == 0.70f && s3_level_scale(0.75f, 3) == 0.60f, "档位：配置 0.75 → 0.70 / 0.65 / 0.60，最深第 3 档");
+    CHECK(s3_max_level(0.85f, 0.60f) == 5 && s3_level_scale(0.85f, 1) == 0.80f && s3_level_scale(0.85f, 2) == 0.75f && s3_level_scale(0.85f, 5) == 0.60f, "档位：配置 0.85 → 0.80 / 0.75 / 0.70 / 0.65 / 0.60，最深第 5 档");
+    CHECK(s3_max_level(1.0f, 0.70f) == 6 && s3_level_scale(1.0f, 1) == 0.95f && s3_level_scale(1.0f, 9) == 0.55f && s3_level_scale(0.72f, 1) == 0.70f, "档位：配置 1.0 的第 1 档 0.95；超出取最低；配置 0.72 的第 1 档 0.70");
     // 慢降：每窗 3 帧掉帧 + 114 帧正常（3 × 33.4 + 114 × 16.6667 = 2000.2 ms，一窗 117 帧，掉帧率 2.56%）
     // Slow lowering: per window 3 dropped frames + 114 normal frames (3 × 33.4 + 114 × 16.6667 = 2000.2 ms, 117 frames per window, dropped-frame rate 2.56%)
     s3 = (scale3d_ctl){.max_level = 2}; s3_now = 2000 * S3_SEC;
@@ -137,6 +142,20 @@ static void test_scale3d(void) {
     CHECK(s3_n(1000, 45.0) == 0, "30 帧档：45 ms（未超 50）不算掉帧");
     s3 = (scale3d_ctl){.max_level = 2, .period_ms = 1000.0 / 30}; s3_now = 6500 * S3_SEC;   // 新起：不带上一段留在窗里的半个窗 | Fresh start: does not carry the half window left over from the previous segment
     CHECK(s3_n(149, 66.7) == 0 && s3_n(1, 66.7) == 1, "30 帧档：66.7 ms 全掉帧满 5 窗（每窗 30 帧 = 2001 ms，共 150 帧）→ 降到 1 档");
+    // 偶发卡顿：每约 10 秒一次连掉 20 帧（截图那样，约 0.67 秒）→ 每次只计 3 帧，90 秒都不降（旧计法 60 秒时掉帧率 3.3% > 1.5% 会降）
+    // One-off stalls: 20 dropped frames in a row about every 10 s (like a screenshot, about 0.67 s) -> each counts 3, no step in 90 s (the old count reached 3.3% > 1.5% at 60 s and stepped down)
+    s3 = (scale3d_ctl){.max_level = 2}; s3_now = 7000 * S3_SEC;
+    for (int k = 0; k < 9; k++) { s3_n(20, D60); s3_n(580, F60); }
+    CHECK(s3.level == 0, "偶发卡顿：每 10 秒连掉 20 帧、共 9 次 → 不降");
+    // 频繁的短卡顿照常计：6 帧掉 + 6 帧正常反复（每段计 3 帧，计入的掉帧率 25%）→ 10 秒内降
+    // Frequent short stalls still count: 6 dropped + 6 normal frames repeated (3 counted per run, a counted rate of 25%) -> steps down within 10 s
+    s3 = (scale3d_ctl){.max_level = 2}; s3_now = 7500 * S3_SEC;
+    for (int k = 0; k < 40; k++) { s3_n(6, D60); s3_n(6, F60); }
+    CHECK(s3.level == 1, "频繁短卡顿：6 掉 6 好反复 12 秒 → 降到 1 档");
+    // 长时间全掉帧：前 3 帧之后，连续满 1 秒起每帧都计 → 照样 5 窗内降（同上面的快降）
+    // A long run of dropped frames: after the first 3, every frame counts once the run has lasted 1 s -> still steps down within 5 windows (as the fast-lowering case above)
+    s3 = (scale3d_ctl){.max_level = 2}; s3_now = 8000 * S3_SEC;
+    CHECK(s3_n(299, D60) == 0 && s3_n(1, D60) == 1, "长段掉帧：满 5 窗（10 秒）→ 降到 1 档，时刻不变");
     int a = s3_replay(0), b = s3_replay(1);
     printf("  （实玩第二段回放：慢帧均匀散开换级 %d 次，挤在一起换级 %d 次）\n", a, b);
     CHECK(a == 0 && b == 0, "动态比例：实玩第二段的慢帧序列（帧率 59+）不论散开还是挤在一起都不换级");

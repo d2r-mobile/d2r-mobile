@@ -13,6 +13,10 @@ enum {
     DM_BTN_LEFT = 1u << 12, DM_BTN_UP = 1u << 13, DM_BTN_RIGHT = 1u << 14, DM_BTN_DOWN = 1u << 15,
 };
 #define DM_STICK_MAX 32767
+// 手柄版键位图标（键帽）样式：前端按最近一次输入的来源报（dm_padmode.c 在没开面板时换图；覆盖层没有那套就用原版 Switch 键帽）
+// Button-icon (glyph) style of the controller layout: the front end reports the source of the latest input (dm_padmode.c swaps the images while no panel is open; without that set in the overlay the original Switch glyphs are used)
+enum { DM_GLYPH_PAD, DM_GLYPH_KBD, DM_GLYPH_XBOX, DM_GLYPH_N };   // 原版 Switch 键帽 / 键盘键帽（Mac App）/ Xbox 键帽 | Original Switch glyphs / keyboard glyphs (Mac App) / Xbox glyphs
+void dm_padmode_request_glyph(int glyph);
 void dm_input_set(uint64_t buttons, int32_t lx, int32_t ly, int32_t rx, int32_t ry);
 uint64_t dm_input_samples(void);   // 游戏已取手柄的累计次数 | Cumulative number of times the game has sampled the controller
 // 实体 / 虚拟手柄（iOS GameController，dm_gamepad.m）：与触屏输入分开存，游戏取手柄时按键按位或、摇杆手柄非零就用手柄的。没连手柄时全 0，取值与原来逐位相同

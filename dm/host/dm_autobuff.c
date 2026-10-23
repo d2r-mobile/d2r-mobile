@@ -100,7 +100,7 @@ uint32_t dm_cur_tick(void);
 
 static int enabled(void) { static int env = -2; if (env == -2) { const char *e = getenv("DM_AUTOBUFF"); env = e ? e[0] != '0' : -1; }
     const char *app = getenv("DM_APP");
-    return env >= 0 ? env : ((TARGET_OS_IPHONE || (app && app[0] && app[0] != '0')) && dm_custom_get("auto_buff")); }
+    return env >= 0 ? env : ((DM_PHONE || (app && app[0] && app[0] != '0')) && dm_custom_get("auto_buff")); }
 static int cfg(const char *nm, int def) { const char *e = getenv(nm); return e && atoi(e) > 0 ? atoi(e) : def; }
 static int has_state(uint64_t u, int st) {
     uint64_t sl = *(uint64_t *)(u + 0x88); if (!sl || !(*(uint32_t *)(sl + 0x1c) >> 31)) return 0;

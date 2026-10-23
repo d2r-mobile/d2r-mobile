@@ -16,7 +16,7 @@ class MacFeatures(unittest.TestCase):
         policy = text[text.index('static int enabled(void)'):text.index('static int cfg(')]
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / 'switch.c'
-            source.write_text('#include <stdlib.h>\n#include <assert.h>\n#undef TARGET_OS_IPHONE\n#define TARGET_OS_IPHONE TEST_PLATFORM\n'
+            source.write_text('#include <stdlib.h>\n#include <assert.h>\n#undef TARGET_OS_IPHONE\n#define TARGET_OS_IPHONE TEST_PLATFORM\n#define DM_PHONE TEST_PLATFORM\n'
                               'static int custom;\nstatic int dm_custom_get(const char *key) { (void)key; return custom; }\n'
                               + policy + '\nint main(int argc, char **argv) { assert(argc == 3); '
                               'custom = 0; assert(enabled() == atoi(argv[1])); '

@@ -24,7 +24,7 @@
 static id<MTLRenderPipelineState> g_rx_pso1; static MTLPixelFormat g_rx_fmt_c, g_rx_fmt_ds;
 static id<MTLDepthStencilState> g_rx_dss;
 #if DM_NVN_M3
-static int g_rx_args;   // 老接口没有参数表：只当「常量缓冲建过没有」的标记 | the older API has no argument table: used only as the marker for "has the constant buffer been created"
+static int g_rx_args;   // 旧接口没有参数表：只当「常量缓冲建过没有」的标记 | the older API has no argument table: used only as the marker for "has the constant buffer been created"
 #else
 static id<MTL4ArgumentTable> g_rx_args;
 #endif

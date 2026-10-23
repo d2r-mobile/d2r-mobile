@@ -183,8 +183,7 @@ int main(void) {
     CHECK(h_fs_MountSave("save", NULL) == RES_OK && write_save("save:/a", "ok3") == RES_OK && h_fs_Commit("save") == RES_OK, "去掉注入重新挂载：事务式照常，写 a=ok3 提交成功");
     snprintf(p, sizeof p, "%s/a", save); CHECK(same(p, "ok3"), "已提交 a = ok3");
 
-    // 语言开关改写设置文件（settings_lang_apply）：期望值按规则手算——只在「与开关不符」时把 Language / VoiceLanguage 改成 0（英文）、8（简中）、2 / 10（西语）或 7（俄语），配音按 voice_for 走中英，别的键和别的语言不动
-    // Language switch rewrites the settings file (settings_lang_apply): expected values hand-computed from the rules - only when it "disagrees with the switch", change Language / VoiceLanguage to 0 (English), 8 (Simplified Chinese), 2 / 10 (Spanish) or 7 (Russian), voice per voice_for; other keys and other languages untouched
+    // 语言开关改写设置文件（settings_lang_apply）：期望值按规则手算——只在「与开关不符」时把 Language / VoiceLanguage 改成 0（英文）、8（简中）、2 / 10（西语）、7（俄语）或 5（韩语），配音按 voice_for 走中英，别的键和别的语言不动
     { extern int g_t_lang; char sd[1200], sf[1300], gotj[512]; snprintf(sd, sizeof sd, "%s/langt", root); mkdir(sd, 0755); snprintf(sf, sizeof sf, "%s/Settings", sd); mkdir(sf, 0755); snprintf(sf, sizeof sf, "%s/Settings/Settings.json", sd);
       #define LANGCASE(dm, in, want, what) do { g_t_lang = (dm); put(sf, (in)); settings_lang_apply(sd); FILE *lf = fopen(sf, "rb"); size_t ln_ = lf ? fread(gotj, 1, sizeof gotj - 1, lf) : 0; if (lf) fclose(lf); gotj[ln_] = 0; CHECK(!strcmp(gotj, (want)), "语言开关：%s", (what)); } while (0)
       LANGCASE(-1, "{ \"Language\": 8, \"VoiceLanguage\": 8 }", "{ \"Language\": 8, \"VoiceLanguage\": 8 }", "没点过应用：一个字不动");
@@ -210,6 +209,13 @@ int main(void) {
       LANGCASE(3, "{ \"Language\": 7, \"VoiceLanguage\": 7 }", "{ \"Language\": 7, \"VoiceLanguage\": 7 }", "开关 = 俄语、文件已是俄文配俄语语音：不动");
       LANGCASE(3, "{ \"Language\": 7, \"VoiceLanguage\": 0 }", "{ \"Language\": 7, \"VoiceLanguage\": 7 }", "开关 = 俄语、文件是俄文配英文语音：语音跟上");
       LANGCASE(1, "{ \"Language\": 7, \"VoiceLanguage\": 7 }", "{ \"Language\": 0, \"VoiceLanguage\": 0 }", "开关 = 英文、文件是俄文：文字与语音都改英文");
+      // 韩语（开关 = 4）：原版韩文 = 5 koKR；韩语配音在分块 11，规则同俄语（资源目录还是上面那个，此刻只有 16 号分块）
+      LANGCASE(4, "{ \"Language\": 0, \"VoiceLanguage\": 0 }", "{ \"Language\": 5, \"VoiceLanguage\": 0 }", "开关 = 韩语、资源里没有韩语配音分块：文字改 koKR，语音配英文");
+      { char rd[1300]; snprintf(rd, sizeof rd, "%s/romfs_ru/data/11-00000001.data", root); put(rd, "x"); }
+      LANGCASE(4, "{ \"Language\": 0, \"VoiceLanguage\": 0 }", "{ \"Language\": 5, \"VoiceLanguage\": 5 }", "开关 = 韩语、资源里有 11 号分块：文字与语音都改成 koKR");
+      LANGCASE(4, "{ \"Language\": 5, \"VoiceLanguage\": 5 }", "{ \"Language\": 5, \"VoiceLanguage\": 5 }", "开关 = 韩语、文件已是韩文配韩语语音：不动");
+      LANGCASE(3, "{ \"Language\": 5, \"VoiceLanguage\": 5 }", "{ \"Language\": 7, \"VoiceLanguage\": 7 }", "开关 = 俄语、文件是韩文：文字与语音都改成 ruRU");
+      LANGCASE(1, "{ \"Language\": 5, \"VoiceLanguage\": 5 }", "{ \"Language\": 0, \"VoiceLanguage\": 0 }", "开关 = 英文、文件是韩文：文字与语音都改英文");
       unsetenv("DM_ROMFS");
       g_t_lang = -1; }
 

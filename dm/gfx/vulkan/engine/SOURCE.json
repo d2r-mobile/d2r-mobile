@@ -1,0 +1,141 @@
+{
+  "source": "NVN-to-Vulkan engine source checksums.",
+  "files": [
+    {
+      "file": "xbg_blit.cpp",
+      "source_sha256": "9c1a52d29db9c2ba8281afd7d119f0eebe7c00c5471382f9132388d98bb5b47b"
+    },
+    {
+      "file": "xbg_blit.h",
+      "source_sha256": "3c10ef623ec293800c78259ef2490e5688c1306b0cb9360759dccae7f393b3ad"
+    },
+    {
+      "file": "xbg_clear.cpp",
+      "source_sha256": "b4340b74dfedd9fe23738cea70e84574477deb70ca676b97898ab1d33fb5e941"
+    },
+    {
+      "file": "xbg_clear.h",
+      "source_sha256": "25a732b1364ae9b4a051a4a94b31619807885ec5c858b69dfa66559d8ff7642e"
+    },
+    {
+      "file": "xbg_clear_spv.h",
+      "source_sha256": "8f2901a70cc2ab1f6b4ab9c6c557a010ea94ce4989828a6250f0c06320b53c0b"
+    },
+    {
+      "file": "xbg_command_clone.c",
+      "source_sha256": "81f65b18f5699c5fe4bee5edf00df63bec1de69715eb89999af4b60967d64124"
+    },
+    {
+      "file": "xbg_cpu_timing.h",
+      "source_sha256": "d229f0985af686911d326bb17965f7fb9ddde4168c7bc141464856aba54d26b0"
+    },
+    {
+      "file": "xbg_depth.c",
+      "source_sha256": "3e88a2e1a8736a5f87c9f179edb8ef6cc511a178dc276800706936b3743b7dad"
+    },
+    {
+      "file": "xbg_depth.h",
+      "source_sha256": "93c9f396d0f17ad0dedc12276be873ebf44540509da36e8ac028eab93cda31fd"
+    },
+    {
+      "file": "xbg_descriptor_timing.h",
+      "source_sha256": "a130ceef7b4a4a90ff59efdc406b751c3996664a04d47236d255337afc1d843c"
+    },
+    {
+      "file": "xbg_draw_plan.c",
+      "source_sha256": "622062219b778258a9a557ff2ad0f9411d718022649e38fa235cc620cff38d6e"
+    },
+    {
+      "file": "xbg_draw_plan.h",
+      "source_sha256": "64ba70e73626bd558501d04be559479c5e9415f0dd7ae085ffc0e48f4bb00f66"
+    },
+    {
+      "file": "xbg_draw_timing.h",
+      "source_sha256": "07b98bce77dded45dd1a1d3ac328a6b8dfa599f5374fb3a153f36ccdf3ff9569"
+    },
+    {
+      "file": "xbg_framebuffer.c",
+      "source_sha256": "43d0d9e3894cfea321bc1c32a333ff15c79bfaf874f199b370a18f1e17931fe7"
+    },
+    {
+      "file": "xbg_framebuffer.h",
+      "source_sha256": "703a13437ffcd19acecd88a897a0458dde89fc32af3cf4c15de4b9c91c95be2e"
+    },
+    {
+      "file": "xbg_game.cpp",
+      "source_sha256": "da1222b52b67dae0ad6cc28713bb236c27a7ac250f8bfdceb71c9cd64d348555"
+    },
+    {
+      "file": "xbg_game.h",
+      "source_sha256": "f350b239253b5cd23d346d352c705a45d8c53081d58987642720106423e5b174"
+    },
+    {
+      "file": "xbg_game_internal.h",
+      "source_sha256": "22675923f18cdbad15ae4c39992c822f8e0f715bd6ca63f58276c78fe44d3011"
+    },
+    {
+      "file": "xbg_nvn.cpp",
+      "source_sha256": "8afe6c4abeabf8c299836fbbd0a06ac77db584f7bdde16f4b56bee0fccab0475"
+    },
+    {
+      "file": "xbg_pipeline_key.h",
+      "source_sha256": "1bf85b7dd11bf589946766119a75be07bc7b29422a1d422c34f4f33f0b44cf7b"
+    },
+    {
+      "file": "xbg_provenance.h",
+      "source_sha256": "a44404dceb348bf0da6c1c5754382b031d0835af32506180da347950f1c9b41a"
+    },
+    {
+      "file": "xbg_quad.c",
+      "source_sha256": "19c22404c5657abe62acca86cce7afe388616aeea6f5677d44db8f87cb22e047"
+    },
+    {
+      "file": "xbg_quad.h",
+      "source_sha256": "f34dbf2c9c1550e045e528cb4e0c7bbbbc990d362529de85eba9b26fb83c0d43"
+    },
+    {
+      "file": "xbg_sampler.cpp",
+      "source_sha256": "7b75ff1b55ab2129e5711ddfbd13d7ee7253d84a9ba30cc6285488af47db0ca9"
+    },
+    {
+      "file": "xbg_sampler.h",
+      "source_sha256": "d61447f049da230e05e21ecc976947c3e7f3f90d3def6879fe29a00faf486677"
+    },
+    {
+      "file": "xbg_shader_key.c",
+      "source_sha256": "8f396ca34711713963cc4c78c6b3d43dfe7febb6393b4dc664dd3dbd0e80bf4b"
+    },
+    {
+      "file": "xbg_stages.cpp",
+      "source_sha256": "b7e5c5603d997ab0d87b08b880646f9e7e99f6f10880585d58df2366b7aa9f3c"
+    },
+    {
+      "file": "xbg_stages.h",
+      "source_sha256": "3fc5edbab8640796b10377cb1fe178c9f6734a9375911d0a47b3fe67d94c2a6e"
+    },
+    {
+      "file": "xbg_texture.c",
+      "source_sha256": "f1732756c97b2c4254b845bedaa8b005564aa0639a3262136992d84e7e7fd379"
+    },
+    {
+      "file": "xbg_texture.h",
+      "source_sha256": "d4438006218222d3771dc8638202cdb1010e959985ab1fbc78aa451f1409f4da"
+    },
+    {
+      "file": "xbg_vertex.c",
+      "source_sha256": "e34d470579a4b7d22d9229fc81420ca6c96039c639a87d255cf485331a561154"
+    },
+    {
+      "file": "xbg_vertex.h",
+      "source_sha256": "1d20c65e27c2d379edb0e79281f49ff00130e3045c36355f67b4f42271f5c94e"
+    },
+    {
+      "file": "xbg_vulkan.cpp",
+      "source_sha256": "e44726c2fe7c8afeceebf325146d553a084e6254df79fc19cca07a3a06b6fd46"
+    },
+    {
+      "file": "xbg_vulkan.h",
+      "source_sha256": "c714270e7492950b3c055fe36d5108d97d738a543ca50a7eb8b31ea7ab4cad7d"
+    }
+  ]
+}

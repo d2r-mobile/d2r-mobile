@@ -4,6 +4,7 @@
 // Crash state: prints the faulting address, pc, lr (converted to module-relative offsets) and the registers; dispatches page fault hooks.
 // Only signal handling itself lives here: diagnostic features (probes / UI messages / sampling) are in diag.c, and this file does not depend on them (the graphics unit tests link only this file).
 #include "dm.h"
+#include "dm_uctx.h"
 #include <signal.h>
 #include <dlfcn.h>
 #include <sys/ucontext.h>

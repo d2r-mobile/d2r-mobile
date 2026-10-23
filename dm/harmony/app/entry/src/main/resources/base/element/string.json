@@ -1,0 +1,36 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "D2R Mobile 平台检测"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "平台能力检测（不含游戏内容）"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "D2R Mobile"
+    },
+    {
+      "name": "widget_display_name",
+      "value": "D2R Mobile 英雄"
+    },
+    {
+      "name": "widget_desc",
+      "value": "英雄卡片：等级、职业、金币、上次游玩"
+    },
+    {
+      "name": "EntryFormAbility_label",
+      "value": "D2R Mobile 卡片"
+    },
+    {
+      "name": "EntryFormAbility_desc",
+      "value": "桌面显示你的英雄"
+    },
+    {
+      "name": "sync_reason",
+      "value": "在你登录同一华为账号的设备之间同步游戏存档"
+    }
+  ]
+}

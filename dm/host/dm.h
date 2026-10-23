@@ -6,6 +6,18 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef __APPLE__
+#include <TargetConditionals.h>
+#endif
+// 手机产品（iOS、安卓、鸿蒙）：玩家装的包——缺省开触屏默认设置、真实声音、性能记录、3D 渲染比例等；与之相对的是 Mac 开发宿主（闸门 / 对拍缺省全关）。
+// 只表示「产品缺省」；真正依赖 iOS 系统的分支（内嵌签名代码段、CoreFoundation 等）仍按 TARGET_OS_IPHONE。
+// Phone product (iOS, Android, HarmonyOS): the package players install -- touch default settings, real sound, performance logging, 3D render scale etc. are on by default; the counterpart is the Mac development host (gates / A-B comparisons, all off by default).
+// It only means "product defaults"; branches that truly depend on the iOS system (embedded signed code segments, CoreFoundation, etc.) still use TARGET_OS_IPHONE.
+#if defined(__ANDROID__) || defined(__OHOS__) || (defined(TARGET_OS_IPHONE) && TARGET_OS_IPHONE)
+#define DM_PHONE 1
+#else
+#define DM_PHONE 0
+#endif
 
 #define MAX_MOD 8
 #ifdef __ANDROID__
@@ -104,11 +116,12 @@ void crash_dump_now(const char *why);   // 按需导出现场（线程 + 图形�
 // 诊断开关：main 启动时从环境变量读一次（getenv 要拿 libc 全局环境锁，进热路径会让全部客体线程排队）
 // Diagnostic switches: read once from environment variables when main starts (getenv takes the libc global environment lock, and on a hot path it would make all guest threads queue up)
 extern uint64_t g_t0_ns;   // 宿主启动时刻（now_ns），日志相对时间用 | Host start time (now_ns), used for relative times in the log
+extern uint64_t g_proc_start_ns;   // 安卓 App 在 dm_main 前交来的进程启动时刻（now_ns 时基），0 = 未交来 | process start time handed over by the Android App before dm_main (now_ns time base), 0 = not given
 extern struct dm_flags { int thr, svc, fs, movie, dbg, imports, bootprof; } g_flag;
 // 启动时间线（DM_BOOTPROF=1，diag.c）：分段打点 + 计数器（纳秒 / 字节，全线程累加）；可用 PROF_GFX_* 埋点
 // Boot timeline (DM_BOOTPROF=1, diag.c): segment marks + counters (nanoseconds / bytes, accumulated over all threads); PROF_GFX_* can be used for instrumentation
 enum { PROF_FS_READ, PROF_WAIT_LOCK, PROF_WAIT_CV, PROF_WAIT_ADDR, PROF_WAIT_SYNC, PROF_SLEEP, PROF_MAIN_WAIT,
-       PROF_GFX_PRESENT, PROF_GFX_SHADER, PROF_TACT, PROF_N };   // PROF_TACT：TACT 块 zlib 解码（svc #0x80，宿主 libdeflate）耗时与输出字节 | PROF_TACT: time and output bytes of TACT block zlib decode (svc #0x80, host libdeflate)
+       PROF_GFX_PRESENT, PROF_GFX_SHADER, PROF_TACT, PROF_GFX_BCDEC, PROF_N };   // PROF_GFX_BCDEC：BC 贴图软解在调用线程上的墙钟与输出字节（马良无 BC）；PROF_TACT：TACT 块 zlib 解码（svc #0x80，宿主 libdeflate）耗时与输出字节 | PROF_TACT: time and output bytes of TACT block zlib decode (svc #0x80, host libdeflate)
 void dm_prof_add(int id, uint64_t ns, uint64_t bytes);
 void dm_prof_mark(const char *seg);
 uint64_t dm_prof_ribbon_ns(void);   // 第一次出现 OpenPanel MainMenuButtonRibbon 的 now_ns 时刻（0 = 尚未；需 DM_BOOTPROF=1） | The now_ns time at which OpenPanel MainMenuButtonRibbon first appeared (0 = not yet; needs DM_BOOTPROF=1)

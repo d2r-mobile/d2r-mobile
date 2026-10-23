@@ -1,0 +1,35 @@
+{
+  "apiType": "stageMode",
+  "buildOption": {
+    "externalNativeOptions": {
+      "path": "./src/main/cpp/CMakeLists.txt",
+      "arguments": "-DOHOS_STL=c++_shared",
+      "cppFlags": "",
+      "abiFilters": [
+        "arm64-v8a"
+      ]
+    }
+  },
+  "targets": [
+    {
+      // 调试版：多挂一个内置运行包目录（src/debugpack，由 scripts/stage_debug_pack.sh 从本机生成的运行包拷进来，不入库）
+      // Debug: also mounts the bundled runtime pack (src/debugpack, staged from the locally generated pack by scripts/stage_debug_pack.sh, never committed)
+      "name": "default",
+      "resource": {
+        "directories": ["./src/main/resources", "./src/debugpack/resources"]
+      }
+    },
+    {
+      // 发布版（AGC）：不带任何游戏派生文件 | Release (AGC): carries no game-derived files
+      "name": "release"
+    },
+    {
+      // 自用发布版：发布证书签名 + 内置运行包（同调试版），只用于自己账号的 AGC 邀请测试、装在自己手机上，不公开分发
+      // Self-use release: release-signed with the bundled runtime pack (as the debug build), only for our own account's AGC invite test on our own phones, never distributed
+      "name": "selfuse",
+      "resource": {
+        "directories": ["./src/main/resources", "./src/debugpack/resources"]
+      }
+    }
+  ]
+}

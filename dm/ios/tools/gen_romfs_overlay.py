@@ -6,11 +6,15 @@
 # Usage: gen_romfs_overlay.py <original game RomFS> <output dir>. The base image is written into the borrowed path (dm/data/casc_overlay/borrowed_paths.tsv), the layout replaces the controller HUDPanelHD.json;
 # the other data archives are still supplied by the base RomFS (at launch the App checks this layer first via DM_ROMFS_OVERLAY), so only the new .build.config and the one data archive newly written this time are copied.
 import re
-import json, os, struct, subprocess, sys, tempfile, shutil
+import json, os, struct, subprocess, sys, tempfile, shutil, runpy
+# 当前进程也用同一 LF 写出规则；原资源只读适配器仍在调用链内。
+# Apply the same LF output policy here; keep the original read-only resource adapter in the call chain.
+runpy.run_path(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'tools', 'winlf', 'sitecustomize.py'))
 from PIL import Image
 HERE=os.path.dirname(os.path.abspath(__file__)); V4=os.environ.get('DM_HUD_V4_DIR') or __import__('gen_paths').gen_dir('NativeHUD','v4')   # 试调时可指向别的产物目录 | Can point to another build output directory when tuning
 romfs, out = sys.argv[1], sys.argv[2]
-sys.path.insert(0,HERE); import gen_assets; gen_assets.ensure(romfs)   # 要读的生成资源（底栏 v4、选角右侧面板…）先确保齐全；输入没变不重出（gen_assets.py 文件头） | First make sure the generated resources to be read (bottom bar v4, character select right panel...) are complete; not regenerated if inputs are unchanged (gen_assets.py file header)
+GENERATED_OVERLAYS = []
+sys.path.insert(0,HERE); import gen_assets; gen_assets.ensure(romfs, overlay_only=True)   # 要读的生成资源（底栏 v4、选角右侧面板…）先确保齐全；输入没变不重出（gen_assets.py 文件头） | First make sure the generated resources to be read (bottom bar v4, character select right panel...) are complete; not regenerated if inputs are unchanged (gen_assets.py file header)
 REPL={'data/hd/global/ui/panel/hud_02/bugbtn.sprite':'base.sprite',            # 借用路径（登记表「当前用途」= 底部 UI v4 底图） | Borrowed path (registry 「当前用途」(current use) = bottom UI v4 base image)
       'data/hd/global/ui/panel/hud_02/front_panel.sprite':'close.sprite',       # 借用路径：局内面板外框右上角的关闭按钮图（NativeHUD/touch/close.png，gen_close_btn.py） | Borrowed path: the close button image at the top-right corner of the in-game panel outer frame (NativeHUD/touch/close.png, gen_close_btn.py)
       'data/global/ui/layouts/controller/hudpanelhd.json':os.path.join(V4,'hud.json')}
@@ -51,6 +55,17 @@ with tempfile.TemporaryDirectory() as t:
     import merc_slots; REPL.update(merc_slots.build(romfs,t,REPL))   # 佣兵面板加六个装备位（底图 + 布局；要在 build_ingame 给它插关闭钮之后） | Add six equipment slots to the mercenary panel (base image + layout; must come after build_ingame has inserted the close button into it)
     REPL.update(touch_layout.build_cursor(romfs,t))   # 面板里的手柄光标圆环换成透明 | The controller cursor ring in panels replaced with a transparent one
     REPL.update(touch_layout.build_glyphs(romfs,t))   # 22 张手柄键图标换成透明 | 22 controller button icons replaced with transparent ones
+    import romfs_art
+    # Xbox 手柄的键位图标（dm_gamepad.m 认出 Xbox 手柄时宿主自动换，见 dm_padmode.c 键帽样式）：原版 Xbox 那套 22 张，文件名「<平台>x<名字>」（宿主 dm_padmode.c 的 Ztouch_controller_buttons_ui/%sX%s）。
+    # 图标按游戏键取名（switch/ButtonRight = 游戏 A）；Xbox 键位下游戏 A 在下方、B 在右边，所以右 / 下两张对调，上 / 左与其余同名照搬
+    # Button icons for Xbox controllers (the host switches automatically when dm_gamepad.m recognizes an Xbox controller, see the glyph styles in dm_padmode.c): the original 22 Xbox images, file names "<platform>x<name>" (the host dm_padmode.c path Ztouch_controller_buttons_ui/%sX%s).
+    # Icons are named per game button (switch/ButtonRight = game A); in the Xbox layout game A is at the bottom and B on the right, so the right / bottom images swap, top / left and the rest are copied by the same name
+    for line in open(os.path.join(romfs,'data','build_manifest.psv'),encoding='utf-8'):
+        f=line.rstrip('\n').split('|')
+        if len(f)<11 or line.startswith('#') or '/ui/controller/controllerbuttons/switch/' not in f[9].lower(): continue
+        nm=os.path.basename(f[9]); src={'ButtonRight.sprite':'ButtonBottom.sprite','ButtonBottom.sprite':'ButtonRight.sprite'}.get(nm,nm)
+        o=os.path.join(t,'xbox_'+nm); open(o,'wb').write(romfs_art.read(romfs,'data/hd/global/ui/Controller/ControllerButtons/xbox/'+src))
+        REPL['data/hd/global/ui/ztouch_controller_buttons_ui/switchx'+nm.lower()]=o
     if os.environ.get('DM_OVERLAY_MAC'):   # Mac App：再出一套键盘键帽，放在触屏键帽同一个目录、文件名「<平台>k<名字>」（宿主 dm_padmode.c 的键盘键帽路径 Ztouch_controller_buttons_ui/%sK%s） | Mac App: additionally produce a set of keyboard key caps, placed in the same directory as the touch key caps with file names "<platform>k<name>" (the keyboard key-cap path of the host's dm_padmode.c is Ztouch_controller_buttons_ui/%sK%s)
         import kbd_glyphs; REPL.update({'data/hd/global/ui/ztouch_controller_buttons_ui/switchk'+os.path.basename(k):v for k,v in kbd_glyphs.build(romfs,t).items()})
     REPL.update(touch_layout.build_profile(romfs,t))   # 大字号 | Large font size
@@ -197,15 +212,17 @@ with tempfile.TemporaryDirectory() as t:
         if shared!=sorted(SHARED_TODO): raise SystemExit('gen_romfs_overlay：两种模式共用的改过的布局与存量清单不一致（多出的要按模式分开：改过的放触屏目录 / 另起新名，原路径留原版）：多 %s，少 %s' % (sorted(set(shared)-set(SHARED_TODO)), sorted(set(SHARED_TODO)-set(shared))))
         with open(os.path.join(t,tag+'repl.tsv'),'w') as f:
             for k,v in repl.items(): f.write(f'{"" if k in MAN else "+"}{k}\t{os.path.join(t,v)}\n')   # 新增路径前加「+」（casc_overlay.py） | New paths are prefixed with "+" (casc_overlay.py)
-        subprocess.run([sys.executable,os.path.join(HERE,'..','..','tools','casc_overlay.py'),romfs,os.path.join(t,tag+'ov'),os.path.join(t,tag+'repl.tsv')]+(['--prebuilt',prebuilt] if prebuilt else []),check=True,stdout=subprocess.DEVNULL)
+        subprocess.run(gen_assets.python_command(os.path.join(HERE,'..','..','tools','casc_overlay.py'),romfs,os.path.join(t,tag+'ov'),os.path.join(t,tag+'repl.tsv'),'--thin')+(['--prebuilt',prebuilt] if prebuilt else []),check=True,stdout=subprocess.DEVNULL)
         src=os.path.join(t,tag+'ov','data'); new=[n for n in os.listdir(src) if n.endswith('.data') and not os.path.islink(os.path.join(src,n))]
         assert len(new)==1, new
         shutil.rmtree(dst,ignore_errors=True); os.makedirs(os.path.join(dst,'data'))
         for n in ('.build.config',new[0]): shutil.copyfile(os.path.join(src,n),os.path.join(dst,'data',n))
         with open(os.path.join(dst,'touch_strings.tsv'),'w',encoding='utf-8') as f:   # 键 \t 原文校验（SHA-1 前 8 位） \t 触摸说法（\\ \\n \\t 转义）；宿主 dm_padmode.c 读 | key <TAB> source checksum (first 8 hex digits of SHA-1) <TAB> touch wording (backslash, newline and tab are escaped); read by the host's dm_padmode.c
             for k,o,v in TS: f.write('%s\t%s\t%s\n' % (k,o,v.replace('\\','\\\\').replace('\n','\\n').replace('\t','\\t')))
+        open(os.path.join(dst,'xbox_glyphs'),'w').write('ztouch_controller_buttons_ui/switchx*.sprite\n')   # 标记文件：覆盖层带 Xbox 键帽，宿主 dm_padmode.c 见到它才在 Xbox 手柄输入时换 | Marker file: the overlay carries Xbox glyphs; the host dm_padmode.c switches to them on Xbox controller input only when it sees this file
         if os.environ.get('DM_OVERLAY_MAC'): open(os.path.join(dst,'kbd_glyphs'),'w').write('ztouch_controller_buttons_ui/switchk*.sprite\n')   # 标记文件：覆盖层带键盘键帽，宿主 dm_padmode.c 见到它才用 | marker file: the overlay carries keyboard key caps; the host's dm_padmode.c uses them only when it sees this
         open(os.path.join(dst,'ctrl_touch'),'w').write('触屏版布局在 layouts/xtouch_lay、ztouch_console_lay、0touch_console_switch_lay（dm_padmode.c 见到本文件才改写前缀）\n')
+        GENERATED_OVERLAYS.append(dst)
         return new[0], os.path.getsize(os.path.join(dst,'data',new[0]))
     n0,z0=emit(REPL,out,'')
     print(f'romfs_overlay：{n0} {z0} 字节，底图 {w}x{h}；前端布局 {len(tl)} 个、挪走键位提示 {ntl} 处')
@@ -244,3 +261,13 @@ with tempfile.TemporaryDirectory() as t:
                 da=os.path.join(out+'_astc_variants',name); emit(RS,da,name+'_astc_',os.path.join(ASTC,'pack_index.tsv'))
                 for f in os.listdir(dst):
                     if f!='data': shutil.copyfile(os.path.join(dst,f),os.path.join(da,f))
+
+# 最后封清单：变体的旁路文件和 ASTC pack 信息也必须在哈希范围内。
+# Finalize after all sidecars/ASTC metadata; each variant has its own complete manifest.
+import overlay_contract
+from pathlib import Path
+source_sha = overlay_contract.source_fingerprint(Path(__file__).resolve().parents[3])
+for directory in GENERATED_OVERLAYS:
+    overlay_contract.write_manifest(directory, source_sha)
+    overlay_contract.verify_manifest(directory, source_sha)
+print('overlay source fingerprint: ' + source_sha)
