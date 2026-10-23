@@ -53,7 +53,7 @@ final class AndroidPortSettings {
         LinearLayout left = card(activity, "D2R MOBILE"); left.setGravity(Gravity.CENTER_VERTICAL);
         TextView title = text(activity, "暗黑破坏神 II\n狱火重生", 27, TEXT);
         title.setPadding(0, dp(activity, 16), 0, dp(activity, 16)); left.addView(title);
-        left.addView(text(activity, "Android\n显示与驱动设置", 13, MUTED));
+        left.addView(text(activity, "上游核心 · Android\n显示与驱动设置", 13, MUTED));
         Button start = new Button(activity); start.setText("启动游戏"); start.setTextSize(18);
         start.setTextColor(0xff15110b); start.setBackgroundTintList(ColorStateList.valueOf(GOLD));
         LinearLayout.LayoutParams launchLayout = new LinearLayout.LayoutParams(-1, dp(activity, 56));

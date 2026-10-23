@@ -9,6 +9,7 @@ import android.app.AlertDialog;
 import android.content.Intent;
 import android.net.Uri;
 import android.hardware.display.DisplayManager;
+import android.hardware.input.InputManager;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.SystemClock;
@@ -48,7 +49,7 @@ import java.util.HashSet;
 import java.util.Locale;
 import java.util.Set;
 
-public class DmActivity extends Activity implements SurfaceHolder.Callback, DisplayManager.DisplayListener {
+public class DmActivity extends Activity implements SurfaceHolder.Callback, DisplayManager.DisplayListener, InputManager.InputDeviceListener {
     static native int nativeStart(String filesDir, String extDir, String romfsSrc, String lang);
     static native void nativeSurface(Object surface, int w, int h);
     static native void nativeRefresh(float hz);
@@ -85,6 +86,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     private boolean libraryLoaded;
     private boolean resumed;
     private DisplayManager displays;
+    private InputManager inputs;
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
@@ -97,6 +99,8 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         current = new WeakReference<>(this);
         displays = getSystemService(DisplayManager.class);
         if (displays != null) displays.registerDisplayListener(this, null);
+        inputs = getSystemService(InputManager.class);
+        if (inputs != null) inputs.registerInputDeviceListener(this, null);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         getWindow().getAttributes().layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
         view = new SurfaceView(this);
@@ -140,12 +144,12 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     // Physical controller: keys and sticks are merged in PadInput into the host controller state (nativePad -> dm_pad_set), combined with
     // the touch stick when the game reads the controller. Controller events are consumed here and not passed on to the views.
     @Override public boolean dispatchKeyEvent(KeyEvent e) {
-        if (PadInput.onKey(e)) return true;
+        if (started && resumed && PadInput.onKey(e)) return true;
         return super.dispatchKeyEvent(e);
     }
 
     @Override public boolean onGenericMotionEvent(MotionEvent e) {
-        if (PadInput.onMotion(e)) return true;
+        if (started && resumed && PadInput.onMotion(e)) return true;
         return super.onGenericMotionEvent(e);
     }
 
@@ -156,6 +160,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     private final Set<Integer> swallowed = new HashSet<>();
 
     @Override public boolean dispatchTouchEvent(MotionEvent e) {
+        if (!started) return super.dispatchTouchEvent(e);
         int action = e.getActionMasked();
         if (action == MotionEvent.ACTION_DOWN) {
             boolean wasPad = PadInput.isPadMode();
@@ -179,7 +184,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
 
     private void applyPadMode(boolean pad) {
         if (touchOverlay == null) return;
-        touchOverlay.setInputEnabled(!pad);
+        touchOverlay.setInputEnabled(resumed && !pad);
         touchOverlay.setVisibility(pad ? View.GONE : View.VISIBLE);
     }
 
@@ -508,12 +513,15 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     @Override public void onDisplayAdded(int id) { updateRefresh(); }
     @Override public void onDisplayRemoved(int id) { updateRefresh(); }
     @Override public void onDisplayChanged(int id) { updateRefresh(); }
+    @Override public void onInputDeviceAdded(int id) {}
+    @Override public void onInputDeviceChanged(int id) { if (started) PadInput.removeDevice(id); }
+    @Override public void onInputDeviceRemoved(int id) { if (started) PadInput.removeDevice(id); }
     @Override protected void onResume() { super.onResume(); resumed = true; fpsTime = 0; if (fpsText != null) { fpsText.removeCallbacks(fpsUpdate); fpsText.post(fpsUpdate); } immersive(); startHost(); updateRefresh(); if (started) { nativeFocus(3); if (touchOverlay != null && bootFailure == 0) applyPadMode(PadInput.isPadMode()); } }
-    @Override protected void onPause() { resumed = false; if (fpsText != null) fpsText.removeCallbacks(fpsUpdate); if (inputDialog != null) inputDialog.dismiss(); releaseTouches(); PadInput.reset(); if (touchOverlay != null) touchOverlay.setInputEnabled(false); if (started) nativeFocus(0); super.onPause(); }
+    @Override protected void onPause() { resumed = false; if (fpsText != null) fpsText.removeCallbacks(fpsUpdate); if (inputDialog != null) inputDialog.dismiss(); releaseTouches(); swallowed.clear(); if (started) PadInput.reset(); if (touchOverlay != null) touchOverlay.setInputEnabled(false); if (started) nativeFocus(0); super.onPause(); }
     @Override protected void onStart() { super.onStart(); if (started) nativeFocus(2); }
     @Override protected void onStop() { if (started) nativeFocus(1); com.xiaoboluo.d2r.widget.HeroWidgetProvider.requestUpdate(this); super.onStop(); }
-    @Override protected void onDestroy() { if (displays != null) displays.unregisterDisplayListener(this); if (inputDialog != null) inputDialog.dismiss(); if (current.get() == this) current.clear(); super.onDestroy(); }
-    @Override public void onWindowFocusChanged(boolean f) { super.onWindowFocusChanged(f); if (f) immersive(); else releaseTouches(); }
+    @Override protected void onDestroy() { if (displays != null) displays.unregisterDisplayListener(this); if (inputs != null) inputs.unregisterInputDeviceListener(this); if (inputDialog != null) inputDialog.dismiss(); if (current.get() == this) current.clear(); super.onDestroy(); }
+    @Override public void onWindowFocusChanged(boolean f) { super.onWindowFocusChanged(f); if (f) immersive(); else { releaseTouches(); if (started) PadInput.reset(); } }
 
     @Override public void surfaceCreated(SurfaceHolder h) {}
     @Override public void surfaceChanged(SurfaceHolder h, int format, int w, int ht) {
