@@ -164,6 +164,12 @@ several devices' `files/dm/vk-pipeline-list.bin` into one seed. A seed only
 works with the bundles it was recorded with, so it ships with them. The
 measurements are in `docs/android-notes/2026-10-22-first-play-stutter.md`.
 
+## Android Auto parked games
+
+The existing game activity declares `MAIN` / `CAR_LAUNCHER` and accepts window resizing for Android Auto parked games on Android 15 or newer. Rendering, saves and touch input run on the phone. Complete resource setup and file-access authorization on the phone first. Android Auto automatically exits parked apps when vehicle motion is detected.
+
+For a locally installed APK, enable Android Auto's own developer mode and **Unknown sources**, then reconnect to a compatible head unit while parked and look for **D2R Mobile**. See [parked app support](https://developer.android.com/training/cars/parked/auto) and [local vehicle testing](https://developer.android.com/training/cars/testing#allow-unknown-sources). Actual DHU/vehicle validation is pending: check launch, display aspect and touch alignment, pause/resume, audio and disconnect/reconnect.
+
 ## Validation and remaining work
 
 Run the root contribution checks, plus `:app:lintDebug`. The pure Java input
