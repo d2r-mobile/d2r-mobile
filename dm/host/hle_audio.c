@@ -1,5 +1,5 @@
-#ifdef __OHOS__
-#include "hle_audio_ohos.inc"
+#if defined(__OHOS__) || (defined(__ANDROID__) && defined(DM_ANDROID_NATIVE_APP))
+#include "hle_audio_native.inc"
 #else
 // nn::audio AudioOut：游戏（FMOD nx 输出层）按块追加 PCM 缓冲，播完由系统放回「已释放」队列并触发事件。
 // 宿主：真出声 = CoreAudio AudioUnit（Mac DefaultOutput / iOS RemoteIO）；静音接收端 = 按真实时间消耗缓冲（不出声，节奏与真机一致）。
