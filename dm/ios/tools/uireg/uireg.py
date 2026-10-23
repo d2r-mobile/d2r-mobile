@@ -732,6 +732,28 @@ def groups():
     g.item("点佣兵页右上角 X","佣兵页关掉、回到游戏画面、不留空外框（看截图）",r"ClosePanel HirelingInventoryPanel"); g.tap(P(615,17),1.5); g.shot()
     g.item("关掉后推摇杆","人能走：坐标变了（面板真关了）",moved); g.at("pos",.2); g.at("down 1 @joy",.3); g.at("move 1 @joy+60,0",1.5); g.at("up 1",.5); g.at("pos",.3)
     gs.append(g)
+    # map 局（线上：设置选全屏无效、点成全屏后开装备栏 / 换图就回小地图）：触屏模式记住玩家要的地图档，面板开着先让开、关掉 / 换区域后回到玩家要的那档
+    # map run (report: choosing full screen had no effect, and after switching to full screen, opening the inventory / changing area went back to the minimap): touch mode remembers the map the player wants, steps aside while a panel is open, and returns to it after the panel closes / after an area change
+    g=G("map"); g.sect("map",0); g.enter(2)
+    g.item("进局","在营地；缺省档是小地图（「读到 2」那行在进局前打，看截图）",r"pos 区域 1 "); g.at("pos",.3); g.shot()
+    g.item("点区域名那一条","切全屏，记住全屏",r"地图：玩家点了 → 记住全屏地图"); g.tap("@mmname",1.5); g.shot()
+    g.item("点底栏十字开物品栏","全屏地图先让成小地图",r"地图：→ 微缩放右（面板开着先让开"); g.tap("@menu",1.5); g.shot()
+    g.item("点右上角 X 关物品栏","回到全屏地图",r"地图：→ 全屏（玩家要全屏"); g.tap(P(615,17),1.5); g.shot()
+    g.item("走到出生点旁的箱子再出营地（换区域）","到了野外，仍是全屏地图（看截图）",r"pos 区域 2 "); g.at("walk_to 5808 4443 6 15 skip",15.5)
+    for x,y,r,to in [(5788,4475,4,12),(5812,4503,4,9),(5826,4522,4,8),(5840,4560,5,8)]: g.at(f"walk_to {x} {y} {r} {to} skip",to+.5)
+    g.wait(2.0); g.at("pos",.3); g.shot()
+    g.item("全屏地图点空处","回小地图，记住小地图",r"地图：玩家点了 → 记住小地图"); g.tap(P(300,150),1.5); g.shot()
+    g.item("开、关一次物品栏","关掉后仍是小地图",r"ClosePanel PlayerInventoryExpansionLayout",r"地图：→ 全屏"); g.tap("@menu",1.5); g.tap(P(615,17),1.5); g.shot()
+    gs.append(g)
+    # mapf 局：选项页把「透视地图尺寸」选成全屏（测试开关 DM_TEST_AUTOMAP 到帧改配置并调原版回调，同选项页那条路）→ 触屏下直接全屏地图，配置值不被改写
+    # mapf run: "automap size" set to full screen on the options page (test switch DM_TEST_AUTOMAP changes the config at a frame and calls the original callback, the same path as the options page) → in touch mode the full-screen map shows directly and the config value is not rewritten
+    g=G("mapf",env="DM_TEST_AUTOMAP=2400:0"); g.sect("mapf",0); g.enter(2); g.t=max(g.t,38.0)
+    g.item("选项里选了全屏","直接全屏地图，不改回小地图档",r"地图：「透视地图尺寸」读到 0 → 触屏下缺省全屏地图",r"改回微缩地图放右"); g.at("pos",.3); g.wait(12.0); g.shot()   # 测试开关在帧 2400（约脚本第 46 秒）改档，这一项要把它框进来
+    g.item("点底栏十字开物品栏","全屏地图先让成小地图",r"地图：→ 微缩放右（面板开着先让开"); g.tap("@menu",1.5); g.shot()
+    g.item("点右上角 X 关物品栏","回到全屏地图",r"地图：→ 全屏（玩家要全屏"); g.tap(P(615,17),1.5); g.shot()
+    g.item("全屏地图点空处","回小地图（小地图还在，点得回来）",r"地图：玩家点了 → 记住小地图"); g.tap(P(300,150),1.5); g.shot()
+    g.item("点区域名那一条","又切回全屏",r"地图：玩家点了 → 记住全屏地图"); g.tap("@mmname",1.5); g.shot()
+    gs.append(g)
     # ms 局：佣兵加装备位（秘境最高通关 ≥ 10 层解锁，DM_TEST_MERC_SLOTS=1 当作已解锁）。带活佣兵的老角色（第 4 行 88 级法师：旧数据版本，走 base/ 那份物品栏表）。
     # 给腰带、手套进背包（这个角色背包只剩这点空位），测试开关替玩家发原版「从背包格给佣兵穿」的包；读佣兵身上的物品；保存退出、同一角色再进一局再读——两件还在各自的部位上。
     # 老角色的暂停菜单是 PauseLayout（不是 PauseLayoutGarden）

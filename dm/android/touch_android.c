@@ -136,6 +136,7 @@ void dm_android_touch_uimsg(const char *cat, const char *act, const char *arg) {
     int fe = !scene.game && touch_overlay();
     if (fe != frontend) { cancel_locked(); head = tail = 0; frontend = fe; }
     dm_tc_set_navigation_mode(&tc, nav);
+    dm_ui_map_hold(nav != 0);   /* 同 iOS：面板开着全屏地图先让成小地图，关掉回到玩家要的那档 | as iOS: while a panel is open the full-screen map steps aside to the minimap, and after it closes it returns to what the player wants */
     dm_tc_set_joy_block(&tc, !!(dm_ui_panel_state() & DM_PS_TEXT));
     /* 游戏态不要右上地图键（同 iOS front_ios.m navigationMode：点右上角小地图本身就开全屏地图，见 direct_begin）
        No top-right map key in game state (as iOS front_ios.m navigationMode: tapping the top-right minimap itself opens the full map, see direct_begin) */

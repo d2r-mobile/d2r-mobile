@@ -191,7 +191,7 @@ static void restart_cover_hook(int on) { dispatch_async(dispatch_get_main_queue(
     dm_tc_enable_targets(&_controls,mask); _overlay.navigationMode=n!=0; [self pushFrom:"navigation" phase:"none"];
     if(!n && !getenv("DM_TOUCH_SCRIPT_START")) touch_script_start();
     if(!n) [self itemLabelsOn];
-    if(n && dm_ui_map_is_full()) { dm_ui_map_full(0); LOG("前端：开了面板，全屏地图先收回小地图"); }   // 全屏地图的面板盖满整屏，会挡在别的面板前面；全屏地图只属于游戏态 | The fullscreen map's panel covers the whole screen and would block other panels; the fullscreen map belongs to game mode only
+    dm_ui_map_hold(n!=0);   // 全屏地图的面板盖满整屏，会挡在别的面板前面：面板开着先让成小地图，关掉回到玩家要的那档（宿主 ui_map_pump） | the full-screen map's panel covers the whole screen and would sit in front of other panels: while a panel is open it steps aside to the minimap, and after it closes it returns to what the player wants (host ui_map_pump)
 }
 // 掉落物名字默认常显：设置缺省已是「显示物品 = 开关式」（hle_fs.c settings_seed），开关式下进程启动后初始是关，
 // 点一次「显示物品」键（手柄 L）即一直显示，退出重进下一局仍保持。所以每个进程只点一次：首次进到局内常态（无面板、无读取画面）1.5 秒后，
