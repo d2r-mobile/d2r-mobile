@@ -98,7 +98,7 @@ App 带本项目自己的图标（`dm/ios/Assets.xcassets/AppIcon.appiconset/App
 - 没有声音时看日志：启动时有一行「audio：输出设备「…」，系统缺省输出「…」」，两者不一致会标红；退出时有一行「声卡回调累计 N」，N 为 0 表示这次没有出声。
 - 旧接口版（`D2R Mobile M3.app`）用的是名字里带 M3 的另一对目录。
 
-**iCloud 存档同步：从本仓库自己构建的 App 没有。**程序里接了与 iPhone / iPad 相同的同步，但它需要 App 带着 iCloud 的签名权限；自己构建的 App 用的是本机临时签名，没有这项权限，所以存档只留在这台 Mac 上，日志里会记一行「iCloud 不可用…只用本地存档」，游戏照常。要把手机上的进度带过来，用下面的手工导入。
+**iCloud 存档同步：自己构建的 App 缺省没有，有付费开发者账号可以打开。**程序里接了与 iPhone / iPad 相同的同步，但它需要 App 带着 iCloud 的签名权限。缺省用本机临时签名，没有这项权限，所以存档只留在这台 Mac 上，日志里会记一行「iCloud 不可用…只用本地存档」，游戏照常。有付费开发者账号时，下载一份带 iCloud 能力的 Mac 描述文件（`.provisionprofile`），放进 `~/dm-work/mac-sign`（或用 `DM_MAC_SIGN_DIR` 指到它所在的文件夹），用 `DM_MAC_ICLOUD=1 dm/tools/mac_app.sh` 构建：脚本从描述文件里读出团队、包标识和权限，用钥匙串里对应的证书签名。描述文件里的包标识决定用哪个 iCloud 容器，用你 iOS App 的包标识就能和 iPhone / iPad 同步。这项由 [@xielh96](https://github.com/xielh96) 贡献。没有付费账号时，要把手机上的进度带过来，用下面的手工导入。
 
 ### 从 iPhone / iPad 导入存档
 
@@ -144,5 +144,5 @@ App 带本项目自己的图标（`dm/ios/Assets.xcassets/AppIcon.appiconset/App
 - 「接上手柄提示换回手柄字母」是模拟验的，实体手柄没接过。
 - 手柄上 ZR 空格的免费回城没有。
 - 秘境左侧的任务栏没有。
-- 自己构建的 App 没有 iCloud 存档同步，也不做更新检查（它不联网）。
+- 自己构建的 App 不做更新检查（它不联网）；iCloud 存档同步要用付费账号的描述文件、带 `DM_MAC_ICLOUD=1` 构建才有（见「存档、日志与 iCloud」）。
 - 旧接口版在 macOS 15 上由一位内测玩家实际玩过（Mac mini M4，macOS 15.7，用的是出好的包）；在 macOS 15 的 Mac 上从本仓库自己构建，未经真人操作。
