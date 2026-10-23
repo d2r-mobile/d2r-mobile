@@ -19,7 +19,19 @@ Buttons and sticks feed the existing host controller input; clear controller inp
 
 支持实体手柄与触屏／手柄界面切换。额外修复启动页尚未装载 JNI 时的输入保护、暂停时纯模拟扳机与十字键清零、设备断开通知，以及十字键按键与轴重复上报时的合并。保留我们已有的驱动、比例、FPS 和 30 帧接线。
 
-Local integration guards JNI until the game starts, registers Android device-removal callbacks, releases all controller channels on pause/focus loss, and merges d-pad key/axis reports independently. State-machine regression checks and instructions are in `tests/pad-input/README.md`. Physical-controller and Android Auto device acceptance are separate from these checks; Android Auto support is not added by this PR.
+Local integration guards JNI until the game starts, registers Android device-removal callbacks, releases all controller channels on pause/focus loss, and merges d-pad key/axis reports independently. State-machine regression checks and instructions are in `tests/pad-input/README.md`. Physical-controller device acceptance is separate from these checks.
+
+## Android Auto parked games / Android Auto 停车游戏
+
+The same `DmActivity` declares `MAIN` + `CAR_LAUNCHER` and is resizable for the projected window. Android Auto parked games require Android 15 or newer. Both drivers still use the phone GPU; game files, saves, touch controls and physical-controller routing remain on the phone. Existing surface resize callbacks update the Vulkan window; touch controls share the same game viewport. Existing pause/focus-loss callbacks clear input and notify the host. Android Auto controls parked-only availability and automatically exits the app when vehicle motion is detected.
+
+复用现有游戏 Activity、触屏和手柄输入，增加停车游戏入口及窗口尺寸适配。需要 Android 15 或更新版本以及支持停车游戏的 Android Auto。画面由手机渲染，存档保留在手机，不需要重新导入游戏数据。先在手机完成资源导入和文件访问授权，再从车机启动。宽屏设置使用当前游戏窗口的比例。
+
+For this locally installed test APK, enable Android Auto developer settings and its **Unknown sources** option, then reconnect Android Auto while parked. This is the documented parked-app development path; it does not bypass driving restrictions. Look for **D2R Mobile** in the car's app launcher (the test package is `com.xiaoboluo.d2r`). Pair a controller with the phone, or use the car touchscreen. Verify launch, aspect/touch alignment, controller takeover, leaving/reopening the app, audio pause/resume and disconnect while parked. A phone launch or synthetic secondary display alone does not establish Android Auto compatibility; DHU or vehicle validation is required.
+
+本地安装版需要在 Android Auto 自身的开发者设置中开启“未知来源”，停车后重新连接，在车机应用列表选择 D2R Mobile。手柄连接手机。验收需要检查启动、比例与触控坐标、手柄切换、离开和恢复、声音及断开连接。手机启动和模拟副屏检查不能代替 DHU／真实车机验收。
+
+References: [parked app manifest](https://developer.android.com/training/cars/parked/auto), [parked lifecycle](https://developer.android.com/training/cars/platforms/android-auto#parked-apps), [local vehicle testing](https://developer.android.com/training/cars/testing#allow-unknown-sources).
 
 ## App updates / 应用更新
 
