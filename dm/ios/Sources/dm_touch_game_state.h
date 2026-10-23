@@ -40,6 +40,7 @@ int dm_touch_game_attach(void);
 void dm_touch_game_live_check(int on);
 int dm_touch_game_snapshot(dm_tg_snapshot *out);
 void dm_touch_game_set_scene(int game_no_panel, uint64_t scene_epoch, uint64_t world_epoch);
+void dm_touch_game_set_layout(uint64_t ui_generation);
 #ifdef DM_TG_TEST_SYNTHETIC_IDENTITY
 /* 仅SDK_STUB显式条件构建可提供此opaque seam；生产走strong Mach原HUD cohort。 | Only an explicitly conditional SDK_STUB build may provide this opaque seam; production uses the strong Mach original HUD cohort. */
 int dm_touch_game_test_identity(const uint64_t *regs, uint64_t *caller_identity, uint64_t *hud_identity);
