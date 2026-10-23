@@ -157,6 +157,22 @@ else
     fail "accepted host focus controls failed"
 fi
 
+if "$javac" --release 8 -cp "$work/java/stubs:$work/java/host" -d "$work/java/host" \
+        "$root/dm/android/java/org/d2r/android/port/GameAudioFocus.java" \
+        "$root/dm/android/tests/GameAudioFocusTest.java" >> "$log" 2>&1 \
+    && "$(dirname "$javac")/java" -cp "$work/java/stubs:$work/java/host" org.d2r.android.port.GameAudioFocusTest >> "$log" 2>&1; then
+    log_line "PASS playable audio focus lifecycle"
+else
+    fail "playable audio focus lifecycle"
+fi
+mkdir -p "$work/java/playable"
+if "$javac" --release 8 -classpath "$jar:$work/java/classes" -d "$work/java/playable" \
+        $(find "$root/dm/android/java" -name '*.java' -type f | sort) >> "$log" 2>&1; then
+    log_line "PASS playable Activity compile against real Android API"
+else
+    fail "playable Activity Android compile"
+fi
+
 # 已验收 IME 实际类逻辑回归与两变异；失败必须传播，不能只编译签名。
 # Accepted IME actual-class logic checks and both mutations; failures must propagate, not just signatures.
 ime_dir=$root/dm/android/tests/ime-stubs

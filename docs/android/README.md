@@ -24,7 +24,7 @@ Updated **2026-10-22**. Follow the [Android roadmap](ROADMAP.md) for current wor
 
 Android skill buttons use transparent silver silhouettes following the upstream iOS mask. Normal and pressed frames are converted once and cached. The bound arrow and fist icons, pressed state and empty slots have been visually checked on the test phone; other class skills still need individual verification.
 
-Android audio can reopen a failed or disconnected AAudio stream on a later start/resume, while retaining the single-consumer fallback. Production-code failure regressions pass; phone call/focus, headset/Bluetooth changes and audible recovery still require device checks. Immediate recovery from a route change without a resume is not established.
+The playable Android Activity now requests system audio focus and suspends AAudio on focus loss or backgrounding. Focus recovery resumes output; stale callbacks cannot unmute a paused or destroyed Activity. It reuses the tested focus boundary, and failed/disconnected streams can reopen on a later start/resume while retaining the single-consumer fallback. The test phone has passed a real transient-focus interruption, and the user confirms normal speaker output and headset switching. Phone-call and broader route coverage remain tracked in .
 
 Performance varies by scene and over time. Reaching about 60 fps in some camp samples is not evidence of stable 60 fps in combat or a long session. Energy savings have not been established. Apple performance measurements apply to the Apple build.
 

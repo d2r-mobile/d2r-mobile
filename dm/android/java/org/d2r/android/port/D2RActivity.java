@@ -9,6 +9,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.hardware.input.InputManager;
+import android.media.AudioManager;
 import android.os.BatteryManager;
 import android.os.Bundle;
 import android.os.Handler;
@@ -49,6 +50,7 @@ public final class D2RActivity extends NativeActivity {
     private TouchControls touchControls;
     private D2RTouchOverlay touchOverlay;
     private boolean activityResumed;
+    private GameAudioFocus gameAudioFocus;
     private BroadcastReceiver batteryReceiver;
     private volatile int batteryVoltageMv = -1;
     private volatile int batteryLevel = -1;
@@ -85,6 +87,7 @@ public final class D2RActivity extends NativeActivity {
     private static native void setVirtualControllerEnabled(boolean enabled);
     private static native void setSkipSaveOnExit(boolean skip);
     private static native int takeDropHaptic();
+    private static native void setAudioFocusAllowed(boolean allowed);
 
     // 存档导入/导出的文件选择器请求码（与文本输入等其它结果回调区分开）。
     // Request codes for the save pickers, kept apart from the other result callbacks.
@@ -397,6 +400,9 @@ public final class D2RActivity extends NativeActivity {
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        setAudioFocusAllowed(false);
+        AudioManager audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+        if (audioManager != null) gameAudioFocus = new GameAudioFocus(audioManager, D2RActivity::setAudioFocusAllowed);
         // 标记与活动的「创建 / 销毁」这一对绑定，语义就是"这个进程里还住着一个游戏活动"。
         // The flag is paired with activity creation/destruction: it means "a game activity still lives in this process".
         hostRunning = true;
@@ -587,12 +593,24 @@ public final class D2RActivity extends NativeActivity {
 
     @Override protected void onResume() {
         super.onResume();
+        if (gameAudioFocus != null) {
+            try { gameAudioFocus.resume(); }
+            catch (SecurityException | IllegalStateException error) {
+                setAudioFocusAllowed(false);
+                Log.e("D2RAndroid", "Audio focus request failed", error);
+            }
+        }
         activityResumed = true;
         updateTouchVisibility();
         startDropHapticPolling();
     }
 
     @Override protected void onPause() {
+        setAudioFocusAllowed(false);
+        if (gameAudioFocus != null) {
+            try { gameAudioFocus.pause(); }
+            catch (SecurityException | IllegalStateException error) { Log.e("D2RAndroid", "Audio focus abandon failed", error); }
+        }
         stopDropHapticPolling();
         activityResumed = false;
         updateTouchVisibility();
@@ -691,6 +709,10 @@ public final class D2RActivity extends NativeActivity {
     }
 
     @Override protected void onDestroy() {
+        if (gameAudioFocus != null) {
+            try { gameAudioFocus.destroy(); }
+            catch (SecurityException | IllegalStateException error) { Log.e("D2RAndroid", "Audio focus release failed", error); }
+        }
         hostRunning = false;
         stopDropHapticPolling();
         if (batteryReceiver != null) { unregisterReceiver(batteryReceiver); batteryReceiver = null; }
