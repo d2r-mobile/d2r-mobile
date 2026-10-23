@@ -47,7 +47,7 @@ class MacFeatures(unittest.TestCase):
                               + policy + '\nint main(int argc, char **argv) { assert(argc == 3); '
                               'custom = atoi(argv[1]); assert((enabled() ? 1 : 0) == atoi(argv[2])); }\n')
             binary = Path(tmp) / 'android-switch'
-            subprocess.run(['clang', '-Wall', '-Werror', '-D__ANDROID__', str(source), '-o', str(binary)],
+            subprocess.run(['clang', '-Wall', '-Werror', '-D__ANDROID__', '-DDM_PHONE=1', str(source), '-o', str(binary)],
                            check=True)
             for custom in (0, 1):
                 for override in (None, '0', '1'):
