@@ -35,6 +35,29 @@ class MacFeatures(unittest.TestCase):
                         expected = (int(override),) * 2 if override is not None else (0, int(bool(ios or app == '1')))
                         subprocess.run([str(binary), *map(str, expected)], env=env, check=True)
 
+    def test_android_autobuff_policy(self):
+        """Android must use its explicit platform gate, not a fake DM_APP."""
+        text = (DM / 'host/dm_autobuff.c').read_text()
+        policy = text[text.index('static int enabled(void)'):text.index('static int cfg(')]
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / 'android-switch.c'
+            source.write_text('#include <stdlib.h>\n#include <assert.h>\n'
+                              'static int custom;\n'
+                              'static int dm_custom_get(const char *key) { (void)key; return custom; }\n'
+                              + policy + '\nint main(int argc, char **argv) { assert(argc == 3); '
+                              'custom = atoi(argv[1]); assert((enabled() ? 1 : 0) == atoi(argv[2])); }\n')
+            binary = Path(tmp) / 'android-switch'
+            subprocess.run(['clang', '-Wall', '-Werror', '-D__ANDROID__', str(source), '-o', str(binary)],
+                           check=True)
+            for custom in (0, 1):
+                for override in (None, '0', '1'):
+                    env = {k: v for k, v in os.environ.items() if k not in ('DM_APP', 'DM_AUTOBUFF')}
+                    env['DM_APP'] = '0'   # production Android does not set DM_APP
+                    if override is not None:
+                        env['DM_AUTOBUFF'] = override
+                    expected = int(override) if override is not None else custom
+                    subprocess.run([str(binary), str(custom), str(expected)], env=env, check=True)
+
     def test_overlay_packaging(self):
         text = (DM / 'tools/mac_app.sh').read_text()
         section = text[text.index('if [ "${DM_MAC_OVERLAY:-}" != none ]; then'):text.index('[ -s "$RES/paths.txt" ]')]
