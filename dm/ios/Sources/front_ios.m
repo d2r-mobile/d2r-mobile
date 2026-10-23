@@ -80,6 +80,8 @@ static __weak DmMetalView *g_touch_view;
 // True fullscreen (screen narrower than 16:9, iPad 4:3): 3D fills the whole window, and the game view (UI, custom-drawn widgets, UI touch points) is a bottom-anchored 16:9 block, see front_ios_view.
 // The world side (tapping monsters / chests / unit projection) is computed on the whole window: world_rect = the whole window's rectangle in game-view coordinates; when not true fullscreen it is the game view itself.
 static int g_full;
+static _Atomic uint64_t g_res_now;        // 当前出图尺寸 {u32 宽, u32 高}（真全屏下随窗口变，见 front_game_res 上的说明）
+static uint64_t g_res_cap;                // 报给游戏建窗口的尺寸（上限）
 static CGRect world_rect(UIView *v) { UIView *b = v.superview; int x, y, w, h, rw = 0, rh = 0; if (!g_full || !b) return v.bounds; dm_ui_rect(&x, &y, &w, &h);
     return dm_screen_real(&rw, &rh) && h > 0 && h < rh ? [v convertRect:b.bounds fromView:b] : v.bounds; }   // 局外（界面矩形就是整个画面）时世界与游戏视图重合 | Out of a run (the UI rectangle is the whole picture) the world and the game view coincide
 static void world_norm(UIView *v, CGFloat x, CGFloat y, float *nx, float *ny) { CGRect r = world_rect(v); *nx = (float)((x - r.origin.x) / r.size.width); *ny = (float)((y - r.origin.y) / r.size.height); }
@@ -163,7 +165,10 @@ static void restart_cover_hook(int on) { dispatch_async(dispatch_get_main_queue(
     { const char *tl=getenv("DM_TEST_SAFE_L"); CGFloat l=tl ? atof(tl) : si.left, hh=self.bounds.size.height; if(hh>0) dm_ui_safe_left((int)lround(l/hh*2160)); }   // 左上角佣兵头像内移到安全线内 | The top-left mercenary portrait is moved inside the safe line
     { const char *tj=getenv("DM_TEST_JOY_ISO"); if(tj) dm_tc_set_iso_fix(atoi(tj)); }   // 测量用：0 = 关掉移动摇杆斜向预修正 | For measurement: 0 = turn off the diagonal pre-correction of the movement stick
     { const char *ts=getenv("DM_TEST_SAFE_R"); CGFloat r=ts ? atof(ts) : si.right, hh=self.bounds.size.height; if(hh>0) dm_ui_safe_right((int)lround(r/hh*2160)); }   // 右上角小地图与区域名内移到安全线内；DM_TEST_SAFE_R=<点> 供 Mac 上验（Mac 窗口安全区是 0） | The top-right minimap and area name are moved inside the safe line; DM_TEST_SAFE_R=<points> is for verification on Mac (the Mac window safe area is 0)
-    if (safeChanged || _controls.layout.width!=self.bounds.size.width || _controls.layout.height!=self.bounds.size.height) {
+    // 平板缩放（控件最多放大 15%）：iPad 一律开；手机按窗口短边判，iPhone Duo 内屏（短边约 669 点、接近 iPad mini）开、外屏与普通 iPhone（≤ 470 点）不开
+    static int tall=-1; int t=UIDevice.currentDevice.userInterfaceIdiom==UIUserInterfaceIdiomPad || fmin(self.bounds.size.width,self.bounds.size.height)>=600; BOOL tallChanged=t!=tall;
+    if (tallChanged) { tall=t; dm_tc_set_tall_scale(t); }
+    if (safeChanged || tallChanged || _controls.layout.width!=self.bounds.size.width || _controls.layout.height!=self.bounds.size.height) {
         [self cancelControlsFrom:"layout"]; dm_tc_resize(&_controls,self.bounds.size.width,self.bounds.size.height);
     }
     _overlay.frame=self.bounds; _info.frame=self.bounds; [_overlay setNeedsDisplay]; if(!_rsCover.hidden && self.window) _rsCover.frame=self.window.bounds;
@@ -406,7 +411,7 @@ static void restart_cover_hook(int on) { dispatch_async(dispatch_get_main_queue(
         BOOL inside=CGRectContainsPoint(area,p) && !(mode==2 && p.x>wr.origin.x+wr.size.width*0.72 && p.y>wr.origin.y+H*0.45);   // 全屏地图右下是技能区 | The bottom right of the fullscreen map is the skill area
         int art=v.art[i], sym=art>=64; UIImage *lab=nil, *mark=nil;
         if(inside && sym) mark=[self mgImage:[NSString stringWithFormat:@"sym_%d.png",art-64]];
-        else { int id=sym ? 0 : art; int lg=dm_lang_group(); lab=lg!=DM_LG_ZH ? [self mgImage:[NSString stringWithFormat:@"label_%d_%s.png",id,lg==DM_LG_ES?"es":lg==DM_LG_MX?"mx":lg==DM_LG_RU?"ru":"en"]] : (old && dm_lang_index()==8 ? [self mgImage:[NSString stringWithFormat:@"label_%d_old.png",id]] : nil);   // 简中 / 繁体用中文，西语用原版 esES / esMX 名字，俄语用原版 ruRU 名字，其余英文名牌，其余原版 enUS 名牌；旧译名只跟简中（注释一系只写 zhCN） | Simplified / Traditional Chinese use Chinese, Spanish uses the original esES / esMX names, Russian uses the original ruRU names, everything else the original enUS name plates; old names follow only Simplified Chinese (the annotation family writes only zhCN)
+        else { int id=sym ? 0 : art; int lg=dm_lang_group(); lab=lg!=DM_LG_ZH ? [self mgImage:[NSString stringWithFormat:@"label_%d_%s.png",id,lg==DM_LG_ES?"es":lg==DM_LG_MX?"mx":lg==DM_LG_RU?"ru":lg==DM_LG_KO?"ko":"en"]] : (old && dm_lang_index()==8 ? [self mgImage:[NSString stringWithFormat:@"label_%d_old.png",id]] : nil);   // 简中 / 繁体用中文，西语用原版 esES / esMX 名字，俄语用原版 ruRU 名字，其余英文名牌，其余原版 enUS 名牌；旧译名只跟简中（注释一系只写 zhCN） | Simplified / Traditional Chinese use Chinese, Spanish uses the original esES / esMX names, Russian uses the original ruRU names, everything else the original enUS name plates; old names follow only Simplified Chinese (the annotation family writes only zhCN)
             lab=lab ?: [self mgImage:[NSString stringWithFormat:@"label_%d.png",id]]; if(inside) mark=[self mgImage:@"cross.png"]; }
         if(!inside) {   // 画面外：沿 玩家点 → 终点 的方向收到可见范围边上（全屏地图再让开右下技能区），只写名字 | Off-screen: clamp along the player point → goal direction to the edge of the visible range (the fullscreen map additionally avoids the bottom-right skill area), name only
             CGFloat tx=p.x>o.x ? (CGRectGetMaxX(area)-o.x)/(p.x-o.x) : p.x<o.x ? (CGRectGetMinX(area)-o.x)/(p.x-o.x) : 1e9, ty=p.y>o.y ? (CGRectGetMaxY(area)-o.y)/(p.y-o.y) : p.y<o.y ? (CGRectGetMinY(area)-o.y)/(p.y-o.y) : 1e9, t=MIN(tx,ty);
@@ -886,8 +891,21 @@ static CGRect letterbox_rect(CGRect f) {
 @interface DmLetterboxView : UIView
 @property (nonatomic, strong) UIView *game;
 @end
+// 真全屏下窗口变了尺寸（iPhone Duo 展开 / 折叠）：出图尺寸换成新窗口的原生像素（超过启动预留的就等比缩进去），游戏窗口建好之后推 31 让它重读
+void dm_oe_res_changed(void);
+// 只对手机：iPad 窗口不变尺寸，Mac 上的 iOS 包窗口能拖但出图一直按屏幕原生（回归与截图闸门的口径）；DM_TEST_WINDOW_PX=1 在 Mac 上打开，拖窗口验这条路
+static void window_px(CGSize s, CGFloat k) {
+    if (!g_full || getenv("DM_GAME_RES") || s.width <= 0 || s.height <= 0 || k <= 0) return;
+    if (UIDevice.currentDevice.userInterfaceIdiom != UIUserInterfaceIdiomPhone && !getenv("DM_TEST_WINDOW_PX")) return;
+    double w = round(fmax(s.width, s.height) * k), h = round(fmin(s.width, s.height) * k), cw = (uint32_t)g_res_cap, ch = (double)(g_res_cap >> 32), f = fmin(1, fmin(cw / w, ch / h));
+    uint64_t v = (uint64_t)((unsigned)(h * f) & ~1u) << 32 | ((unsigned)(w * f) & ~1u), old = atomic_exchange(&g_res_now, v);
+    if (old == v || !old) return;
+    LOG("画面：窗口变成 %.0fx%.0f 点 → 出图 %ux%u（原 %ux%u，启动预留 %.0fx%.0f）%s", s.width, s.height, (unsigned)v, (unsigned)(v >> 32), (unsigned)old, (unsigned)(old >> 32), cw, ch,
+        dm_uiscreen_res_live() ? "，通知游戏重读" : "，游戏窗口还没建好，建好后按新值");
+    if (dm_uiscreen_res_live()) dm_oe_res_changed();
+}
 @implementation DmLetterboxView
-- (void)layoutSubviews { [super layoutSubviews]; if (self.bounds.size.width > 0 && self.bounds.size.height > 0) self.game.frame = letterbox_rect(self.bounds);
+- (void)layoutSubviews { [super layoutSubviews]; window_px(self.bounds.size, UIScreen.mainScreen.nativeScale); if (self.bounds.size.width > 0 && self.bounds.size.height > 0) self.game.frame = letterbox_rect(self.bounds);
     { static CGRect last; CGRect g = self.game.frame; if (g_full && !CGRectEqualToRect(g, last)) { last = g; int x, y, w, h, rw = 0, rh = 0; dm_ui_rect(&x, &y, &w, &h); dm_screen_real(&rw, &rh); LOG("画面：游戏视图摆到 y %.0f 高 %.0f（窗口 %.0fx%.0f；真实画面 %dx%d，界面矩形 y %d 高 %d）", g.origin.y, g.size.height, self.bounds.size.width, self.bounds.size.height, rw, rh, y, h); } }
     if (g_full && g_layer.superlayer == self.layer) { [CATransaction begin]; [CATransaction setDisableActions:YES]; g_layer.frame = self.bounds;
         g_layer.drawableSize = CGSizeMake(self.bounds.size.width * g_layer.contentsScale, self.bounds.size.height * g_layer.contentsScale); [CATransaction commit]; } }
@@ -895,10 +913,21 @@ static CGRect letterbox_rect(CGRect f) {
 // True fullscreen: the strip above the game view has only 3D; fingers landing there are also given to the game view (negative y) -- tapping monsters / chests works as usual, and the UI and custom-drawn widgets cannot be hit
 - (UIView *)hitTest:(CGPoint)p withEvent:(UIEvent *)e { UIView *h = [super hitTest:p withEvent:e]; return g_full && h == self ? self.game : h; }
 @end
+// 测试：模拟窗口变尺寸（iPhone Duo 展开 / 折叠）。Mac 上的 iOS 包窗口不能拖（要求全屏），用这个到点把最外层视图改成给定点数，走的是同一段布局代码。
+// DM_TEST_FOLD=<秒>:<宽>x<高>[,<秒>:<宽>x<高>…]，秒数从视图建好时算；配 DM_TEST_WINDOW_PX=1 让 Mac 上也跟着换出图尺寸
+static UIView *test_fold(UIView *top) {
+    const char *e = getenv("DM_TEST_FOLD"); if (!e) return top;
+    for (const char *q = e; q && *q; q = strchr(q, ',') ? strchr(q, ',') + 1 : NULL) {
+        double t = 0, w = 0, h = 0; if (sscanf(q, "%lf:%lfx%lf", &t, &w, &h) != 3 || w <= 0 || h <= 0) continue;
+        __weak UIView *wt = top; dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(t * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            UIView *u = wt; if (!u) return; LOG("测试：视图改成 %.0fx%.0f 点（DM_TEST_FOLD）", w, h); u.frame = CGRectMake(0, 0, w, h); [u setNeedsLayout]; [u layoutIfNeeded]; });
+    }
+    return top;
+}
 UIView *front_ios_view(CGRect frame) {
     front_game_res(1);   // 「真全屏」开没开（g_full）是它第一次被调时按屏幕比例定的；下面摆视图要用，不能指望别处碰巧先调过 | whether "true fullscreen" is on (g_full) is decided from the screen aspect ratio the first time this is called; the view layout below needs it and cannot count on something else happening to have called it first
     CGRect full = frame; frame = letterbox_rect(frame);
-    dm_tc_set_tall_scale(UIDevice.currentDevice.userInterfaceIdiom==UIUserInterfaceIdiomPad);   // UIKit 点数：仅 iPad 开启有上限的平板缩放 | UIKit points: enable the bounded tablet profile only on iPad.
+    dm_tc_set_tall_scale(UIDevice.currentDevice.userInterfaceIdiom==UIUserInterfaceIdiomPad);   // UIKit 点数：iPad 开启有上限的平板缩放（手机大屏另在布局时按短边判，见 DmMetalView layoutSubviews）
     DmMetalView *v = [[DmMetalView alloc] initWithFrame:frame];
     g_rate_link = [CADisplayLink displayLinkWithTarget:[DmRateHint new] selector:@selector(tick:)];
     g_rate_link.preferredFrameRateRange = CAFrameRateRangeMake(60, 60, 60);
@@ -908,27 +937,32 @@ UIView *front_ios_view(CGRect frame) {
     g_layer.pixelFormat = MTLPixelFormatBGRA8Unorm;
     g_layer.contentsScale = UIScreen.mainScreen.nativeScale;
     g_layer.drawableSize = CGSizeMake(frame.size.width * g_layer.contentsScale, frame.size.height * g_layer.contentsScale);
-    if (!CGRectEqualToRect(full, frame)) { DmLetterboxView *box = [[DmLetterboxView alloc] initWithFrame:full]; box.backgroundColor = UIColor.blackColor; box.game = v; [box addSubview:v];
+    // 真全屏一律套容器：窗口会变尺寸（iPhone Duo 展开 / 折叠），容器的布局回调负责跟着换出图尺寸；启动那一刻窗口碰巧是 16:9 也要套（Mac 上的场景初值 667x375）
+    if (g_full || !CGRectEqualToRect(full, frame)) { DmLetterboxView *box = [[DmLetterboxView alloc] initWithFrame:full]; box.backgroundColor = UIColor.blackColor; box.game = v; [box addSubview:v];
         if (g_full) {   // 出图层与游戏视图分离：出图层挂在容器上铺满整窗，游戏视图透明、叠在它上面 | The present layer is separated from the game view: the present layer hangs on the container and fills the whole window; the game view is transparent and stacked on top of it
             CAMetalLayer *ml = [CAMetalLayer layer]; ml.device = g_layer.device; ml.pixelFormat = MTLPixelFormatBGRA8Unorm; ml.contentsScale = g_layer.contentsScale; ml.frame = box.bounds;
             ml.drawableSize = CGSizeMake(full.size.width * ml.contentsScale, full.size.height * ml.contentsScale); [box.layer insertSublayer:ml atIndex:0];
             v.opaque = NO; v.layer.opaque = NO; v.backgroundColor = UIColor.clearColor; g_layer = ml; mtl_set_ui_rect_fn(ui_rect_frac);
-            LOG("画面：窗口 %.0fx%.0f 比 16:9 窄 → 真全屏已开：出图层铺满整窗；游戏视图跟宿主的界面矩形走（局内贴底、局外居中），启动先按居中的 %.0fx%.0f 摆", full.size.width, full.size.height, frame.size.width, frame.size.height); return box; }
-        LOG("画面：窗口 %.0fx%.0f 与游戏画面比例不同 → 游戏视图 %.0fx%.0f 居中（左右各留 %.0f 点、上下各留 %.0f 点）", full.size.width, full.size.height, frame.size.width, frame.size.height, frame.origin.x - full.origin.x, frame.origin.y - full.origin.y); return box; }
-    return v;
+            LOG("画面：窗口 %.0fx%.0f 比 16:9 窄 → 真全屏已开：出图层铺满整窗；游戏视图跟宿主的界面矩形走（局内贴底、局外居中），启动先按居中的 %.0fx%.0f 摆", full.size.width, full.size.height, frame.size.width, frame.size.height); return test_fold(box); }
+        LOG("画面：窗口 %.0fx%.0f 与游戏画面比例不同 → 游戏视图 %.0fx%.0f 居中（左右各留 %.0f 点、上下各留 %.0f 点）", full.size.width, full.size.height, frame.size.width, frame.size.height, frame.origin.x - full.origin.x, frame.origin.y - full.origin.y); return test_fold(box); }
+    return test_fold(v);
 }
 
 void *front_metal_layer(void) { return (__bridge void *)g_layer; }
 // 主机档 = 屏幕原生像素（界面文字原生，3D 由游戏自带的渲染比例另缩，见 hle_oe.c scale3d_tick）：
 // iPhone 17 Pro Max → 2868x1320。掌机档仍按原版高度 720 × 屏幕比例（宽取 8 的倍数，1568x720），只在 DM_OPMODE=0 / 脚本切换时用到。
 // DM_GAME_RES=宽x高（主机模式；掌机按 720/900 同比）覆盖：DM_GAME_RES=1600x900 即原版 16:9 保底（负对照），DM_GAME_RES=1952x900 即早先的缺省
-// Docked profile = native screen pixels (UI text is native; 3D is scaled separately by the game's own render scale, see hle_oe.c scale3d_tick):
-// iPhone 17 Pro Max → 2868x1320. The handheld profile still uses the original game's height 720 × screen aspect ratio (width rounded to a multiple of 8, 1568x720), and is only used with DM_OPMODE=0 / script switching.
-// DM_GAME_RES=WIDTHxHEIGHT (docked mode; handheld scales by 720/900) overrides: DM_GAME_RES=1600x900 is the original game's 16:9 floor (negative control), DM_GAME_RES=1952x900 is the earlier default
+// 窗口会变尺寸的设备（iPhone Duo 内外屏切换、展开 / 折叠时窗口当场改尺寸）：真全屏下出图尺寸跟着窗口走（window_px），
+// 推一次性能模式通知（31）让游戏重读。游戏只接受不超过启动时窗口尺寸的新值（dm_uiscreen.c 的说明），所以比 16:9 窄的手机屏
+// （只有折叠屏是这个形状）启动时按短边 2160 预留：外屏启动也装得下内屏。iPad、普通 iPhone 的窗口不变尺寸，启动值 = 屏幕原生，与原来相同。
 uint64_t front_game_res(int docked) {
     static double aspect; static unsigned fw, fh;
     if (!aspect) {
-        CGRect b = UIScreen.mainScreen.nativeBounds; aspect = fmax(b.size.width, b.size.height) / fmin(b.size.width, b.size.height);
+        CGRect b = UIScreen.mainScreen.nativeBounds;
+        // 测试：DM_TEST_SCREEN=<宽>x<高> 把屏幕当成给定像素的手机屏（Mac 上的 iOS 包模拟 iPhone Duo 外屏 2034x1398，配 DM_TEST_FOLD / DM_TEST_WINDOW_PX）
+        const char *ts = getenv("DM_TEST_SCREEN"); unsigned tw = 0, th = 0; int phone = UIDevice.currentDevice.userInterfaceIdiom == UIUserInterfaceIdiomPhone;
+        if (ts && sscanf(ts, "%ux%u", &tw, &th) == 2 && tw && th) { b = CGRectMake(0, 0, tw, th); phone = 1; }
+        aspect = fmax(b.size.width, b.size.height) / fmin(b.size.width, b.size.height);
         const char *e = getenv("DM_GAME_RES"); if (e && sscanf(e, "%ux%u", &fw, &fh) == 2) aspect = (double)fw / fh;
         else { fw = (unsigned)fmax(b.size.width, b.size.height); fh = (unsigned)fmin(b.size.width, b.size.height);
             // 比 16:9 窄的屏（iPad 4:3）：游戏界面按屏高缩放、按 ≥16:9 设计，4:3 下面板横向放不下。按屏宽取 16:9，画面居中、上下留黑边
@@ -939,8 +973,13 @@ uint64_t front_game_res(int docked) {
             // DM_IPAD_FULL=0 falls back to the above: 16:9 with black bars throughout
             if (aspect < 16.0 / 9 - 0.01) { const char *fu = getenv("DM_IPAD_FULL");
                 if (!fu || atoi(fu)) { g_full = 1; dm_uiscreen_enable(DM_UISCREEN_BOTTOM); } else { aspect = 16.0 / 9; fh = (unsigned)llround(fw * 9.0 / 16 / 2) * 2; } } }
+        g_res_cap = (uint64_t)fh << 32 | fw;
+        if (g_full && !e && phone && fh < 2160) {
+            unsigned cw = (unsigned)llround(2160.0 * fw / fh / 2) * 2; g_res_cap = (uint64_t)2160 << 32 | cw;
+            LOG("画面：比 16:9 窄的手机屏 %ux%u（折叠屏）→ 窗口按 %ux2160 预留，内外屏切换时出图尺寸在这以内跟着窗口变", fw, fh, cw); }
+        atomic_store(&g_res_now, (uint64_t)fh << 32 | fw);
     }
-    if (fw && docked) return (uint64_t)fh << 32 | fw;
+    if (fw && docked) return dm_uiscreen_res_live() ? atomic_load(&g_res_now) : g_res_cap;
     uint64_t h = docked ? 900 : 720, w = (uint64_t)llround(h * aspect / 8) * 8;
     return h << 32 | w;
 }

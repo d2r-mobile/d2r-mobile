@@ -4,17 +4,9 @@
   · 塔拉夏符号 hd/global/ui/PANEL/Quest_Log/TalRashaSymbol.sprite（7 帧；第 N 帧 = 关卡 66+N 墓门门楣上刻的那个，宿主逐门截图对过 66/67/68/70）
   · 名牌下的灰十字 = 自动地图单位十字 hd/global/ui/AUTOMAP/Units.sprite 第 6 帧（白）按 50% 透明画（原版地图上 NPC 名字下就是这个灰十字）
   · 名牌 = 原版地图给 NPC / 物件标名的样式：深色半透明底 + 名字；人名浅金 (212,196,145)、物件白字（取自原版小地图截图）；字体 hd/ui/fonts/BlizzardGlobal-V5_81.ttf
-  · 名字 = 原版字符串（data/local/lng/strings/*.json 的 zhCN；英文 label_<序号>_en.png 取 enUS，西语 label_<序号>_es.png / _mx.png 取 esES / esMX，俄语 label_<序号>_ru.png 取 ruRU）；旧译名（自定义页「物品注释与旧译名」开着时游戏显示的名字）取 annot/oldnames.tsv
+  · 名字 = 原版字符串（data/local/lng/strings/*.json 的 zhCN；英文 label_<序号>_en.png 取 enUS，西语 label_<序号>_es.png / _mx.png 取 esES / esMX，俄语 label_<序号>_ru.png 取 ruRU，韩语 label_<序号>_ko.png 取 koKR）；旧译名（自定义页「物品注释与旧译名」开着时游戏显示的名字）取 annot/oldnames.tsv
 产物（构建时生成，不进仓库）：Gen/assets/NativeHUD/mapgoal/{sym_0..6.png, cross.png, label_<序号>.png, 旧译名不同的 label_<序号>_old.png, mapgoal.json}。
-用法：python3 dm/ios/tools/gen_map_goal_art.py <原版 RomFS（Update）>   （读包与解贴图走 romfs_art.py）
-'''Art for minimap quest destinations (the seven tombs use Tal Rasha symbols from the quest log, other destinations use original map name plates, off-screen edge markers show only the name).
-All taken from original assets, no shapes the original doesn't have:
-  - Tal Rasha symbol hd/global/ui/PANEL/Quest_Log/TalRashaSymbol.sprite (7 frames; frame N = the one carved on the tomb lintel of level 66+N, host checked door by door with screenshots for 66/67/68/70)
-  - Gray cross under the name plate = automap unit cross hd/global/ui/AUTOMAP/Units.sprite frame 6 (white) drawn at 50% opacity (on the original map this gray cross is under NPC names)
-  - Name plate = the style the original map uses to label NPCs / objects: dark translucent background + name; person names light gold (212,196,145), objects white (from original minimap screenshots); font hd/ui/fonts/BlizzardGlobal-V5_81.ttf
-  - Names = original strings (zhCN of data/local/lng/strings/*.json; English label_<n>_en.png from enUS, Spanish label_<n>_es.png / _mx.png from esES / esMX, Russian label_<n>_ru.png from ruRU); old names (names the game shows when "Item annotations and old names" is on in the custom page) from annot/oldnames.tsv
-Output (generated at build time, not in the repo): Gen/assets/NativeHUD/mapgoal/{sym_0..6.png, cross.png, label_<n>.png, label_<n>_old.png for differing old names, mapgoal.json}.
-Usage: python3 dm/ios/tools/gen_map_goal_art.py <original RomFS (Update)>   (package reading and texture decoding via romfs_art.py)'''"""
+用法：python3 dm/ios/tools/gen_map_goal_art.py <原版 RomFS（Update）>   （读包与解贴图走 romfs_art.py）"""
 import csv, json, os, struct, sys
 from PIL import Image, ImageDraw, ImageFont
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -92,7 +84,8 @@ def main():
         es = cache[f][key]['esES']; label(es, col, font).save(os.path.join(OUT, 'label_%d_es.png' % i))   # 西语：原版 esES / esMX 名字（两套用词不同，各出一张） | Spanish: original esES / esMX names (the two use different wording, one image each)
         mx = cache[f][key]['esMX']; label(mx, col, font).save(os.path.join(OUT, 'label_%d_mx.png' % i))
         ru = cache[f][key]['ruRU']; label(ru, col, font).save(os.path.join(OUT, 'label_%d_ru.png' % i))   # 俄语：原版 ruRU 名字 | Russian: original ruRU names
-        man.append({'id': i, 'file': f, 'key': key, 'zhCN': zh, 'old': zo, 'enUS': en, 'esES': es, 'esMX': mx, 'ruRU': ru, 'color': list(col)})
+        ko = cache[f][key]['koKR']; label(ko, col, font).save(os.path.join(OUT, 'label_%d_ko.png' % i))   # 韩语：原版 koKR 名字（BlizzardGlobal 带韩文字形）
+        man.append({'id': i, 'file': f, 'key': key, 'zhCN': zh, 'old': zo, 'enUS': en, 'esES': es, 'esMX': mx, 'ruRU': ru, 'koKR': ko, 'color': list(col)})
     json.dump({'text_px': TEXT_PX, 'symbol_frames': 7, 'labels': man}, open(os.path.join(OUT, 'mapgoal.json'), 'w'), ensure_ascii=False, indent=1)
     print('mapgoal：符号 7 帧、十字 1、名牌 %d（旧译名不同的 %d）→ %s' % (len(man), sum(m['old'] != m['zhCN'] for m in man), OUT))
 

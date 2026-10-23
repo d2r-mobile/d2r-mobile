@@ -66,43 +66,44 @@ static uint64_t g_tx_from;          // 本次事务开始的帧 | Frame at which
 static _Atomic uint32_t g_rebuilds; // 布局重建完成的次数：前端据此重认 HUD（技能钮快照的 HUD 集合按控件地址认，重建后全换了） | Number of completed layout rebuilds: the front end uses it to re-identify the HUD (the HUD set of the skill-button snapshot is identified by widget address, and they all change after a rebuild)
 uint32_t dm_padmode_rebuilds(void) { return atomic_load(&g_rebuilds); }
 
-// Mac App 的键盘键帽（只在 macOS 宿主里编；iOS 包没有这一套）：手柄版布局不变，只把取键位图标的路径换到覆盖层里那套键盘键名的图
-// （ios/tools/kbd_glyphs.py，与触屏的透明键帽同目录、文件名「<平台>K<名字>」）。玩家按了键盘就用键盘键帽，实体手柄有输入就换回手柄键帽；
-// 换图要让游戏重载布局，走的就是手柄 / 触屏那同一个切换事务（事务里的「模式」多带一位：第 0 位手柄版、第 1 位键盘键帽）。
-// Keyboard key caps of the Mac App (compiled only in the macOS host; the iOS package does not have them): the gamepad layout is unchanged, only the path the key icons are taken from is switched to the keyboard-key images in the overlay
-// (ios/tools/kbd_glyphs.py, in the same directory as the touch layout's transparent key caps, file names "<platform>K<name>"). When the player presses the keyboard, keyboard key caps are used; when a physical gamepad has input, it switches back to gamepad key caps;
-// swapping images requires the game to reload the layout, which goes through the same switching transaction as gamepad / touch (the transaction's "mode" carries one more bit: bit 0 gamepad layout, bit 1 keyboard key caps).
+// 手柄版的键帽（键位图标）样式：原版 Switch 键帽 / 键盘键帽（Mac App，玩家按了键盘）/ Xbox 键帽（玩家在用 Xbox 手柄，dm_gamepad.m 按手柄类型报）。
+// 手柄版布局不变，只把取键位图标的路径换到覆盖层里的另一套图，与触屏的透明键帽同目录：键盘「<平台>K<名字>」（ios/tools/kbd_glyphs.py）、
+// Xbox「<平台>X<名字>」（gen_romfs_overlay.py，原版 Xbox 那套按游戏键重排，见 dm_padmap.h dm_padmap_face_xbox）。覆盖层带哪套看标记文件 kbd_glyphs / xbox_glyphs。
+// 换图要让游戏重载布局，走的就是手柄 / 触屏那同一个切换事务（事务里的「模式」：第 0 位手柄版、往上是键帽样式 DM_GLYPH_*）。
+// Glyph (button-icon) styles of the controller layout: the original Switch glyphs / keyboard glyphs (Mac App, the player pressed a key) / Xbox glyphs (the player is using an Xbox controller; dm_gamepad.m reports the controller type).
+// The controller layout stays the same; only the path the button icons are read from moves to another set of images in the overlay, in the same directory as the transparent touch glyphs: keyboard "<platform>K<name>" (ios/tools/kbd_glyphs.py),
+// Xbox "<platform>X<name>" (gen_romfs_overlay.py, the original Xbox set rearranged by game button, see dm_padmap.h dm_padmap_face_xbox). Which sets the overlay carries is told by the marker files kbd_glyphs / xbox_glyphs.
+// Swapping the images needs the game to reload its layout, which goes through the same controller / touch switch transaction (the transaction's "mode": bit 0 = controller layout, the bits above = glyph style DM_GLYPH_*).
+#define GLYPH_OFF 0x1d0f5b8
+static const char *const k_glyph[DM_GLYPH_N] = { NULL, "Ztouch_controller_buttons_ui/%sK%s", "Ztouch_controller_buttons_ui/%sX%s" };
+static const char *const k_glyph_mark[DM_GLYPH_N] = { NULL, "kbd_glyphs", "xbox_glyphs" };
+static int g_glyph_have[DM_GLYPH_N] = { 1 }, g_glyph, g_glyph_next;   // 覆盖层带哪几套；当前路径指着哪套；下一次写路径时指哪套 | Which sets the overlay carries; which set the current path points at; which set the next path write points at
+static _Atomic int g_glyph_want;
+static const char *const k_glyph_name[DM_GLYPH_N] = { "Switch", "keyboard", "Xbox" };   // 日志用 | For the log
 #if TARGET_OS_OSX
-#define KBD_GLYPH_OFF 0x1d0f5b8
-static const char k_kbd_glyph[] = "Ztouch_controller_buttons_ui/%sK%s";
-static int g_kbd_have, g_kbd, g_kbd_next, g_app;   // 覆盖层带键盘键帽；当前路径指着键盘键帽；下一次写路径时要不要指键盘键帽；Mac App 形态 | the overlay carries keyboard key caps; the current path points at keyboard key caps; whether the next path write should point at keyboard key caps; Mac App form
-static _Atomic int g_kbd_want;
-void dm_padmode_request_kbd(int kbd) { kbd = kbd ? 1 : 0; if (!g_kbd_have) return; atomic_store(&g_kbd_want, kbd); }   // 前端（任意线程）：键盘有输入 1 / 实体手柄有输入 0。这里不立输入冻结：换键帽要等面板都关了才起（见 kbd_swap_ok），等的时候玩家照常操作；事务起的那一帧才冻结 | front end (any thread): keyboard had input 1 / physical gamepad had input 0. No input freeze is raised here: swapping key caps waits until all panels are closed (see kbd_swap_ok), and the player operates as usual while waiting; the freeze starts only on the frame the transaction starts
-int dm_padmode_kbd(void) { return g_kbd; }
+static int g_app;   // Mac App 形态 | the overlay carries keyboard key caps; the current path points at keyboard key caps; whether the next path write should point at keyboard key caps; Mac App form
+#endif
+void dm_padmode_request_glyph(int g) { if (g < 0 || g >= DM_GLYPH_N || !g_glyph_have[g]) g = DM_GLYPH_PAD; atomic_store(&g_glyph_want, g); }   // 前端（任意线程）：键盘有输入 → 键盘，实体手柄有输入 → 按它的类型。覆盖层没有那套就用原版键帽。这里不立输入冻结：换键帽要等面板都关了才起（见 glyph_swap_ok），等的时候玩家照常操作；事务起的那一帧才冻结 | Front end (any thread): keyboard input -> keyboard, physical controller input -> by its type. Without that set in the overlay the original glyphs are used. No input freeze here: the glyph swap waits until all panels are closed (see glyph_swap_ok), the player keeps playing meanwhile; input freezes only on the frame the transaction starts
+int dm_padmode_kbd(void) { return g_glyph == DM_GLYPH_KBD; }
 // 只换键帽的重载只在「没有面板开着」时起：重载布局会把开着的页重建一遍，设置页的勾选框会全显示成未勾、还多出「全部接受」（实测），
 // 所以局内要 HUD 在屏、游戏没停（暂停菜单 / 设置页 / 借壳的页）、手势层认的面板一个没开；前端要删除 / 选项 / 起名 / 确认框都没开。等到条件满足的那一帧再换
 // The reload that only swaps key caps starts only when "no panel is open": reloading the layout rebuilds any open page, and the checkboxes of the settings page would all show as unchecked with an extra "Accept All" appearing (measured),
 // so in game the HUD must be on screen, the game not stopped (pause menu / settings page / pages borrowing another shell) and none of the panels the gesture layer recognises open; in the front end none of delete / options / naming / confirmation boxes open. The swap happens on the first frame where the conditions hold
-static int kbd_swap_ok(uint8_t *b) {
+static int glyph_swap_ok(uint8_t *b) {
     int dm_ingame_now(void), dm_ui_panel_state(void), dm_ui_fe_drag_ok(void);
     if (!dm_ingame_now()) return dm_ui_fe_drag_ok();
     return !(*(volatile uint8_t *)(b + 0x2d5ff51) | *(volatile uint8_t *)(b + 0x2d5ff67)) && !dm_ui_panel_state();
 }
-#endif
 static int pfx_write(uint8_t *b, int pad) {
     for (unsigned i = 0; i < sizeof k_pfx / sizeof *k_pfx; i++) { const char *p = (const char *)(b + k_pfx[i].off);
-#if TARGET_OS_OSX
-        if (k_pfx[i].off == KBD_GLYPH_OFF && !strcmp(p, k_kbd_glyph)) continue;
-#endif
+        if (k_pfx[i].off == GLYPH_OFF && (!strcmp(p, k_glyph[DM_GLYPH_KBD]) || !strcmp(p, k_glyph[DM_GLYPH_XBOX]))) continue;
         if (strcmp(p, k_pfx[i].pad) && strcmp(p, k_pfx[i].touch)) { LOG("【红】手柄 / 触屏布局：main+%#x 不是预期的「%s」（是「%.32s」），不改", k_pfx[i].off, k_pfx[i].pad, p); return 0; } }
     for (unsigned i = 0; i < sizeof k_pfx / sizeof *k_pfx; i++) memcpy(b + k_pfx[i].off, pad ? k_pfx[i].pad : k_pfx[i].touch, strlen(k_pfx[i].pad));
-#if TARGET_OS_OSX
-    _Static_assert(sizeof k_kbd_glyph == sizeof "Controller/ControllerButtons/%s/%s", "键盘键帽路径要与原版路径等长");
-    if (pad && g_kbd_next) memcpy(b + KBD_GLYPH_OFF, k_kbd_glyph, sizeof k_kbd_glyph - 1);
-#endif
+    _Static_assert(sizeof "Ztouch_controller_buttons_ui/%sK%s" == sizeof "Controller/ControllerButtons/%s/%s", "换的键帽路径要与原版路径等长");
+    if (pad && g_glyph_next) memcpy(b + GLYPH_OFF, k_glyph[g_glyph_next], strlen(k_glyph[g_glyph_next]));
     return 1;
 }
-enum { NSTR = 160 };   // 中 / 英 / esES / esMX / ruRU 各一套（去重后 114 条） | One set each for Chinese / English / esES / esMX / ruRU (114 entries after dedup)
+enum { NSTR = 160 };   // 中 / 英 / esES / esMX / ruRU / koKR 各一套（去重后 138 条）
 static struct { char *key, *val; size_t klen; char sha[9]; uint64_t node, orig, olen; } g_str[NSTR];
 static int g_nstr;
 static uint8_t *g_b;
@@ -160,9 +161,12 @@ void dm_padmode_boot(void) {   // 开机：游戏建面板之前（main.c，nnMa
     if (!dm_overlay_file("ctrl_touch", mk, sizeof mk)) { LOG("手柄 / 触屏布局：覆盖层没有 ctrl_touch 标记，照原版布局"); return; }
     int pad = getenv("DM_APP") != NULL;   // Mac App：没有触屏圆钮与底栏的绘制层，开机就用原版手柄版（我们的功能页在手柄版布局里同样有），之后也不切 | Mac App: there is no drawing layer for the touch buttons and bottom bar, so it starts in the original gamepad UI (our feature pages exist in the gamepad layout as well) and never switches afterwards
 #if TARGET_OS_OSX
-    g_app = pad; g_kbd_have = pad && dm_overlay_file("kbd_glyphs", mk, sizeof mk); g_kbd = g_kbd_next = g_kbd_have; atomic_store(&g_kbd_want, g_kbd);   // Mac App 开机先用键盘键帽（多数人没接手柄）；实体手柄一有输入就换 | the Mac App starts with keyboard key caps (most people have no gamepad connected); it switches as soon as a physical gamepad has input
-    if (pad) LOG("手柄 / 触屏布局：键盘键帽 %d", g_kbd_have);
+    g_app = pad;
 #endif
+    g_glyph_have[DM_GLYPH_KBD] = pad && dm_overlay_file(k_glyph_mark[DM_GLYPH_KBD], mk, sizeof mk);   // 键盘键帽只有 Mac App 用 | Keyboard glyphs are used only by the Mac App
+    g_glyph_have[DM_GLYPH_XBOX] = dm_overlay_file(k_glyph_mark[DM_GLYPH_XBOX], mk, sizeof mk);
+    g_glyph = g_glyph_next = g_glyph_have[DM_GLYPH_KBD] ? DM_GLYPH_KBD : DM_GLYPH_PAD; atomic_store(&g_glyph_want, g_glyph);   // Mac App 开机先用键盘键帽（多数人没接手柄）；实体手柄一有输入就按它的类型换 | The Mac App starts with keyboard glyphs (most people have no controller connected); as soon as a physical controller gives input, switch by its type
+    LOG("手柄 / 触屏布局：键帽 键盘 %d、Xbox %d", g_glyph_have[DM_GLYPH_KBD], g_glyph_have[DM_GLYPH_XBOX]);
     if (pfx_write((uint8_t *)m->base, pad)) { g_have = 1; g_cur = pad; atomic_store(&g_want, pad); g_b = (uint8_t *)m->base; str_load(); LOG("手柄 / 触屏布局：开机用%s", pad ? "原版手柄版（Mac App）" : "触屏版（layouts/xtouch_lay 等三个目录）"); }
 }
 void dm_padmode_request(int pad) { pad = pad ? 1 : 0;
@@ -473,37 +477,32 @@ void dm_padmode_step(uint8_t *b, uint64_t frame) {   // 游戏主线程每帧（
 #if TARGET_OS_OSX
     // 建角模式页「极乐世界」那行左边写死的手柄键帽（布局 touch_layout.py 的 TouchBlissKey，原位 x −1665）：Mac 的覆盖层同位带了一个键盘键帽 TouchBlissKeyK，按当前键帽对调
     // The hard-coded gamepad key cap to the left of the "Elysium" row on the character-creation mode page (TouchBlissKey in the layout touch_layout.py, original position x -1665): the Mac overlay carries a keyboard key cap TouchBlissKeyK at the same position, and the two are swapped according to the current key caps
-    if (g_kbd_have && frame % 10 == 0) { uint64_t root = rd8((uint64_t)(uintptr_t)(b + 0x2f05458)), a = root ? pm_find(root, "TouchBlissKey", 0) : 0, k = a ? pm_find(root, "TouchBlissKeyK", 0) : 0;
-        for (int i = 0; i < 2 && a && k; i++) { uint64_t w = i ? k : a; int32_t *r = (int32_t *)(uintptr_t)(w + 0x70), x = (i ? g_kbd : !g_kbd) ? -1665 : 99999; if (r[0] != x) { r[0] = x; ((void (*)(uint64_t))rd8(rd8(w) + 0x10))(w); } } }
-    // 测试开关 DM_TEST_KBDCAPS=<帧>:<0|1>[,…]：到帧当作「实体手柄有输入（0）/ 键盘有输入（1）」（无人值守的局没有实体手柄）
-    // Test switch DM_TEST_KBDCAPS=<frame>:<0|1>[,...]: at that frame act as if "a physical gamepad had input (0) / the keyboard had input (1)" (unattended runs have no physical gamepad)
-    { static int n = -1, k; static struct { uint64_t f; int m; } ev[8];
-      if (n < 0) { n = 0; const char *e = getenv("DM_TEST_KBDCAPS"); for (const char *q = e; q && *q && n < 8; ) { unsigned long long f; int m; if (sscanf(q, "%llu:%d", &f, &m) != 2) break; ev[n].f = f; ev[n].m = m; n++; q = strchr(q, ','); if (q) q++; } }
-      if (k < n && frame >= ev[k].f) { LOG("DM_TEST_KBDCAPS：帧 %llu 请求键盘键帽 %d", (unsigned long long)frame, ev[k].m); dm_padmode_request_kbd(ev[k].m); k++; } }
+    if (g_glyph_have[DM_GLYPH_KBD] && frame % 10 == 0) { int kb = g_glyph == DM_GLYPH_KBD; uint64_t root = rd8((uint64_t)(uintptr_t)(b + 0x2f05458)), a = root ? pm_find(root, "TouchBlissKey", 0) : 0, k = a ? pm_find(root, "TouchBlissKeyK", 0) : 0;
+        for (int i = 0; i < 2 && a && k; i++) { uint64_t w = i ? k : a; int32_t *r = (int32_t *)(uintptr_t)(w + 0x70), x = (i ? kb : !kb) ? -1665 : 99999; if (r[0] != x) { r[0] = x; ((void (*)(uint64_t))rd8(rd8(w) + 0x10))(w); } } }
 #endif
+    // 测试开关 DM_TEST_GLYPH=<帧>:<样式>[,…]：到帧当作「这一种输入来了」请求键帽样式（0 Switch 手柄 / 1 键盘 / 2 Xbox 手柄；无人值守的局没有实体手柄与键盘）
+    // Test switch DM_TEST_GLYPH=<frame>:<style>[,...]: at that frame, act as if that kind of input arrived and request the glyph style (0 Switch controller / 1 keyboard / 2 Xbox controller; unattended runs have no physical controller or keyboard)
+    { static int n = -1, k; static struct { uint64_t f; int m; } ev[8];
+      if (n < 0) { n = 0; const char *e = getenv("DM_TEST_GLYPH"); for (const char *q = e; q && *q && n < 8; ) { unsigned long long f; int m; if (sscanf(q, "%llu:%d", &f, &m) != 2) break; ev[n].f = f; ev[n].m = m; n++; q = strchr(q, ','); if (q) q++; } }
+      if (k < n && frame >= ev[k].f) { LOG("DM_TEST_GLYPH：帧 %llu 请求键帽样式 %d", (unsigned long long)frame, ev[k].m); dm_padmode_request_glyph(ev[k].m); k++; } }
     if (g_have && frame % 30 == 0) str_apply(g_cur);   // 串表开机后才装、切语言会重装：定期核 | The string table is loaded only after boot and reloaded on a language switch: check periodically
     if (!g_have) return;
     { uint32_t dm_oe_ui_opmode_reads(void); static uint64_t fp0; static uint32_t nfp; uint64_t root = rd8((uint64_t)(uintptr_t)(b + 0x2f05458)), ch = root ? rd8(root + 0x58) : 0, n = root ? rd8(root + 0x60) : 0, fp = n * 0x9e3779b97f4a7c15ull;
       for (uint64_t i = 0; ch && i < n && i < 256; i++) fp = (fp << 7 | fp >> 57) ^ rd8(ch + 8 * i);
       if (fp != fp0) { fp0 = fp; nfp++; } g_sig = dm_oe_ui_opmode_reads() + nfp; }
-#if TARGET_OS_OSX
-    int w = atomic_load(&g_want), wx = w, cx = g_cur;
-    if (g_kbd_have) { int tp = w >= 0 ? w : g_cur, tk = tp ? atomic_load(&g_kbd_want) : 0; if (tk != g_kbd && tp == g_cur && !kbd_swap_ok(b)) tk = g_kbd;
-        wx = tp | tk << 1; cx = g_cur | g_kbd << 1; if (wx == cx && w < 0) wx = -1; }   // 键帽那一位并进事务的「模式」里 | the key-cap bit is merged into the transaction's "mode"
+    int w = atomic_load(&g_want), wx, cx;
+    { int tp = w >= 0 ? w : g_cur, tk = tp ? atomic_load(&g_glyph_want) : 0; if (tk != g_glyph && tp == g_cur && !glyph_swap_ok(b)) tk = g_glyph;
+      wx = tp | tk << 1; cx = g_cur | g_glyph << 1; if (wx == cx && w < 0) wx = -1; }   // 键帽样式并进事务的「模式」里（触屏版不看键帽，记 0） | The glyph style goes into the transaction's "mode" (the touch layout ignores glyphs and records 0)
     int act = dm_modetx_step(&g_tx, frame, wx, cx, g_sig);
-    if (act == DM_TXA_BEGIN) { g_kbd_next = wx >> 1; w = wx & 1; }
-#else
-    int w = atomic_load(&g_want), act = dm_modetx_step(&g_tx, frame, w, g_cur, g_sig);
-#endif
+    if (act == DM_TXA_BEGIN) { g_glyph_next = wx >> 1; w = wx & 1; }
     if (act == DM_TXA_NONE) { if (g_tx.st == DM_TX_IDLE && atomic_load(&g_freeze)) { atomic_store(&g_freeze, 0); if (atomic_load(&g_want) != w) atomic_store(&g_freeze, 1); } return; }   // 没在切：请求时立的冻结（想要的就是当前模式 / 又改回来了）撤掉；撤的同时又来了新请求的重新立上 | Not switching: the freeze set at request time (the wanted mode is the current one / it was changed back) is lifted; if a new request arrives at the same time as the lift, it is set again
     if (act == DM_TXA_BEGIN) {
         if (!pfx_write(b, w)) { g_tx.st = DM_TX_IDLE; atomic_store(&g_want, -1); atomic_store(&g_freeze, 0); return; }
         atomic_store(&g_freeze, 1); g_tx_from = frame;
         items_run(g_cur, 1);   // 旧一侧各登记项收手（dm_mode_items.h）：在途的替按键作废、挪过的控件写回、缓存的控件地址清掉 | Registered items of the old side stand down (dm_mode_items.h): in-flight key presses on the player's behalf are voided, moved widgets written back, cached widget addresses cleared
         g_cur = w; str_apply(w); dm_oe_ui_opmode(!dm_opmode());
-#if TARGET_OS_OSX
-        g_kbd = g_kbd_next; if (g_kbd_have) LOG("手柄 / 触屏布局：键盘键帽 → %d", g_kbd);
-#endif
+        if (g_glyph != g_glyph_next) LOG("手柄 / 触屏布局：键帽 %s → %s", k_glyph_name[g_glyph], k_glyph_name[g_glyph_next]);
+        g_glyph = g_glyph_next;
         LOG("手柄 / 触屏布局：切到%s版——开始（输入冻结，让游戏重载布局）", w ? "原版手柄" : "触屏"); return; }
     if (g_tx.timeouts) LOG("【红】手柄 / 触屏布局：%d 帧内没回读到界面重建（游戏没来读运行模式、界面根下的面板也没换），按超时往下走", DM_MODETX_TIMEOUT);
     if (act == DM_TXA_REPORT_BACK) { dm_oe_ui_opmode(-1); return; }

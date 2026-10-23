@@ -1,8 +1,8 @@
 # Apple TV（tvOS）
 
-社区移植，作者 [@yinqingyan](https://github.com/yinqingyan)，经作者同意按 MIT 许可贡献。**开发者预览**：在 Apple TV 4K（第三代，A15）实机上到达了职业选择画面；后续社区实测已进入游戏并操作局内设置；长期稳定性、手柄全键位和可靠存档仍未完成验证，维护者没有实机测试过。
+社区移植，作者 Android implementation，经作者同意按 MIT 许可贡献。**开发者预览**：在 Apple TV 4K（第三代，A15）实机上到达了职业选择画面；后续社区实测已进入游戏并操作局内设置；长期稳定性、手柄全键位和可靠存档仍未完成验证，维护者没有实机测试过。
 
-Community port by [@yinqingyan](https://github.com/yinqingyan), contributed under the MIT License with the author's consent. **Developer preview**: it reached the character-selection screen on a real Apple TV 4K (3rd generation, A15); later community testing reached gameplay and in-game settings; long-session stability, full controller mapping and reliable saves are not fully verified, and the maintainers have not tested it on real hardware.
+Community port by Android implementation, contributed under the MIT License with the author's consent. **Developer preview**: it reached the character-selection screen on a real Apple TV 4K (3rd generation, A15); later community testing reached gameplay and in-game settings; long-session stability, full controller mapping and reliable saves are not fully verified, and the maintainers have not tested it on real hardware.
 
 ## 是什么 / What it is
 

@@ -1,31 +1,35 @@
 #!/usr/bin/env python3
 # 底部 UI v4 生成器（按 v4 效果图实装）：产出 NativeHUD/v4/base.png（底图）与 hud.json（手柄 HUD 布局）。
-# 用法：python3 dm/ios/tools/gen_hud_v4.py <原版 RomFS（Update）> [输出目录] [试调 json]   构建时跑（tools/gen_assets.py），产物 Gen/assets/NativeHUD/v4，不进仓库。
+# 用法：python3 dm/ios/tools/gen_hud_v4.py <原版 RomFS（Update）> [输出目录] [试调 json] [--overlay-only]   构建时跑（tools/gen_assets.py），产物 Gen/assets/NativeHUD/v4，不进仓库。
 # 几何与素材在 hud_v4_design.py（效果图脚本搬进仓库的那部分）：有 PC 版 D2R 文件（DM_PC_DATA）出原版 2 倍图，没有就用 Switch 素材放大。
 # 几何量全部取自效果图脚本（同一套数）；底图（石条 + 七格 + 天使 / 恶魔，球心挖空透出原生球液）由 gen_romfs_overlay.py 构建时写进借用路径
 # （dm/data/casc_overlay/borrowed_paths.tsv）。血 / 蓝球、腰带、红方十字（LevelUpButton）、回城（SkillButton6，ZR 位）、经验条用原生部件，只改位置与缩放。
 # 布局以 touchrectv1 为底（= 原版手柄 HUD 布局 Controller/HUDPanelHD.json 套我们的补丁 touchrectv1_patch.json：根铺满全屏、部件锚底边中点；SkillButton1–5 已摆在右侧技能区，iOS 技能圈叠在其上）。
 # 实测（Mac 宿主）：布局 1 单位 = 屏高/2160；v31 原始贴图 1 纹素 = 2 单位；rect.scale 按 0.1 取整生效（0.8182 按 0.8），位置须按取整后的值算。
 # Bottom UI v4 generator (implemented per the v4 mockup): outputs NativeHUD/v4/base.png (base image) and hud.json (controller HUD layout).
-# Usage: python3 dm/ios/tools/gen_hud_v4.py <original game RomFS (Update)> [output dir] [tuning json]   Run at build time (tools/gen_assets.py); build output Gen/assets/NativeHUD/v4, not committed to the repo.
+# Usage: python3 dm/ios/tools/gen_hud_v4.py <original game RomFS (Update)> [output dir] [tuning json] [--overlay-only]   Run at build time (tools/gen_assets.py); build output Gen/assets/NativeHUD/v4, not committed to the repo.
 # Geometry and assets are in hud_v4_design.py (the part of the mockup script moved into the repo): with PC D2R files (DM_PC_DATA) it produces the original 2× images, otherwise it upscales the Switch assets.
 # All geometry values come from the mockup script (same set of numbers); the base image (stone strip + seven slots + angel / demon, orb centers cut out to show the native orb liquid) is written into the borrowed path by gen_romfs_overlay.py at build time
 # (dm/data/casc_overlay/borrowed_paths.tsv). The life / mana orbs, belt, red square cross (LevelUpButton), town portal (SkillButton6, ZR position) and experience bar use native widgets, with only position and scale changed.
 # The layout is based on touchrectv1 (= the original game's controller HUD layout Controller/HUDPanelHD.json with our patch touchrectv1_patch.json applied: root fills the full screen, widgets anchored at the bottom-edge midpoint; SkillButton1–5 are already placed in the right-side skill area with the iOS skill circles stacked on top).
 # Measured (Mac host): 1 layout unit = screen height/2160; v31 raw texture 1 texel = 2 units; rect.scale takes effect rounded to 0.1 (0.8182 acts as 0.8), so positions must be computed from the rounded value.
-import json, re, sys, os
+import argparse, json, re, sys, os
 import numpy as np
 from PIL import Image
 HERE=os.path.dirname(os.path.abspath(__file__)); sys.path.insert(0,HERE)
 import romfs_art, hud_v4_design, layout_patch
 from gen_paths import gen_dir
-ROMFS=sys.argv[1]; OUT=sys.argv[2] if len(sys.argv)>2 else gen_dir('NativeHUD','v4')   # 试调时可指定输出目录 | The output directory can be specified when tuning
+parser=argparse.ArgumentParser(description='Generate bottom HUD v4 assets')
+parser.add_argument('romfs'); parser.add_argument('out',nargs='?'); parser.add_argument('tuning_json',nargs='?')
+parser.add_argument('--overlay-only',action='store_true',help='Skip iOS skill silhouette atlases unused by the CASC overlay')
+args=parser.parse_args()
+ROMFS=args.romfs; OUT=args.out or gen_dir('NativeHUD','v4')   # 试调时可指定输出目录 | The output directory can be specified when tuning
 os.makedirs(OUT,exist_ok=True); SRC=hud_v4_design.Source(ROMFS)
 def load(var='C'): return hud_v4_design.load(SRC, var)
 # 试调量（腰带三项按手机实拍校正：原版小药水贴图在格内偏右下，以手机常见的小药水居中为准；其余 Mac 截图逐像素量出）：腰带位移 / 格距、经验条位移、数值文字位移与字号
 # Tuning values (the three belt items are corrected from real phone captures: the original game's small potion texture sits toward the lower right within the slot, so the small potion commonly seen on the phone is taken as centered; the rest are measured pixel by pixel from Mac screenshots): belt offset / slot pitch, experience bar offset, value text offset and font size
 T=dict(bx=6.5,by=5,bpx=25,bs=1.6,ex=-7,ey=-15,txt=43,tx=-238,ts=1.4)   # bs：腰带缩放（药水对效果图 78 像素图标） | bs: belt scale (potions matched to the mockup's 78-pixel icons)
-if len(sys.argv)>3: T.update(json.loads(sys.argv[3]))   # 试调：覆盖上面的量 | Tuning: overrides the values above
+if args.tuning_json is not None: T.update(json.loads(args.tuning_json))   # 试调：覆盖上面的量 | Tuning: overrides the values above
 g=load('C'); W,H=g['W'],g['H']; U=H/2160; RX0,RY0=-1473,-417
 ux=lambda px:(px-W/2)/U-RX0; uy=lambda py:(py-H)/U-RY0
 BASE='PANEL/HUD_02/BugBTN'   # 借用路径，见登记表 | Borrowed path, see the registry
@@ -161,15 +165,16 @@ for n in range(1,9):      # 难度数字：效果图方案 C（Exocet + 原版�
 # 前端放进深色圆底 + 古铜圆环（同 PC 版圆形技能键的样式），不再把方形图标塞进圆圈
 # Skill silhouette atlas: from the official skill atlas (Sources/TouchArt/dm_native_skill_N.png, frame positions unchanged) take only the silver silhouette (bright, low saturation; drop the rusty iron square plate and the four corner rivets),
 # the front end puts it on a dark round base + bronze ring (same style as the PC version's round skill buttons), no longer stuffing a square icon into a circle
-ART=os.path.join(HERE,'..','Sources','TouchArt'); man=json.load(open(os.path.join(ART,'native_art_manifest.json')))
-for a_ in man['assets']:
-    if not a_['asset'].startswith('dm_native_skill_'): continue
-    im=np.asarray(Image.open(os.path.join(ART,a_['asset'])).convert('RGBA')).astype(float)/255
-    mx=im[...,:3].max(-1); mn=im[...,:3].min(-1); sat=(mx-mn)/np.maximum(mx,1e-6)
-    al=np.clip((mx-0.42)/0.18,0,1)*np.clip((0.32-sat)/0.12,0,1)*im[...,3]
-    fw,pitch=a_['frame_width'],a_['frame_pitch']; Hh,Ww=al.shape; yy,xx=np.mgrid[0:Hh,0:Ww]
-    al*=np.hypot((xx%pitch)-fw/2,yy-Hh/2)<fw*0.46
-    Image.fromarray((np.dstack([im[...,:3],al])*255).astype('uint8')).save(os.path.join(UI,'sil_'+a_['asset']))
+if not args.overlay_only:
+    ART=os.path.join(HERE,'..','Sources','TouchArt'); man=json.load(open(os.path.join(ART,'native_art_manifest.json')))
+    for a_ in man['assets']:
+        if not a_['asset'].startswith('dm_native_skill_'): continue
+        im=np.asarray(Image.open(os.path.join(ART,a_['asset'])).convert('RGBA')).astype(float)/255
+        mx=im[...,:3].max(-1); mn=im[...,:3].min(-1); sat=(mx-mn)/np.maximum(mx,1e-6)
+        al=np.clip((mx-0.42)/0.18,0,1)*np.clip((0.32-sat)/0.12,0,1)*im[...,3]
+        fw,pitch=a_['frame_width'],a_['frame_pitch']; Hh,Ww=al.shape; yy,xx=np.mgrid[0:Hh,0:Ww]
+        al*=np.hypot((xx%pitch)-fw/2,yy-Hh/2)<fw*0.46
+        Image.fromarray((np.dstack([im[...,:3],al])*255).astype('uint8')).save(os.path.join(UI,'sil_'+a_['asset']))
 # 技能键标签（PC 定稿演示图同款：主键「攻击」、其余 F1–F4 / 第二套 F5–F8），原版界面字体加粗米色 + 右下暗影，按效果图像素预渲染
 # Skill button labels (same as the final PC demo image: main button 「攻击」(Attack), the rest F1–F4 / second set F5–F8), the original game's UI font in bold beige + lower-right dark shadow, pre-rendered at mockup pixels
 lf=g['num'](34)

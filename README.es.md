@@ -1,10 +1,10 @@
 # D2R Mobile
 
-**Una capa de compatibilidad de código abierto para iOS / macOS que ejecuta Diablo II: Resurrected con la expansión Reign of the Warlock.** Lleva a iPhone, iPad y Mac, completa, la edición de Nintendo Switch que compraste, expansión incluida: el código original del juego se ejecuta de forma nativa, todos los controles se rehicieron para pantalla táctil, la tasa de fotogramas se mantiene en 60 fps y entras a una partida un segundo después del menú principal. Ahora también hay una versión nativa para macOS (primera versión): en un Mac con Apple silicon se abre con doble clic y funciona con teclado, ratón y mando. Apple TV 4K (3.ª generación, A15) cuenta con un port de la comunidad (versión preliminar para desarrolladores) que, hasta ahora, solo ha llegado a la pantalla de selección de personaje en el dispositivo de su autor; consulta la tabla de dispositivos más abajo.
+**Una capa de compatibilidad de código abierto para iOS, macOS, Android y HarmonyOS que ejecuta Diablo II: Resurrected con la expansión Reign of the Warlock.** Lleva a iPhone, iPad y Mac, completa, la edición de Nintendo Switch que compraste, expansión incluida: el código original del juego se ejecuta de forma nativa, todos los controles se rehicieron para pantalla táctil, la tasa de fotogramas se mantiene en 60 fps y entras a una partida un segundo después del menú principal. Ahora también hay una versión nativa para macOS (primera versión): en un Mac con Apple silicon se abre con doble clic y funciona con teclado, ratón y mando. **Desde la v2.0 hay una versión para Android** (port de la comunidad): el mismo programa del juego se ejecuta de forma nativa en teléfonos Android ARM64, con los gráficos reimplementados sobre Vulkan; en un teléfono con Snapdragon 8+ Gen 1, el campamento y los combates de la Guarida del Mal y del Nivel de las Vacas van a una mediana de 60 fps (consulta «Android» más abajo); sobre el mismo motor hay una versión para HarmonyOS (port de la comunidad: un shell sin firmar de la página de Releases que firmas tú, sin compilar nada; consulta «HarmonyOS»). Apple TV 4K (3.ª generación, A15) cuenta con un port de la comunidad (versión preliminar para desarrolladores) que, hasta ahora, solo ha llegado a la pantalla de selección de personaje en el dispositivo de su autor; consulta la tabla de dispositivos más abajo.
 
 Esto no es una demo técnica que «más o menos funciona». Es una versión móvil pulida para jugar a diario, desde tu primer personaje hasta el contenido de fin de juego.
 
-Plataformas: iPhone / iPad (iOS 26 o posterior; iOS 18 – 25 con la compilación para API antiguas) · Mac (Apple silicon, macOS 26 o posterior; macOS 15 – 25 con la compilación para API antiguas) · Apple TV 4K (3.ª generación, A15; port de la comunidad, versión preliminar para desarrolladores) · Versión del juego: edición de Switch con Reign of the Warlock, 1.0.34.0 (corresponde a la versión de PC 3.3.94012) · Español / English / 中文 / Русский · Licencia: MIT · **Aporta tus propios archivos del juego**
+Plataformas: iPhone / iPad (iOS 26 o posterior; iOS 18 – 25 con la compilación para API antiguas) · Mac (Apple silicon, macOS 26 o posterior; macOS 15 – 25 con la compilación para API antiguas) · Apple TV 4K (3.ª generación, A15; port de la comunidad, versión preliminar para desarrolladores) · Teléfonos Android (ARM64, Android 12 o posterior, Vulkan 1.1; port de la comunidad) · Teléfonos HarmonyOS (HarmonyOS NEXT; port de la comunidad, shell sin firmar de la página de Releases que firmas tú) · Versión del juego: edición de Switch con Reign of the Warlock, 1.0.34.0 (corresponde a la versión de PC 3.3.94012) · Español / English / 中文 / Русский / 한국어 · Licencia: MIT · **Aporta tus propios archivos del juego**
 
 English: [README.md](README.md) · 中文: [README.zh-CN.md](README.zh-CN.md)
 
@@ -25,8 +25,8 @@ English: [README.md](README.md) · 中文: [README.zh-CN.md](README.zh-CN.md)
 **Es:**
 
 - El propio programa aarch64 del juego, **ejecutándose directamente en el dispositivo**, sin CPU emulada. iPhone y Switch usan la misma clase de procesador; solo se reescriben las pocas instrucciones que no pueden ejecutarse sin cambios bajo el kernel de Apple, y todos los demás bytes del programa quedan exactamente como se publicaron. Todas las clases, todas las palabras rúnicas (Runewords), las zonas de terror (Terror Zones), los jefes, las reglas de botín y el desarrollo de las misiones son idénticos al original.
-- Los servicios de plataforma que el juego espera —llamadas al sistema, sistema de archivos, API gráfica, audio, entrada— los proporciona un pequeño anfitrión (host) escrito para las plataformas de Apple. La API gráfica está reimplementada por completo sobre Metal de Apple, sin ninguna capa de emulación en medio, y los shaders se traducen sin conexión a partir de los originales del juego.
-- Un port pensado para teléfonos y llevado hasta el final: un esquema de control táctil completo, pantalla de borde a borde en iPhone y pantalla completa real en iPad, compatibilidad con mandos, modo de ahorro de energía, sincronización de partidas guardadas, inglés y chino, y todo un conjunto de modos de fin de juego y mejoras de calidad de vida que el original nunca tuvo.
+- Los servicios de plataforma que el juego espera —llamadas al sistema, sistema de archivos, API gráfica, audio, entrada— los proporciona un pequeño anfitrión (host) escrito para las plataformas de Apple. La API gráfica está reimplementada por completo —sobre Metal en los dispositivos de Apple y sobre Vulkan en Android—, sin ninguna capa de emulación en medio, y los shaders se traducen sin conexión a partir de los originales del juego.
+- Un port pensado para teléfonos y llevado hasta el final: un esquema de control táctil completo, pantalla de borde a borde en iPhone y pantalla completa real en iPad, compatibilidad con mandos, modo de ahorro de energía, sincronización de partidas guardadas, cinco idiomas (inglés, chino, español, ruso y coreano), y todo un conjunto de modos de fin de juego y mejoras de calidad de vida que el original nunca tuvo.
 
 **No es:**
 
@@ -93,7 +93,7 @@ Esto no es un mando pegado sobre la pantalla. Cada panel y cada acción se rehic
 
 ### Mando
 
-Conecta un mando y pulsa cualquier botón: la interfaz cambia a la distribución original para mando, con indicaciones de botones en la parte inferior de cada panel. Toca la pantalla y vuelves al instante a la interfaz táctil. El inventario, el alijo (Stash), el árbol de habilidades, la Chronicle y los ajustes se pueden manejar por completo con el mando, con la misma asignación de botones que en Switch.
+Conecta un mando y pulsa cualquier botón: la interfaz cambia a la distribución original para mando, con indicaciones de botones en la parte inferior de cada panel. Toca la pantalla y vuelves al instante a la interfaz táctil. El inventario, el alijo (Stash), el árbol de habilidades, la Chronicle y los ajustes se pueden manejar por completo con el mando, con la misma asignación de botones que en Switch. Con un mando de Xbox, la asignación cambia sola a la de la versión de PC / Xbox (abajo confirma, derecha vuelve atrás) y las indicaciones muestran los iconos de botones de Xbox; no hay que activar nada.
 
 <p align="center">
   <img src="https://github.com/d2r-mobile/d2r-mobile/releases/download/assets/en_pad_combat.jpg" width="49%" alt="Combate con un mando conectado">
@@ -158,9 +158,9 @@ La mayoría de las funciones se pueden activar o desactivar una por una en el ju
   <img src="https://github.com/d2r-mobile/d2r-mobile/releases/download/assets/en_map.jpg" width="33%" alt="El mapa a pantalla completa">
 </p>
 
-### Español, inglés, chino y ruso
+### Español, inglés, chino, ruso y coreano
 
-Todo el juego cambia entre español, inglés, chino y ruso en Opciones → Extras; tras reiniciar, la interfaz queda en el idioma que elegiste. La primera vez que lo abres sigue el idioma de tu dispositivo (el español de España usa los textos esES del juego y el de otras regiones, los textos latinoamericanos esMX; el ruso usa los textos ruRU). En español y en ruso, los objetos, las habilidades y los monstruos usan la terminología oficial del juego, y todo lo que añadimos —Grieta superior, Crónica, la página de ajustes, las indicaciones de gestos y los rótulos del mapa— también está traducido (las notas de objetos solo existen en chino y español). El ruso es el texto ruRU del juego, sin variantes regionales. Voces: en español quedan en inglés; en ruso se usan las voces rusas originales si tus archivos del juego las incluyen (un paquete hecho con los datos completos del juego las trae) y, si no, en inglés; en chino, voces en chino.
+Todo el juego cambia entre español, inglés, chino, ruso y coreano en Opciones → Extras; tras reiniciar, la interfaz queda en el idioma que elegiste. La primera vez que lo abres sigue el idioma de tu dispositivo (el español de España usa los textos esES del juego y el de otras regiones, los textos latinoamericanos esMX; el ruso usa los textos ruRU). En español, ruso y coreano, los objetos, las habilidades y los monstruos usan la terminología oficial del juego, y todo lo que añadimos —Grieta superior, Crónica, la página de ajustes, las indicaciones de gestos y los rótulos del mapa— también está traducido (las notas de objetos solo existen en chino y español). El ruso es el texto ruRU del juego y el coreano su texto koKR, sin variantes regionales. Voces: en español quedan en inglés; en ruso y en coreano se usan las voces rusas o coreanas originales si tus archivos del juego las incluyen (un paquete hecho con los datos completos del juego las trae) y, si no, en inglés; en chino, voces en chino. El coreano lo aportó Android implementation.
 
 <p align="center">
   <img src="https://github.com/d2r-mobile/d2r-mobile/releases/download/assets/es_game.jpg" width="58%" alt="Partida con la interfaz en español">
@@ -185,9 +185,35 @@ flowchart LR
 | Anfitrión (host) | `dm/host` | Carga el programa reescrito y proporciona los servicios de plataforma a los que llama |
 | Gráficos | `dm/gfx` | Implementa la API gráfica del juego sobre Metal; los shaders se traducen sin conexión a partir de los originales del juego |
 | App de iOS | `dm/ios` | El contenedor de la app, los controles táctiles y la interfaz |
+| App de Android | `dm/android` | El contenedor de Android, la capa táctil y la presentación con Vulkan |
+| App de HarmonyOS | `dm/harmony` | El contenedor de HarmonyOS (ArkTS + N-API), que comparte el anfitrión y el motor Vulkan con Android |
+| Gráficos con Vulkan | `dm/gfx/vulkan` | La misma API gráfica sobre Vulkan (lo comparten Android y HarmonyOS; el motor viene del port a HarmonyOS) |
 | Verificación | `dm/verify` | Comprueba que el código reescrito se comporta exactamente igual que el original, además de las barreras de regresión por las que pasa cada cambio |
 
 **Por qué puedes confiar en él:** la estabilidad no es cuestión de suerte. Las herramientas de pruebas y verificación forman parte del proyecto: pruebas unitarias para el anfitrión y la capa gráfica, una comprobación de equivalencia para cada instrucción reescrita, regresión con recorridos automatizados por script para la interfaz táctil y pruebas de humo en dispositivos reales. Empieza por `make -C dm/host/tests run`, `make -C dm/gfx/tests run` y `dm/verify/regress.sh` (ejecútalos dentro del entorno de Python preparado en el paso 2 más abajo; `regress.sh` además necesita `brew install llvm`). Cómo contribuir se explica en [CONTRIBUTING.md](CONTRIBUTING.md) (en inglés).
+
+## Android (nuevo en la v2.0)
+
+Los teléfonos Android usan procesadores ARM64, igual que la Switch, así que, como en los dispositivos de Apple, el propio programa del juego se ejecuta directamente en el teléfono, sin emular la CPU. Esta versión lleva a Android todo el anfitrión —llamadas al sistema, sistema de archivos, audio, entrada, partidas guardadas— sin cambios y sustituye la capa gráfica por Vulkan: el motor de reproducción NVN→Vulkan viene del port a HarmonyOS de Android implementation, y la app de Android, los controles táctiles, la presentación con Vulkan y una ronda completa de optimización, medida paso a paso en un teléfono, son obra de Android implementation. Las versiones de Apple y de Android comparten el mismo código del anfitrión, así que los cambios futuros benefician a ambas.
+
+Medido por los autores del port en sus teléfonos (ajustes por defecto del producto: escala de renderizado 3D limitada a 0.85 y reducida dinámicamente cuando se pierden fotogramas):
+
+| Teléfono | Resultado |
+|---|---|
+| Redmi K50 Ultra (Snapdragon 8+ Gen 1, Adreno 730, Android 15) | Campamento, combate en la Guarida del Mal, combate en el Nivel de las Vacas: **mediana de 60 fps**, GPU unos 14–15 ms por fotograma |
+| OnePlus 13 (Adreno 830) | Jugable; cuando aparece cierto efecto de luz en el campamento, a veces parpadean durante un instante pequeños cuadros negros (en investigación) |
+
+Requisitos mínimos: ARM64, Android 12 (API 31) o posterior y una GPU con Vulkan 1.1.
+
+**Cómo usarlo hoy**: instala `D2RMobile-android.apk` desde la página de versiones (no contiene ningún contenido del juego). En un ordenador, ejecuta `python3 dm/tools/d2rm_android.py <directorio Update> <directorio de salida>` con tus propios archivos del juego para crear el paquete de importación (una carpeta `android` con el programa del juego reescrito, todos los paquetes de shaders de Vulkan, la capa táctil y algunas tablas de datos) y cópialo junto con los recursos del juego (la carpeta `data`) a `Download/S2X/D2R Mobile/` en el teléfono. La app lo importa con una pantalla de progreso al abrirla. Sin adb y sin compilar el APK tú mismo. Los pasos completos están en [docs/ANDROID.md](docs/ANDROID.md) (en inglés). Los controles táctiles se dibujan igual que en iPhone (bases de botón, siluetas plateadas de habilidades, joystick) y ya no hay botones virtuales de mando sobre los paneles abiertos. Frente a la versión de iOS faltan algunos detalles táctiles: el menú de las casillas de habilidad vacías, la superposición para repartir puntos y la imagen del objeto que sigue al dedo al arrastrar en una tienda.
+
+El progreso, las mediciones de cada ronda y el trabajo pendiente están en [docs/ANDROID_COLLABORATION.md](docs/ANDROID_COLLABORATION.md) y [docs/android-notes/](docs/android-notes/) (en inglés). La versión para HarmonyOS está en la sección siguiente.
+
+## HarmonyOS (nuevo en la v2.0)
+
+La app para HarmonyOS NEXT (`dm/harmony`) es de Android implementation y usa el mismo anfitrión y el mismo motor Vulkan que Android. Medido por el autor en un Mate 90 Pro Max (Maleoon 955): 59,7 fps manteniendo el joystick en el campamento del Acto I, intervalo de pantalla p50 16,6 / p99 18,1 ms.
+
+**Cómo usarla**: la misma idea que el shell de iOS. La página de Releases tiene un **paquete de instalación sin firmar que no contiene nada del juego** (`D2RMobile-harmony-shell-unsigned.hap`). HarmonyOS NEXT solo instala apps firmadas con tu propio certificado de desarrollador, así que lo vuelves a firmar con tu certificado de depuración y lo instalas; no tienes que compilar la app. Después, en un ordenador, ejecuta `python3 dm/tools/d2rm_android.py --target ohos <carpeta Update> <carpeta de salida>` sobre tus propios archivos del juego para crear el paquete de ejecución, ponlo junto con los recursos del juego en una carpeta «D2R Mobile» del teléfono, abre la app y elige esa carpeta para importarla. Los pasos completos están en [docs/HARMONYOS.md](docs/HARMONYOS.md) (en inglés). El autor completó toda la cadena (firmar → instalar → primera importación → entrar en partida → guardar y salir) en un Mate 90 Pro Max, con tres arranques en frío seguidos sin problemas; necesitas una cuenta de desarrollador de Huawei (DevEco Studio puede generar el certificado de depuración y registrar el dispositivo por ti).
 
 ## Qué dispositivos son compatibles
 
@@ -196,12 +222,15 @@ Mínimo: **un chip A14 / M1 o posterior**: la capa gráfica necesita Metal 3, qu
 | Dispositivo | ¿Se puede jugar? | Cómo | Qué tan seguros estamos |
 |---|---|---|---|
 | **iPhone / iPad, A17 Pro y posteriores** (iPhone 15 Pro y posteriores, iPhone 16 y posteriores, iPad con chips de la serie M) | Sí | iOS 26 o posterior: el contenedor predeterminado / la compilación predeterminada; iOS 18 – 25: el contenedor para iOS 18 / la [compilación para API antiguas](docs/OLDER_SYSTEMS.md) (en inglés) | Dispositivos principales, jugados a diario |
+| **iPhone Duo** (plegable) | Sí; la imagen cambia de tamaño al desplegarlo o plegarlo | Los shells de la página de Releases se compilan con Xcode 27.1; si lo compilas tú con Xcode, usa la 27.1 para que la pantalla interior se llene (consulta [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md), en inglés) | Compatible desde la v2.0. Comprobado en un Mac alternando entre los tamaños de la pantalla exterior e interior que da el simulador de iPhone Duo (el simulador no puede ejecutar los gráficos del juego). Lo probaremos en un iPhone Duo real en cuanto tengamos uno; si tienes uno, cuéntanos en un Issue cómo te va |
 | **iPhone / iPad, A16 y anteriores** (todos los modelos de iPhone 14, iPhone 15 / 15 Plus, serie iPhone 13, etc.) | Sí, con un paso adicional | Crea un Legacy Device Pack (paquete para dispositivos antiguos) a partir de tus propios archivos del juego como se indica en [docs/LEGACY_DEVICES.md](docs/LEGACY_DEVICES.md) (en inglés) e inclúyelo al crear el paquete de instalación; la división por sistema es la misma que en la fila anterior | Jugado por jugadores: iPhone 14 Pro Max (A16, 6 GB) a 60 fps; iPhone 13 Pro Max (A15, 6 GB) en el modo de 30 fps |
 | **Dispositivos con 4 GB de RAM** (como el iPad mini de 6.ª generación o el iPad Air de 4.ª generación) | Funciona, pero la memoria va muy justa (seguimos reduciendo el uso de memoria) | Igual que la fila de A16 y anteriores (con el Legacy Device Pack) | Probado por un jugador: en un iPad mini 6 (A15, 4 GB, iPadOS 27), unos minutos del Acto I funcionaron a 50–58 fps tras la reducción automática de calidad, con avisos constantes de memoria del sistema y a solo unos 560 MB por debajo del límite de memoria del sistema; las escenas cargadas, con muchos monstruos y efectos, pueden ser cerradas por el sistema. En una versión anterior, un iPad Air 4 (A14, 4 GB) fue cerrado por el sistema unos segundos después de abrirse |
 | **Chips A14 con 6 GB de RAM o más** (como el iPhone 12 Pro / 12 Pro Max) | Aún no hay reportes | Igual que la fila de A16 y anteriores | Si lo has probado, abre un Issue y cuéntanos |
 | **Chips A13 y anteriores** (como la serie iPhone 11 y el iPad Pro de 2020) | No compatible | — | El chip gráfico no admite Metal 3 (probado por un jugador en un iPad Pro con A12Z; las referencias de Apple están encima de la tabla); la app lo indica al abrirse en lugar de cerrarse inesperadamente |
 | **Mac, Apple silicon** | Sí (App nativa de macOS) | macOS 26 o posterior: la compilación predeterminada; macOS 15 – 25: la [compilación para API antiguas](docs/OLDER_SYSTEMS.md) (en inglés). Teclado, ratón y mando funcionan; lo que puede hacer cada uno está en [docs/MAC.md](docs/MAC.md) (en inglés) | Un jugador ha jugado con la compilación para API antiguas en macOS 15.7.7 |
-| **Apple TV 4K (3.ª generación, A15)** | Port de la comunidad ([@yinqingyan](https://github.com/yinqingyan), aportado bajo la licencia MIT con el consentimiento del autor), versión preliminar para desarrolladores | Compílalo como se indica en [dm/tvos/README.md](dm/tvos/README.md) (en inglés) y copia los archivos del juego y el Legacy Device Pack dentro de la app; solo en hardware real, el Simulador no puede ejecutarlo; las partidas guardadas viven en el directorio Caches, que el sistema puede vaciar | Llegó a la pantalla de selección de personaje en hardware real; entrar en la partida, la asignación completa del mando y las partidas guardadas aún no están verificados, y los mantenedores no lo han probado en hardware real |
+| **Apple TV 4K (3.ª generación, A15)** | Port de la comunidad (Android implementation, aportado bajo la licencia MIT con el consentimiento del autor), versión preliminar para desarrolladores | Compílalo como se indica en [dm/tvos/README.md](dm/tvos/README.md) (en inglés) y copia los archivos del juego y el Legacy Device Pack dentro de la app; solo en hardware real, el Simulador no puede ejecutarlo; las partidas guardadas viven en el directorio Caches, que el sistema puede vaciar | Llegó a la pantalla de selección de personaje en hardware real; entrar en la partida, la asignación completa del mando y las partidas guardadas aún no están verificados, y los mantenedores no lo han probado en hardware real |
+| **Teléfonos HarmonyOS** (HarmonyOS NEXT, API 26) | Se puede jugar (port de la comunidad) | El shell sin firmar de la página de Releases, firmado con tu certificado de depuración, más un paquete de ejecución hecho con tus archivos del juego; consulta [docs/HARMONYOS.md](docs/HARMONYOS.md) (en inglés) | Verificado por el autor en un Mate 90 Pro Max: firmar, instalar, importar, entrar en partida, guardar y salir |
+| **Teléfonos Android** (ARM64, Android 12 o posterior, Vulkan 1.1) | Se puede jugar (port de la comunidad) | El APK de la página de versiones + un paquete de importación creado con tus propios archivos del juego; consulta [docs/ANDROID.md](docs/ANDROID.md) (en inglés) | Medido por los autores del port: Redmi K50 Ultra, mediana de 60 fps; OnePlus 13 jugable, con pequeños cuadros negros que a veces parpadean un instante; probado en un vivo X200 Ultra |
 | **Mac con Intel** | No compatible | — | — |
 
 **Qué significan los diálogos de la App**
@@ -213,13 +242,23 @@ Mínimo: **un chip A14 / M1 o posterior**: la capa gráfica necesita Metal 3, qu
 
 ## Primeros pasos
 
-Ambas rutas empiezan con **los archivos del juego que compraste**: la edición de Switch de Diablo II: Resurrected más la expansión Reign of the Warlock, actualizada a la 1.0.34.0 (la versión que muestra la consola; corresponde a la versión de PC 3.3.94012, y los nombres de directorio y las herramientas de este repositorio usan este último número). Este proyecto está hecho para la versión con esa expansión; usarlo sin la expansión no está soportado ni se ha verificado. Cómo prepararlos se explica en [docs/GAME_FILES.md](docs/GAME_FILES.md) (en inglés).
+Juegues en el dispositivo que juegues, empiezas con **los archivos del juego que compraste**: la edición de Switch de Diablo II: Resurrected más la expansión Reign of the Warlock, actualizada a la 1.0.34.0 (la versión que muestra la consola; corresponde a la versión de PC 3.3.94012, y los nombres de directorio y las herramientas de este repositorio usan este último número). Este proyecto está hecho para la versión con esa expansión; usarlo sin la expansión no está soportado ni se ha verificado. Cómo prepararlos se explica en [docs/GAME_FILES.md](docs/GAME_FILES.md) (en inglés).
 
 > Este proyecto proporciona únicamente herramientas y un contenedor de instalación que no contiene ningún contenido del juego. No distribuimos ni respaldamos, y no nos hacemos responsables de, ningún tercero que distribuya recursos del juego, ejecutables del juego o paquetes de instalación que contengan contenido del juego. Usa únicamente archivos del juego que poseas legalmente.
 
 Este proyecto está implementado y verificado sobre la edición de Switch 1.0.34.0 (que corresponde a la versión de PC 3.3.94012), y por defecto las herramientas solo aceptan esa versión. Usuarios de la comunidad han informado de que adaptaron otras versiones por su cuenta siguiendo la estructura de este repositorio y que las ejecutaron con éxito. Las tablas de reglas están agrupadas por versión del juego (en `dm/tools/patch_nso.py`, indexadas por el build ID del programa principal); te invitamos a contribuir con la versión que hayas adaptado.
 
-**Primero revisa tu dispositivo**: la tabla «Qué dispositivos son compatibles» de arriba te indica qué compilación usar y si además necesitas un Legacy Device Pack.
+**Primero revisa tu dispositivo** y busca tu sección en la tabla de abajo; la tabla «Qué dispositivos son compatibles» de arriba te indica qué compilación usar en dispositivos de Apple y si además necesitas un Legacy Device Pack.
+
+| Tu dispositivo | Cómo | Pasos |
+|---|---|---|
+| iPhone / iPad, con un Mac con Apple silicon | Una compilación completa desde el código fuente | «Con un Mac: tres pasos», más abajo |
+| iPhone / iPad, sin Mac | Descarga un contenedor sin contenido del juego y añade tu contenido en Windows / Linux | «Sin un Mac», más abajo, y [docs/NO_XCODE.md](docs/NO_XCODE.md) (en inglés) |
+| Mac (Apple silicon) | Compila una App nativa de macOS | «Jugar directamente en un Mac», más abajo, y [docs/MAC.md](docs/MAC.md) (en inglés) |
+| Teléfono Android | Instala el APK de la página de versiones y copia al teléfono un paquete de importación creado en una computadora | «Android», más abajo, y [docs/ANDROID.md](docs/ANDROID.md) (en inglés) |
+| Teléfono HarmonyOS | Firma el shell sin firmar de la página de Releases con tu certificado de depuración, crea un paquete de ejecución en un ordenador y cópialo al teléfono | «HarmonyOS», más abajo, y [docs/HARMONYOS.md](docs/HARMONYOS.md) (en inglés) |
+
+Las dos rutas para iPhone / iPad, comparadas:
 
 | | Con un Mac | Sin un Mac |
 |---|---|---|
@@ -255,7 +294,7 @@ La cuenta de Apple usada para firmar: una cuenta de desarrollador de pago te da 
 
 La primera vez que abras la app en tu teléfono, te pedirá la «carpeta de recursos del juego» (game resource folder): los 18 archivos de recursos de tus archivos del juego. Dónde ponerlos se explica en la sección "The "game resource folder" that goes on the phone" de [docs/GAME_FILES.md](docs/GAME_FILES.md) (en inglés).
 
-`./setup.sh check` es una revisión de estado: informa elemento por elemento del estado de esta computadora, las herramientas, los archivos del juego y la configuración de firma, y para todo lo que falte indica dónde conseguirlo y qué comando ejecutar a continuación; no cambia nada. Si lo que tienes es un paquete completo del juego (`.xci` / `.nsp`), `./setup.sh <game package> <prod.keys>` primero extrae los archivos del juego en su lugar y luego continúa (instala hactool antes). Vuelve a ejecutar `./setup.sh` después de cada actualización a un nuevo commit: recompila los binarios parcheados y la biblioteca de shaders para el código fuente actual (los pasos que ya están al día se omiten). También reescribe tres archivos del repositorio que cambian según las huellas de tus herramientas locales (`dm/gfx/tools/dmsh_chain.lock`, `dm/gfx/nvn/dmsh_chain.h`, `dm/gfx/nvn/c1_full.tsv`); es lo esperado, no hagas commit de ellos.
+`./setup.sh check` es una revisión de estado: informa elemento por elemento del estado de esta computadora, las herramientas, los archivos del juego y la configuración de firma, y para todo lo que falte indica dónde conseguirlo y qué comando ejecutar a continuación; no cambia nada. Si lo que tienes es un paquete completo del juego (`.xci` / `.nsp`), `./setup.sh <game package> <prod.keys>` primero extrae los archivos del juego en su lugar y luego continúa (instala hactool antes); si el juego base y la actualización son paquetes separados, pasa ambos: `./setup.sh <juego base> <actualización> <prod.keys>`. Vuelve a ejecutar `./setup.sh` después de cada actualización a un nuevo commit: recompila los binarios parcheados y la biblioteca de shaders para el código fuente actual (los pasos que ya están al día se omiten). También reescribe tres archivos del repositorio que cambian según las huellas de tus herramientas locales (`dm/gfx/tools/dmsh_chain.lock`, `dm/gfx/nvn/dmsh_chain.h`, `dm/gfx/nvn/c1_full.tsv`); es lo esperado, no hagas commit de ellos.
 
 ### Jugar directamente en un Mac
 
@@ -269,6 +308,38 @@ DM_MAC_M3=1 dm/tools/mac_app.sh      # macOS 15 – 25: produces D2R Mobile M3.a
 
 La interfaz es la interfaz para mando del original. Teclado: Espacio confirma, Esc vuelve atrás, Intro, la tecla `=` abre el menú / un personaje nuevo, W A S D mueven, y cada uno de los demás botones del mando tiene una tecla. Ratón: al hacer clic en un monstruo, un PNJ o un objeto, caminas hasta él e interactúas, y se puede hacer clic en las ranuras de habilidad, las casillas de pociones y las indicaciones de teclas de la parte inferior, en los botones y pestañas de los paneles, en las figuras de las clases al crear un personaje y en el minimapa; al hacer clic en un suelo vacío caminas hasta allí y, si mantienes pulsado, sigues caminando; al hacer clic en un monstruo lo atacas, y los objetos funcionan con doble clic y arrastre. Con teclado, las indicaciones en pantalla muestran teclas del teclado. Las partidas guardadas se quedan en este Mac (una App que compilas tú no tiene sincronización por iCloud) y se pueden importar a mano desde un iPhone / iPad. La tabla de teclas, cómo crear un personaje, qué puede hacer el ratón, los pasos de importación y las carencias conocidas están en [docs/MAC.md](docs/MAC.md) (en inglés). El teclado y un mando físico aún no los ha manejado ninguna persona; si lo pruebas, cuéntanos cómo te fue.
 
+### Android
+
+Sin Mac, sin adb y sin compilar el APK tú mismo; sirve cualquier computadora con Windows / Linux / Mac (por ahora se ha completado en un Mac). Los pasos completos, las herramientas necesarias y qué hacer si algo falla están en [docs/ANDROID.md](docs/ANDROID.md) (en inglés).
+
+1. Prepara tus archivos del juego, igual que para los dispositivos de Apple ([docs/GAME_FILES.md](docs/GAME_FILES.md)).
+2. Crea el paquete de importación en una computadora:
+
+   ```
+   python3 dm/tools/d2rm_android.py <directorio Update de tus archivos del juego> <directorio de salida>
+   ```
+
+3. Por USB, copia la carpeta `android` que se creó y la carpeta de recursos del juego `data` a `Download/S2X/D2R Mobile/` en el teléfono.
+4. Descarga `D2RMobile-android.apk` de la [página de Releases](https://github.com/d2r-mobile/d2r-mobile/releases), instálalo, ábrelo y permite el «acceso a todos los archivos»; la app importa el paquete e inicia el juego.
+
+El código fuente debe ser de la misma versión que el APK; con cada versión nueva cambia el APK y el paquete de importación juntos, y tus partidas se conservan. Para compilar el APK tú mismo desde el código fuente, consulta [dm/android/README.md](dm/android/README.md) (en inglés).
+
+### HarmonyOS
+
+No tienes que compilar la app. Necesitas una cuenta de desarrollador de Huawei y DevEco Studio (por su herramienta de firma y `hdc`; también puede generar el certificado de depuración y registrar el teléfono). Los pasos completos, los comandos y qué hacer si algo falla están en [docs/HARMONYOS.md](docs/HARMONYOS.md) (en inglés).
+
+1. Prepara tus archivos del juego, igual que para los dispositivos de Apple ([docs/GAME_FILES.md](docs/GAME_FILES.md), en inglés).
+2. Descarga el shell sin firmar `D2RMobile-harmony-shell-unsigned.hap` de la [página de Releases](https://github.com/d2r-mobile/d2r-mobile/releases), fírmalo con tu propio certificado de depuración y tu profile (`hap-sign-tool sign-app`) e instálalo en el teléfono con `hdc install -r`.
+3. Crea el paquete de ejecución en un ordenador:
+
+   ```
+   python3 dm/tools/d2rm_android.py --target ohos <carpeta Update de tus archivos del juego> <carpeta de salida>
+   ```
+
+4. En el teléfono, crea una carpeta «D2R Mobile» con los recursos del juego en `data/` y el paquete de ejecución del paso anterior en `dm/`, abre la app, toca Importar y elige esa carpeta.
+
+El código fuente debe ser de la misma versión que el shell. Para una versión nueva, firma el shell nuevo con la misma firma e instálalo encima del anterior; tus partidas guardadas se conservan. El autor completó estos pasos en un Mate 90 Pro Max.
+
 ### Sin un Mac: el contenedor más la herramienta de empaquetado
 
 Descarga nuestro paquete «contenedor» precompilado (`D2RMobile-shell-build-input.zip`; `D2RMobile-shell-ios18-build-input.zip` para iOS 18 – 25), que no contiene ningún contenido del juego, desde la [página de Releases](https://github.com/d2r-mobile/d2r-mobile/releases) de este repositorio, añade tus propios archivos del juego, crea el paquete de instalación en Windows o Linux y luego fírmalo e instálalo con una herramienta de sideloading. El contenedor es material de entrada para la compilación, no una app para instalar (si lo instalas tal cual, solo muestra un diálogo y no inicia el juego); cuando pases a una nueva versión, vuelve a crear el paquete de instalación con el nuevo contenedor. Solo en esta ruta, como la computadora que crea el paquete no tiene el compilador de shaders de Apple, el **primer arranque** en el teléfono dedica unos 7 minutos a compilar shaders (una sola vez, con barra de progreso); un paquete compilado con Xcode no tiene ese paso. Los pasos, y hasta qué punto se ha verificado cada uno, están en [docs/NO_XCODE.md](docs/NO_XCODE.md) (en inglés).
@@ -278,6 +349,7 @@ Descarga nuestro paquete «contenedor» precompilado (`D2RMobile-shell-build-inp
 | Elemento | Estado |
 |---|---|
 | Juego en línea | Fuera del alcance del proyecto; totalmente sin conexión |
+| Versión para Android | Faltan algunos detalles táctiles de iOS (menú de casillas de habilidad vacías, superposición para repartir puntos, imagen que sigue al dedo en una tienda); consulta «Android» más arriba |
 | Paquetes del juego `.nsp` / `.xci` | Las herramientas solo comprueban la versión del programa principal y no distinguen formatos de paquete; nosotros recorrimos todo el proceso con un `.xci`, y los usuarios han informado de que los paquetes `.nsp` también funcionan perfectamente |
 | Firmar e instalar con una herramienta de sideloading (Sideloadly, AltStore y similares) | No verificado; abre un issue y cuéntanos cómo te fue |
 | Crear el paquete en Linux | No verificado (verificado en Windows y Mac) |
@@ -291,11 +363,11 @@ Descarga nuestro paquete «contenedor» precompilado (`D2RMobile-shell-build-inp
 - En los puntos marcados como no verificados, cuéntanos si funcionaron o no. Cualquiera de las dos respuestas es valiosa.
 - Para cambiar el código: primero consigue que pasen los puntos de entrada de pruebas de arriba. Cada cambio tiene que superar las barreras de regresión.
 
-**Llevarlo a otras plataformas:** este enfoque no se limita a iPhone y iPad. Los Mac con Apple silicon ya tienen una versión nativa (consulta «Jugar directamente en un Mac», más arriba), compilada a partir del mismo programa del juego y el mismo anfitrión; Apple TV también tiene un port de la comunidad (versión preliminar para desarrolladores, consulta la tabla de dispositivos). Los teléfonos Android usan la misma clase de procesador, así que el programa del juego también se ejecuta allí de forma nativa, y el camino está totalmente abierto: las únicas partes que hay que sustituir son las caras del anfitrión y de la capa gráfica que dan a la plataforma. El autor no tiene ningún teléfono Android a mano, y le encantaría ver a alguien llevarlo a Android.
+**Llevarlo a otras plataformas:** este enfoque no se limita a iPhone y iPad. Los Mac con Apple silicon ya tienen una versión nativa (consulta «Jugar directamente en un Mac», más arriba), compilada a partir del mismo programa del juego y el mismo anfitrión; Apple TV también tiene un port de la comunidad (versión preliminar para desarrolladores, consulta la tabla de dispositivos). Android ya también está en marcha: desde la v2.0 hay una versión para Android portada por la comunidad (consulta «Android» más arriba), construida sobre el mismo anfitrión y con solo la capa gráfica sustituida por Vulkan; también ha llegado una versión para HarmonyOS (consulta «HarmonyOS» más arriba), que comparte el mismo motor Vulkan.
 
 **Llevarlo a otros juegos:** alguien ya ha probado otros juegos de Switch sobre el mismo anfitrión. El anfitrión tiene algunos comportamientos que están activados por defecto en iOS y se escribieron para este juego en concreto; otro juego tropieza con ellos primero, así que desactívalos o sácalos antes de empezar:
 
-- `dm/host/hle_oe.c`: la escala de renderizado 3D vale 0.75 por defecto en iOS, y `scale3d_tick` la reescribe en desplazamientos dentro del renderizador de este juego; con otro juego, eso es un puntero descontrolado.
+- `dm/host/hle_oe.c`: la escala de renderizado 3D vale 0.75 por defecto en los teléfonos (la app de Android la fija en 0.85), y `scale3d_tick` la reescribe en desplazamientos dentro del renderizador de este juego; con otro juego, eso es un puntero descontrolado.
 - `dm/host/hle_fs.c`: la siembra del alijo compartido en el primer arranque (`DM_STASH_SEED`) y los ajustes predeterminados de la distribución táctil (`DM_TOUCH_DEFAULTS`) están activados por defecto en iOS.
 - `dm/host/main.c`: el limitador de vaciado de partidas guardadas parchea una constante en una dirección fija del programa del juego; `argv[0]` está fijado en el código como `"D2R"`.
 - `dm/host/hle_time.c`: el interruptor de prueba de hora fija reconoce una dirección fija del programa del juego.
@@ -321,12 +393,21 @@ Lo más limpio sería mover estos valores predeterminados a una configuración p
 | [docs/OLDER_SYSTEMS.md](docs/OLDER_SYSTEMS.md) (en inglés) | Sistemas antiguos (iOS 18 – 25, macOS 15 – 25): compilar la versión para API antiguas y combinarla con el Legacy Device Pack |
 | [docs/qa-rift-pet-life.md](docs/qa-rift-pet-life.md) (en inglés) | Lista de comprobación de regresión para la vida de los esbirros en las Greater Rifts (qué se ha ejecutado y qué no; se agradecen aportaciones) |
 | [docs/DERIVED.md](docs/DERIVED.md) (en inglés) | Material relacionado con el juego en este repositorio: qué hay, qué no hay y por qué |
+| [docs/ANDROID.md](docs/ANDROID.md) (en inglés) | Jugar en un teléfono Android: instalar el APK, crear el paquete de importación, versiones nuevas, problemas |
+| [docs/HARMONYOS.md](docs/HARMONYOS.md) (en inglés) | Jugar en un teléfono HarmonyOS: firmar el shell sin firmar, crear el paquete de ejecución, importar, solución de problemas |
+| [dm/harmony/README.md](dm/harmony/README.md) (en inglés) | HarmonyOS: estructura del código, comandos de compilación, ajustes por defecto y mediciones |
+| [dm/android/README.md](dm/android/README.md) (en inglés) | Android: estructura del código, compilación, los archivos que hay que poner en el teléfono y la lista de comprobación |
+| [dm/gfx/vulkan/INTEGRATION.md](dm/gfx/vulkan/INTEGRATION.md) (en inglés y chino) | Cómo se conecta la capa gráfica de Vulkan a la API gráfica común |
+| [docs/ANDROID_COLLABORATION.md](docs/ANDROID_COLLABORATION.md) (en inglés) | Colaboración Android / HarmonyOS: quién trabaja dónde, cómo participar, estado medido y trabajo pendiente; las notas de cada ronda están en [docs/android-notes/](docs/android-notes/) |
 
 ## Aviso legal
 
 **Debes poseer el juego, incluida la expansión Reign of the Warlock.** Este es un proyecto independiente y sin fines comerciales. No está afiliado a Blizzard Entertainment ni a Nintendo, ni cuenta con su respaldo o patrocinio. Diablo y Blizzard Entertainment son marcas comerciales de Blizzard Entertainment, Inc.; Nintendo Switch es una marca comercial de Nintendo. Úsalo solo con una copia del juego que poseas.
 
 ## Agradecimientos
+
+**La versión para Android de la v2.0 viene de tres autores de la comunidad. Gracias especiales a:**
+
 
 Este proyecto se apoya en el trabajo de código abierto que aparece a continuación. Gracias a sus autores y mantenedores.
 

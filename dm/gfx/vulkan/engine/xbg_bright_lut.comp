@@ -1,0 +1,32 @@
+#version 450
+// 3D 画面加亮的调色表重写（与 dm/gfx/nvn/nvn_mtl.m 的 Metal 核 lutk 同一算法）：色调映射先把合成好的 HDR x0.008 做 PQ 编码，
+// 再查这张 32^3 调色表；HDR 先乘曝光 k 等价于把表换成 L'(u) = L(PQ(k * PQ^-1(u)))。高光按提亮后的亮度往原值收（雪、天光不糊成白）。
+// 改了这里要重新生成 xbg_bright_spv.h（命令见那个文件开头）。
+// Color table rewrite for the 3D picture brightening (the same algorithm as the Metal kernel lutk in dm/gfx/nvn/nvn_mtl.m):
+// tone mapping PQ-encodes the composited HDR x0.008 and then looks up this 32^3 table; multiplying HDR by the exposure k
+// first equals replacing the table with L'(u) = L(PQ(k * PQ^-1(u))). Highlights are pulled back toward the original value
+// by their brightened luminance (snow and sky light do not wash out to white). Regenerate xbg_bright_spv.h after editing
+// this file (the command is at the top of that file).
+layout(local_size_x = 4, local_size_y = 4, local_size_z = 4) in;
+layout(set = 0, binding = 0) uniform sampler3D src;
+layout(set = 0, binding = 1) writeonly uniform image3D dst;
+layout(push_constant) uniform Push { float k; } pc;
+
+// 与色调映射着色器里的 PQ 常数逐位相同
+// Bit-identical to the PQ constants in the tone mapping shader
+const float m1 = 0.1593017578125, m2 = 78.84375, c1 = 0.8359375, c2 = 18.8515625, c3 = 18.6875;
+vec3 pq(vec3 v) { vec3 p = pow(abs(v), vec3(m1)); return pow((c1 + c2 * p) / (1.0 + c3 * p), vec3(m2)); }
+vec3 pq_inv(vec3 u) { vec3 q = pow(u, vec3(1.0 / m2)); return pow(max(q - c1, 0.0) / max(c2 - c3 * q, 1e-6), vec3(1.0 / m1)); }
+
+void main() {
+    ivec3 n = imageSize(dst), g = ivec3(gl_GlobalInvocationID);
+    if (any(greaterThanEqual(g, n))) return;
+    vec3 u = (vec3(g) + 0.5) / vec3(n), u2 = clamp(pq(pc.k * pq_inv(u)), 0.0, 1.0);
+    // b：按曝光 k 提亮后的输出；o：原版这一格
+    // b: the output brightened by exposure k; o: this cell in the original game
+    vec4 b = textureLod(src, u2, 0.0), o = texelFetch(src, g, 0);
+    // 高光保护：提亮后越接近白，越收回原值；暗处 s = 0 照常提亮
+    // Highlight protection: the closer to white after brightening, the more it returns to the original; dark cells (s = 0) brighten fully
+    float s = smoothstep(0.65, 1.0, dot(b.rgb, vec3(0.2126, 0.7152, 0.0722)));
+    imageStore(dst, g, vec4(max(mix(b.rgb, o.rgb, s), o.rgb), b.a));
+}

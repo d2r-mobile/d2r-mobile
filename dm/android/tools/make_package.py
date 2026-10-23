@@ -346,7 +346,7 @@ def main():
 
         game = produce / "game"
         game.mkdir(exist_ok=True)
-        environment = dict(os.environ, DM_TARGET="android", DM_RULESET="touch-run-v4")
+        environment = dict(os.environ, DM_TARGET="android", DM_ANDROID_RUNTIME="1", DM_RULESET="touch-run-v4")
         for module in ("main", "sdk", "subsdk0"):
             run([sys.executable, ROOT / "tools" / "patch_nso.py", exefs / module, game, module],
                 f"改写模块 {module}", env=environment)

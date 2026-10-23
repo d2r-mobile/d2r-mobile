@@ -26,21 +26,48 @@ STEPS = [('加宽储藏箱', ['gen_widestash_art.py', '{R}']), ('编年史盖板
          ('技能图集与索引', ['native_art/generate.py', '{R}']), ('底部 UI v4', ['gen_hud_v4.py', '{R}'])]
 
 
-def stamp(R):
+def python_command(script, *arguments):
+    # 每个生成子进程使用 UTF-8 和 LF；保留调用方已有的只读 RomFS 适配器。
+    # Every generator subprocess uses UTF-8 and LF while retaining an existing read-only RomFS adapter.
+    return [sys.executable, '-X', 'utf8', os.path.join(HERE, '..', '..', 'tools', 'winlf', 'run.py'), script, *arguments]
+
+
+def stamp(R, overlay_only=False):
     h = hashlib.sha256(open(os.path.join(R, 'data', 'build_manifest.psv'), 'rb').read())
-    for d, ds, fs in sorted(os.walk(HERE)):
+    h.update(b'\0overlay-only\0' if overlay_only else b'\0full-assets\0')
+    # 逐层就地剪掉 __pycache__ 并排序（不能写 sorted(os.walk(...))：那会先走完整棵树，剪枝失效，生成步骤第一次跑时新写的 .pyc 就会改掉指纹，
+    # 下一次 ensure 把刚出的产物当成过期再出一遍）。
+    # Prune __pycache__ and sort in place level by level (not sorted(os.walk(...)): that walks the whole tree first, so the pruning has no
+    # effect, and the .pyc files the generation steps write on their first run change the fingerprint, making the next ensure() regenerate
+    # output it has just produced).
+    for d, ds, fs in os.walk(HERE):
         ds[:] = sorted(x for x in ds if x != '__pycache__')
-        for f in sorted(fs): h.update(os.path.relpath(os.path.join(d, f), HERE).encode()); h.update(open(os.path.join(d, f), 'rb').read())
+        for f in sorted(x for x in fs if not x.endswith('.pyc')): h.update(os.path.relpath(os.path.join(d, f), HERE).encode()); h.update(open(os.path.join(d, f), 'rb').read())
     pc = os.environ.get('DM_PC_DATA') or os.path.join(DM_ROOT, 'data/assets-src/raw')
     h.update(('%s|%s|%s' % (pc, os.path.isdir(pc), os.environ.get('DM_REQUIRE_PC_ART', ''))).encode())
     return h.hexdigest()
 
 
-def ensure(R):
+def ensure(R, overlay_only=False):
     """产物齐、指纹没变就直接返回；否则拿锁生成。返回 True = 这次重出了。 | If the build output is complete and the fingerprint unchanged, return directly; otherwise take the lock and generate. Returns True = regenerated this time."""
     root = gen_paths.gen_dir(); st = os.path.join(root, '.stamp'); lock = os.path.join(root, '.gen_lock')
-    outs = [os.path.join(root, 'NativeHUD', 'v4', 'base.png'), os.path.join(HERE, '..', 'Sources', 'TouchArt', 'dm_native_skill_0.png'), os.path.join(HERE, '..', 'Sources', 'dm_touch_native_art.c')]
-    want = stamp(R); fresh = lambda: all(map(os.path.isfile, outs)) and os.path.isfile(st) and open(st).read() == want
+    v4 = os.path.join(root, 'NativeHUD', 'v4')
+    outs = [os.path.join(v4, 'base.png'), os.path.join(v4, 'hud.json'), os.path.join(v4, 'hud_v4_ui', 'ui.json')]
+    full_outs = outs + [os.path.join(HERE, '..', 'Sources', 'TouchArt', 'dm_native_skill_0.png'),
+                        os.path.join(HERE, '..', 'Sources', 'dm_touch_native_art.c'),
+                        os.path.join(v4, 'hud_v4_ui', 'sil_dm_native_skill_0.png')]
+    if not overlay_only: outs = full_outs
+    # 两种范围共享目录及锁，模式写进同一 stamp，不能把精简产物当成完整 iOS 产物。完整产物是精简产物的超集，所以精简请求也认新鲜的完整
+    # stamp：run.sh 先出完整产物，随后 gen_romfs_overlay.py 的精简请求不再重出（重出会清掉 hud_v4_ui/ 里的技能剪影）。
+    # Both scopes share outputs and one lock; one mode-sensitive stamp prevents reusing overlay-only output as full iOS assets. The full
+    # output is a superset of the overlay-only output, so an overlay-only request also accepts a fresh full stamp: after run.sh makes the
+    # full assets, gen_romfs_overlay.py's overlay-only request no longer regenerates them (which cleared the skill silhouettes in hud_v4_ui/).
+    want = stamp(R, overlay_only=overlay_only); full_want = stamp(R) if overlay_only else want
+    def fresh():
+        if not os.path.isfile(st): return False
+        have = open(st).read()
+        if have == full_want: return all(map(os.path.isfile, full_outs))
+        return have == want and all(map(os.path.isfile, outs))
     if fresh(): return False
     t0 = time.time()
     while True:
@@ -57,14 +84,16 @@ def ensure(R):
         open(os.path.join(lock, 'pid'), 'w').write(str(os.getpid()))
         if fresh(): return False   # 等锁期间别人已经生成好了 | Someone else already generated it while we waited for the lock
         if os.path.exists(st): os.remove(st)
-        run_steps(R); open(st, 'w').write(want); return True
+        run_steps(R, overlay_only=overlay_only); open(st, 'w').write(want); return True
     finally: shutil.rmtree(lock, ignore_errors=True)
 
 
-def run_steps(R):
+def run_steps(R, overlay_only=False):
     for name, cmd in STEPS:
-        t0 = time.time(); r = subprocess.run([sys.executable] + [os.path.join(HERE, c) if i == 0 else c.replace('{R}', R) for i, c in enumerate(cmd)],
-                                            capture_output=True, text=True)
+        if overlay_only and cmd[0] == 'native_art/generate.py': continue
+        argv = python_command(os.path.join(HERE, cmd[0]), *[c.replace('{R}', R) for c in cmd[1:]])
+        if overlay_only and cmd[0] == 'gen_hud_v4.py': argv.append('--overlay-only')
+        t0 = time.time(); r = subprocess.run(argv, capture_output=True, text=True)
         if r.returncode: sys.exit('🔴 生成「%s」失败：\n%s%s' % (name, r.stdout[-1500:], r.stderr[-1500:]))
         tip = [l for l in r.stdout.splitlines() if l.startswith(('没找到', '底栏素材'))]
         print('%s：%.1f 秒%s' % (name, time.time() - t0, ('（' + tip[0] + '）') if tip else ''))

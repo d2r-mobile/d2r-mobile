@@ -1,12 +1,12 @@
-# D2R Mobile · Diablo II: Resurrected for iPhone, iPad & Mac
+# D2R Mobile · Diablo II: Resurrected for iPhone, iPad, Mac, Android & HarmonyOS
 
-**Play Diablo II: Resurrected offline on iPhone, iPad and Apple silicon Mac.** Native ARM code, Metal graphics, touch controls and the Reign of the Warlock expansion. Bring your own Nintendo Switch game files.
+**Play Diablo II: Resurrected offline on iPhone, iPad, Apple silicon Mac, Android and HarmonyOS.** Native ARM code, Metal on Apple and Vulkan on Android and HarmonyOS. Includes Reign of the Warlock, touch controls and controller support. Bring your own Nintendo Switch game files.
 
 Drag to aim. Make Runewords in one tap. Clear Hell, then take on 100 levels of Greater Rift and a 12-stage Boss Rush. Play with touch or a controller; the native Mac app also supports keyboard and mouse.
 
 **[Build & install](#getting-started)** · [Supported devices](#which-devices-are-supported) · [Releases](https://github.com/d2r-mobile/d2r-mobile/releases) · [中文](README.zh-CN.md) · [Español](README.es.md)
 
-MIT · English / 中文 / Español / Русский · iOS 26+ / macOS 26+; older-API builds support iOS 18+ / macOS 15+. Apple TV 4K has a [community developer preview](dm/tvos/README.md), verified through character selection only.
+MIT · English / 中文 / Español / Русский / 한국어 · iOS 26+ / macOS 26+; older-API builds support iOS 18+ / macOS 15+. Apple TV 4K has a [community developer preview](dm/tvos/README.md), verified through character selection only.
 
 <p align="center">
   <img src="https://github.com/d2r-mobile/d2r-mobile/releases/download/assets/hero_en.jpg" width="100%" alt="Diablo II: Resurrected running natively on iPhone, with Harrogath and the red portal to the Greater Rift">
@@ -105,7 +105,7 @@ We rebuilt every panel and every action for touch, with one rule: **keep the ori
 
 ### Controller
 
-Connect a controller and press any button: the interface switches to the original controller layout, with button prompts at the bottom of every panel. Touch the screen and the touch interface comes back. Inventory, stash, skill tree, Chronicle and settings all work with a controller, using the Switch button mapping.
+Connect a controller and press any button: the interface switches to the original controller layout, with button prompts at the bottom of every panel. Touch the screen and you are back in the touch interface instantly. Inventory, stash, skill tree, Chronicle and settings are fully controller-navigable, with the same button mapping as on Switch. With an Xbox controller the layout switches automatically to the PC / Xbox one (bottom confirms, right goes back) and the prompts show Xbox button icons; there is nothing to turn on.
 
 <p align="center">
   <img src="https://github.com/d2r-mobile/d2r-mobile/releases/download/assets/en_pad_combat.jpg" width="49%" alt="Combat with a controller connected">
@@ -170,9 +170,9 @@ You can toggle most features one by one in game under Options → Custom.
   <img src="https://github.com/d2r-mobile/d2r-mobile/releases/download/assets/en_map.jpg" width="33%" alt="The full-screen map">
 </p>
 
-### English, Chinese, Spanish and Russian
+### English, Chinese, Spanish, Russian and Korean
 
-The whole game switches between English, Chinese, Spanish and Russian under Options → Custom; after a restart, the interface is in the language you chose. On first launch it follows your device language (Spanish from Spain uses the game's esES text, other Spanish regions use the Latin American esMX text). In English, Spanish and Russian, items, skills and monsters use the original Diablo II wording, and everything we added — Greater Rift, Chronicle, the settings page, gesture prompts, map name plates — is translated too (item notes are translated for Chinese and Spanish only). Russian is the game's single ruRU text, with no regional variants. Voice acting: Chinese UI gets Chinese voices; Russian gets the original Russian voices when your game files include them (a package built from the complete game data does), otherwise English; everything else is English.
+The whole game switches between English, Chinese, Spanish, Russian and Korean under Options → Custom; after a restart, the interface is in the language you chose. On first launch it follows your device language (Spanish from Spain uses the game's esES text, other Spanish regions use the Latin American esMX text). In English, Spanish, Russian and Korean, items, skills and monsters use the original Diablo II wording, and everything we added — Greater Rift, Chronicle, the settings page, gesture prompts, map name plates — is translated too (item notes are translated for Chinese and Spanish only). Russian is the game's single ruRU text and Korean its koKR text, with no regional variants. Voice acting: Chinese UI gets Chinese voices; Russian and Korean get the original Russian or Korean voices when your game files include them (a package built from the complete game data does), otherwise English; everything else is English.
 
 <p align="center">
   <img src="https://github.com/d2r-mobile/d2r-mobile/releases/download/assets/en_game.jpg" width="58%" alt="Gameplay with the English interface">
@@ -197,9 +197,35 @@ flowchart LR
 | Host | `dm/host` | Loads the rewritten program and provides the platform services it calls |
 | Graphics | `dm/gfx` | Implements the game's graphics API on Metal; the build translates shaders offline from the game's originals |
 | iOS app | `dm/ios` | The app shell, touch controls and interface |
-| Verification | `dm/verify` | Checks that the rewritten code behaves like the original, plus the regression gates every change goes through |
+| Android app | `dm/android` | The Android shell, touch overlay and Vulkan presentation |
+| HarmonyOS app | `dm/harmony` | The HarmonyOS shell (ArkTS + N-API), sharing the host and the Vulkan engine with Android |
+| Vulkan graphics | `dm/gfx/vulkan` | The same graphics API on Vulkan (shared by Android and HarmonyOS; the engine comes from the HarmonyOS port) |
+| Verification | `dm/verify` | Checks that the rewritten code behaves exactly like the original, plus the regression gates every change goes through |
 
 **Tests ship with the code.** The project includes unit tests for the host and graphics layers, an equivalence check for every rewritten instruction, scripted walkthrough regression for the touch interface, and on-device smoke tests. Start with `make -C dm/host/tests run`, `make -C dm/gfx/tests run` and `dm/verify/regress.sh` (run them inside the Python environment from step 2 below; `regress.sh` also needs `brew install llvm`). [CONTRIBUTING.md](CONTRIBUTING.md) covers how to send changes.
+
+## Android (new in v2.0)
+
+Android phones use ARM64 processors just like the Switch, so, as on Apple devices, the game's own program executes directly on the phone with no CPU emulation. This release brings the whole host — system calls, file system, audio, input, saves — to Android unchanged and swaps the graphics layer for Vulkan: the NVN-to-Vulkan replay engine comes from Android implementation's HarmonyOS port, and the Android app, touch controls, Vulkan presentation and a full round of performance work, each step measured on a phone, are by Android implementation. The Apple and Android versions share the same host code, so future changes benefit both.
+
+Measured by the port's authors on their phones (product defaults: 3D render scale capped at 0.85 and lowered dynamically when frames drop):
+
+| Phone | Result |
+|---|---|
+| Redmi K50 Ultra (Snapdragon 8+ Gen 1, Adreno 730, Android 15) | Camp, Den of Evil fight, Cow Level fight: **median 60 fps**, GPU about 14–15 ms a frame |
+| OnePlus 13 (Adreno 830) | Playable; when one particular light effect appears in the camp, small black squares occasionally flash for an instant (under investigation) |
+
+Minimum: ARM64, Android 12 (API 31) or later, and a GPU with Vulkan 1.1.
+
+**How to use it today**: install `D2RMobile-android.apk` from the release page (it contains no game content). On a computer, run `python3 dm/tools/d2rm_android.py <Update directory> <output directory>` on your own game files to make the import pack (an `android` folder with the rewritten game program, every Vulkan shader bundle, the touch overlay and a few data tables), and copy it together with your game resources (the `data` folder) to `Download/S2X/D2R Mobile/` on the phone. The App imports it with a progress screen when you open it. No adb, and no need to build the APK yourself. The full steps are in [docs/ANDROID.md](docs/ANDROID.md). The touch controls are drawn the same way as on iPhone (button sockets, silver skill silhouettes, joystick), and no virtual pad buttons cover open panels. Compared with the iOS version, a few touch details are still unfinished: the empty-skill-slot menu, the stat-point overlay, and the item image that follows your finger while dragging in a shop.
+
+Progress, the measurements from every round and the remaining work are in [docs/ANDROID_COLLABORATION.md](docs/ANDROID_COLLABORATION.md) and [docs/android-notes/](docs/android-notes/). The HarmonyOS version is in the next section.
+
+## HarmonyOS (new in v2.0)
+
+The HarmonyOS NEXT app (`dm/harmony`) is by Android implementation and uses the same host and the same Vulkan engine as Android. Measured by the author on a Mate 90 Pro Max (Maleoon 955): 59.7 fps holding the joystick in the Rogue Encampment, display interval p50 16.6 / p99 18.1 ms.
+
+**How to use it**: the same idea as the iOS shell. The Releases page has an **unsigned install package that contains no game content** (`D2RMobile-harmony-shell-unsigned.hap`). HarmonyOS NEXT only installs apps signed with your own developer certificate, so you re-sign it with your own debug certificate and install it; you do not build the app yourself. Then, on a computer, run `python3 dm/tools/d2rm_android.py --target ohos <Update folder> <output folder>` on your own game files to make the runtime pack, put it with the game resources in a "D2R Mobile" folder on the phone, open the app and pick that folder to import. The full steps are in [docs/HARMONYOS.md](docs/HARMONYOS.md). The author ran the whole chain (re-sign → install → first import → into a game → save and exit) on a Mate 90 Pro Max, with three cold starts in a row working; you need a Huawei developer account (DevEco Studio can generate the debug certificate and register the device for you).
 
 ## Which devices are supported
 
@@ -208,12 +234,15 @@ Minimum: **an A14 / M1 chip or later** — the graphics layer needs Metal 3, whi
 | Device | Playable? | How | How sure we are |
 |---|---|---|---|
 | **iPhone / iPad, A17 Pro and later** (iPhone 15 Pro and later, iPhone 16 and later, iPads with M-series chips) | Yes | iOS 26 or later: the default shell / default build; iOS 18 – 25: the iOS 18 shell / [older-API build](docs/OLDER_SYSTEMS.md) | Main devices, played daily |
+| **iPhone Duo** (foldable) | Yes; the picture resizes when you unfold or fold | The shells on the Releases page are built with Xcode 27.1; when building with Xcode yourself, use 27.1 so the inner screen is filled (see [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md)) | Supported since v2.0. Checked on a Mac switching between the outer and inner screen sizes taken from the iPhone Duo simulator (the simulator itself cannot run the game's graphics). We will test on a real iPhone Duo as soon as we have one; if you have the phone, please tell us how it goes in an Issue |
 | **iPhone / iPad, A16 and earlier** (all iPhone 14 models, iPhone 15 / 15 Plus, iPhone 13 series and so on) | Yes, with one extra step | Make a Legacy Device Pack from your own game files as in [docs/LEGACY_DEVICES.md](docs/LEGACY_DEVICES.md) and include it when making the install package; the system split is the same as the row above | Played by players: iPhone 14 Pro Max (A16, 6 GB) at 60 fps; iPhone 13 Pro Max (A15, 6 GB) in the 30 fps mode |
 | **Devices with 4 GB of RAM** (such as the 6th-generation iPad mini or the 4th-generation iPad Air) | Runs, but memory is very tight (we are still reducing memory use) | Same as the A16-and-earlier row (with the Legacy Device Pack) | Tested by a player: on an iPad mini 6 (A15, 4 GB, iPadOS 27) a few minutes of Act I ran at 50–58 fps after automatic quality reduction, with constant system memory warnings and only about 560 MB below the system memory limit — busy scenes with many monsters and effects may be ended by the system; on an earlier version an iPad Air 4 (A14, 4 GB) was ended by the system a few seconds after launch |
 | **A14 chips with 6 GB of RAM or more** (such as iPhone 12 Pro / 12 Pro Max) | No reports yet | Same as the A16-and-earlier row | If you have tried, please open an Issue and tell us |
 | **A13 and earlier chips** (such as the iPhone 11 series and the 2020 iPad Pro) | Not supported | — | The graphics chip does not support Metal 3 (tested by a player on an iPad Pro with A12Z; Apple's references are above the table); the app says so at launch instead of crashing |
 | **Mac, Apple silicon** | Yes (native macOS App) | macOS 26 or later: the default build; macOS 15 – 25: the [older-API build](docs/OLDER_SYSTEMS.md). Keyboard, mouse and gamepad all work; what each can do is in [docs/MAC.md](docs/MAC.md) | A player has played the older-API build on macOS 15.7.7 |
-| **Apple TV 4K (3rd generation, A15)** | Community port ([@yinqingyan](https://github.com/yinqingyan), contributed under the MIT License with the author's consent), developer preview | Build as in [dm/tvos/README.md](dm/tvos/README.md) and copy the game files and the Legacy Device Pack into the app; real hardware only, the Simulator cannot run it; saves live in the Caches directory, which the system may purge | Reached the character-selection screen on real hardware; entering the game, full controller mapping and saves are not verified yet, and the maintainers have not tested it on real hardware |
+| **Apple TV 4K (3rd generation, A15)** | Community port (Android implementation, contributed under the MIT License with the author's consent), developer preview | Build as in [dm/tvos/README.md](dm/tvos/README.md) and copy the game files and the Legacy Device Pack into the app; real hardware only, the Simulator cannot run it; saves live in the Caches directory, which the system may purge | Reached the character-selection screen on real hardware; entering the game, full controller mapping and saves are not verified yet, and the maintainers have not tested it on real hardware |
+| **HarmonyOS phones** (HarmonyOS NEXT, API 26) | Playable (community port) | The unsigned shell from the Releases page, re-signed with your own debug certificate, plus a runtime pack made from your own game files, see [docs/HARMONYOS.md](docs/HARMONYOS.md) | Verified by the author on a Mate 90 Pro Max: re-sign, install, import, into a game, save and exit |
+| **Android phones** (ARM64, Android 12 or later, Vulkan 1.1) | Playable (community port) | The release page's APK + an import pack made from your own game files, see [docs/ANDROID.md](docs/ANDROID.md) | Measured by the port's authors: Redmi K50 Ultra median 60 fps; OnePlus 13 playable, with occasional black squares flashing for an instant; played on a vivo X200 Ultra |
 | **Intel Macs** | Not supported | — | — |
 
 **What the dialogs in the App mean**
@@ -225,13 +254,23 @@ Minimum: **an A14 / M1 chip or later** — the graphics layer needs Metal 3, whi
 
 ## Getting started
 
-Both routes start with **the files of the game you bought**: the Switch release of Diablo II: Resurrected plus the Reign of the Warlock expansion, updated to 1.0.34.0 (the version the console shows; it corresponds to PC version 3.3.94012, and the directory names and tools in this repository use the latter number). This project is built for the version with that expansion; using it without the expansion is not supported and has not been verified. How to prepare them is in [docs/GAME_FILES.md](docs/GAME_FILES.md).
+Whatever device you play on, you start with **the files of the game you bought**: the Switch release of Diablo II: Resurrected plus the Reign of the Warlock expansion, updated to 1.0.34.0 (the version the console shows; it corresponds to PC version 3.3.94012, and the directory names and tools in this repository use the latter number). This project is built for the version with that expansion; using it without the expansion is not supported and has not been verified. How to prepare them is in [docs/GAME_FILES.md](docs/GAME_FILES.md).
 
 > This project provides only tools and an install shell that contains no game content. We do not distribute or endorse, and are not responsible for, any third party distributing game assets, game executables or install packages that contain game content. Please use only game files you legally own.
 
 This project is implemented and verified on the Switch release 1.0.34.0 (which corresponds to PC version 3.3.94012), and by default the tools accept only that version. Community users have reported adapting other versions on their own by following the structure of this repository, and running them successfully. The rule tables are grouped by game version (in `dm/tools/patch_nso.py`, keyed by the build ID of the main program); you are welcome to contribute the version you adapted.
 
-**Check your device first**: the "Which devices are supported" table above tells you which build to use and whether you also need a Legacy Device Pack.
+**Check your device first** and find your section in the table below; the "Which devices are supported" table above tells you which build to use on Apple devices and whether you also need a Legacy Device Pack.
+
+| Your device | How | Steps |
+|---|---|---|
+| iPhone / iPad, with an Apple silicon Mac | A full build from source | "With a Mac: three steps" below |
+| iPhone / iPad, without a Mac | Download a shell with no game content and add your game content on Windows / Linux | "Without a Mac" below and [docs/NO_XCODE.md](docs/NO_XCODE.md) |
+| Mac (Apple silicon) | Build a native macOS App | "Playing directly on a Mac" below and [docs/MAC.md](docs/MAC.md) |
+| Android phone | Install the release page's APK and copy an import pack made on a computer to the phone | "Android" below and [docs/ANDROID.md](docs/ANDROID.md) |
+| HarmonyOS phone | Re-sign the unsigned shell from the Releases page with your own debug certificate, make a runtime pack on a computer and copy it to the phone | "HarmonyOS" below and [docs/HARMONYOS.md](docs/HARMONYOS.md) |
+
+The two routes for iPhone / iPad compared:
 
 | | With a Mac | Without a Mac |
 |---|---|---|
@@ -269,7 +308,7 @@ The fastest route is [the one-sentence build](#build-it-with-one-sentence): your
 
 The first time you open the app on your phone, it asks for the "game resource folder": the 18 resource archives from your game files. The section "The "game resource folder" that goes on the phone" in [docs/GAME_FILES.md](docs/GAME_FILES.md) shows where to put them.
 
-`./setup.sh check` is a health check. It reports the state of this computer, the tools, the game files and the signing configuration item by item, and for anything missing it says where to get it and which command to run next. It changes nothing. If you have a whole game package (`.xci` / `.nsp`), `./setup.sh <game package> <prod.keys>` extracts the game files into place first and then carries on (install hactool first). Run `./setup.sh` again after you pull new commits: it rebuilds the patched binaries and the shader library for the current sources and skips steps that are up to date. It also rewrites three files in the repository that track your local tool fingerprints (`dm/gfx/tools/dmsh_chain.lock`, `dm/gfx/nvn/dmsh_chain.h`, `dm/gfx/nvn/c1_full.tsv`). That is expected; do not commit them.
+`./setup.sh check` is a health check: it reports the state of this computer, the tools, the game files and the signing configuration item by item, and for everything missing it says where to get it and which command to run next; it changes nothing. If what you have is a whole game package (`.xci` / `.nsp`), `./setup.sh <game package> <prod.keys>` first extracts the game files into place and then carries on (install hactool first); if the base game and the update are separate packages, give both: `./setup.sh <base game> <update> <prod.keys>`. Run `./setup.sh` again after every update to a new commit: it rebuilds the patched binaries and the shader library for the current sources (steps that are already up to date are skipped). It also rewrites three files in the repository that change with your local tool fingerprints (`dm/gfx/tools/dmsh_chain.lock`, `dm/gfx/nvn/dmsh_chain.h`, `dm/gfx/nvn/c1_full.tsv`); that is expected, do not commit them.
 
 ### Playing directly on a Mac
 
@@ -283,6 +322,38 @@ DM_MAC_M3=1 dm/tools/mac_app.sh      # macOS 15 – 25: produces D2R Mobile M3.a
 
 The interface is the original's gamepad interface. Keyboard: Space confirms, Esc goes back, Return, the `=` key opens the menu / a new character, W A S D moves, and every other gamepad button has a key. Mouse: clicking a monster, NPC or object walks over and interacts, and the skill slots, potion cells and key hints at the bottom, buttons and tabs in panels, the class figures when creating a character and the minimap can all be clicked; clicking empty ground walks there and holding keeps walking, clicking a monster attacks it, and items take double clicks and drags. With a keyboard, the prompts on screen show keyboard keys. Saves stay on this Mac (an App you build yourself has no iCloud sync) and can be imported by hand from an iPhone / iPad. The key table, how to create a character, what the mouse can do, the import steps and the known shortcomings are in [docs/MAC.md](docs/MAC.md). Keyboard and a physical gamepad have not been operated by a person yet — if you try it, please tell us how it went.
 
+### Android
+
+No Mac, no adb and no building the APK yourself; any Windows / Linux / Mac computer will do (it has been run through on a Mac so far). The full steps, the tools to install and what to do when something goes wrong are in [docs/ANDROID.md](docs/ANDROID.md).
+
+1. Prepare your game files, the same as for Apple devices ([docs/GAME_FILES.md](docs/GAME_FILES.md)).
+2. Make the import pack on a computer:
+
+   ```
+   python3 dm/tools/d2rm_android.py <Update directory of your game files> <output directory>
+   ```
+
+3. Over USB, copy the `android` folder it made and the game resource folder `data` to `Download/S2X/D2R Mobile/` on the phone.
+4. Download `D2RMobile-android.apk` from the [Releases page](https://github.com/d2r-mobile/d2r-mobile/releases), install it, open it and allow "All files access"; the App imports the pack and starts the game.
+
+The source must be from the same release as the APK; for a new release, replace both the APK and the import pack, and your saves stay. To build the APK yourself from source, see [dm/android/README.md](dm/android/README.md).
+
+### HarmonyOS
+
+You do not build the app yourself. You need a Huawei developer account and DevEco Studio (for its signing tool and `hdc`; it can also generate the debug certificate and register the phone). The full steps, commands and what to do when something fails are in [docs/HARMONYOS.md](docs/HARMONYOS.md).
+
+1. Prepare your game files, the same as for Apple devices ([docs/GAME_FILES.md](docs/GAME_FILES.md)).
+2. Download the unsigned shell `D2RMobile-harmony-shell-unsigned.hap` from the [Releases page](https://github.com/d2r-mobile/d2r-mobile/releases), re-sign it with your own debug certificate and profile (`hap-sign-tool sign-app`), then install it on the phone with `hdc install -r`.
+3. Make the runtime pack on a computer:
+
+   ```
+   python3 dm/tools/d2rm_android.py --target ohos <Update folder of your game files> <output folder>
+   ```
+
+4. On the phone, make a "D2R Mobile" folder with the game resources in `data/` and the runtime pack from the previous step in `dm/`, open the app, tap Import and pick that folder.
+
+The source must be from the same release as the shell. For a new release, re-sign the new shell with the same signing and install it over the old one; your saves are kept. The author ran these steps on a Mate 90 Pro Max.
+
 ### Without a Mac: the shell plus the packaging tool
 
 Download our prebuilt "shell" package (`D2RMobile-shell-build-input.zip`; `D2RMobile-shell-ios18-build-input.zip` for iOS 18 – 25), which contains no game content, from this repository's [Releases page](https://github.com/d2r-mobile/d2r-mobile/releases), add your own game files, make the install package on Windows or Linux, then sign and install it with a sideloading tool. The shell is build input, not an app to install (installed as is, it only shows a dialog and does not start the game); when you move to a new release, make the install package again with the new shell. On this route only, because the computer making the package has no Apple shader compiler, the **first launch** on the phone spends about 7 minutes compiling shaders (once, with a progress bar); a package built with Xcode has no such step. The steps, and how far each one has been verified, are in [docs/NO_XCODE.md](docs/NO_XCODE.md).
@@ -292,6 +363,7 @@ Download our prebuilt "shell" package (`D2RMobile-shell-build-input.zip`; `D2RMo
 | Item | Status |
 |---|---|
 | Online play | Out of scope; fully offline |
+| Android version | A few iOS touch details (empty-skill-slot menu, stat-point overlay, the item image that follows your finger in a shop) are unfinished; see "Android" above |
 | `.nsp` / `.xci` game packages | The tools only check the version of the main program and do not distinguish package formats; we ran the whole path with an `.xci` ourselves, and users have reported that `.nsp` packages work perfectly as well |
 | Signing and installing with a sideloading tool (Sideloadly, AltStore and the like) | Not verified; open an issue and tell us how it went |
 | Making the package on Linux | Not verified (verified on Windows and Mac) |
@@ -305,11 +377,11 @@ Download our prebuilt "shell" package (`D2RMobile-shell-build-input.zip`; `D2RMo
 - For the items marked not verified, tell us whether they worked. Either answer helps.
 - To change the code, get the test entry points above passing first. Every change has to pass the regression gates.
 
-**Taking it to other platforms:** this approach is not limited to iPhone and iPad. Apple silicon Macs already have a native version (see "Playing directly on a Mac" above), built from the same game program and the same host; Apple TV also has a community port (developer preview, see the device table). Android phones use the same class of processor, so the game program executes natively there as well, and the route is fully open: the only parts to replace are the sides of the host and the graphics layer that face the platform. The author has no Android phone at hand, and would love to see someone bring it to Android.
+**Taking it to other platforms:** this approach is not limited to iPhone and iPad. Apple silicon Macs already have a native version (see "Playing directly on a Mac" above), built from the same game program and the same host; Apple TV also has a community port (developer preview, see the device table). Android has been reached too: since v2.0 there is a community-ported Android version (see "Android" above) built on the same host, with only the graphics layer swapped for Vulkan; a HarmonyOS version has arrived too (see "HarmonyOS" above), sharing the same Vulkan engine.
 
 **Taking it to other games:** someone has already tried other Switch games on the same host. The host has some behaviour that is on by default on iOS and was written for this one game; another game runs into these first, so turn them off or move them out before you start:
 
-- `dm/host/hle_oe.c`: the 3D render scale defaults to 0.75 on iOS, and `scale3d_tick` rewrites it at offsets inside this game's renderer — with another game that is a wild pointer.
+- `dm/host/hle_oe.c`: the 3D render scale defaults to 0.75 on phones (the Android app sets 0.85), and `scale3d_tick` rewrites it at offsets inside this game's renderer — with another game that is a wild pointer.
 - `dm/host/hle_fs.c`: seeding the shared stash on first launch (`DM_STASH_SEED`) and the touch-layout default settings (`DM_TOUCH_DEFAULTS`) are on by default on iOS.
 - `dm/host/main.c`: the save-flush throttle patches a constant at a fixed address in the game program; `argv[0]` is hard-coded to `"D2R"`.
 - `dm/host/hle_time.c`: the fixed-time test switch recognises a fixed address in the game program.
@@ -335,12 +407,21 @@ The cleaner arrangement is to move these defaults into per-game configuration an
 | [docs/OLDER_SYSTEMS.md](docs/OLDER_SYSTEMS.md) | Older systems (iOS 18 – 25, macOS 15 – 25): building the older-API version and combining it with the Legacy Device Pack |
 | [docs/qa-rift-pet-life.md](docs/qa-rift-pet-life.md) | Regression checklist for minion life in Greater Rifts (what has been run and what has not; additions welcome) |
 | [docs/DERIVED.md](docs/DERIVED.md) | Game-related material in this repository: what is here, what is not, and why |
+| [docs/ANDROID.md](docs/ANDROID.md) | Playing on an Android phone: installing the APK, making the import pack, new releases, troubleshooting |
+| [docs/HARMONYOS.md](docs/HARMONYOS.md) | Playing on a HarmonyOS phone: re-signing the unsigned shell, making the runtime pack, importing, troubleshooting |
+| [dm/harmony/README.md](dm/harmony/README.md) | HarmonyOS: source layout, build commands, defaults and measurements |
+| [dm/android/README.md](dm/android/README.md) | Android: source layout, building, the files to put on the phone, the acceptance checklist |
+| [dm/gfx/vulkan/INTEGRATION.md](dm/gfx/vulkan/INTEGRATION.md) | How the Vulkan graphics layer plugs into the shared graphics API |
+| [docs/ANDROID_COLLABORATION.md](docs/ANDROID_COLLABORATION.md) | Android / HarmonyOS collaboration: who works where, how to take part, measured status and remaining work; the notes from every round are in [docs/android-notes/](docs/android-notes/) |
 
 ## Legal
 
 **You must own the game, including the Reign of the Warlock expansion.** This is an independent, non-commercial project. It is not affiliated with, endorsed by, or sponsored by Blizzard Entertainment or Nintendo. Diablo and Blizzard Entertainment are trademarks of Blizzard Entertainment, Inc.; Nintendo Switch is a trademark of Nintendo. Use it only with a copy of the game that you own.
 
 ## Acknowledgements
+
+**The Android version in v2.0 comes from three community authors. Special thanks to:**
+
 
 This project stands on the open-source work below. Thank you to its authors and maintainers.
 

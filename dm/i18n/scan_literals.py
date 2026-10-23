@@ -70,7 +70,7 @@ def hits():
             s = open(f, encoding='utf-8', errors='replace').read(); text, lits = (strip_c if kind == 'c' else strip_py)(s)
             for pos, lit in lits:
                 if not CJK.search(lit) or caller(text, pos) in SINK: continue
-                out.append((os.path.relpath(f, ROOT), s.count('\n', 0, pos) + 1, lit, caller(text, pos)))
+                out.append((os.path.relpath(f, ROOT).replace(os.sep, "/"), s.count('\n', 0, pos) + 1, lit, caller(text, pos)))
     return out
 
 def main():

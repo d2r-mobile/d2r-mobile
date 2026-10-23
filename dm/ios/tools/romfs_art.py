@@ -28,12 +28,16 @@ def lib():
     """块线性 ↔ 线性的转换库：仓库里的 nvn_deswizzle.c + nvn_tex.c 现编成动态库（每次进程编一次）。 | Block-linear ↔ linear conversion library: the repo's nvn_deswizzle.c + nvn_tex.c compiled on the fly into a dynamic library (compiled once per process)."""
     global _lib
     if _lib is None:
-        p = os.path.join(tempfile.mkdtemp(), 'deswizzle.dll' if os.name == 'nt' else 'deswizzle.dylib')
+        # 无系统 clang 的构建机可指定由同一源码预编的转换库；不随包分发。
+        # Hosts without system clang may use a library built from these same sources; it is not shipped.
+        p = os.environ.get('DM_DESWIZZLE_LIB')
         # Windows 上动态库的函数要点名导出才找得到（实测：不带这三项能编能加载，但取不到函数）
         # On Windows a dynamic library's functions must be exported by name to be found (measured: without these three options it compiles and loads, but the functions cannot be fetched)
         win = ['-Wl,/EXPORT:nvn_tex_layout', '-Wl,/EXPORT:nvn_deswizzle', '-Wl,/EXPORT:nvn_swizzle'] if os.name == 'nt' else ['-fPIC']
-        subprocess.run(['clang', '-O2', '-shared', *win, '-I' + os.path.join(DM, 'gfx', 'nvn'), '-I' + os.path.join(DM, 'gfx', 'tex'), '-o', p,
-                        os.path.join(DM, 'gfx', 'tex', 'nvn_deswizzle.c'), os.path.join(DM, 'gfx', 'nvn', 'nvn_tex.c')], check=True)
+        if not p:
+            p = os.path.join(tempfile.mkdtemp(), 'deswizzle.dll' if os.name == 'nt' else 'deswizzle.dylib')
+            subprocess.run(['clang', '-O2', '-shared', *win, '-I' + os.path.join(DM, 'gfx', 'nvn'), '-I' + os.path.join(DM, 'gfx', 'tex'), '-o', p,
+                            os.path.join(DM, 'gfx', 'tex', 'nvn_deswizzle.c'), os.path.join(DM, 'gfx', 'nvn', 'nvn_tex.c')], check=True)
         L = C.CDLL(p); L.nvn_tex_layout.argtypes = [C.POINTER(Desc), C.POINTER(Layout)]
         L.nvn_deswizzle.argtypes = [C.POINTER(Desc), C.c_uint, C.c_uint, C.c_void_p, C.c_void_p, C.c_size_t]
         L.nvn_swizzle.argtypes = [C.POINTER(Desc), C.c_uint, C.c_uint, C.c_void_p, C.c_size_t, C.c_void_p]

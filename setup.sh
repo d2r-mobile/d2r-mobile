@@ -17,13 +17,15 @@ die() { echo "✗ $*" >&2; exit 1; }
 case "${DM_LANG:-${LC_ALL:-${LANG:-}}}" in zh*) ZH=1;; *) ZH=0;; esac
 m() { if [ "$ZH" = 1 ]; then echo "$1"; else echo "$2"; fi; }
 
-# 给了游戏包与密钥：先把游戏文件取出来放到位（dm/tools/extract_game.sh），再接着往下做
+# 给了游戏包与密钥：先把游戏文件取出来放到位（dm/tools/extract_game.sh），再接着往下做。本体与更新可以是分开的两个包：先给所有游戏包，最后给 prod.keys
+# Given game packages and keys: first extract the game files into place (dm/tools/extract_game.sh), then carry on. The base game and the update may be separate packages: all game packages first, prod.keys last
 case "${1:-}" in
   *.xci|*.XCI|*.nsp|*.NSP)
-    [ $# -ge 2 ] || die "$(m "用法：./setup.sh <游戏包 .xci 或 .nsp> <prod.keys>" "Usage: ./setup.sh <game package .xci or .nsp> <prod.keys>")"
+    PKGS=(); while [ $# -gt 0 ]; do case "$1" in *.xci|*.XCI|*.nsp|*.NSP) PKGS+=("$1"); shift;; *) break;; esac; done
+    [ $# -ge 1 ] || die "$(m "用法：./setup.sh <游戏包 .xci 或 .nsp> [<游戏包> …] <prod.keys>" "Usage: ./setup.sh <game package .xci or .nsp> [<game package> ...] <prod.keys>")"
     if [ -d "$GAME" ]; then say "$(m "已有游戏文件目录 ${GAME}，不再解包" "Game files directory $GAME already exists; skipping extraction")"
-    else bash "$HERE/dm/tools/extract_game.sh" "$1" "$2" || exit 1; fi
-    shift 2;;
+    else bash "$HERE/dm/tools/extract_game.sh" "${PKGS[@]}" "$1" || exit 1; fi
+    shift;;
 esac
 
 # 体检：逐项报「状态 / 缺的话去哪拿 / 下一步命令」。./setup.sh check 只做这一段，不动任何东西
@@ -40,7 +42,7 @@ if [ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = arm64 ]; then ok "$(m "Apple 
 else bad "$(m "需要 Apple 芯片的 Mac（这台是 $(uname -s) $(uname -m)）" "An Apple silicon Mac is required (this is $(uname -s) $(uname -m))")" "$(m "换一台 Apple 芯片的 Mac 再来" "Use an Apple silicon Mac")"; fi
 # 图形层整个建在 macOS 26 / iOS 26 才有的图形接口（Metal 4）上：macOS 低于 26 时，在这台 Mac 上运行的那几样（Mac App、宿主、图形层单测、Mac 冒烟）编不过也跑不了
 # The graphics layer is built entirely on a graphics interface that exists only from macOS 26 / iOS 26 on (Metal 4): below macOS 26, the things that run on this Mac (the Mac App, the host, the graphics unit tests, the Mac smoke run) neither build nor run
-case "${OSV%%.*}" in ''|*[!0-9]*) ;; *) [ "${OSV%%.*}" -ge 26 ] || note "$(m "这台 Mac 是 macOS ${OSV}：低于 26。Mac App（dm/tools/mac_app.sh）、宿主与图形层单测、Mac 冒烟需要 macOS 26 及以上（用到了 macOS 26 才有的图形接口）。要在这台 Mac 上玩，出老接口版：DM_MAC_M3=1 dm/tools/mac_app.sh（最低 macOS 15.0，见 docs/OLDER_SYSTEMS.zh-CN.md）" "This Mac runs macOS ${OSV}, below 26. The Mac App (dm/tools/mac_app.sh), the host and graphics unit tests and the Mac smoke run need macOS 26 or later (they use a graphics interface that exists only from macOS 26 on). To play on this Mac, build the older-API version: DM_MAC_M3=1 dm/tools/mac_app.sh (minimum macOS 15.0, see docs/OLDER_SYSTEMS.md)")";; esac
+case "${OSV%%.*}" in ''|*[!0-9]*) ;; *) [ "${OSV%%.*}" -ge 26 ] || note "$(m "这台 Mac 是 macOS ${OSV}：低于 26。Mac App（dm/tools/mac_app.sh）、宿主与图形层单测、Mac 冒烟需要 macOS 26 及以上（用到了 macOS 26 才有的图形接口）。要在这台 Mac 上玩，出旧接口版：DM_MAC_M3=1 dm/tools/mac_app.sh（最低 macOS 15.0，见 docs/OLDER_SYSTEMS.zh-CN.md）" "This Mac runs macOS ${OSV}, below 26. The Mac App (dm/tools/mac_app.sh), the host and graphics unit tests and the Mac smoke run need macOS 26 or later (they use a graphics interface that exists only from macOS 26 on). To play on this Mac, build the older-API version: DM_MAC_M3=1 dm/tools/mac_app.sh (minimum macOS 15.0, see docs/OLDER_SYSTEMS.md)")";; esac
 DK=$DM_ROOT; while [ ! -d "$DK" ] && [ "$DK" != / ]; do DK=$(dirname "$DK"); done; FREE=$(df -g "$DK" 2> /dev/null | awk 'NR==2 {print $4}'); WANT=30; [ -d "$GAME" ] && WANT=15
 if [ -n "$FREE" ] && [ "$FREE" -ge "$WANT" ]; then ok "$(m "磁盘剩余 $FREE GB（至少要 $WANT GB）" "$FREE GB free disk space (at least $WANT GB needed)")"
 else bad "$(m "磁盘剩余 ${FREE:-?} GB，不够：工作区要约 12 GB，解游戏包另要约 20 GB" "Only ${FREE:-?} GB free: the workspace needs about 12 GB, extracting the game package about 20 GB more")" "$(m "腾出空间，或用 DM_ROOT=<别的盘上的目录> 换位置" "Free up space, or point DM_ROOT=<a directory on another disk> elsewhere")"; fi

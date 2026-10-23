@@ -15,7 +15,7 @@
 #include <fcntl.h>
 #include "nvn_mtl.h"
 #include "nvn_copy_pitch.h"
-// 编译期开关 DM_NVN_M3=1：图形后端走老接口（普通命令队列 / 命令缓冲 / 渲染与计算与拷贝编码器，逐槽绑定缓冲，对参数块引用的资源逐个声明），
+// 编译期开关 DM_NVN_M3=1：图形后端走旧接口（普通命令队列 / 命令缓冲 / 渲染与计算与拷贝编码器，逐槽绑定缓冲，对参数块引用的资源逐个声明），
 // 目标 macOS 15 / iOS 18。缺省 0 = Metal 4（macOS 26 / iOS 26）。两支共用同一份回放逻辑，分叉处都在 #if DM_NVN_M3 里
 // Compile-time switch DM_NVN_M3=1: the graphics backend uses the older API (ordinary command queue / command buffers / render, compute and copy encoders, buffers bound per slot, each resource referenced by an argument block declared individually),
 // target macOS 15 / iOS 18. Default 0 = Metal 4 (macOS 26 / iOS 26). Both branches share the same replay logic, and every divergence is inside #if DM_NVN_M3
@@ -90,14 +90,14 @@ static id<MTLCommandQueue> g_q;
 static id<MTL4CommandQueue> g_q4;
 static dispatch_queue_t g_feedback_q;
 #endif
-// 命令流队列只许一条：游戏的命令缓冲与出图都提交到它（Metal 4 = g_q4，老接口 = g_q；Metal 4 构建里的 g_q 只给 CPU 同步等完的回读 / 截图 / 收尾用）。
+// 命令流队列只许一条：游戏的命令缓冲与出图都提交到它（Metal 4 = g_q4，旧接口 = g_q；Metal 4 构建里的 g_q 只给 CPU 同步等完的回读 / 截图 / 收尾用）。
 // WaitSync 空跑即正确靠这个前提（见 hle_nvn.c g_nops 里 WaitSync 的注释）：建命令流队列一律经这里，第二次建即报红中止
 // Only one command queue is allowed: the game's command buffers and presents are all submitted to it (Metal 4 = g_q4, legacy API = g_q; in Metal 4 builds g_q is only for CPU-synchronous readback / screenshots / teardown).
 // WaitSync being correct as a no-op relies on this (see the WaitSync comment in g_nops of hle_nvn.c): all command queues are created here, and a second creation reports red and aborts
 static void stream_queue_once(void) { static int n; if (++n > 1) MDIE("【红】建了第 %d 条命令流队列：WaitSync 空跑的前提是只有一条（见 hle_nvn.c g_nops 里 WaitSync 的注释），加队列先把 WaitSync 改成真等", n); }
 static _Atomic uint32_t g_present_qos;
 #define ALLOC_MAX 8
-static int g_alloc_n, g_alloc_cur;   // 主提交的在途槽（Metal 4：每槽一个命令分配器；老接口：只用来限制在途提交数） | in-flight slots of the main submission (Metal 4: one command allocator per slot; older API: used only to limit the number of in-flight submissions)
+static int g_alloc_n, g_alloc_cur;   // 主提交的在途槽（Metal 4：每槽一个命令分配器；旧接口：只用来限制在途提交数） | in-flight slots of the main submission (Metal 4: one command allocator per slot; older API: used only to limit the number of in-flight submissions)
 #if !DM_NVN_M3
 static id<MTL4CommandAllocator> g_alloc4[ALLOC_MAX];   // 主提交的命令分配器池：开工时挑一个 GPU 已用完的，没有就新建（到上限才等） | Command allocator pool of the main submission: at start pick one the GPU has finished with, create a new one if there is none (wait only at the cap)
 static id<MTL4CommandAllocator> g_up_alloc4[3];
@@ -146,7 +146,7 @@ static _Atomic int g_up_pending;
 static pthread_mutex_t g_res_mu = PTHREAD_MUTEX_INITIALIZER;   // 驻留集专用锁：res_add 会在持 g_mu 的路径里调用（arena_new），不能共用 g_mu | Dedicated lock for the residency set: res_add is called on paths that hold g_mu (arena_new), so it cannot share g_mu
 static NSHashTable *g_res_objects;
 #if DM_NVN_M3
-// 老接口按「缓冲对象 + 偏移」绑定，而回放层手里是显卡地址：登记过的缓冲（内存池的零拷贝缓冲、参数区块、暂存块等，几十个）按地址区间反查。
+// 旧接口按「缓冲对象 + 偏移」绑定，而回放层手里是显卡地址：登记过的缓冲（内存池的零拷贝缓冲、参数区块、暂存块等，几十个）按地址区间反查。
 // 弱引用登记（__unsafe_unretained + 撤驻留时摘掉）；最近命中的那一项先试——同一通道里的绑定几乎都落在同一两个缓冲上
 // The older API binds by "buffer object + offset", while the replay layer holds GPU addresses: registered buffers (zero-copy buffers of memory pools, argument blocks, staging blocks and so on, a few dozen) are looked up by address range.
 // Registered by weak reference (__unsafe_unretained, removed when residency is withdrawn); the most recently hit entry is tried first - bindings within one pass almost always land on the same one or two buffers
@@ -635,9 +635,9 @@ static void ser_gate(void) {
 // Metal 4 conservative barriers (first version): a consumer barrier at the start of an encoder (all prior work → this encoder) and a producer barrier at the end (this encoder and earlier → later encoders).
 // Only the one at the start is not enough: t_rt_range 'pass 1 → pass 2 → copy' read back black, and after adding the end barrier it is 19/19. Old-queue encoders (upload / diagnostics / present) do not go through these barriers.
 #if DM_NVN_M3
-static inline void m4_end(id e) { [e endEncoding]; }   // 老接口没有显式屏障：依赖关系由 useResource 声明 + 系统自动跟踪 | the older API has no explicit barriers: dependencies come from useResource declarations plus the system's automatic tracking
+static inline void m4_end(id e) { [e endEncoding]; }   // 旧接口没有显式屏障：依赖关系由 useResource 声明 + 系统自动跟踪 | the older API has no explicit barriers: dependencies come from useResource declarations plus the system's automatic tracking
 static inline void m3_rbuf(id<MTLRenderCommandEncoder> e, int vertex, NSUInteger i, uint64_t gpu) {
-    NSUInteger off; id<MTLBuffer> b = m3_buf(gpu, &off); if (gpu && !b) { { static int n_; if (!n_++) MLOG("【红】" "老接口绑定：显卡地址 %#llx 不在任何登记过的缓冲里（槽 %lu）", (unsigned long long)gpu, (unsigned long)i); } return; }
+    NSUInteger off; id<MTLBuffer> b = m3_buf(gpu, &off); if (gpu && !b) { { static int n_; if (!n_++) MLOG("【红】" "旧接口绑定：显卡地址 %#llx 不在任何登记过的缓冲里（槽 %lu）", (unsigned long long)gpu, (unsigned long)i); } return; }
     if (vertex) [e setVertexBuffer:b offset:off atIndex:i]; else [e setFragmentBuffer:b offset:off atIndex:i];
 }
 #else
@@ -674,7 +674,7 @@ static inline void enc_r_args(RENC e, MTLRenderStages s, uint64_t gpu, NSUIntege
 static inline void enc_r_draw(RENC e, MTLPrimitiveType p, NSUInteger v, NSUInteger n) { [e drawPrimitives:p vertexStart:v vertexCount:n]; }
 static inline void enc_r_draw_instanced(RENC e, MTLPrimitiveType p, NSUInteger v, NSUInteger n, NSUInteger i, NSUInteger b) { [e drawPrimitives:p vertexStart:v vertexCount:n instanceCount:i baseInstance:b]; }
 #if DM_NVN_M3
-static inline void enc_r_draw_indexed(RENC e, MTLPrimitiveType p, NSUInteger n, MTLIndexType t, uint64_t gpu, NSUInteger len, NSUInteger i, NSInteger bv, NSUInteger bi) { (void)len; if (!n) return; NSUInteger off; id<MTLBuffer> b = m3_buf(gpu, &off); if (!b) { { static int n_; if (!n_++) MLOG("【红】" "老接口绘制：索引缓冲地址 %#llx 不在任何登记过的缓冲里", (unsigned long long)gpu); } return; } [e drawIndexedPrimitives:p indexCount:n indexType:t indexBuffer:b indexBufferOffset:off instanceCount:i baseVertex:bv baseInstance:bi]; }
+static inline void enc_r_draw_indexed(RENC e, MTLPrimitiveType p, NSUInteger n, MTLIndexType t, uint64_t gpu, NSUInteger len, NSUInteger i, NSInteger bv, NSUInteger bi) { (void)len; if (!n) return; NSUInteger off; id<MTLBuffer> b = m3_buf(gpu, &off); if (!b) { { static int n_; if (!n_++) MLOG("【红】" "旧接口绘制：索引缓冲地址 %#llx 不在任何登记过的缓冲里", (unsigned long long)gpu); } return; } [e drawIndexedPrimitives:p indexCount:n indexType:t indexBuffer:b indexBufferOffset:off instanceCount:i baseVertex:bv baseInstance:bi]; }
 #else
 static inline void enc_r_draw_indexed(RENC e, MTLPrimitiveType p, NSUInteger n, MTLIndexType t, uint64_t gpu, NSUInteger len, NSUInteger i, NSInteger bv, NSUInteger bi) { [e drawIndexedPrimitives:p indexCount:n indexType:t indexBuffer:gpu indexBufferLength:len instanceCount:i baseVertex:bv baseInstance:bi]; }
 #endif
@@ -687,7 +687,7 @@ static inline id<MTLComputeCommandEncoder> enc_c_begin_concurrent(id<MTLCommandB
 static inline void enc_c_end(id e) { m4_end(e); }
 static inline void enc_c_pso(id e, id<MTLComputePipelineState> p) { [e setComputePipelineState:p]; }
 #if DM_NVN_M3
-static inline void enc_c_args(id e, uint64_t gpu, NSUInteger i) { NSUInteger off; id<MTLBuffer> b = m3_buf(gpu, &off); if (gpu && !b) { { static int n_; if (!n_++) MLOG("【红】" "老接口计算绑定：显卡地址 %#llx 不在任何登记过的缓冲里（槽 %lu）", (unsigned long long)gpu, (unsigned long)i); } return; } [(id<MTLComputeCommandEncoder>)e setBuffer:b offset:off atIndex:i]; }
+static inline void enc_c_args(id e, uint64_t gpu, NSUInteger i) { NSUInteger off; id<MTLBuffer> b = m3_buf(gpu, &off); if (gpu && !b) { { static int n_; if (!n_++) MLOG("【红】" "旧接口计算绑定：显卡地址 %#llx 不在任何登记过的缓冲里（槽 %lu）", (unsigned long long)gpu, (unsigned long)i); } return; } [(id<MTLComputeCommandEncoder>)e setBuffer:b offset:off atIndex:i]; }
 #else
 static inline void enc_c_args(id e, uint64_t gpu, NSUInteger i) { (void)e; [g_ct setAddress:gpu atIndex:i]; }
 #endif
@@ -1134,7 +1134,7 @@ static void up_flush(void) {
         m4_end(g_up_ce); g_up_ce = nil;
     }
 #if DM_NVN_M3
-    // 老接口：拷贝与计算是两种编码器——先一个拷贝编码器做「暂存块 → 贴图」，再一个计算编码器做无 BC 的 GPU 解压
+    // 旧接口：拷贝与计算是两种编码器——先一个拷贝编码器做「暂存块 → 贴图」，再一个计算编码器做无 BC 的 GPU 解压
     // Older API: copy and compute are two kinds of encoder - first a copy encoder does "staging block -> texture", then a compute encoder does the GPU decompression for devices without BC
     BENC b = g_nup_blits ? [g_up_cb blitCommandEncoder] : nil;
     for (int i = 0; b && i < g_nup_blits; i++) {
@@ -1678,10 +1678,10 @@ static pg_pass *pg_new(int kind, int nslot) {
     g_pg_used += nslot;
     return p;
 }
-// 开渲染通道前记通道信息（附件、尺寸、读入方式）；老接口在描述符上挂阶段边界采样，Metal 4 在开编码器后 / 收编码器前写时间戳（pg_render_begin / pg_render_finish）。
+// 开渲染通道前记通道信息（附件、尺寸、读入方式）；旧接口在描述符上挂阶段边界采样，Metal 4 在开编码器后 / 收编码器前写时间戳（pg_render_begin / pg_render_finish）。
 // 改到 Metal 4时描述符没了采样附件，这里整段被短路、提交时的回读调用也删了，两种接口都没再出过数，这次补齐
-// Record pass info before opening a render pass (attachments, size, load action); the legacy API attaches stage boundary sampling to the descriptor, while Metal 4 writes timestamps after opening / before ending the encoder (pg_render_begin / pg_render_finish).
-// When moving to Metal 4 the descriptor lost its sample attachments, this whole block was short-circuited and the readback call at submission was deleted, so neither API produced numbers again; this restores it
+// Record the pass info (attachments, size, load actions) before opening a render pass; the older API attaches stage-boundary sampling to the descriptor, while Metal 4 writes timestamps after opening / before ending the encoder (pg_render_begin / pg_render_finish).
+// When we moved to Metal 4 the descriptor lost its sampling attachment, this whole block was short-circuited and the readback at submit time was removed too, so neither API produced numbers any more; this restores both
 static void pg_render(RPD *pd, NSUInteger nc) {
     pg_pass *p = pg_new(0, PG_RSLOTS); if (!p) return;
 #if DM_NVN_M3
@@ -1739,7 +1739,7 @@ static void pg_compute_end(id e) {   // 收 pg_compute 开的计算编码器之�
 #endif
 }
 static void pg_end_render(void) { if (g_pg_open >= 0) { g_pg_pass[g_pg_open].draws += (int)g_stat_draw; g_pg_open = -1; } }
-static void pg_commit(id fb) {   // 把本次提交的通道表交给完成回调解析；fb = FB_ON(o, g_cb)（老接口是命令缓冲的完成回调，Metal 4 是提交选项的反馈回调） | Hands this submission's pass table to the completion callback for parsing; fb = FB_ON(o, g_cb) (on the legacy API the command buffer completion handler, on Metal 4 the commit options feedback handler)
+static void pg_commit(id fb) {   // 把本次提交的通道表交给完成回调解析；fb = FB_ON(o, g_cb)（旧接口是命令缓冲的完成回调，Metal 4 是提交选项的反馈回调） | Hands this submission's pass table to the completion callback for parsing; fb = FB_ON(o, g_cb) (on the legacy API the command buffer completion handler, on Metal 4 the commit options feedback handler)
     if (!g_pg || !g_pg_np) return;
     int n = g_pg_np; pg_pass *ps = malloc(n * sizeof *ps); memcpy(ps, g_pg_pass, n * sizeof *ps);
     __typeof__(g_pg_buf[0]) buf = g_pg_buf[g_pg_b]; uint32_t used = g_pg_used;
@@ -3034,7 +3034,7 @@ static uint64_t ui_mat_patch(const p_bind_buf *u, void *mb, uint64_t mo) {
     return lg;
 }
 #if DM_NVN_M3
-// 老接口的资源声明去重：同一渲染编码器内对同一资源重复 useResource 是幂等的，而每次新编参数块都会把它引用的资源全声明一遍——
+// 旧接口的资源声明去重：同一渲染编码器内对同一资源重复 useResource 是幂等的，而每次新编参数块都会把它引用的资源全声明一遍——
 // 营地实测每次绘制声明 9.7 次、其中 9.2 次是本编码器里已经声明过的，每次约 227 条指令。这里记下本通道（g_pass.serial，与渲染编码器一一对应：
 // 序号只在开渲染编码器前递增）已按哪些用法声明过哪些资源，已覆盖的跳过。表满（一个通道里超过表长个不同资源）时不记、照常声明。
 // 表项不持有资源：声明过的资源被编码器持有到提交完成，同一通道内它的地址不会被别的资源复用。只在提交线程上用
@@ -3062,10 +3062,10 @@ static int encode_args(id<MTLCommandEncoder> en, NvShader *sh, int nvn_stage, in
         return 1;
     }
 #if DM_NVN_M3
-    // 老接口：着色器经参数块间接访问的每个资源都要在本编码器上声明用途，系统才知道它和别的编码器（上传拷贝、别的通道）之间的先后依赖；
+    // 旧接口：着色器经参数块间接访问的每个资源都要在本编码器上声明用途，系统才知道它和别的编码器（上传拷贝、别的通道）之间的先后依赖；
     // 不声明的话只读贴图会和写它的拷贝乱序（迁 Metal 4 前实测过）。同一编码器内重复声明是幂等的
-    // Older API: every resource a shader accesses indirectly through an argument block must have its usage declared on this encoder, so that the system knows its ordering dependency against other encoders (upload copies, other passes);
-    // without the declaration a read-only texture gets out of order with the copy that writes it (measured before the move to Metal 4). Repeated declarations within one encoder are idempotent
+    // Older API: every resource the shaders reach indirectly through an argument buffer must have its usage declared on this encoder, so the system knows its ordering against other encoders (upload copies, other passes);
+    // without the declaration a read-only texture can be reordered against the copy that writes it (measured before the move to Metal 4). Declaring it again on the same encoder is idempotent
     #define USE(r, u) do { id<MTLResource> r_ = (id<MTLResource>)(r); if (r_) { if (nvn_stage == 5) [(id<MTLComputeCommandEncoder>)en useResource:r_ usage:(u)]; else if (!m3_use_seen((__bridge void *)r_, (uint32_t)(u))) [(id<MTLRenderCommandEncoder>)en useResource:r_ usage:(u) stages:MTLRenderStageVertex | MTLRenderStageFragment]; } \
         if (__builtin_expect(g_res_check_on, 0)) res_check((r), sh->key, reg); } while (0)
     #define USE_SAMP(r, u) do { (void)(u); if (__builtin_expect(g_res_check_on, 0)) res_check((r), sh->key, reg); } while (0)   // 采样器不是资源，不用声明 | samplers are not resources and need no declaration
@@ -6172,7 +6172,7 @@ static int present_now(const tex_t *t, double period, uint64_t frame, uint64_t t
         pthread_mutex_unlock(&g_pq_mu);
     }
 #if DM_NVN_M3
-    CBUF cb = [g_q commandBuffer];   // 老接口：交画面记在命令缓冲上（presentDrawable），这一帧的绘制做完才上屏 | older API: presentation is recorded on the command buffer (presentDrawable), so the frame reaches the screen only after its drawing is done
+    CBUF cb = [g_q commandBuffer];   // 旧接口：交画面记在命令缓冲上（presentDrawable），这一帧的绘制做完才上屏 | older API: presentation is recorded on the command buffer (presentDrawable), so the frame reaches the screen only after its drawing is done
     if (!present_encode_m4(cb, src, dr.texture, crop, alloc_i)) return 0;
 #else
     [g_present_alloc4[alloc_i] reset];

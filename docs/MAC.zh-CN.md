@@ -13,9 +13,9 @@ Apple 芯片（Intel 芯片的 Mac 不支持；各设备的情况见首页「[�
 | 你的系统 | 用哪种出法 | 产出 |
 |---|---|---|
 | macOS 26 及以上 | 缺省：`dm/tools/mac_app.sh` | `D2R Mobile.app` |
-| macOS 15 – 25 | 老接口版：`DM_MAC_M3=1 dm/tools/mac_app.sh` | `D2R Mobile M3.app` |
+| macOS 15 – 25 | 旧接口版：`DM_MAC_M3=1 dm/tools/mac_app.sh` | `D2R Mobile M3.app` |
 
-缺省的构建把图形部分建在 macOS 26 才有的图形接口（Metal 4）上，更早的系统上打不开（系统会提示这个 App 不能与当前版本的 macOS 配合使用）。老接口版是同一份源码、同一个游戏，图形部分改用老系统也有的接口，最低 macOS 15.0；细节见 [OLDER_SYSTEMS.zh-CN.md](OLDER_SYSTEMS.zh-CN.md)。
+默认构建把图形部分建在 macOS 26 才有的图形接口（Metal 4）上，更早的系统上打不开（系统会提示这个 App 不能与当前版本的 macOS 配合使用）。旧接口版是同一份源码、同一个游戏，图形部分改用老系统也有的接口，最低 macOS 15.0；细节见 [OLDER_SYSTEMS.zh-CN.md](OLDER_SYSTEMS.zh-CN.md)。
 
 ## 构建
 
@@ -27,11 +27,13 @@ dm/tools/mac_app.sh                  # macOS 26 及以上
 DM_MAC_M3=1 dm/tools/mac_app.sh      # macOS 15 – 25
 ```
 
-缺省出法约十几秒，产出 `~/dm-work/out/macapp/D2R Mobile.app`（约 3 MB）。老接口版第一次要把着色器库按 macOS 15 重编一份，多花约 3–4 分钟，产出 `D2R Mobile M3.app`；它有自己的存档与日志目录（名字里带 M3），可以和缺省的 App 并存。想放到别处：命令后面跟输出目录。
+默认出法约十几秒，产出 `~/dm-work/out/macapp/D2R Mobile.app`（约 3 MB）。旧接口版第一次要把着色器库按 macOS 15 重编一份，多花约 3–4 分钟，产出 `D2R Mobile M3.app`；它有自己的存档与日志目录（名字里带 M3），可以和缺省的 App 并存。想放到别处：命令后面跟输出目录。
 
-这个 App 里只有我们自己的程序。改写后的游戏程序、着色器库、界面覆盖层都是从你的游戏文件做出来的，它们留在你的工作区（`~/dm-work`）里，App 只记着它们的位置——所以**这个 App 只能在构建它的这台 Mac 上跑**，请不要拷给别人，也不要删掉或挪动工作区（老接口版重编的着色器库就在输出目录里）。签名用的是本机临时签名，不需要开发者账号，也不需要登记设备。
+这个 App 里只有我们自己的程序。改写后的游戏程序、着色器库、界面覆盖层都是从你的游戏文件做出来的，它们留在你的工作区（`~/dm-work`）里，App 只记着它们的位置——所以**这个 App 只能在构建它的这台 Mac 上跑**，请不要拷给别人，也不要删掉或挪动工作区（旧接口版重编的着色器库就在输出目录里）。签名用的是本机临时签名，不需要开发者账号，也不需要登记设备。
 
 版本号与构建号可以指定：`DM_MAC_VERSION`（缺省 1.0）、`DM_MAC_BUILD`（缺省取当前的月日时分）。
+
+App 带本项目自己的图标（`dm/ios/Assets.xcassets/AppIcon.appiconset/AppIcon1024.png`）。想换成自己的图：`DM_MAC_ICON_SOURCE=<图>`（要不透明、铺满的正方形；macOS 26 起圆角由系统自己裁，四周留透明边的图会被缩小放进灰色底框）；不要图标：`DM_MAC_ICON_SOURCE=none`。
 
 ## 第一次打开
 
@@ -63,6 +65,8 @@ DM_MAC_M3=1 dm/tools/mac_app.sh      # macOS 15 – 25
 
 接上手柄直接可用，与键盘并存。菜单栏有「显示 → 全屏（⌃⌘F）」和「退出（⌘Q）」。窗口可以随意拉大小。进游戏后画面按窗口 / 屏幕的比例铺满（16:10 的 MacBook 上窗口态和全屏态都铺满，界面贴底，开着大面板时界面居中）；主菜单、选角等前端页仍是 16:9、上下留边。
 
+鼠标指针停在游戏窗口里 3 秒不动会自动隐藏（用键盘或手柄玩时不挡画面），鼠标一动立刻回来；在菜单栏、别的窗口或对话框上不会隐藏。改时长：`defaults write org.d2rmobile.mac CursorHideSeconds -float 5`（单位秒；`0` = 关；旧接口版用 `org.d2rmobile.mac.m3`），然后重开 App。
+
 ## 鼠标
 
 现在能做的：
@@ -92,7 +96,7 @@ DM_MAC_M3=1 dm/tools/mac_app.sh      # macOS 15 – 25
 - 存档：`~/Library/Application Support/D2R Mobile/save`
 - 日志：`~/Library/Logs/D2R Mobile/host.log`（上一次运行的是 `host.prev.log`）。报问题时用菜单栏「帮助 → 分享日志…」：它把这两份日志和一份版本信息打成一个压缩包，让你选保存位置；不上传、不带存档，日志里的用户名会换成 `~`。
 - 没有声音时看日志：启动时有一行「audio：输出设备「…」，系统缺省输出「…」」，两者不一致会标红；退出时有一行「声卡回调累计 N」，N 为 0 表示这次没有出声。
-- 老接口版（`D2R Mobile M3.app`）用的是名字里带 M3 的另一对目录。
+- 旧接口版（`D2R Mobile M3.app`）用的是名字里带 M3 的另一对目录。
 
 **iCloud 存档同步：从本仓库自己构建的 App 没有。**程序里接了与 iPhone / iPad 相同的同步，但它需要 App 带着 iCloud 的签名权限；自己构建的 App 用的是本机临时签名，没有这项权限，所以存档只留在这台 Mac 上，日志里会记一行「iCloud 不可用…只用本地存档」，游戏照常。要把手机上的进度带过来，用下面的手工导入。
 
@@ -141,4 +145,4 @@ DM_MAC_M3=1 dm/tools/mac_app.sh      # macOS 15 – 25
 - 手柄上 ZR 空格的免费回城没有。
 - 秘境左侧的任务栏没有。
 - 自己构建的 App 没有 iCloud 存档同步，也不做更新检查（它不联网）。
-- 老接口版在 macOS 15 上由一位内测玩家实际玩过（Mac mini M4，macOS 15.7，用的是出好的包）；在 macOS 15 的 Mac 上从本仓库自己构建，未经真人操作。
+- 旧接口版在 macOS 15 上由一位内测玩家实际玩过（Mac mini M4，macOS 15.7，用的是出好的包）；在 macOS 15 的 Mac 上从本仓库自己构建，未经真人操作。

@@ -139,10 +139,23 @@ static Result mount(const char *name, const char *dir, int ro) { return mount_ex
 // APFS is case-insensitive by default, Horizon paths are case-sensitive: every component is looked up exactly by guest name.
 // Ordinary host names are unchanged; only when a name collides on the host is a separate physical name chosen, with the guest name stored in an xattr.
 // clonefile preserves xattr, so save Commit/remount needs no separate mapping table; enumeration must not leak physical aliases.
+#ifdef __APPLE__
 #define FS_GUEST_NAME "org.d2rmobile.guest-name"
+#define fs_xattr_get(p, buf, n) getxattr(p, FS_GUEST_NAME, buf, n, 0, XATTR_NOFOLLOW)
+#define fs_xattr_set(p, v, n) setxattr(p, FS_GUEST_NAME, v, n, 0, XATTR_NOFOLLOW)
+#define fs_xattr_del(p) removexattr(p, FS_GUEST_NAME, XATTR_NOFOLLOW)
+#else   // Linux：扩展属性要带 user. 命名空间，不跟随链接的是 l* 版本；「没有这个属性」是 ENODATA | Linux: extended attributes need the user. namespace, the no-follow versions are l*; "no such attribute" is ENODATA
+#define FS_GUEST_NAME "user.org.d2rmobile.guest-name"
+#define fs_xattr_get(p, buf, n) lgetxattr(p, FS_GUEST_NAME, buf, n)
+#define fs_xattr_set(p, v, n) lsetxattr(p, FS_GUEST_NAME, v, n, 0)
+#define fs_xattr_del(p) lremovexattr(p, FS_GUEST_NAME)
+#ifndef ENOATTR
+#define ENOATTR ENODATA
+#endif
+#endif
 static int guest_name(const char *parent, const char *physical, char *out, size_t n) {
     char p[1280]; snprintf(p, sizeof p, "%s/%s", parent, physical);
-    ssize_t k = getxattr(p, FS_GUEST_NAME, out, n - 1, 0, XATTR_NOFOLLOW);
+    ssize_t k = fs_xattr_get(p, out, n - 1);
     if (k >= 0) { out[k] = 0; return 1; }
     if (errno != ENOATTR) return 0;
     strlcpy(out, physical, n); return 1;
@@ -254,8 +267,8 @@ static int set_guest_name(const char *hp, const char *path) {
     if (k >= sizeof guest) { errno = ENAMETOOLONG; return -1; }
     memcpy(guest, start, k); guest[k] = 0;
     const char *physical = strrchr(hp, '/') + 1;
-    if (strcmp(physical, guest)) return setxattr(hp, FS_GUEST_NAME, guest, strlen(guest), 0, XATTR_NOFOLLOW);
-    if (!removexattr(hp, FS_GUEST_NAME, XATTR_NOFOLLOW) || errno == ENOATTR) return 0;
+    if (strcmp(physical, guest)) return fs_xattr_set(hp, guest, strlen(guest));
+    if (!fs_xattr_del(hp) || errno == ENOATTR) return 0;
     return -1;
 }
 static Result err_res(const char *op, const char *path) {
@@ -329,7 +342,7 @@ static void stash_seed_one(const char *save_dir, const char *name) {
 // 标准级与专家级各一份，各判各的（游戏按角色类型选文件名，main+0x2ce1e8：DLC 类型标准 = ModernSharedStashSoftCoreV2、专家 = ModernSharedStashHardCoreV2；文件格式相同）
 // One copy each for standard and hardcore, each judged on its own (the game picks the file name by character type, main+0x2ce1e8: DLC type standard = ModernSharedStashSoftCoreV2, hardcore = ModernSharedStashHardCoreV2; same file format)
 static void stash_seed(const char *save_dir) {
-    const char *e = getenv("DM_STASH_SEED"); int on = e ? strcmp(e, "0") != 0 : TARGET_OS_IPHONE; if (!on) return;   // iOS 上缺省开；Mac 宿主缺省关（对拍 / 存档事务这些闸门逐字节比存档目录，多出一个文件就红），要验时设 DM_STASH_SEED=1 | on by default on iOS; off by default on the Mac host (gate checks such as lockstep comparison / save transaction compare the save directory byte by byte, one extra file turns them red), set DM_STASH_SEED=1 to verify
+    const char *e = getenv("DM_STASH_SEED"); int on = e ? strcmp(e, "0") != 0 : DM_PHONE; if (!on) return;   // iOS 上缺省开；Mac 宿主缺省关（对拍 / 存档事务这些闸门逐字节比存档目录，多出一个文件就红），要验时设 DM_STASH_SEED=1 | on by default on iOS; off by default on the Mac host (gate checks such as lockstep comparison / save transaction compare the save directory byte by byte, one extra file turns them red), set DM_STASH_SEED=1 to verify
     stash_seed_one(save_dir, "ModernSharedStashSoftCoreV2"); stash_seed_one(save_dir, "ModernSharedStashHardCoreV2");
 }
 #else
@@ -340,7 +353,7 @@ static void stash_seed(const char *save_dir) { (void)save_dir; }
 // Fallback for 「大字体」(Large Font) (settings key "Low Vision Mode"): if it is 1 in the settings file, change it back to 0. It switches the UI to the original game's low-vision layout profile, which our touch UI was never built for; it hangs after being turned on in the settings page.
 // This item in the settings page is separately hidden by the UI overlay; this here guarantees that devices where it was already turned on recover on restart. Same switch as settings_seed (on by default on iOS, on the Mac host only with DM_TOUCH_DEFAULTS=1)
 static void low_vision_off(const char *save_dir) {
-    const char *e = getenv("DM_TOUCH_DEFAULTS"); int on = e ? strcmp(e, "0") != 0 : TARGET_OS_IPHONE; if (!on) return;
+    const char *e = getenv("DM_TOUCH_DEFAULTS"); int on = e ? strcmp(e, "0") != 0 : DM_PHONE; if (!on) return;
     char path[1200]; snprintf(path, sizeof path, "%s/Settings/Settings.json", save_dir); static char buf[65536]; FILE *f = fopen(path, "rb"); if (!f) return;
     size_t n = fread(buf, 1, sizeof buf - 1, f); fclose(f); if (n == sizeof buf - 1) return; buf[n] = 0;
     char *k = strstr(buf, "\"Low Vision Mode\""); if (!k) return; char *v = strchr(k + 17, ':'); if (!v) return; v++; while (*v == ' ' || *v == '\t') v++;
@@ -349,18 +362,15 @@ static void low_vision_off(const char *save_dir) {
     if (ok && !rename(tmp, path)) LOG("设置兜底：「大字体」（Low Vision Mode）是开着的，已改回关"); else remove(tmp);
 }
 // 语音语言跟着文字语言走，但资源里不一定有那种配音：出包（dm/ios/tools/testflight.sh）裁掉了 11 种语言的配音分块 06–16，只留简中（17）与英文（基底）；
-// 自己从完整数据出包的（公开仓库的做法）都在。俄语配音在分块 16（build_manifest.psv 里 locales/audio/ruRU 的 1689 个文件 Chunk 列全是 16）：
-// 简中（8）配简中配音；俄语（7）在资源里有 16 号分块时配俄语配音，没有就配英文；其余一律英文配音（0）——西语文字配英文配音
-// Voice language follows the text language, but the resources may not hold that voice-over: our packaging (dm/ios/tools/testflight.sh) strips the voice chunks 06–16 of 11 languages, keeping only Simplified Chinese (17) and English (base);
-// builds made from complete data (the public repository's way) keep them all. The Russian voice-over is in chunk 16 (all 1689 files under locales/audio/ruRU in build_manifest.psv have Chunk 16):
-// Simplified Chinese (8) gets its own voice-over; Russian (7) gets the Russian voice-over when chunk 16 is present in the resources, otherwise English; everything else gets English (0) - Spanish text gets the English voice-over
-static int ru_voice_present(void) {
-    char b[1024], p[1100]; snprintf(p, sizeof p, "%s/data/16-00000001.data", envdir("DM_ROMFS", "data/switch/3.3.94012/Update/RomFS", b, sizeof b));
+// 自己从完整数据出包的（公开仓库的做法）都在。俄语配音在分块 16、韩语配音在分块 11（build_manifest.psv 里 locales/audio/ruRU、koKR 各 1689 个文件，Chunk 列分别全是 16、11）：
+// 简中（8）配简中配音；俄语（7）/ 韩语（5）在资源里有对应分块时配那种配音，没有就配英文；其余一律英文配音（0）——西语文字配英文配音
+static int voice_chunk_present(int chunk) {
+    char b[1024], p[1100]; snprintf(p, sizeof p, "%s/data/%02d-00000001.data", envdir("DM_ROMFS", "data/switch/3.3.94012/Update/RomFS", b, sizeof b), chunk);
     return !access(p, F_OK);
 }
-static int voice_for(int lang) { return lang == 8 ? 8 : lang == 7 && ru_voice_present() ? 7 : 0; }
+static int voice_for(int lang) { return lang == 8 ? 8 : lang == 7 && voice_chunk_present(16) ? 7 : lang == 5 && voice_chunk_present(11) ? 5 : 0; }
 static void settings_seed(const char *save_dir) {
-    const char *e = getenv("DM_TOUCH_DEFAULTS"); int on = e ? strcmp(e, "0") != 0 : TARGET_OS_IPHONE; if (!on) return;
+    const char *e = getenv("DM_TOUCH_DEFAULTS"); int on = e ? strcmp(e, "0") != 0 : DM_PHONE; if (!on) return;
     static const char *kv[][2] = {{"\"Item Name Display\"", "1"}, {"\"Item Tooltip Hotkey Appender\"", "0"},
                                   {"\"AutoMapMode\"", "2"}, {"\"AutoMap Open On Load\"", "1"}};
     char dir[1100], path[1200]; snprintf(dir, sizeof dir, "%s/Settings", save_dir); snprintf(path, sizeof path, "%s/Settings.json", dir);
@@ -384,14 +394,10 @@ static void settings_seed(const char *save_dir) {
     fclose(f); if (rename(tmp, path)) { LOG("【红】设置缺省：改名到 %s 失败", path); return; }
     LOG("设置缺省：%s 补了 %d 个键（显示物品 = 开关式 / 说明条热键 = 关 / 小地图放右、进局自动开%s；已有的键不动）", path, added, first ? " / 首次安装按系统语言写 Language" : "");
 }
-// 语言开关（自定义页标题行那一格，dm_custom.c 的 lang：0 中文 / 1 English / 2 Español / 3 Русский）：玩家点过「应用」后设置文件里有明确的值，每次挂存档（游戏读设置之前）
+// 语言开关（自定义页标题行那一格，dm_custom.c 的 lang：0 中文 / 1 English / 2 Español / 3 Русский / 4 한국어）：玩家点过「应用」后设置文件里有明确的值，每次挂存档（游戏读设置之前）
 // 按它把原版设置文件的 Language（文字）和 VoiceLanguage（语音，语音跟着切，见 voice_for）改好。只在「与开关不符」时改：
-// 文字语言已落在这一项里（中文 = 简中 / 繁中，English = 英文，Español = esES / esMX，Русский = ruRU）就不动文字，所以开关是中文时玩家在原版里选的繁中不会被改回简中；
-// 选 Español 时要改才改，按系统地区定 esES（2）或 esMX（10）；选 Русский = 7 ruRU（原版只有一种俄文）。两个键缺哪个补哪个。没点过应用（-1）= 一个字不动
-// Language switch (the cell on the title row of the custom page, lang in dm_custom.c: 0 Chinese / 1 English / 2 Español / 3 Russian): once the player has tapped "Apply", the settings file holds an explicit value; every time the save is mounted (before the game reads settings)
-// use it to fix Language (text) and VoiceLanguage (voice; voice follows the switch, see voice_for) in the original settings file. Change only when it "disagrees with the switch":
-// if the text language already falls within this option (Chinese = Simplified / Traditional Chinese, English = English, Español = esES / esMX, Russian = ruRU), leave the text alone, so when the switch is Chinese, Traditional Chinese chosen by the player in the original game is not changed back to Simplified;
-// when Español is chosen, change only if needed, picking esES (2) or esMX (10) by system region; Russian = 7 ruRU (the original has only one Russian). Add whichever of the two keys is missing. Never tapped Apply (-1) = change nothing at all
+// 文字语言已落在这一项里（中文 = 简中 / 繁中，English = 英文，Español = esES / esMX，Русский = ruRU，한국어 = koKR）就不动文字，所以开关是中文时玩家在原版里选的繁中不会被改回简中；
+// 选 Español 时要改才改，按系统地区定 esES（2）或 esMX（10）；选 Русский = 7 ruRU（原版只有一种俄文），选 한국어 = 5 koKR。两个键缺哪个补哪个。没点过应用（-1）= 一个字不动
 static int json_int_set(char *buf, size_t cap, const char *key, int val) {   // 把 "key": N 的 N 换成 val（没有这个键就插在第一个 { 之后）；返回 1 = 改了 | Replace the N of "key": N with val (if the key is absent, insert it after the first {); returns 1 = changed
     char *k = strstr(buf, key); char num[16]; snprintf(num, sizeof num, "%d", val);
     if (!k) { char *b = strchr(buf, '{'); char ins[96]; int m = snprintf(ins, sizeof ins, "\n    %s: %s,", key, num); if (!b || strlen(buf) + (size_t)m + 1 >= cap) return 0;
@@ -400,19 +406,19 @@ static int json_int_set(char *buf, size_t cap, const char *key, int val) {   // 
     if (e == v || atoi(v) == val) return 0; size_t nl = strlen(num); if (strlen(buf) + nl + 1 >= cap) return 0;
     memmove(v + nl, e, strlen(e) + 1); memcpy(v, num, nl); return 1; }
 static void settings_lang_apply(const char *save_dir) {
-    int dm_custom_lang_explicit(void); int sel = dm_custom_lang_explicit(); if (sel < 0 || sel > 3) return;
+    int dm_custom_lang_explicit(void); int sel = dm_custom_lang_explicit(); if (sel < 0 || sel > 4) return;
     char path[1200]; snprintf(path, sizeof path, "%s/Settings/Settings.json", save_dir); static char buf[66000]; FILE *f = fopen(path, "rb"); if (!f) return;
     size_t n = fread(buf, 1, 65535, f); fclose(f); if (n == 65535) return; buf[n] = 0;
     const char *k = strstr(buf, "\"Language\""), *c = k ? strchr(k + 10, ':') : NULL; int cur = c ? atoi(c + 1) : 8;   // 没写 = 游戏缺省（宿主报简中） | Not written = game default (the host reports Simplified Chinese)
-    int in = sel == 0 ? (cur == 8 || cur == 9) : sel == 1 ? cur == 0 : sel == 3 ? cur == 7 : (cur == 2 || cur == 10);   // 文字语言已落在选中的那一项里 | The text language already falls within the selected option
-    int dm_sys_lang(void); int want = in ? cur : sel == 0 ? 8 : sel == 1 ? 0 : sel == 3 ? 7 : (dm_sys_lang() == 10 ? 10 : 2);
+    int in = sel == 0 ? (cur == 8 || cur == 9) : sel == 1 ? cur == 0 : sel == 3 ? cur == 7 : sel == 4 ? cur == 5 : (cur == 2 || cur == 10);   // 文字语言已落在选中的那一项里 | The text language already falls within the selected option
+    int dm_sys_lang(void); int want = in ? cur : sel == 0 ? 8 : sel == 1 ? 0 : sel == 3 ? 7 : sel == 4 ? 5 : (dm_sys_lang() == 10 ? 10 : 2);
     const char *vk = strstr(buf, "\"VoiceLanguage\""), *vc = vk ? strchr(vk + 15, ':') : NULL; int vcur = vc ? atoi(vc + 1) : -1;
     int voice = in && sel == 0 && vcur > 0 ? vcur : voice_for(want);   // 文字已在中文项里：语音只要不是英文就不动（玩家在原版里选的繁中语音照旧）；其余按 voice_for | Text is already within the Chinese option: leave voice alone as long as it is not English (Traditional Chinese voice chosen by the player in the original game stays); otherwise follow voice_for
     int ch = json_int_set(buf, sizeof buf, "\"Language\"", want) | json_int_set(buf, sizeof buf, "\"VoiceLanguage\"", voice); if (!ch) return;
     char tmp[1300]; snprintf(tmp, sizeof tmp, "%s.lang", path); f = fopen(tmp, "wb"); size_t m = strlen(buf);
     if (!f || fwrite(buf, 1, m, f) != m) { if (f) fclose(f); LOG("【红】语言开关：写 %s 失败", tmp); return; }
     fclose(f); if (rename(tmp, path)) { LOG("【红】语言开关：改名到 %s 失败", path); return; }
-    static const char *const nm[4] = { "中文", "English", "Español", "Русский" };
+    static const char *const nm[5] = { "中文", "English", "Español", "Русский", "한국어" };
     LOG("语言开关：设置文件的 Language / VoiceLanguage 改成 %d / %d（%s；原文字语言 %d）", want, voice, nm[sel], cur);
 }
 // 事务式存档当前的工作目录（游戏读写的那份；宿主自己的旁路文件写在这里才会随 Commit 进已提交版）。没挂载存档时返回 NULL
@@ -436,7 +442,7 @@ HLE_FORCE("_ZN2nn2fs13MountSaveDataEPKcRKNS_7account3UidE", "fsp-srv；存档 �
     // iOS 上缺省写；Mac 宿主的对拍闸门（存档要和真机真值逐文件相同）不写
     // Rule files for the loot filter (the game loads them at startup; dm_lootfilter.c registers this hook from a constructor; it is null in unit tests that link only hle_fs.c). Same switch as settings_seed:
     // written by default on iOS; not written under the Mac host's parity gate (saves must match the device ground truth file by file)
-    { const char *e = getenv("DM_TOUCH_DEFAULTS"); if (g_dm_mount_seed_hook && (e ? strcmp(e, "0") != 0 : TARGET_OS_IPHONE)) g_dm_mount_seed_hook(dd); }
+    { const char *e = getenv("DM_TOUCH_DEFAULTS"); if (g_dm_mount_seed_hook && (e ? strcmp(e, "0") != 0 : DM_PHONE)) g_dm_mount_seed_hook(dd); }
     return mount_ex(name, dd, 0, 1);
 }
 void (*g_dm_pre_commit_hook[5])(const char *workdir);   // 提交前调（工作目录）：宿主旁路文件按工作目录里的存档内容核对后再写（[0] 个人仓库多页 dm_pages.c、[2] 百宝囊 dm_pouch.c、[1] 编年史仓库 dm_vault.c、[3] 秘境进度 dm_rift.c、[4] iCloud 收件箱并回 dm_cloudmerge.c） | Called before commit (working directory): host side files are checked against the save content in the working directory before being written ([0] personal stash multi-page dm_pages.c, [2] pouch dm_pouch.c, [1] Chronicle stash dm_vault.c, [3] Rift progress dm_rift.c, [4] iCloud inbox merge dm_cloudmerge.c)

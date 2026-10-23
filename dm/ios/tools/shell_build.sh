@@ -40,6 +40,10 @@ python3 ../tools/guest_dylib.py "$OUT" "$O/ref" main sdk > /dev/null || die "对
 echo '// 壳：模块映像不在可执行文件里（tools/shell_build.sh）' > Gen/embed.S
 sed -i '' -e 's/ -Wl,-segprot,__DM[A-Za-z0-9]*W,rw,rw//g' -e 's/^OTHER_CFLAGS = \$(inherited) /OTHER_CFLAGS = $(inherited) -DDM_SHELL /' Gen/dm.xcconfig
 grep -q -- '-DDM_SHELL' Gen/dm.xcconfig && ! grep -q segprot Gen/dm.xcconfig || die "构建配置没改对：$(grep -n 'OTHER_' Gen/dm.xcconfig)"
+# 壳里不留本机路径（断言带的 __FILE__ 会编进可执行文件，暴露用户名与目录结构）：源码副本与构建目录换成中性前缀；链接留下的目标文件路径在下面 strip -S 去掉
+case "$W$DD" in *' '*) die "工作目录带空格，编译参数里放不下：$W";; esac
+WR=$(cd "$W" && pwd -P); sed -i '' -e "s#-DDM_SHELL #-DDM_SHELL -ffile-prefix-map=$W=src -ffile-prefix-map=$WR=src -ffile-prefix-map=$DD=build #" Gen/dm.xcconfig
+grep -q -- '-ffile-prefix-map' Gen/dm.xcconfig || die "路径替换参数没加上：$(grep -n 'OTHER_CFLAGS' Gen/dm.xcconfig)"
 # 真机用的壳同时面向 iPhone 与 iPad（设备族是构建设置，要作为命令行参数传）；Mac 变体不传，窗口与坐标换算照开发包
 # The device shell targets both iPhone and iPad (device family is a build setting and must be passed as a command-line argument); the Mac variant does not pass it, and its window and coordinate mapping follow the dev build
 if [ "$KIND" = mac ]; then DEST='platform=macOS,arch=arm64,variant=Designed for iPad'; PROD=Release-iphoneos; FAM=; else DEST='generic/platform=iOS'; PROD=Release-iphoneos; FAM=DM_DEVICE_FAMILY=1,2; fi
@@ -77,6 +81,9 @@ printf 'PRODUCT=%s\nCHAIN=%s\nKIND=%s\nSHADER_SRC=%s\nSPIRV_CROSS=%s\n' "$(head 
 rm -rf "$A/Extensions" "$A/PlugIns"
 for k in BAAppGroupID BAHasManagedAssetPacks BAUsesAppleHosting; do /usr/libexec/PlistBuddy -c "Delete :$k" "$A/Info.plist" 2> /dev/null; done
 rm -rf "$A/_CodeSignature" "$A/embedded.mobileprovision"
+# 链接时记下的目标文件路径（调试映射）也是本机路径：去掉调试符号（壳不签名，使用者的自签工具装机时整包重签）；再查一遍整个壳不含本机路径
+strip -S "$A/DmIOS" || die "strip 失败"
+leak=$(LC_ALL=C grep -raoE -- "/Users/[A-Za-z0-9._-]+|$HOME" "$A" | head -3); [ -z "$leak" ] || die "壳里带着本机路径：$leak"
 # 核对：壳的可执行文件里没有模块映像节；壳里剩下的文件逐个列出来留档
 # Check: the shell's executable has no module image sections; the files left in the shell are listed one by one for the record
 n=$(otool -l "$A/DmIOS" | grep -c -E 'sectname __dm.*x[01]|segname __DM.*W'); [ "$n" = 0 ] || die "壳的可执行文件里还有模块映像节 $n 个"

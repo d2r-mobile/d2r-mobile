@@ -1,409 +1,211 @@
-# Android port — Xiaomi 15 Ultra / Snapdragon 8 Elite
+# Android port
 
 中文：[README.zh-CN.md](README.zh-CN.md)
 
-## Current playable branch (2026-10-22)
+This is the ARM64 Android version. The APK links the shared host, the Vulkan
+replay engine, AAudio, a transparent touch overlay drawn the same way as iOS, and
+system text input. It has been played on real phones (camp, fights, panels, NPC
+dialogs); measurements are in `docs/android-notes/`. Players
+install the release APK and import their own game content: see "Installing as a
+player" below.
 
-The development build now starts the real game, enters camp and saves/exits on the target phone. Turnip is the rendering baseline. Combat, skills, pickup and inventory/stash dragging have user verification; complete touch parity, broad lifecycle/device coverage, sustained 60 fps and energy savings are not established. Current priorities and known limitations are in the [fork README](../../docs/android/README.md#current-status) and project board.
+## Source layout
 
-Use `main` as the accepted Android baseline. The former integration branch is consolidated through PR; new topic PRs target `main`. The current APK builder is `tools/build.py --game-run`, with reference toolchain and local resources. Android game-data ZIP import and driver choices are described in the [current user instructions](../../README.md#trying-a-development-build).
+- `app/`: Java Activity, fullscreen SurfaceView, touch overlay, and Gradle app.
+- `jni_android.c`, `front_android.c`: startup, resource locations, lifecycle, and
+  platform front-end interfaces.
+- `touch_android*`: bridge to the shared `dm/ios/Sources/dm_touch_controls.c` state
+  machine; `text_input_jni.c` bridges synchronous guest prompts to Android dialogs.
+- `vulkan_present.*`: Android window ownership, swapchain, and presentation.
+- `../gfx/vulkan/`: NVN replay adapter and Vulkan engine.
+- `compat/`: Android implementations of the host's Apple platform interfaces.
+- `tools/`: source-list parsing, ELF assembly conversion, and localized resources.
 
-**Historical tooling below:** the remaining sections document the earlier standalone runtime, fixtures and synthetic diagnostic milestones. Their counts, blockers and old device results apply to those checkpoints, not to the current game frontend. In particular, `app/build.sh` builds the synthetic diagnostic, not the playable APK; `paths.sh` workspace conventions below describe those tools. Archived contract tasks are not claimed as proven by the reference runtime first run. Preserve strict validation and failure boundaries.
+## Installing as a player
 
-## Storage and game files
-
-`paths.sh` defaults the workspace to a sibling `d2r-work` directory; explicitly set `DM_ROOT` to an external-disk workspace in a worktree. Relative `../d2r-work` examples below assume the sibling layout; substitute your `$DM_ROOT` when overridden. NDK / tool archives are under its `tools/android`, build outputs under `build`, and compiler / test temporary files under `tmp`.
-
-Use your own Switch release **1.0.34.0 with Reign of the Warlock**, corresponding to **3.3.94012** in repository paths:
-
-```text
-$DM_ROOT/data/switch/3.3.94012/Update/
-├── ExeFS/
-│   ├── main
-│   ├── sdk
-│   └── subsdk0
-└── RomFS/
-    └── data/
-        ├── build_manifest.psv
-        └── all exported .data files with original names
-```
-
-The three ExeFS files suffice to start validating program decoding / rewriting; full RomFS is needed for shaders, resources and gameplay. Already-exported ExeFS / RomFS need no keys. Keep files local, outside Git. Validate with `./dm/android/check_game_files.sh --exefs-only`, or omit the flag to also check the manifest and 18 required runtime archives. The checker verifies the three full program SHA-256 digests against upstream `setup.sh`; it checks resource presence / nonempty size, not RomFS hashes. An alternate Update directory can be passed as the last argument. See [GAME_FILES.md](../../docs/GAME_FILES.md) for upstream version / extraction details.
-
-## Game-free host entry and offline dependencies
-
-Run from the repository root. On an ARM64 development host with CMake 3.22+, a C compiler and Capstone 5:
+The release page's `D2RMobile-android.apk` contains no game content (built by
+`dm/android/tools/shell_apk.sh`: the three tables generated from game files are
+replaced by stand-ins that read the imported `derived.tsv` at run time, as in the
+iOS shell). You make the game content on a computer from your own game files:
 
 ```sh
-# Replace with your external-disk workspace; keep build/cache/tmp off the checkout.
-export DM_ROOT=/path/to/external-disk/d2r-work
-./dm/android/test.sh -DDM_ANDROID_VULKAN=OFF
+python3 dm/tools/d2rm_android.py <Update directory of the Switch version 3.3.94012> <output directory>
 ```
 
-This configures, builds and runs owned host CTest fixtures under ASAN/UBSAN without game files or a phone. Disabling Vulkan omits GPU checks. `-DDM_ANDROID_REWRITE_SCAN=OFF` additionally omits Capstone-dependent rewrite audits and their tests when Capstone is unavailable; it does not count as passing those checks. These are development subsets, not full release acceptance.
+It rewrites the game program for Android, translates every shader into a Vulkan
+bundle, generates the touch overlay and a few data tables, and writes
+`<output directory>/android/`. The tools it needs are listed at the top of the
+script (Python packages, the .NET SDK, and `spirv-opt` / `spirv-val` / `glslc`
+from the Vulkan SDK); it reports anything missing.
 
-The first configuration downloads the hash-pinned LZ4 1.10.0 / Mbed TLS 3.6.4 sources declared in `dependencies.cmake`. For a disconnected build, obtain and verify those exact archives beforehand, extract them outside Git, then provide their source directories to **each** build/test invocation:
+Copy the whole `android` folder to `Download/S2X/D2R Mobile/` on the phone, and
+your game resources (the whole `RomFS/data` directory) to `data` in the same
+place. Open the App: when it finds a new import pack it copies it into the
+internal `files/dm/` (with progress; the first time takes a minute or two), then
+starts. The import pack must come from the same release as the App (the product
+code in `pack_info.txt` must equal the one built into the App); otherwise the App
+says so. After the import you can delete the `android` folder on the phone. The
+import pack contains game content; keep it to yourself.
+
+## Build locally
+
+The current configuration uses JDK 17 or newer, Gradle 9.8.1, Android SDK 36,
+NDK 29.0.14206865, CMake 3.31.6, and Python 3. ARM64 devices must support Android
+12/API 31 or newer and Vulkan 1.1 with the required device features. These are build/manifest requirements, not a
+claim that all matching devices have been tested. The first target is vivo X200
+Ultra (Android 16/API 36, Adreno 830).
+
+Vulkan compatibility is selected from actual format features, not the Android version. Startup logs `format_feature_flags2` and `depth16_as_d24`; D16 is widened only when D16 lacks linear filtering and X8_D24 has all required uses. A Vulkan 1.1 version number alone does not establish compatibility. vivo should log `1 / 0`; the Redmi K50 Ultra (Adreno 730, Vulkan 1.1) logs `0 / 1` and runs this path.
+
+Prepare your own game files according to the root setup documentation. Generate
+`dm_vault_tab.h`, `dm_hud_exp.h`, and `dm_bright_levels.inc` outside the repository
+using the rules in `dm/host/Makefile`. Set `ANDROID_HOME` and `ANDROID_SDK_ROOT` to
+the same SDK directory, and `JAVA_HOME` to the JDK. From the repository root:
 
 ```sh
-./dm/android/test.sh -DDM_ANDROID_VULKAN=OFF \
-  -DFETCHCONTENT_SOURCE_DIR_DM_LZ4="$DM_ROOT/tools/src/lz4-1.10.0" \
-  -DFETCHCONTENT_SOURCE_DIR_DM_MBEDTLS="$DM_ROOT/tools/src/mbedtls-3.6.4"
+gradle -p dm/android :app:assembleDebug :app:lintDebug \
+  -PdmGenDir=/absolute/path/to/private/generated/headers \
+  -PdmPython=/absolute/path/to/python
 ```
 
-These paths are examples of pre-extracted directories, not directories the script installs. CMake source overrides bypass archive downloading/hash checking, so verify the archives against `dependencies.cmake` yourself before using them. NDK, SDK, compiler and optional GPU tools must also be installed before disconnecting. This workflow needs no game program, SDK module, keys or saves.
+The APK is `dm/android/app/build/outputs/apk/debug/app-debug.apk`. Native linking
+uses `--no-undefined`. `-PdmPrebuiltJni=...` is a packaging-only fallback; it is not
+evidence that current native sources compile.
 
-`bash dm/android/app/build.sh` builds the [synthetic diagnostic APK](app/README.md), requiring Vulkan/glslc, NDK, Android SDK platform/build-tools 35, JDK/keytool and zip. It enables Vulkan, may run host fixture tests when the host cache is absent, exports an owned fixture and signs with a local debug key; it never installs or launches the APK. Output is `$DM_ROOT/build/android/apk-diagnostic/d2r-diagnostic-debug.apk`. It is not a playable game build.
-
-## Build and test
-
-Install CMake 3.22+ and an [Android NDK](https://developer.android.com/ndk/downloads) (r28+ recommended). The tools target Android API 29+, `arm64-v8a`, with 16 KB ELF segment alignment. Runtime page size comes from `sysconf`, following Android's [page-size guidance](https://developer.android.com/guide/practices/page-sizes).
+On Linux or WSL, `dm/android/docker/` runs the same build in a container with these
+versions pinned, so no Windows-side Python, NDK or CMake is needed:
 
 ```sh
-./dm/android/build.sh
+docker build -t dm-android-build:1 dm/android/docker
+DM_GEN_DIR=/absolute/path/to/private/generated/headers dm/android/docker/build.sh
 ```
 
-Output defaults to `../d2r-work/build/android/arm64-v8a`; override `DM_ROOT` or `DM_ANDROID_BUILD_DIR`. NDK r29 is detected under `../d2r-work/tools/android/android-ndk-r29`; otherwise set `ANDROID_NDK_HOME` or `ANDROID_NDK_ROOT`. The existing `setup.sh` prepares Apple-specific artifacts and is not an Android build entry point.
+The script runs as your user and keeps the debug signing key in `~/.android-dm`; see
+its header for the mounts.
 
-First configuration downloads pinned LZ4 1.10.0 and Mbed TLS 3.6.4 archives into the build tree, checking their SHA-256 digests. Only LZ4 and SHA-256 / zeroization sources are compiled. The BSD-2-Clause and Apache-2.0 license texts stay with the extracted sources.
+## Private runtime files
 
-The default GPU build additionally needs a host `glslc` compiler and a Vulkan loader / headers on development hosts. Android uses the NDK headers and system `libvulkan.so`. On this Mac the existing Homebrew Vulkan SDK / MoltenVK is used; all new shaders / build artifacts remain on T2. To run only CPU tests on a host without a Vulkan SDK, use `./dm/android/test.sh -DDM_ANDROID_VULKAN=OFF`; pass `-DDM_ANDROID_VULKAN=ON` to restore GPU checks.
+The APK and Git repository contain no game program, shaders, game art, or saves.
+The import pack provides them (see "Installing as a player"), and the App imports
+it into the internal directories below.
 
-| Component | Implemented / tested behavior |
-|---|---|
-| `nso.c`, `nso_file.c` | NSO0 parsing, bounded LZ4 decompression, supplied segment SHA-256 checks, zeroed gaps / BSS; reject truncation, overlap and oversized input (512 MiB file / image cap) |
-| `dm_nso_inspect` | Read modules and report layout / build ID / checksum status; never execute or export game content |
-| `module.c`, `module_map.c` | Bounded MOD0 / ELF64 tables, SysV symbol lookup, ABS64 / GLOB_DAT / JUMP_SLOT / RELATIVE plans; reserve actual bases, relocate copies and seal mapped segments; roll back failed loads |
-| `dm_module_inspect`, `dm_module_test` | Offline linking / optional mapping; synthetic cross-module symbols, weak / strong / absolute / hidden symbols, invalid bounds, cycles, overlapping / unaligned targets and transactional failure |
-| `image_map.c` | Copy RW, then protect code RX, rodata R, data / BSS RW and gaps inaccessible at host page granularity; reject W/X page conflicts |
-| `gate.S` | Reuse upstream `host/entry.S`, adapting Mach-O symbol names to ELF |
-| `dm_image_test` | Execute a handwritten ARM64 program from mapped memory through the host gate and system clock call, then return; test read-only code, nonexecutable data, writable BSS, bounds and W^X rejection |
-| `dm_image_code_test` | Reserve an appended RX stub region, install synthetic x18 / TLS patches, register actual gate addresses and return natively; check inaccessible reservation/gaps, RO/RW/NX isolation and invalid layouts |
-| `dm_gate_test`, `dm_gate_vectors` | General-register writeback, all 32 full SIMD registers, FPSR, FPCR, NZCV and preservation of platform x18 |
-| `runtime/context.c`, `heap.c`, `event.c` | Public-pthread guest contexts, owned TLS / TLR destruction, stable-address heap resizing / zeroing, manual / auto-reset events and monotonic timeouts |
-| `runtime/patch.c`, `dispatch.c`, `svc.c` | Rewrite supported SVC / counter / TLS instructions into real native gates; virtualize x18 for those instructions, including fp/lr operands; basic heap, sleep, tick and bounded debug-output services |
-| `runtime/input.c` | Coherent Npad snapshots (0x28-byte ABI), quick-tap latching, held buttons, disconnect clearing, bounded stick axes |
-| `vulkan/` | Actual device / queue / memory operations, SPIR-V compute pipeline, descriptors / push constants, image clear / layout transitions / copies, barriers, fences and verified CPU readback |
+| Location | Contents |
+| --- | --- |
+| App internal `files/dm/out/` | `main` and `sdk` rewriter products generated with `DM_TARGET=android`, including patched modules, fixups, and gates |
+| App internal `files/dm/shaders/` | External `.xgs` bundles matching the game and Vulkan backend |
+| App internal `files/dm/overlay/` | Required CASC touch overlay, including `overlay.manifest`, generated from the matching source and the user's resources |
+| App internal `files/dm/overlay/touchart/`, `files/dm/overlay/hud_v4_ui/` | Skill atlases and their silver silhouettes, map icon, circle frame, bottom bar art, and the skill-button socket (the repository's `dm/ios/Sources/ControlArt/dm_mobile_socket.png`), staged by `stage_touch_assets.py`. The touch controls draw them the same way as iOS (`dm/ios/Sources/DmTouchControlArt.h`, `DmTouchOverlay.m`); the joystick is drawn in code |
+| Shared `Download/S2X/D2R Mobile/data/` | User's resource archives and `.build.config`; requires Android's all-files-access setting. When this directory does not exist but the earlier `Download/data/` does, the App keeps using `Download/data/` |
+| App internal `files/dm/derived.tsv`, `files/dm/pack_info.txt` | Data tables generated from game files (read at startup by the release APK without game content); the import pack's product code and creation time |
+| App internal `files/save/` | Saves; preserve during upgrades |
+| App internal `files/temp/`, `files/dm/boot.log` | Temporary files and appended startup logs |
 
-`dm_image_map` alone does not relocate an image; `dm_modules_map` reserves all bases and relocates copies before committing permissions. Neither certifies that code is safe to enter. Read-only segments may share page permissions, but W/X conflicts fail. The synthetic test is not a rewritten game module. ARM64 execution / gate tests run only on ARM64 development hosts and are also built for Android.
+The launcher uses external app-private `dm/` as a fallback if no internal main
+module exists. It checks required paths before startup; this check does not prove
+shader identity or resource compatibility. Use the debug application's `run-as`
+access to provision internal files, and overlay-install with the same signing
+key. Never uninstall or clear data as an upgrade step. Back up existing saves
+before device validation. Do not upload APKs or any of these private files to a PR.
 
-The system rewriter supports recognized SVC, `cntpct/cntvct`, `tpidr_el0` and `tpidrro_el0` sites. Portable artifact loading is implemented; complete control-flow classification and game initialization remain incomplete. Gate tables must remain immutable while guest threads run. Event handles / event-only WaitSynchronization SVCs are implemented; thread creation/waiting, cancellation, mutex/condition/address arbitration remain incomplete. Debug output accepts readable heap ranges only. Unknown SVCs return `NotImplemented`; unresolved imports abort. `GetSystemTick` returns the 19.2 MHz counter directly in x0, following [libnx's SVC wrappers](https://github.com/switchbrew/libnx/blob/master/nx/source/kernel/svc.s) and [result definitions](https://github.com/switchbrew/libnx/blob/master/nx/include/switch/result.h).
+The overlay generator `dm/ios/tools/gen_romfs_overlay.py` supports
+`DM_DESWIZZLE_LIB` for a locally compiled native texture helper. Its thin CASC
+output contains only changes and references the original archives; it must not
+replace the original resource directory.
 
-The GPU test proves compute, transfer and synthetic graphics draw/readback, without game NVN rendering or a swapchain presenter. macOS execution goes through MoltenVK and does not certify Adreno. The queue is externally serialized and offscreen helpers submit synchronously. Run `dm_vulkan_test pattern.spv fullscreen.vert.spv pixels.frag.spv` from the build's `vulkan` directory; all have Android builds.
+### Shader bundles
 
-Inspect local files without execution:
+`files/dm/shaders/` holds one `<key>.xgs` for each shader the game uses; the
+key is the first 16 hexadecimal digits of the SHA-256 of the shader's control
+section. A bundle is an XGS1 file: a header, the bindings, the vertex input
+locations, the c1 bytes, then the SPIR-V (`xbg_shader_header` in
+`dm/gfx/vulkan/engine/xbg_game.h`). The set tested so far has 6,931 bundles:
+
+- **6,927 are translations of the game's own shaders.** They are derived from
+  game files, so they stay out of Git, PRs and the APK. `dm/gfx/tools/dmsh_vk.py`
+  makes them from start to finish: `dm/gfx/tools/dmsh_xlate` translates each
+  shader to SPIR-V for Vulkan, the bindings are renumbered for the single
+  descriptor set (original number × 6 + stage number), the capabilities for
+  reading and writing storage images of unknown format are added, unused
+  capabilities are trimmed, `<key>.vk.json` is exported, and the packing function
+  of `pack_game_shaders.py` writes the bundle. The 6,927 bundles it makes are
+  byte-for-byte identical to the tested ones made with the project's HarmonyOS
+  shader pipeline (`dmsh_vk.py --compare <reference dir> <output dir>`).
+- **4 are the query kernels embedded in the main program** (`q_val0`,
+  `q_val8`, `q_dlt0`, `q_dlt8`; Mac and iOS use the MSL versions in
+  `dm/gfx/nvn/nvn_builtin.h`). They are hand-written, so they can be built from
+  source: `python3 dm/gfx/tools/pack_builtin_queries.py --output <new
+  directory>` compiles `dm/gfx/vulkan/kernels/builtin_queries.comp` with
+  `glslc` (the NDK has it under `shader-tools/`) and writes the 4 files.
+
+A bundle set can also carry `vk-pipeline-list.seed`. On a first launch, before
+`files/dm/vk-pipeline-list.bin` exists, the engine builds the pipelines the seed
+lists during start-up, so a first visit to the places it covers does not
+stutter while pipelines build. `dm/android/tools/merge_warm_lists.py` merges
+several devices' `files/dm/vk-pipeline-list.bin` into one seed. A seed only
+works with the bundles it was recorded with, so it ships with them. The
+measurements are in `docs/android-notes/2026-10-22-first-play-stutter.md`.
+
+## Validation and remaining work
+
+Run the root contribution checks, plus `:app:lintDebug`. The pure Java input
+checks can run without a device:
 
 ```sh
-../d2r-work/build/host-sanitized/dm_nso_inspect \
-  ../d2r-work/data/switch/3.3.94012/Update/ExeFS/main \
-  ../d2r-work/data/switch/3.3.94012/Update/ExeFS/sdk \
-  ../d2r-work/data/switch/3.3.94012/Update/ExeFS/subsdk0
+javac -encoding UTF-8 -d /tmp/dm-input-tests \
+  dm/android/app/src/main/java/com/xiaoboluo/d2r/TextInputRules.java \
+  dm/android/tests/TextInputRulesTest.java
+java -cp /tmp/dm-input-tests com.xiaoboluo.d2r.TextInputRulesTest
 ```
 
-Inspect cross-module linking, reserve actual addresses, relocate private copies, protect segments and release them without executing code:
+Device acceptance must separately record installation, genuine GPU output/FPS,
+character creation, entering a world, moving and stopping, NPC interaction,
+inventory/skills, sound, background/resume, and saving/reloading. Headless host
+FPS is not a rendering result. Metal GPU timing and scanout timestamps are not
+implemented by this backend; unavailable metrics must not be treated as zero cost.
 
-```sh
-../d2r-work/build/host-sanitized/dm_module_inspect --map \
-  ../d2r-work/data/switch/3.3.94012/Update/ExeFS/main \
-  ../d2r-work/data/switch/3.3.94012/Update/ExeFS/subsdk0 \
-  ../d2r-work/data/switch/3.3.94012/Update/ExeFS/sdk
+The Vulkan bridge currently replays all draws and uses synchronous host
+translation (`DM_NVN_SYNC=1`); the upstream asynchronous path needs an independent
+object-lifetime audit. The presenter still waits for its queue each frame.
+Advanced iOS skill artwork, empty-slot skill menus, specialized quantity/stat
+popovers, and shop drag-follow visuals are incomplete. Generic controls and text
+input do not establish complete iOS parity. macOS/iOS regressions must be run on
+an Apple build host before upstream integration.
+
+The overlay generator writes a source fingerprint and exact file hashes to `overlay.manifest`. The APK embeds the same generator-input fingerprint. Missing, incomplete, or mismatched overlays stop startup with a localized message before the host thread starts. Deploy the complete generated directory; do not copy a manifest onto old resources or generate one on the phone. Regenerate after generator/layout changes. This contract does not authenticate third-party resource downloads.
+
+`gen_romfs_overlay.py` requests overlay-only assets: it skips the iOS skill atlas and its unused skill silhouettes. Full `gen_assets.ensure()` still requires them. Skill atlas validation compares dimensions and decoded RGBA pixels while retaining source sprite SHA256/MD5 checks. Generator subprocesses explicitly use UTF-8/LF and preserve an existing read-only resource adapter. Windows/Linux byte equality must still be verified with the same game input and tool versions.
+
+Vulkan compatibility is selected from actual format features, not the Android version. Startup logs `format_feature_flags2` and `depth16_as_d24`; D16 is widened only when D16 lacks linear filtering and X8_D24 has all required uses. A Vulkan 1.1 version number alone does not establish compatibility. vivo should retain `1 / 0`; Redmi K50 Ultra needs separate device validation.
+# Current iOS touch controls
+
+Android shares the upstream touch state machine and its read-only skill-binding observer. Generate the binding index and atlas PNGs from your own matching RomFS outside the checkout:
+
+```
+python dm/ios/tools/native_art/generate.py <RomFS> --output-dir <external-native-art>
 ```
 
-Without `--map`, linking uses analysis addresses and performs no mapping or relocation writes. Missing strong imports return exit 3; malformed / unsupported metadata or mapping errors return exit 1. Mapping refuses unresolved strong imports. Initializers are recorded but never called. ELF TLS relocations, IFUNC and REL/RELR are unsupported. The mapper installs no instruction rewrites or HLE overrides and is not a game entry point. Reserve / commit APIs require fresh mappings under exclusive loader ownership; never recommit live guest mappings.
+Copy only `dm_touch_native_art.c` into the existing `DM_GEN_DIR`. CMake requires that external index alongside the existing generated host headers. After generating a fresh overlay and HUD, run:
 
-Enable USB debugging, connect the phone, authorize this computer, then run (use your output directory if overridden):
-
-```sh
-adb devices -l
-adb push ../d2r-work/build/android/arm64-v8a/dm_android_probe /data/local/tmp/dm_android_probe
-adb push ../d2r-work/build/android/arm64-v8a/dm_texture_test /data/local/tmp/dm_texture_test
-adb shell chmod 700 /data/local/tmp/dm_android_probe /data/local/tmp/dm_texture_test
-adb shell /data/local/tmp/dm_android_probe
-adb shell /data/local/tmp/dm_texture_test
+```
+python dm/android/tools/stage_touch_assets.py --native-art <external-native-art>/TouchArt --hud <assets>/NativeHUD/v4/hud_v4_ui --overlay <candidate-overlay>
 ```
 
-With multiple devices, use `adb -s SERIAL` for every command. No root is required. The probe returns nonzero if anonymous RW→RX mapping fails, Vulkan 1.1 instance creation fails, or no graphics logical device can be created. It reports model, SoC, Android version, page size, GPU/driver version, BC/ASTC support and shader-int64 support. These are observations, not a final game compatibility policy. It does not execute the test instruction or run shaders. A probe PASS does **not** mean the game can run: it does not test a presentation surface, required per-format usage, shader correctness, guest code execution, or app-domain SELinux policy. In particular, `adb shell` memory permissions must be rechecked inside the eventual APK.
+Import the complete finalized candidate overlay. Skill PNGs and HUD images stay in the external resource payload; do not add them to Git or APK assets. The renderer reads them from the validated imported `files/dm/overlay` directory. `DM_NATIVE_ART_DIR=<external-native-art>` lets the native-art capture test verify the external index and pixels. The five navigation buttons remain enabled until the complete replacement inventory flow passes device validation.
 
-The texture test reuses upstream `nvn_tex.c` and `nvn_deswizzle.c` without copying them. It checks synthetic RGBA8, BC1, BC3 and ASTC data through 2D, array and 3D mip chains, guard bytes, short pitches, invalid mip/layer rejection and independently calculated GOB addresses. It needs no proprietary fixtures. It can also run on the development computer:
+## Debug performance controls
 
-```sh
-./dm/android/test.sh
+Only CMake's Debug configuration reads `<files>/dm/android-debug.env`; Release contains no reader or call. This file is separate from the game's general `env`. It accepts only `DM_3D_SCALE`, `DM_3D_SCALE_DYN` and `DM_3D_SCALE_FLOOR`, one `KEY=VALUE` per line. Blank lines, `#` comments and CRLF are accepted. Unknown or repeated keys, files over 4096 bytes, lines over 127 characters, non-finite or malformed numbers, invalid switches and a floor above the starting scale reject the whole file. Scale and floor range from 0.50 through 1.00; DYN is exactly 0 or 1. The log reports acceptance/rejection without values.
+
+Defaults are a scale ceiling of 0.85 on Android (0.75 on the other phone platforms), dynamic scaling enabled, floor 0.60. For a fixed-scale A/B comparison, use:
+
+```
+DM_3D_SCALE=0.75
+DM_3D_SCALE_DYN=0
+DM_3D_SCALE_FLOOR=0.60
 ```
 
-Host test output defaults to `../d2r-work/build/host-sanitized` (override `DM_ANDROID_HOST_BUILD_DIR`). CTest suites cover decoding, rewrites, portable artifacts, native execution, linking, input, RomFS imports, event SVCs and actual GPU work. Full logs are under `Testing/Temporary/LastTest.log` in the build directory.
+Synchronization stays enabled. The file cannot override synchronization, frame overlap or any other setting. The parser regression is `dm/android/tests/test_debug_env.c`; build and run it independently from the game.
 
-## Optional extraction / verification tools
+## Runtime and diagnostic builds
 
-`./dm/android/tools.sh <command> ...` selects the external workspace Python/hactool paths without automatically reading game files or keys. Install the tools you need separately; the wrapper is not an installer. See [GAME_FILES.md](../../docs/GAME_FILES.md) for user-owned inputs and [DEPENDENCIES.md](../../docs/DEPENDENCIES.md) for upstream tool/license details. Keep tools, extracted files and diagnostic logs outside Git, and sanitize any evidence before sharing.
-
-## Historical roadmap: remaining port work, in dependency order
-
-The tested foundations now include thread/synchronization handles with cancellation and a virtual-priority getter, heap and alias mappings, exact stack leases, the native host-service bridge, and bounded 4–32 KiB production assembly guests. These are supported synthetic execution paths; they do not establish complete SDK or game compatibility. The new texture backend is a host-only RGBA8 resource subset. The new `runtime/lm_wire.c` helper decodes only a bounded Log request shape (type6, one static, one map-alias buffer, length 1–1024, pointer below 2^39). It returns numeric fields without dereferencing guest memory. `runtime/lm.c` additionally retains up to four copied 1 KiB packets per host for live child Log requests, with FIFO dequeue; it is not a sink, does not implement SetDestination, and is not complete logging. Installation is serialized per host and only the genuine lm backend may own the port; Log source pins require an owned readable range.
-
-1. **Safe SDK entry and required services.** Resolve the SDK monitor-return/indirect-entry proof without weakening the strict scanner. Complete the remaining required service/import contracts, orderly shutdown and controlled module initialization; bounded synchronization cancellation, priority queries and an opt-in reserved process alias region are now implemented. Strict enrolled-backing accounting now supports GetInfo 21/22, and one owned reservation contains module and TLS mappings for GetInfo 12/13. Remaining Horizon region-policy/service rules, virtual core masks and later IPC/service initialization remain open. Existing rewriting, linking and relocation inspection does not authorize running unresolved SDK paths. The ordered static inventory is [docs/android/startup-services-inventory.md](../../docs/android/startup-services-inventory.md).
-2. **NVN resources through presentation.** Bind guest NVN resource lifetimes and updates to Vulkan; extend required texture formats/layouts, translated shaders, descriptor reflection/binding, render targets/state and draw commands. Reuse the SPIR-V/reflection stage in `gfx/tools/dmsh_xlate/Program.cs`. Add the real Vulkan swapchain presenter, frame synchronization and surface-loss handling. A sampled RGBA8 image is one prerequisite, not the complete renderer.
-3. **Real HID, audio and persistent saves.** Connect Android touch/gamepad events to guest HID imports, implement the audio backend and focus behavior, and add writable save storage with durability and reload checks. Tested Npad snapshots and read-only RomFS are foundations for these paths.
-4. **App lifecycle integration.** Connect resource import, controlled initialization, runtime ownership, shutdown and restoration to the diagnostic NativeActivity shell. Existing diagnostic pause/resume logs do not establish game lifecycle recovery. Keep player-visible text in the shared string table.
-5. **Device and game acceptance.** Run the new paths on reachable Xiaomi hardware, then verify actual APK scenes, input, audio, save/reload and lifecycle behavior; cover 4/16 KiB page configurations where available and measure sustained performance/temperature. Earlier device CLI/diagnostic results do not validate this new texture backend or full game startup.
-
-Game execution and visual validation require the user's own files as described in [GAME_FILES.md](../../docs/GAME_FILES.md). Safe SDK entry and service coverage gate controlled initialization; graphics work can continue with owned fixtures meanwhile. There is no evidence-based completion percentage or delivery date yet.
-
-## Verification on 2026-10-16–17
-
-Based on upstream source snapshot`:
-
-- NDK r29 / Clang 21: Android ARM64 tools cross-compiled successfully, including native runtime / system-patch / input tests and the Vulkan test / synthetic shader; compilation does not establish Android runtime compatibility.
-- ARM64 macOS host CTest with AddressSanitizer and UndefinedBehaviorSanitizer: 25/25 passed. The GPU test ran on Apple M4 through MoltenVK and verified every output pixel. Native rewrite coverage includes virtual TLS, plain x18, fp/lr writes, scratch / platform x18 preservation, NZCV, SP pre/post-index, 32-bit zero extension, counter and SVC tick.
-- Separate ThreadSanitizer builds of runtime / input tests passed: four guest threads, 1,000 event handshakes and 50,000 concurrent input publications. This is host-side concurrency evidence, not Android scheduling / driver acceptance.
-- Shell syntax, invalid-NDK error handling and `git diff --check`: passed.
-- `dm_i18n.py --check`: passed, 372 rows. The unchanged literal scanner reports two baseline diagnostics with the system Python 3.10; it exits successfully under the prepared Python 3.12, but its STRING-only token handling does not cover Python 3.12's separate f-string tokens. This is not a complete literal-coverage guarantee; no scanner changes were made here.
-- Real main / subsdk0 / sdk modules parsed, linked and mapped on the development Mac: 116,034 relocations, zero unresolved strong references and 16 unresolved weak references resolved to zero. All nine NSO segment hashes passed. This is local inspection, not game execution.
-- No phone was connected. No Android device / APK-process execution, game startup, full-game rewrite equivalence or game Vulkan rendering validation yet.
-
-## Plain x18 rewriting and whole-text audit
-
-`runtime/x18_patch.c` uses a real 256-byte stack frame and one host gate to obtain the guest x18 slot address. The substituted ARM64 operation executes natively; scratch registers and platform x18 are preserved. It handles ordinary arithmetic, loads/stores, 32-bit zero extension, fp/lr writes, NZCV and bounded constant SP pre/post-index writeback. Indexed or deep-negative SP accesses, dynamic SP assignment, PC-relative instructions, branches and exclusive windows are rejected. One gate per instruction is a correctness-first implementation, not a near-zero-overhead or device-performance claim.
-
-The host decoder uses the upstream Capstone operand-substitution method and compares the resulting disassembly exactly, including immediates. Capstone 5 headers/library are required for the host audit (this Mac uses the existing Homebrew install); Android targets never link Capstone. Hosts without it can set `-DDM_ANDROID_REWRITE_SCAN=OFF` to omit this audit and its tests.
-
-```sh
-../d2r-work/build/host-sanitized/dm_rewrite_scan \
-  ../d2r-work/data/switch/3.3.94012/Update/ExeFS/main \
-  ../d2r-work/data/switch/3.3.94012/Update/ExeFS/subsdk0 \
-  ../d2r-work/data/switch/3.3.94012/Update/ExeFS/sdk
-```
-
-Exit 3 reports deferred/undecodable sites, 1 reports input/tool errors, and 2 is usage. This tool emits no runnable image. Linear disassembly may encounter padding/inline data and cannot prove code/data classification. Exclusive windows use the upstream conservative 16-instruction bound; unmatched loads and all x18/system sites inside identified windows are reported, not individually patched. A full rewriter must handle entire windows and their branch entries/exits without calling the host inside the load-exclusive/store-exclusive region. Real audit results stay under the workspace's `build/dump-inspection/rewrite-scan.log`.
-
-## x18 PC-relative addresses and conditional branches
-
-`runtime/x18_control.c` adds 96-byte native stubs for ADR/ADRP and W/X CBZ/CBNZ, TBZ/TBNZ, reusing the ordinary stub's saved-register/guest-slot prefix. ADR/ADRP is re-encoded as ADRP+ADD at the relocated PC; mappings must be 4KB aligned. Conditional instructions test a temporary holding guest x18 and independently restore registers/stack before returning to the original taken or fall-through target; NZCV and guest x18 remain unchanged. Indirect BR/BLR/RET are rejected. All bounds and branch ranges are checked before publishing output.
-
-The `x18_control` suite executes synthetic modules natively under sanitizers: positive/negative cross-page addresses, both forward/backward branch paths, W/X width distinction, bits 0/31/32/63, and NZCV preservation. Android cross-compilation also builds `dm_x18_control_test`. The real-module audit accepts 373 PC-relative and 787 conditional sites. The formerly deferred indirect branches, window sites and SP-read aliases are covered by the region support below; unmatched exclusive loads and undecodable text words still need classification. The audit continues to return 3 and produces no runnable whole-game image. Latest local log: `../d2r-work/build/dump-inspection/control-scan.log`.
-
-## Jump tables, exclusive windows and SP-read aliases
-
-`runtime/x18_jump.c` accepts verified unsigned byte/halfword-indexed jump tables. `rewrite/jump_table.c` checks the preceding eight instructions, ADR/ADD provenance, unsigned load width and intervening writes. Runtime stubs check index bounds/alignment, route through equally spaced landing branches and restore borrowed registers/stack before entering the original target. Generic indirect branches remain unsupported. No red zone is used.
-
-`rewrite/window_decode.c` chooses registers unused throughout a window, verifies substitutions, rejects SP access/calls/PC-relative data operations/nested exclusive loads, and checks direct branches across text for external interior entry. `runtime/x18_window.c` copies the entire region and relocates its branches; fall-through uses exit zero. There are no host calls between exclusive load/store or inside retry loops. A host gate runs only before the first load. Direct-entry checking is conservative and does not prove every indirect entry or complete code/data classification.
-
-The new manual and decoder-driven native tests cover byte/halfword table boundaries and invalid-target traps; four-thread 4,000-increment contention; a forced first store-exclusive failure using CLREX followed by successful retry; and paired CAS equal/unequal exits. A separate decoded native test proves `mov x18,sp` reads the original guest SP; the decoder handles its ADD/MOV alias without changing the stack. No dynamic stack-switch instruction was required by these formerly deferred sites.
-
-The region audit accepts all 20 jump-table sites, all 24 x18 sites in 12 exclusive windows and all 13 SP-read aliases. Deferred PC-relative, branch, other and window-site counters are zero for all three modules. **This is not a game-start certificate:** 48 unmatched exclusive loads and 1,047 undecodable text words remain for classification. Audit exit remains 3. Local evidence: `../d2r-work/build/dump-inspection/regions-scan.log`; no game code was executed. The newer shared preparation scan below additionally reports unsupported system registers.
-
-## Appended executable stubs and module linking
-
-`dm_image_reserve_with_code` / `dm_image_commit_with_code` accept a separate stub buffer and image-relative offset. Its first page must be beyond every original image page, including BSS, and aligned to the actual host page size. The combined reservation remains bounded to 512 MiB. Reservation starts inaccessible; commit zeroes padding, copies image/stubs while RW, flushes the instruction cache and seals text/stubs RX, rodata R, data/BSS RW and intervening gaps inaccessible. No writable-executable page is created. These functions do not generate or validate instruction rewrites.
-
-`dm_modules_map_with_code` integrates per-module stub regions with actual-base symbol resolution and relocation of private copies. A zero descriptor means no appended region. Invalid layouts, missing stub bytes or later failures roll back all reservations without publishing output or changing input images. Existing `dm_modules_map` callers keep their original behavior. Tests exercise linking with an appended region on one module, native branching into it, mixed modules without stubs and failure during a later module's commit. The separate `image_code_mapping` test exercises x18/TLS stubs and host gates across the original-text/appended-code boundary.
-
-Local evidence: `build/image-code-host-build.log` (20/20 sanitizer tests), `build/image-code-android-build.log` (17 Android ARM64 tools), `build/image-code-android-elf.log` (new executable's 16 KiB LOAD alignment), and `build/dump-inspection/image-code-module-map.log` (116,034 real relocations, no guest execution), all under `../d2r-work`. Static analysis of both mapping implementations passed. Android execution still needs the phone.
-
-Additional local diagnostics split the 1,047 undecodable words into 1,027 occurrences of the same `0xe7ffdefe` encoding, 18 words within MOD0 metadata and two other words. The 48 unmatched exclusive loads include control flow with CLREX and later/nested exclusive operations; 40 have CLREX among the next 24 linear instructions. These observations do not prove safe code/data boundaries or live-exclusive paths, so no blockers were suppressed. Detailed output stays outside Git in `build/dump-inspection/remaining-all-shapes.log`. Classification and a safe initialization contract remain unresolved; the game has not started.
-
-## Shared audit and in-memory rewrite preparation
-
-`rewrite/prepare.c` is the common scan used by `dm_rewrite_scan` and the host preparation API. `dm_rewrite_prepare` can audit only, or produce a private patched NSO image, an appended stub buffer and an image-relative gate table. It decodes only the unchanged source, reuses all existing emitters, bounds combined image/stubs to 512 MiB and publishes output only after the entire scan passes. Any unsupported site, unmatched exclusive load, undecodable word or emitter failure discards partial buffers and leaves caller output / source unchanged. This is a process-local memory artifact: its host-gate addresses are not a portable Android disk format. The caller must add actual mapped bases to gate entries, combine/sort them and keep the table immutable for guest threads.
-
-`rewrite_preparation` tests two complete synthetic MOD0/RELA modules: prepare them, link at reserved bases, copy/seal image and stub pages, register the combined gate table, then execute a relocated cross-module call natively. Other native paths exercise system/TLS, plain x18, ADR, both conditional outcomes, an exclusive retry window and a byte-indexed jump table. Audit/materialized reports agree; tests also reject malformed arguments, unknown words/registers/indirect branches, unmatched loads and out-of-range stub branches without publishing partial output. No game initializer is executed.
-
-```sh
-../d2r-work/build/host-sanitized/dm_rewrite_scan --prepare-check \
-  ../d2r-work/data/switch/3.3.94012/Update/ExeFS/main \
-  ../d2r-work/data/switch/3.3.94012/Update/ExeFS/subsdk0 \
-  ../d2r-work/data/switch/3.3.94012/Update/ExeFS/sdk
-```
-
-This CLI uses a placeholder gate address, discards successful memory output and never writes, maps or executes it. Exit 3 means coverage blockers, 1 means input/tool failure, 2 means usage. System-register checks permit native NZCV/FPCR/FPSR but now reject other unhandled privileged operations, including four `CTR_EL0` reads in the real SDK. The real preparation check returns 3: the 48 unmatched loads and 1,047 undecodable words remain, plus those four register reads. No real-module artifact is published or game code entered. Linear coverage alone still does not prove code/data classification, indirect entries, Horizon services or safe initialization.
-
-Evidence under `../d2r-work`: `build/prepare-host-build.log` (21/21 ASAN/UBSAN tests), `build/prepare-android-build.log` (existing 17 Android targets build; the Capstone preparation tool remains host-only), `build/static-analysis/prepare` (Clang analysis), and `build/dump-inspection/prepare-check.log` / `unsupported-systems.log` (data-only real inspection). The next work is remaining classification / cache-register semantics and Android artifact binding / initialization. No APK or device execution yet.
-
-## Checkpoint: portable artifacts, services, graphics and diagnostic APK
-
-`rewrite/exclusive.c` follows every bounded direct path from an unmatched load to a store/CLREX/next exclusive load. It accepts only paths requiring no host rewrite or unknown call/return; limits are 256 distinct instructions and a 4 KiB radius. This confirms 43 previously unmatched sites can remain native, leaving five SDK sites unresolved. Validated MOD0 structures are treated as metadata, with direct branch entries rejected. The exact unallocated encoding `0xe7ffdefe` is retained unchanged and counted separately; a native child test confirms it still traps (SIGTRAP on this Mac). This follows the top-level unallocated `0011` group in the [Arm architecture manual, C4.1](https://cs140e.sergio.bz/docs/ARMv8-Reference-Manual.pdf), not a general unknown-word exemption.
-
-Four `CTR_EL0` reads remain native so cache maintenance uses the target CPU's actual line sizes, following [Android compiler-rt's cache flush implementation](https://android.googlesource.com/toolchain/compiler-rt/+/release_36/lib/builtins/clear_cache.c). Mac direct access raised an exception during testing: Darwin execution now checks retained bytes instead of executing CTR, and the Android probe reports the actual value. Android CTR access and cache maintenance still need device verification.
-
-Latest preparation: main has no scan blockers; subsdk0 has one unclassified word; SDK has one unclassified word and five unresolved exclusive paths. Main exported successfully to `../d2r-work/build/android/artifacts/main-v1.dma` and passed artifact decoding/checksum validation. It contains user-local game code and stays outside Git/APKs. **No real entry or initializer ran; scan acceptance is not full rewrite equivalence, service coverage or game-start approval.** Logs: `build/dump-inspection/services-prepare-check.log`, `main-artifact-export.log`.
-
-`artifact.c` stores unlinked output in a v1 little-endian format: 160-byte header, image bytes, stubs and 16-byte relative gate records. Header/payload SHA-256 detects corruption, not authenticity. Both files and mapped images are capped at 512 MiB. Stub offsets are 16 KiB aligned; host-gate literals are zeroed on disk and rebound from validated fixup locations in private copies before sealing RX. Loaders validate sizes, segment/page overlaps, reserved fields, gate kinds/arguments/order and fixup bounds. Failed reads/maps publish no partial output. Writers exclusively create files and never overwrite existing paths. Use only trusted executable inputs; this is not a sandbox.
-
-```sh
-../d2r-work/build/host-sanitized/dm_rewrite_scan --export NEW.dma ExeFS/main
-../d2r-work/build/host-sanitized/dm_artifact_inspect NEW.dma
-# Only inspect/link/map, never enter code:
-../d2r-work/build/host-sanitized/dm_artifact_inspect --map first.dma second.dma
-```
-
-Host imports can be explicitly bound during linking. They override undefined-symbol relocations, not local definitions or direct calls. The read-only `runtime/romfs.c` adapter provides six upstream nn::fs imports (cache query, mount, open, read, size, close), exact-case rooted openat traversal without symlinks or `..`, pread/EOF semantics and 128 generation-tagged handles. It supports raw extracted resources, without `.holes`, overlays, directory enumeration, writable storage or save transactions. Guest buffers must be valid caller-owned memory; it is not a guest-memory sandbox. Tests include 4,000 concurrent reads and stale/full-handle rejection. Actual RomFS prefix reading passed; real module linking applied ten host-import writes among 116,034 relocations without game execution. Logs: `romfs-import-read.log`, `romfs-import-link.log` under `build/dump-inspection`.
-
-`runtime/sync.c` implements CreateEvent, SignalEvent, ClearEvent, CloseHandle, ResetSignal and event-only WaitSynchronization SVCs. Read/write endpoints have distinct rights, events reset manually, waiting pins objects across handle closure, indexes/timeouts use a monotonic clock, and generation handles retire on overflow. Limits are 64 objects/128 endpoints and 64 handles per wait. Thread waiting, cancellation and mutex/condition/address arbitration are not yet implemented; do not pthread_cancel waiting threads. Host ASAN/UBSAN tests pass; separate ThreadSanitizer runs pass for event and RomFS tests (`build/services-tsan.log`).
-
-`vulkan/vk_draw.c` adds actual vertex/fragment pipelines, image views, a render pass/framebuffer, fullscreen draw, color-write→transfer→host barriers and readback, following [Khronos synchronization guidance](https://docs.vulkan.org/guide/latest/synchronization_examples.html). All pixels and trailing guards pass at 1×1, 13×11 and 37×19 on M4/MoltenVK. These are synthetic draws, not NVN replay, game shaders or an Adreno result.
-
-The [NativeActivity diagnostic app](app/README.md) is built, debug-signed and passes APK signature/16 KiB ZIP alignment checks. It bundles only owned synthetic ARM64/TLS and GPU fixtures, handles window/redraw/low-memory callbacks and displays the GPU diagnostic through CPU readback. This is not the future game swapchain presenter or game UI. Its app-process execution, lifecycle, screenshot/accessibility and Adreno acceptance remain unverified without the phone, as allowed by the user's offline-first scope. No visual QA PASS is claimed.
-
-Current verification: 25/25 host ASAN/UBSAN suites (`build/services-host-build.log`); 21 Android executables plus diagnostic shared library; signed diagnostic APK (`build/app-apk-build.log`); static analysis under `build/static-analysis/services`; i18n table 372 rows. All outputs and SDK packages remain under `../d2r-work`. Changes remain local and uncommitted.
-
-Remaining order: resolve the five SDK paths/two words and indirect/data-entry questions; implement thread lifecycle, mutex/condition/address arbitration, memory/SDK services and safe initializers; extend filesystem to directories and transactional saves; implement NVN resource/state/shader/draw semantics and a game swapchain presenter; add resource import, game input/audio/UI; then perform Xiaomi APK-process acceptance. The diagnostic APK does not complete these tasks or justify FPS/thermal claims.
-
-## Checkpoint: monitor semantics and literal classification
-
-SVC stubs now explicitly execute CLREX before returning, matching the monitor clearing on exception return described in [Arm's A64 synchronization guide, §3.2.4](https://documentation-service.arm.com/static/68c223238a337a2bc6645c0a). MRS/MSR stubs keep their layout; SVC gate return/fixup offsets and total 32-byte size stay unchanged. The bounded exclusive-path checker accepts direct SVCs and direct BL targets whose first instruction is SVC. It still rejects other calls, indirect calls and returns with a live reservation. This resolves four of the remaining five SDK exclusive paths without claiming those Horizon services are implemented.
-
-The preparer marks two narrow single-word data forms before rewriting: forward 32-bit LDR-literal references to a word immediately after RET and before NOP; and BL-over-one-word / LDR-from-LR / SXTW / ADD-LR with consistent registers and a relative target inside data/BSS. Bytes are preserved, including values that decode as x18 instructions. Known direct branch/ADR entries and ADRP-page references conflict with classification and block output. Width, bounds, MOD0 overlap and register checks apply. This is evidence-based pattern recognition, not proof against all indirect code/data entries; unwind gaps and arbitrary decode failures are not accepted as data evidence.
-
-Real module results: main and subsdk0 have zero scan blockers; SDK has zero unknown words and one remaining exclusive path, at +0x34f390, which can return with a live monitor. Each auxiliary module has one classified literal word and zero literal conflicts. Main and subsdk0 were exported and checksum-validated under `../d2r-work/build/android/artifacts/monitor-literal/`; the new main supersedes the earlier `main-v1.dma` checkpoint. All remain private game-derived files, outside Git and APKs. No real initializer or guest instruction ran. Logs: `monitor-literal-final-check.log`, `monitor-main-export.log`, `monitor-subsdk0-export.log`, `monitor-artifact-inspect.log` under `build/dump-inspection`.
-
-Regression tests failed before the SVC/literal fixes and pass afterward. Current host ASAN/UBSAN result: 25/25 (`build/monitor-literal-host-tests.log`), including native execution of a synthetic literal reader and unchanged TLS/tick/SVC gate execution. A dedicated synthetic host gate rearms an exclusive reservation; after the SVC stub returns, STXR fails and leaves memory unchanged. Negative cases cover conflicting entries, 64-bit loads, wrong BL distance, register mismatch and invalid relative targets. Android ARM64 rebuild passes (`build/monitor-android-build.log`); changed production C sources pass Clang analysis (`build/static-analysis/monitor-literal`). The latest SVC changes have not run on the phone.
-
-The earlier diagnostic APK did pass synthetic ARM64 gate execution, Vulkan 256x256 pixel verification/window submission and basic pause/resume logging on Xiaomi / SM8750, Android 16 API 36 with 4 KiB pages; see [app checkpoint](app/README.md). Full game execution, NVN graphics and visual/lifecycle stress acceptance remain pending. Next: establish a safe treatment of the remaining monitor-return path, then complete thread/synchronization services and controlled initialization.
-
-## Checkpoint: 32-bit address wait/signal services
-
-`runtime/arbiter.c` implements SVC 0x34 WaitForAddress and 0x35 SignalToAddress for 32-bit types 0/1/2, following the [libnx ABI](https://github.com/switchbrew/libnx/blob/master/nx/include/switch/kernel/svc.h) and [public kernel semantics](https://github.com/Atmosphere-NX/Atmosphere/blob/master/libraries/libmesosphere/source/kern_k_address_arbiter.cpp). It supports signed less-than/equality predicates, decrement-before-wait (including zero-timeout), signal-only, increment-if-equal, and waiter-count-dependent modification. Updates use atomic operations with defined unsigned wraparound. Predicate checking, queue insertion and notification share the host mutex, avoiding lost wakeups; selected waiters remain selected even if other signals arrive before they resume. Positive timeouts use a monotonic deadline captured before locking; negative timeouts wait indefinitely. Up to 128 active waits are supported, with FIFO ordering for the same address. Thread-priority ordering, cancellation and 64-bit equality are not implemented; never pthread_cancel a waiting thread.
-
-Arbitration accepts only aligned words in committed heap memory or explicitly registered writable regions. `dm_host_register_writable` permits up to 16 nonoverlapping trusted regions before thread attachment/waiting, rejects heap overlap and invalid/overflowing ranges, and transfers no ownership. Register only writable module data mappings; keep them valid until host destruction. This is a loader contract, not OS permission discovery or a sandbox. Heap shrink is rejected while address waits are active, preventing addresses from disappearing; heap growth is allowed, and host destruction returns EBUSY until waits finish. Resource/capacity checks occur before a nonzero-wait decrement so a refused wait cannot leave an unmatched counter change.
-
-Current verification: 26/26 host ASAN/UBSAN suites (`build/arbiter-host-tests.log`), 3/3 ThreadSanitizer suites for RomFS/events/arbiter (`build/arbiter-tsan-tests.log`), Android ARM64 cross-build (`build/arbiter-android-build.log`) and Clang analysis (`build/static-analysis/arbiter`). Tests cover memory registration/bounds, predicates/wraparound, FIFO/count/isolation, deadlines, heap lifetime, all 128 waiting slots, failure without counter mutation, 500 request/reply rounds and actual synthetic SVC34/35 execution through native ARM64 gates. Before implementation the runtime test failed (`arbiter-red-test.log`); the capacity regression separately failed before its fix (`arbiter-capacity-red.log`). No new phone run occurred.
-
-The SDK monitor-return blocker remains. Read-only caller investigation supports a native ticket-lock polling helper and shows no later use of its reservation on the three known direct caller paths, but does not close computed or external indirect callers. The polling instructions and strict return rejection remain unchanged. Managed thread creation/start/exit/waiting, priority/cancellation, mutex/condition services, safe game initialization and NVN graphics remain outstanding. No real game code was executed; previous main/subsdk0 artifacts remain the latest accepted exports.
-
-## Checkpoint: managed native thread lifecycle
-
-`runtime/sync.c` now supports CreateThread (0x08), StartThread (0x09), ExitThread (0x0a), GetThreadId (0x25), CloseHandle and mixed event/thread WaitSynchronization. Managed threads use independent pthreads, guest TLS/TLR, stable reserved IDs and generation handles. Their TLR-owned thread object receives the handle at +0x1b0. Closing a handle does not invalidate a running thread or an already pinned wait. Thread completion is manual-reset and cannot be cleared/signaled through event endpoints. An unstarted thread releases its stack lease when its last reference closes; a started thread releases the lease after returning to the native stack and detaching its context, before publishing completion. Completed but unclosed thread objects still occupy a slot.
-
-`runtime/thread_stack.S` preserves native nonvolatile GPR/SIMD, FP state and platform x18 while switching stacks. ExitThread restores the native stack rather than invoking pthread_exit/unwinding from guest stack memory. Preserving x18 also respects Android's [ShadowCallStack ABI](https://source.android.com/docs/security/test/shadow-call-stack). ASAN and TSAN fiber interfaces describe the switches in their respective verification builds. Returning from a guest entry without ExitThread remains a fatal contract violation.
-
-Before attachment, register trusted executable regions with `dm_host_register_executable`. The loader owns their RX permissions/lifetime; writable/executable registrations may not overlap. Before CreateThread, register each exact stack range using `dm_host_register_thread_stack`: at least 64 KiB, 16-byte aligned and entirely within committed heap or a registered writable region. These APIs do not infer stack sizes or inspect OS page permissions. A leased stack cannot be reused/unregistered or removed by heap shrink. Inactive registrations can be removed with `dm_host_unregister_thread_stack`. Limits are 16 executable regions, 16 writable regions, 64 stack registrations, 64 managed thread objects and 128 shared event/thread handles. Gate tables/code must remain valid and immutable while created threads can still execute. Created unstarted threads keep host destruction busy until they are closed or finish.
-
-StartThread waits for native context initialization before reporting success, with separate startup-operation/running references. Failed initialization returns a resource error, publishes no completed signal, and keeps the unstarted handle available for retry/close. The regression intentionally injects invalid host gate metadata while no guest runs, proving failure propagation, no entry execution, same-handle retry and cleanup. It failed before the handshake fix (`build/thread-startup-red.log`) and passes afterward.
-
-Current evidence: 27/27 host ASAN/UBSAN suites (`build/thread-host-tests.log`); 4/4 TSAN suites (`build/thread-tsan-tests.log`); Android ARM64 cross-build (`build/thread-android-build.log`), including 16 KiB LOAD alignment for the new executable; Clang analysis (`build/static-analysis/thread`). Native tests execute owned C entries on actual registered guest stacks and an owned rewritten ExitThread SVC through the real gate. They cover eight concurrent guests/TLS IDs, mixed event/thread waits, close while waiting/running, unstarted close, 100 start/close races, startup failure/retry, 64 completed-object capacity/reuse, stack/heap lifetime and malformed registration/creation parameters. Temporary investigation files were removed; all logs/builds stay on T2.
-
-These are backend/synthetic results, without real game execution or another phone run. Externally attached contexts have a current-thread pseudo ID, but actual main-thread handle/bootstrap registration is still pending. Game SDK stack allocations are not yet wired to the explicit registration API. Virtual priority/core inputs are validated; priority, affinity, cancellation, mutex/condition services and small-stack support are still outstanding. The remaining SDK monitor-return scan blocker is unchanged. Next: main-thread bootstrap/stack-allocation integration, mutex/condition services, then controlled game initialization once the execution contract is complete.
-
-## Checkpoint: main registration, SDK-style stacks and mutex/condition services
-
-`dm_guest_bootstrap_main(host,gates,&handle)` now attaches the calling pthread and registers a real thread handle at virtual priority 44. It writes the owned TCB handle/ID, rolls attachment back on registration failure, and leaves the output untouched on error. `dm_guest_register_current_thread` registers an already attached native thread at an explicit priority. Detach or the pthread TLS destructor publishes completion, releases the execution reference and wakes mutex waiters whose owner ended. Closing a handle preserves existing execution/wait references. External native threads cannot StartThread again or use the managed ExitThread stack switch. These registrations share the existing 64 thread-object limit; they do not run `nnosInitialize` or any initializer.
-
-The optional `dm_host_set_sdk_thread_abi` accepts a loader-verified entry, ThreadType size, 64-bit stack base/size field offsets and top reserve. Configure it before attachment and only after verifying the SDK image/layout. It contains no automatic version detector or built-in game addresses. On matching CreateThread, the runtime checks the complete ThreadType and allocation against trusted writable mappings, alignment/overflow, exact `SP=base+size-reserve`, and the callback pointer stored at SP against registered executable regions. It automatically leases the full allocation and separately records SP; closing an unstarted handle or completing a thread removes the automatic registration. Collisions, unmapped aliases and malformed fields fail before thread creation. Existing explicitly registered stacks remain supported.
-
-`thread_stack.S` now restores the requested initial SP again after sanitizer setup and tail-enters the guest. A normal C call from the setup function would consume stack space and violate the SDK entry contract. The owned assembly fixture records the exact entry SP and tail-calls a callback from its reserved top; 80 unstarted and 81 executed SDK-style lifecycles verify automatic slot reuse. The regression fails with the former C-call entry (`build/bootstrap-sp-red.log`) and passes with the assembly tail entry. The fixture uses an invented field layout and contains no game bytes.
-
-`runtime/mutex.c` implements ArbitrateLock/Unlock and WaitProcessWideKeyAtomic/SignalProcessWideKey (SVC 0x1a–0x1d) using atomic guest words and the shared host lock. It follows the [public kernel condition-variable implementation](https://github.com/Atmosphere-NX/Atmosphere/blob/master/libraries/libmesosphere/source/kern_k_condition_variable.cpp): publish the condition key before releasing ownership, transfer signaled waiters to the mutex queue, preserve priority/FIFO order, and maintain finite monotonic deadlines after transfer. Timeout does not implicitly reacquire ownership; the SDK handles retry. A timeout may leave a waiter flag/key until unlock/signal. Owner references survive handle closure and are moved during handoff; owner exit wakes dependent mutex waiters with an error. Heap shrink is blocked while mutex/condition waits retain guest addresses.
-
-Verification: 29/29 host ASAN/UBSAN suites (`build/bootstrap-host-tests.log`); 6/6 TSAN suites (`build/bootstrap-tsan-tests.log`); Android ARM64 cross-build (`build/bootstrap-android-build.log`); Clang analysis (`build/static-analysis/bootstrap`); unchanged 372-row i18n gate. Tests cover bootstrap failure rollback/capacity, real guest initial SP, automatic stack lease cleanup, priority/FIFO including condition transfer, closed/exited owners, invalid words/tags, zero/finite timeouts, count-one/all signal and 100 key-publication races. Attached mutex/condition scenarios run all four SVCs through actual synthetic ARM64 rewritten gates. The internal wait cap is 128, but the shared 64 thread-object cap prevents reaching it through the public registered-thread API; no full-128 mutex capacity result is claimed.
-
-These are backend/synthetic results. The SDK ABI adapter is opt-in and has not been enabled on real game execution. It validates already mapped SDK allocations; it does not implement the SDK alias-stack allocator, Horizon MapMemory/UnmapMemory or stacks below 64 KiB. Main SDK initialization, priority inheritance/native scheduling, Oryon affinity and cancellation remain pending. The SDK monitor-return scan blocker is unchanged; no real game instruction or initializer ran, no new phone run occurred, and NVN graphics remains outstanding. All logs/builds remain on T2, outside Git/APK.
-
-## Checkpoint: bounded owned stack aliases
-
-`dm_host_create_layout(heap_capacity,stack_capacity)` opts into a contiguous owned heap/stack reservation with shared file-backed heap pages. Android uses close-on-exec memfd through the public syscall interface (including API 29); macOS uses an immediately unlinked temporary file under `TMPDIR`. The original `dm_host_create` keeps its anonymous heap behavior. MapMemory/UnmapMemory (0x04/0x05) support up to 64 exact destination/source/size tuples, with source restricted to committed owned heap and destination restricted to the owned stack reservation. Source becomes inaccessible while the alias is live; writes through the alias change the same backing pages and survive unmap. Stack mappings use real host-page protection, so both addresses and size must satisfy Horizon 4 KiB and host-page alignment. This supports general 4 KiB mappings on a 4 KiB Android host and only the aligned subset on a 16 KiB host; protection is never rounded onto neighbors.
-
-
-QueryMemory (0x06) reports exact owned free/heap/stack extents, locked/inaccessible source state, registered module ranges, all 40 output bytes and PageInfo in x1. Its output must lie entirely within a writable owned or explicitly registered range. Future native main-stack queries therefore require an explicit stack registration; bootstrap does not discover OS stack mappings. GetInfo (0x29) implements heap 4/5, ASLR 12/13, stack 14/15 and stable per-host CSPRNG entropy 11 for checked handles/subids; unsupported IDs fail. These bounds and entropy support the owned allocator-shaped fixture, not complete SDK initialization or Vamm/physical-memory services.
-
-
-Mapping mutation rejects overlapping thread leases and memory pins, and conservatively rejects active address/mutex waits. Heap shrink rejects live aliases, relevant pins and existing thread/wait leases; file truncation preserves zero-on-recommit behavior with permission rollback on failure. Destruction rejects live aliases or pins. WaitSynchronization copies owned handle arrays under the host mutex after read validation. RomFS imports pin owned read/write ranges across unlocked I/O; unowned valid caller pointers retain the existing trusted-native contract, while QueryMemory remains strict. A failed OS rollback is a fatal host invariant violation. Partial unmaps, permission-changing SVCs, sub-64-KiB stacks, automatic SDK activation and real game initialization remain outside this checkpoint.
-
-
-Owner verification on the 16 KiB ARM64 Mac: `dm_memory_test` passed shared-byte checks, source/stale-destination fault children, query boundaries/guards, invalid tuples/64-entry exhaustion, real bad-fd mapping/truncation failure rollback, shrink/recommit zeroing, pins, a concurrent collision, four actual rewritten SVC gates with x0/x1 ABI checks, and 100 SDK-shaped map/create/release/unmap cycles with 99 native entries at exact SP. Fault children install signal handlers and exit with an expected marker; they do not deliberately produce native crash reports. All eight relevant owner regression suites passed with the final native-gate fixture. Durable owner evidence: `../d2r-work/.omo/evidence/alias-backend-20261017/`. No game instruction or initializer was executed by this work.
-
-
-Parent acceptance passed 30/30 host ASAN/UBSAN suites and 7/7 TSAN suites; after the final native-gate fixture and API29 test declaration fix, memory/RomFS were rebuilt and passed 2/2 again under each sanitizer (`build/alias-host-tests.log`, `alias-tsan-tests.log`). The final complete NDK API29 build passed (`build/alias-android-build.log`). All seven owned CLI tests—memory, RomFS, thread, bootstrap, mutex, arbiter and sync—passed on the Xiaomi SM8750, Android16/API36, 4KiB pages (`build/alias-device-*.log`). The memory test executed all four rewritten SVC gates on the phone. Host/device binaries matched by SHA-256; the new memory executable has 0x4000 ELF LOAD alignment. Five changed runtime units had zero Clang analyzer diagnostics, and the existing 372-row i18n gate passed. This is CLI backend acceptance, not a new APK or game initialization result. The SDK monitor-return scan blocker, full SDK service/initializer readiness, small-stack host-call bridge and NVN/game graphics remain unresolved.
-
-## Checkpoint: native host-service stack bridge
-
-The runtime version of `dm_gate` and all six RomFS import veneers now enter host C on the attached pthread's native stack. Standalone gate tests still use the generic dispatcher. A 128-slot registry publishes an opaque native thread identity and public pthread stack bounds at attachment; Android uses TPIDR_EL0 and the verified Darwin path uses TPIDRRO_EL0 with its low three bits masked. Neither path reads private TLS fields or borrows x18. Missing registration, wrong stack domain and reentry trap before host dispatch. Failed registry attachment or bridge preparation makes StartThread fail before publishing startup success; its unstarted handle remains retryable.
-
-Assembly finds the registry before C, reserves a transition frame below the saved native RUN frame, and keeps the original 800-byte guest gate frame in place, including its outer FP/LR spill. It restores native x18 and FP control/status from RUN, checks the actual service SP against native bounds, and preserves guest return state. The registry remains busy until all return-frame fields have been consumed. A managed ExitThread service returns fully from native C, retires the guest sanitizer fiber on the guest stack, then leaves RUN on the native stack; its guest continuation never executes. Native-only attached callers retain their current native stack. Unsupported reentry, signal-handler imports and guest callbacks nested inside an active service are outside this contract. An explicit `dm_romfs_query_cache_size` helper preserves the one pre-attachment native query use case; the guest import table always returns veneers.
-
-ASAN tracks both stacks through normal round trips and retires the active guest fake stack at terminal exit. TSAN switches use `no_sync` with release/acquire on that context's record at every synchronous handoff, including initial publication and final completion; there is no global handoff token. Pure transition/bootstrap helpers disable sanitizer instrumentation because compiler-generated hooks would straddle fiber changes. The separate, non-inlined host service remains instrumented. Sanitizer builds require at least 32 KiB of guest space below the source SP before calling transition hooks; the assembly guard rejects smaller headroom before entering C. This is a tested policy for the current sanitizer runtimes, not a universal runtime stack bound. The existing 64 KiB allocation minimum remains unchanged, and production builds do not inherit the sanitizer-only headroom rule.
-
-Owner validation on the 16 KiB ARM64 Mac passed all 25 configured ASAN/UBSAN tests with fake-stack detection enabled, and all nine targeted TSAN suites. The new core fixture runs eight concurrent owned guests through real rewritten GetThreadId, TLS, blocking WaitSynchronization and terminal ExitThread gates; checks SP, x18, nonvolatile registers/SIMD and guest/native FP state; fills all 128 registry slots; verifies failure, same-handle retry, reuse and cleanup; and tests sanitizer source headroom at zero, 32752 and exactly 32768 bytes using child signal handlers on alternate stacks. Six import veneers are also checked at the final Android shared-library link: the common entry is locally bound and no PLT/JUMP_SLOT may clobber the w17 import ID. Logs and owner report stay outside Git under `../d2r-work/.omo/evidence/bridge-core-20261017/` and `build/bridge-owner-*`.
-
-This bridge does not prove a smaller guest allocation, arbitrary SCS-instrumented guest C callbacks, PAC-signed guest code, full SDK initialization or game readiness. Native service C retains ordinary compiler SCS/PAC behavior; the supported guest ABI is the existing rewritten ARM64 contract. The SDK monitor-return blocker, further service/initializer readiness and NVN/game graphics remain open. No game instructions or initializers were executed.
-
-Final parent acceptance on the frozen source passed 32/32 full host ASAN/UBSAN suites with stack-use-after-return detection (`build/bridge-host-tests.log`) and 9/9 TSAN suites (`build/bridge-tsan-tests.log`, symbolization disabled to avoid the local atos reporting stall). The import fixture includes actual instrumented guest C writing inputs and reading native-service outputs. The full NDK API29 build and final shared-library six-veneer binding check passed (`build/bridge-android-build.log`); four runtime units had zero Clang analyzer diagnostics. This wave has no new phone runtime result because wireless ADB was unreachable, and no new APK or game execution result. The accepted source manifest is `build/bridge-source-freeze.json` (116 files, documentation excluded).
-
-## Checkpoint: bounded small-stack execution
-
-Production now admits trusted rewritten ARM64 assembly guests with allocations of at least 4096 bytes. The read-only `dm_host_thread_stack_minimum()` and `dm_host_thread_stack_entry_headroom()` report the compiled runtime policy. Production requires at least 1056 bytes below the exact initial SP: the largest supported fixed rewrite frame is a 256-byte x18 stub plus the 800-byte gate; a system-instruction stub uses 16+800 bytes. This budget excludes guest live frames, semantic instruction stack adjustments/accesses and the SDK top reserve. The caller must retain the required space at every rewritten boundary. Admission is not whole-program stack-depth analysis or a sandbox, and it does not authorize arbitrary host/instrumented C callbacks on small guest stacks.
-
-Explicit stack registration and SDK-style automatic leasing share the allocation minimum. The SDK adapter additionally checks `size-top_reserve >= entry_headroom` before accepting the exact initial SP, while leasing the complete allocation. Production RUN now enters the guest directly in assembly; it no longer calls a C bootstrap on the guest stack. Normal services still switch to the native pthread stack before host C. Production terminal ExitThread leaves RUN directly from native assembly, without a guest-side C retirement helper. Returning from a managed entry traps. Unresolved imports save the existing bounded 96-byte frame and then trap in assembly; the legacy returned-entry route also traps. The runtime's fatal targets are locally bound on ELF, preventing a dynamic-linker call on the guest stack. Generic standalone gate objects retain their prior dispatcher behavior; shared `host/entry.S` is unchanged.
-
-ASAN/TSAN builds retain a 65536-byte allocation minimum and require 33824 usable bytes at initial SP: 1056 fixed rewrite bytes plus the existing 32768-byte sanitizer source-hook policy. The sanitizer bootstrap, balanced normal/terminal fiber transitions and instrumented native services remain enabled. These are tested admission limits for the current runtimes, not a universal bound on sanitizer stack usage. Heap/alias page geometry is unchanged: the 16 KiB Mac test uses exact 4/8 KiB logical registrations within guarded native-page allocations and checks the remaining bytes with canaries; it does not claim 4 KiB physical protection on that host.
-
-The owner release matrix executes actual 4/8/16/32/64 KiB guests through rewritten SVC/TLS/plain-x18 instructions and all six imports, with two concurrent blocking reads on distinct native service stacks. Explicit and SDK-style stacks preserve exact SP, virtual/physical x18, registers, vectors and FP state; full allocation leases survive blocking and are released after terminal completion. All production cases touch exactly 1056 bytes in this fixture, including an SDK reserve leaving exactly 1056 usable bytes; 1040 is rejected. ASAN refuses 4–32 KiB without changing outputs, executes 64 KiB including exactly 33824 usable bytes, and rejects 33808. Owner release and ASAN/UBSAN suites each pass 26/26. Independent 4 KiB returned/unresolved/legacy-return children produce SIGTRAP. A shared-link check verifies all 4096 unresolved stubs and both fatal routes; an external default-visibility negative control fails as expected. Evidence stays under `../d2r-work/.omo/evidence/small-stack-core-20261017/` and `build/small-stack-owner-*`.
-
-These results cover the bounded rewritten assembly ABI, not arbitrary PAC-signed/SCS-instrumented guest callbacks, reentry, SDK monitor-return acceptance, full SDK initialization or NVN/game graphics. No real game code or initializer was executed, and this wave has no new device/APK runtime result.
-
-Final acceptance on the frozen source passed release 26/26 (`build/small-stack-release-tests.log`), full ASAN/UBSAN 33/33 with stack-use-after-return detection (`build/small-stack-host-tests.log`), and TSAN 10/10 (`build/small-stack-tsan-tests.log`). The complete NDK API29 build passed, including both final shared-library checks for six import veneers and 4096 unresolved stubs/fatal routes (`build/small-stack-android-build.log`). Bridge, heap and synchronization analyzer reports each contain zero diagnostics. The accepted manifest is `build/small-stack-source-freeze.json` (118 files, documentation excluded). Wireless ADB remained unavailable; Android evidence is cross-build/shared-ELF validation, with no new phone, APK or game execution result.
-
-## Checkpoint: NVN RGBA8 Vulkan texture resources
-
-`dm_vk_texture_upload` now accepts validated block-linear NVN RGBA8 UNORM (`0x25`) 2D and 2D-array descriptors, deswizzles every mip/layer through the existing shared helpers, flushes host-visible staging memory when noncoherent, and uploads to an optimal-tiled Vulkan image. The returned image/view spans the requested mips/layers in shader-read layout; 2D and array views retain their corresponding types. Format features, image usage limits, allocation types and all source/storage sizes are checked. Descriptor admission requires positive dimensions/depth/levels, a natural mip chain, flags/stride zero, samples 0 or 1 and packaged block height 0–6; hard limits of 16384 texels per dimension and 2048 layers precede upstream layout arithmetic and are further restricted by device limits. Unsupported formats, sRGB, compression, 3D/cube, multisampling and other flags are rejected.
-
-Calls remain externally serialized and synchronous. Failure leaves the output unchanged and releases acquired resources after establishing GPU completion; callers must complete any subsequent GPU use before destroying the returned texture. The shared submit helper now distinguishes a failed submission from a failed completion wait. It falls back to device-idle where completion is uncertain and preserves the original error. If that fallback also cannot establish completion, it terminates without destroying resources that may still be in use; no deferred cleanup queue is claimed. A device-lost submission still requires a completion operation, while a device-lost wait permits cleanup.
-
-The actual Apple M4/MoltenVK GPU test compares all 11,509 RGBA texels across independent 1×1, 13×11 mip-chain, 65×37 three-layer and 37×19 packaged-block-height fixtures. A one-byte corruption in layer 2/mip 6 produces the expected exact pixel mismatch. The lifecycle fixtures run real upload/buffer/submit code through 16 injected failures, checking unchanged outputs, zero remaining resource ownership, noncoherent flush and both image barriers. Separate submit tests cover pre-submit errors, OOM, device loss, unknown submit failure and fail-stop ordering; a cleanup-before-abort negative control is detected in Release with NDEBUG enabled. Owner Release tests pass 3/3 (`.omo/evidence/vulkan-texture-core/tests.log`). The Khronos validation layer is unavailable on this host, so these results do not claim validation-layer coverage.
-
-This is a host backend API with owned synthetic shaders and source bytes. Guest NVN object/import binding, broader formats and updates, translated game shader/descriptor/draw integration and a real swapchain presenter remain open. It adds no raw C call from a small guest stack. No game instruction or initializer ran, no APK was installed, and wireless ADB remained unavailable; current texture runtime evidence is Mac GPU execution plus Android cross-compilation, not Adreno/device acceptance.
-
-Parent integration passed the initial full Release suite 29/29 (`build/texture-release-tests.log`) and full ASAN/UBSAN suite 35/35 (`build/texture-host-tests.log`). After the final rollback fixture and submit checks landed, all four Vulkan suites were rebuilt and passed 4/4 under both Release and ASAN/UBSAN (`build/texture-final-release.log`, `texture-final-sanitized.log`). The final complete NDK API29 build passed, including the new texture and failure-test CLI targets plus existing shared-entry checks (`build/texture-final-android.log`). Changed Vulkan core analyzer reports contain zero diagnostics. The final source manifest is `build/texture-source-freeze.json` (125 files, documentation excluded); earlier TSAN/runtime results remain prior-wave evidence, not a new texture-driver concurrency certification.
-
-## Checkpoint: synchronization cancellation and thread priority
-
-`CancelSynchronization` (SVC `0x19`) now cancels a registered thread's active WaitSynchronization or records one pending cancellation for its next blocking synchronization wait; repeated requests coalesce. Ready objects and zero-timeout polling take precedence over pending cancellation. The first completion is latched under the host mutex, so later signal/reset/cancel operations cannot replace the result already selected; a later cancellation can remain pending for the next wait. Cancellation does not terminate the thread or interrupt address-arbiter/mutex/condition waits; the tested address-arbiter case retains the request until the subsequent synchronization wait. Handle references preserve blocked-wait state through close, and stale/event handles are rejected.
-
-`GetThreadPriority` (SVC `0x0c`) returns the stored virtual priority for registered, unstarted and completed thread objects while their handles remain valid. The current-thread pseudo handle requires a matching registered context. Lookup uses the low 32 bits of w1; the rewritten gate returns Result in x0 and priority in x1. Preserving the full input x1 on error is this host's tested policy. This getter adds neither priority inheritance nor physical scheduling control. Independent tests cover priorities 0/17/63, stale generations, wrong-host contexts and actual native service SP. Cancellation executes through real rewritten gates in pure assembly guests using 4 KiB production stacks and 64 KiB sanitizer stacks, including pre-start and active cancellation, exact SP/x18 and terminal exit; no guest-side host C path was added.
-
-The full integration suites passed Release 31/31, ASAN/UBSAN 37/37 and TSAN 11/11 (`build/sdk-startup-{release,host,tsan}-tests.log`). After the priority target was added, `horizon_priority` passed 1/1 in each of those three modes (`build/sdk-startup-final-{release,sanitized,tsan}.log`). The complete NDK API29 build and final priority target build passed (`build/sdk-startup-android-build.log`, `sdk-startup-final-android.log`), with 16 KiB ELF LOAD alignment. Both changed C units have zero analyzer diagnostics; i18n checked 372 table rows and 460 allowlisted Chinese literals (`build/sdk-startup-i18n.log`). The source freeze is `build/sdk-startup-source-freeze.json` (128 files, documentation excluded).
-
-SDK startup remains blocked. New unwind/relocation evidence narrows the monitor-return frontier to runtime object/vtable targets; it does not close indirect entry or justify relaxing the scanner (`.omo/evidence/sdk-entry-proof/report.md`). The metadata-only startup inventory identifies GetInfo IDs 2/3/16/21/22, virtual core-mask behavior, SetThreadCoreMask and further service/IPC initialization as remaining bounded contracts (`.omo/evidence/sdk-startup-audit/startup-readiness.md`). Priority is an exact constructor dependency; cancellation support alone is not proof that it is required before startup. No real game instruction or initializer was executed, and this wave has no current phone/APK runtime result.
-
-
-## Checkpoint: reserved process alias region
-
-`dm_host_create_process_layout(heap_capacity, stack_capacity, alias_capacity)` adds an opt-in contiguous heap/stack/alias reservation. All capacities are nonzero; heap uses 2 MiB units and stack/alias use both native-page and 4 KiB alignment. Checked arithmetic covers the complete span. GetInfo 2/3 reports the real alias region, and ASLR size 13 covers all three regions. The alias region remains PROT_NONE: QueryMemory reports its exact free extent, while writable/executable registration, read/write pins, stack registration and MapMemory destinations reject it. Existing heap-to-stack mappings retain their protections and leases. Both legacy constructors keep their previous extra-ID rejection and free-region coalescing.
-
-GetInfo 16 reports zero bytes because this model has no dedicated guest process system-resource pool. Read-only SDK metadata confirms that this function's zero-output branch skips pool-manager construction and rejoins unlock; it does not prove complete SDK initialization or all downstream behavior. IDs 21/22 remain unsupported until guest budget, module/main-stack ownership, borrowed registrations, TLS/TLR charging and shared-backing deduplication have a coherent accounting contract. Heap commitment and host RSS are not substituted for process physical-memory usage. This reservation adds no MapSharedMemory or MapPhysicalMemory service. GetInfo consumes low 32-bit ID/handle inputs and a full 64-bit subtype; errors preserve the full input x1 under the existing tested host policy.
-
-The independent fixture checks exact region boundaries, read/write faults in controlled children, denied partial overlaps, existing stack aliases, heap resize rollback/zeroing and release of the entire reservation. Actual rewritten SVC 0x29/0x06 calls verify x0/x1 results and native service-stack bounds. The initial teardown oracle incorrectly assumed Darwin mincore rejected unmapped addresses; it was replaced with a read-only Mach region query, while Linux retains mincore. No runtime change was needed for that test correction. Private Release process-memory and legacy memory tests passed 2/2 (`.omo/evidence/process-memory-core/tests.log`); direct scenario output is in `direct.log` beside it.
-
-The strict SDK monitor-return rejection remains in place. This is an owned synthetic runtime checkpoint, with no game instruction/initializer execution, current phone execution or APK installation. Contract and replay commands are recorded in `.omo/evidence/process-memory-core/`; the primary semantics and exact disabled-pool branch review are in `.omo/evidence/process-memory-review/`.
-
-Frozen integration passed Release 33/33, ASAN/UBSAN 39/39 with stack-use-after-return detection enabled, and TSAN 13/13 (`build/process-memory-{release-tests,host-tests,tsan-tests}.log`). The full NDK r29/API29 build passed, including the new 16 KiB-aligned CLI and both shared-library checks for six import veneers and 4096 unresolved traps (`build/process-memory-android-build.log`). Heap/memory static analysis reported zero diagnostics (`build/process-memory-static-analysis/`). The freeze records 129 non-documentation files (`build/process-memory-source-freeze.json`). These cross-build results do not constitute current Android device acceptance.
-
-
-## Checkpoint: owned guest-backing budget
-
-`dm_host_create_accounted_process(heap, stack, alias, budget)` adds a separate strict mode with an enforced, page-aligned guest budget. GetInfo 21 returns that limit; 22 counts committed heap, enrolled module backing and live or pinned-retired guest TLS/TLR mappings. Aliases share the original heap charge. Address reservations, host implementation metadata, native service stacks and private loader buffers are outside used guest backing; this is neither RSS nor a claim about resident host pages. Legacy constructors continue to reject 21/22.
-
-The host-owned `dm_host_map_modules` wrapper calls the real multi-module linker/mapper and reuses its exact page-layout calculation for quota preflight and permissions. It charges each complete mapped extent because the mapper zeroes the whole extent before protecting holes and segments, including appended stubs. Publication is atomic after successful linking/protection; failure leaves output and charges unchanged and restores attempted subranges to PROT_NONE. Returned views are borrowed until host destruction and must not be unmapped or reprotected by the caller. Strict mode rejects uncharged external guest registrations and unknown-pointer pins. Owned RO reads, RW/RX runs and inaccessible holes retain their real permissions. Guest stacks must use committed heap or its stack aliases.
-
-Guest TLS/TLR uses a dedicated page-rounded allocation, reported by QueryMemory as ThreadLocal (`0x0c`). Failed attachment rolls back its allocation/charge. If another thread holds a pin when its owner detaches, the mapping remains charged until the final pin releases; retired mappings reject new pins. TLS supports explicit read/write pins and QueryMemory, but does not support generic writable-only services such as TLS-backed mutex/arbiter words or guest stacks. A two-thread pinned-buffer test covers detach, retained charge, payload access and final full-span release; it is a pin-primitive test, not a RomFS `pread` integration test.
-
-The initial accounting implementation passed Release 34/34, ASAN/UBSAN 40/40 and TSAN 14/14 (`build/block-one-{release,asan,tsan}-tests.log`), plus the complete NDK API29 build and existing shared-library entry checks (`build/block-one-android-build.log`). The focused fixture links two owned synthetic modules, executes rewritten GetInfo 21/22, verifies RO/gap boundaries, quota exhaustion, alias deduplication and concurrent TLS lifecycles (`.omo/evidence/accounting-core/ctest.log`). An independent external control of the initial accounting implementation that removes TLS pin retention fails the retained-charge assertion (`.omo/evidence/block-one-review/tls-control/`).
-
-The final layout extends the same owned reservation to heap | stack | alias | arena, with arena capacity equal to the enforced budget. Modules occupy its immutable prefix; up to 128 TLS slots use the remainder. GetInfo 12/13 now encloses every owned guest mapping, and QueryMemory uses the arena permission ledger before reporting free regions. Borrowed module views reject public module-unmap. Failed commits and retired TLS reset their exact subranges to PROT_NONE while parent ownership remains continuous; they never unmap an interior hole. Reset failure terminates rather than returning an inconsistent reservation. Final destruction releases the whole reservation once. Focused tests cover all-address containment, zeroed TLS-slot reuse and eleven individually injected protection failures with successful retries (`.omo/evidence/accounting-core/unified-test.log`); standalone module tests still pass (`unified-module-test.log`). The independent pin-retention control was also rerun against this unified source: positive exit 0 and the mutation failing before worker release (`.omo/evidence/block-one-review/tls-control-unified/`). Initial source/QA provenance is preserved separately in `build/block-one-accounting-initial-source`.
-
-This does not complete safe SDK startup. The strict monitor-return blocker, verified startup ABI/prerequisites, remaining services and real initialization/lifecycle acceptance are separate obligations; enclosing all owned mappings does not establish every Horizon region-policy rule. The accounting fixtures are synthetic; the separately approved real SDK diagnostic milestone below is limited to one initialization stage. Android evidence remains cross-build only. The accounting contract and replay commands are in `.omo/evidence/accounting-core/`.
-
-Final unified integration passed Release 34/34, ASAN/UBSAN 41/41 with stack-use-after-return checks, and TSAN runtime 14/14 (`build/block-one-final-release-tests.log`, `block-one-fixed-asan-tests.log`, `block-one-final-tsan-tests.log`). The earlier combined ASAN run exposed diagnostic alternate-signal-stack teardown; the corrected full run is the acceptance evidence. Full NDK API29 compilation and shared-entry checks passed (`block-one-final-android-build.log`); six changed core/mapper units have zero static-analysis diagnostics. The 137-file source freeze and exact QA index are `build/block-one-source-freeze.json` and `block-one-final-qa.json`. These results include no current Android device or APK execution.
-
-The separate host diagnostic keeps preparation opaque and non-exportable. It quarantines every instruction of a generically validated FDE extent containing an unproved exclusive root, then applies the unchanged strict preparer to the private copy. Owned three-module fixtures prove controlled entry/return, every quarantine entry stopping, unsupported SVC/subtype refusal, low-SP signal handling, bounded trace overflow and watchdog termination. They passed with filesystem writes limited to scratch and networking denied; negative controls verify non-scratch creation, bind and connect fail (`build/block-one-restricted-{diagnostic,controls}.log`). This diagnostic transformation is not production acceptance or a semantics-preserving monitor fix.
-
-The first real-input check was preparation only: main/subsdk0 pass strict preparation; SDK retains one unmatched exclusive root and strict refusal. Diagnostic preparation of its private copy succeeds with one quarantined extent, while before/after input hashes are identical (`.omo/evidence/sdk-stage-diagnostic/actual-prepare.log` and `actual-input-{before,after}.sha256`). That check performed no real module mapping, instruction execution or artifact serialization. That preparation result alone did not authorize execution.
-
-After a separate ABI/containment review, the restricted macOS diagnostic executed `_init_libc0` followed by `nnosInitialize(own_handle, 0)` and returned. The child exited 0 with 19 trace records, a returned marker and a cleanup marker; managed ExitThread and host cleanup completed without a quarantine stop, unsupported-service stop, signal or timeout (`build/block-one-real-stage-run.log`). All three original input hashes passed pre/post checks (`block-one-real-stage-input-{precheck,postcheck}.log`). Observed GetInfo IDs were 2, 3, 11, 12, 13, 14, 15, 21 and 22; this run does not establish ID 16 or later service coverage.
-
-This is one real SDK stage in the private diagnostic mapping. Production strict SDK preparation still rejects the original input. Later libc/SDK-module initialization, required IPC and other services, lifecycle completion and Android/device acceptance remain unverified; major block one is not complete.
-
-## Checkpoint: bounded local named-port and synchronous IPC transport
-
-Read-only analysis of the unchanged SDK image localizes the stopped frontier: the SDK contains exactly one `svc #0x1f` site (sdk+0x39fb80), called only from `nn::sm::Initialize` at sdk+0x38736c, which passes the rodata string `sm:` in x1. The recorded input r0 in the last diagnostic is the caller-stub's saved C out-pointer, not the port name. The next transport call is `nn::sf::hipc::SendSyncRequest` at sdk+0x385040: it compares its message pointer with `tpidrro_el0` and then uses `svc #0x21`, so the implicit buffer is the thread's TLS slot.
-
-`runtime/ipc.c` implements the bounded raw-register transport only. `svc #0x1f` consumes x1 (a registered local port name) and returns w0/w1; x0 is left to the library stub, never dereferenced. `svc #0x21` snapshots the calling thread's 0x100-byte TLS buffer under the host lock and accepts two descriptor-free forms proven from SDK dataflow: type4/CMIF v0, and the real first request — type6/CMIF v1 with the send-PID special header (PID bytes are never trusted). It publishes a fully built, zero-padded response of exactly 8 + num_data_words*4 bytes; everything else returns 0x4201 and publishes nothing. Type7/CMIF v1 control messages with 8 data words are handled for the two proven commands: 3 QueryPointerBufferSize returns the host's truthful u16 capacity 0 (no pointer-buffer allocation exists), and 0 ConvertSessionToDomain allocates one real per-session 32-bit root id, returns the same id on repeat, and commits it only after the reply is successfully written; nonzero 16-byte alignment padding is accepted, while unknown commands, versions and descriptor forms stay explicit unsupported. After conversion, ordinary unwrapped requests are rejected with 0x4201 until domain request routing exists; the original port handler is never invoked. A local `lm` domain port is installed with a real per-session root and up to eight bounded logger children: OpenLogger (command 0, 14-word type6/send-PID frame) returns a 52-byte SFCO reply with one 32-bit child id, and domain close (type 2, 8-word frame) retires that exact child; failures roll back unpublished children. Root and child ids share one per-session non-reusing namespace; root close retires only the service root (live children stay closable, reconversion/OpenLogger are rejected), while kernel `CloseHandle` tears down the session and all children. Log and SetDestination remain explicit unsupported, so this is resource acquisition/close, not complete logging. Sessions use the existing 128-slot generation handle table with a new kind; `CloseHandle` discriminates them before any sync-object access, and malformed requests close the session as documented for `SendSyncRequest` errors. `runtime/sm.c` provides `sm:` with real RegisterClient (command 0) and GetServiceHandle (command 1): registrations are owned by their host, GetServiceHandle returns a real session handle for a locally registered port through a HIPC response move handle, unknown services stay explicit unsupported, and handle publication rolls back on failure. This is transport plus two real SM commands, not SDK startup.
-
-The owned fixture covers the raw x0/x1 ABI, the real type6/send-PID RegisterClient packet with untrusted PID bytes, the type7/SFCI-v1 controls (query, conversion, duplicate conversion, malformed command/version/descriptor/word-count, closed handle), two-host isolation with identical generation handles (destroying one host leaves the other's registration intact), GetServiceHandle move-handle publication to a real registered port with a follow-up request/reply, unknown-service unsupported, real request/response and empty payloads, deterministic reply padding and extent, malformed/descriptor/wrong-alignment packets, invalid and non-guest name pointers, unregistered ports, wrong-kind operations (ClearEvent, ResetSignal, priority, thread id, wait), close/stale generations, re-entrant BAD_STATE, close during dispatch, 32-session exhaustion/rollback and host-destroy EBUSY. Release and ASAN/UBSAN pass, the existing sync and accounting fixtures still pass, and the runtime compiles for Android arm64-v8a. Negative controls reintroducing the x0-consumption, 8-byte CMIF offset or unreachable session-close defects fail the same fixture. No real SDK/game execution and no device run. RegisterClient and GetServiceHandle are implemented and fixture-tested; other services and real startup remain unimplemented.
+The separate launcher/runtime build and its host checks are documented in the [Android development guide](../../docs/android/README.md).

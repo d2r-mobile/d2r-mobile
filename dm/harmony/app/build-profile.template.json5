@@ -1,0 +1,56 @@
+// 模板：复制为 build-profile.json5，在 DevEco「Project Structure → Signing Configs」里填口令（口令只存本机）。
+// Template: copy to build-profile.json5 and enter passwords in DevEco Project Structure → Signing Configs (stored locally only).
+{
+  "app": {
+    "signingConfigs": [
+      {
+        "name": "debug",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "<path to your debug .cer>",
+          "keyAlias": "debugKey",
+          "keyPassword": "",
+          "profile": "<path to your debug .p7b>",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "<path to your debug .p12>",
+          "storePassword": ""
+        }
+      }
+,
+      {
+        "name": "release",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "<path to your release .cer>",
+          "keyAlias": "<your key alias>",
+          "keyPassword": "",
+          "profile": "<path to your release .p7b>",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "<path to your release .p12>",
+          "storePassword": ""
+        }
+      }
+    ],
+    "products": [
+      { "name": "default", "signingConfig": "debug", "targetSdkVersion": "26.0.0", "compatibleSdkVersion": "26.0.0", "runtimeOS": "HarmonyOS" },
+      { "name": "release", "signingConfig": "release", "bundleName": "com.xiao.boluo", "targetSdkVersion": "26.0.0", "compatibleSdkVersion": "26.0.0", "runtimeOS": "HarmonyOS" },
+      // 自用发布版：发布证书签名 + 内置运行包，只给自己的账号做 AGC 邀请测试，不公开分发 | Self-use release: release-signed with the bundled runtime pack, for our own AGC invite test only, never distributed
+      { "name": "selfuse", "signingConfig": "release", "bundleName": "com.xiao.boluo", "targetSdkVersion": "26.0.0", "compatibleSdkVersion": "26.0.0", "runtimeOS": "HarmonyOS" }
+    ],
+    "buildModeSet": [ { "name": "debug" }, { "name": "release" } ]
+  },
+  "modules": [ { "name": "entry", "srcPath": "./entry", "targets": [
+        {
+          "name": "default",
+          "applyToProducts": ["default"]
+        },
+        {
+          "name": "release",
+          "applyToProducts": ["release"]
+        },
+        {
+          "name": "selfuse",
+          "applyToProducts": ["selfuse"]
+        }
+      ] } ]
+}

@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 只要一个权限：所有文件访问（读玩家放在 Download/S2X/D2R Mobile/data 的游戏资源）。不联网、不要别的权限。 -->
+<!-- Only one permission: all files access (to read the game resources the player puts in Download/S2X/D2R Mobile/data). No network, no other permissions. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+    <uses-feature android:name="android.hardware.vulkan.version" android:version="0x401000" android:required="true" />
+    <application
+        android:label="@string/dmAndroidName"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
+        android:hasFragileUserData="true"
+        android:appCategory="game"
+        android:isGame="true"
+        android:allowBackup="false"
+        android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen">
+        <activity
+            android:name=".DmActivity"
+            android:exported="true"
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden|navigation|uiMode|density"
+            android:resizeableActivity="false"
+            android:launchMode="singleTask">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <receiver android:name=".widget.HeroWidget2x2Provider"
+            android:exported="false" android:label="@string/dmAndroidWidgetName2x2">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_2x2_info" />
+            <meta-data android:name="vivo_widget" android:value="true" />
+            <meta-data android:name="vivoWidgetVersion" android:value="1" />
+            <meta-data android:name="vivo.widget.description" android:resource="@string/dmAndroidWidgetDescription" />
+        </receiver>
+        <receiver android:name=".widget.HeroWidget4x2Provider"
+            android:exported="false" android:label="@string/dmAndroidWidgetName4x2">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/widget_4x2_info" />
+            <meta-data android:name="vivo_widget" android:value="true" />
+            <meta-data android:name="vivoWidgetVersion" android:value="1" />
+            <meta-data android:name="vivo.widget.description" android:resource="@string/dmAndroidWidgetDescription" />
+        </receiver>
+    </application>
+</manifest>

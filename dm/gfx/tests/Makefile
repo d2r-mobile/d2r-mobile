@@ -29,6 +29,10 @@ t_cover: t_cover.c ../nvn/nvn_cover.h
 	clang -O1 -Wall -o $@ t_cover.c
 t_pace: t_pace.c ../nvn/nvn_pace.h
 	clang -O1 -Wall -o $@ t_pace.c
+t_adaptive_pace: t_adaptive_pace.c ../nvn/nvn_adaptive_pace.h ../nvn/nvn_pace.h
+	clang -O1 -Wall -o $@ t_adaptive_pace.c
+t_completion_wait: t_completion_wait.cpp ../vulkan/engine/xbg_completion_wait.h
+	clang++ -std=c++17 -O1 -Wall -pthread -DDM_COMPLETION_WAIT_SELFTEST -DDM_COMPLETION_WAIT_MAIN -o $@ t_completion_wait.cpp
 t_fuse_check: t_fuse_check.m ../../host/crash.c $(GFX) $(GFX_H)
 	clang $(CFLAGS) -fobjc-arc -o $@ t_fuse_check.m ../../host/crash.c $(filter-out ../nvn/nvn_mtl.m ../nvn/nvn_entry.S ../nvn/nvn_thunks.S,$(GFX)) $(FW)
 t_rt_srgb_view: t_rt_srgb_view.m ../../host/crash.c $(GFX) $(GFX_H)
@@ -70,6 +74,8 @@ t_pfv: t_pfv.m ../../host/crash.c $(GFX) $(GFX_H)
 run: \
 	t_accept_scene \
 	t_accept_shader \
+	t_adaptive_pace \
+	t_completion_wait \
 	t_copy_pitch \
 	t_builtin \
 	t_cover \
@@ -102,6 +108,8 @@ run: \
 	./t_builtin
 	./t_deswz_gpu
 	./t_pace
+	./t_adaptive_pace
+	./t_completion_wait
 	./t_refl
 	./t_hmap
 	./t_cover
@@ -134,12 +142,12 @@ run: \
 	MTL_DEBUG_LAYER=1 ./t_accept_scene
 	./t_accept_shader
 .PHONY: run
-# 老接口版那一遍（图形后端编译期开关 DM_NVN_M3=1，目标 macOS 15.0）：在旁边的 tests_m3 目录里用同一份测试源码另编另跑，不动这里的缺省产物。
+# 旧接口版那一遍（图形后端编译期开关 DM_NVN_M3=1，目标 macOS 15.0）：在旁边的 tests_m3 目录里用同一份测试源码另编另跑，不动这里的缺省产物。
 # 闸门（verify/accept.sh）两遍都跑，免得以后只测一边
 # The older-API pass (compile-time switch DM_NVN_M3=1 of the graphics backend, target macOS 15.0): built and run separately from the same test sources in the sibling tests_m3 directory, leaving the default outputs here untouched.
 # The gate (verify/accept.sh) runs both passes, so that only one side being tested cannot happen later
 run-m3:
-	rm -rf ../tests_m3 && mkdir ../tests_m3 && cp Makefile *.c *.m *.py ../tests_m3/
+	rm -rf ../tests_m3 && mkdir ../tests_m3 && cp Makefile *.c *.cpp *.m *.py ../tests_m3/
 	$(MAKE) -C ../tests_m3 run CFLAGS="$(CFLAGS) -DDM_NVN_M3=1 -mmacosx-version-min=15.0"
 
 t_copy_pitch: t_copy_pitch.c ../nvn/nvn_copy_pitch.h
