@@ -112,7 +112,7 @@ if "$javac" --release 11 -d "$interface_java" \
         "$root/dm/android/java/org/d2r/android/port/OverlayArchive.java" \
         "$root/dm/android/tests/OverlayArchiveTest.java" >> "$log" 2>&1 \
     && "$(dirname "$javac")/java" -cp "$interface_java" org.d2r.android.port.OverlayArchiveTest "$root" >> "$log" 2>&1; then
-    log_line "PASS independent interface update integrity and recovery"
+    log_line "PASS APK interface migration, integrity and recovery"
 else
     fail "interface update regression"
 fi

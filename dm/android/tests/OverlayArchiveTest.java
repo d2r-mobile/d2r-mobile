@@ -200,7 +200,34 @@ public final class OverlayArchiveTest {
         }
         tests++;
     }
+    private static void bundledUpgrade() throws Exception {
+        try (Fixture fixture = new Fixture()) {
+            Map<String, String> files = contents();
+            byte[] zip = archive(manifest(files), files);
+            check(OverlayArchive.bundledNeedsUpdate(new ByteArrayInputStream(zip), fixture.assets), "legacy overlay upgrades from APK");
+            OverlayArchive.install(new ByteArrayInputStream(zip), fixture.assets, fixture.modules, ACTIVE);
+            check(!OverlayArchive.bundledNeedsUpdate(new ByteArrayInputStream(zip), fixture.assets), "same bundled interface is not rewritten");
+            check(OverlayArchive.bundledNeedsUpdate(new ByteArrayInputStream(archive(manifest(files).replace("test-v2", "test-v1"), files)), fixture.assets), "older APK restores its matching interface");
+            files.put("overlay/data/ui.data", "updated APK interface with same version");
+            zip = archive(manifest(files), files);
+            check(OverlayArchive.bundledNeedsUpdate(new ByteArrayInputStream(zip), fixture.assets), "content change detected even at same version");
+            OverlayArchive.install(new ByteArrayInputStream(zip), fixture.assets, fixture.modules, ACTIVE);
+            check(!OverlayArchive.bundledNeedsUpdate(new ByteArrayInputStream(zip), fixture.assets), "updated content installed");
+            PackageArchive.deleteTree(fixture.overlay);
+            check(OverlayArchive.bundledNeedsUpdate(new ByteArrayInputStream(zip), fixture.assets), "first game-only import receives APK interface");
+            OverlayArchive.install(new ByteArrayInputStream(zip), fixture.assets, fixture.modules, ACTIVE);
+            fixture.unaffected();
+            write(new File(fixture.overlay, OverlayArchive.MANIFEST), "damaged metadata");
+            check(OverlayArchive.bundledNeedsUpdate(new ByteArrayInputStream(zip), fixture.assets), "damaged metadata can be repaired from APK");
+            OverlayArchive.install(new ByteArrayInputStream(zip), fixture.assets, fixture.modules, ACTIVE);
+            write(new File(fixture.assets, "romfs/data/build_key.txt"), "different game");
+            try { OverlayArchive.bundledNeedsUpdate(new ByteArrayInputStream(zip), fixture.assets); throw new AssertionError("wrong game accepted"); }
+            catch (IOException expected) { check(OverlayArchive.version(fixture.assets).equals("test-v2"), "wrong game leaves overlay intact"); }
+        }
+        tests++;
+    }
     public static void main(String[] args) throws Exception {
+        bundledUpgrade();
         successfulUpdate();
         String valid = manifest(contents());
         rejected(valid.replace("format=1", "format=2"), contents(), ACTIVE);

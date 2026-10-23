@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise APK assembly with synthetic tool outputs; never install or use game data."""
 import shutil
+import io
 import sys
 import tempfile
 import zipfile
@@ -27,6 +28,15 @@ def main() -> None:
         (output / "game-host-activity/libdmandroid.so").write_bytes(b"synthetic")
         shader_cache = root / "shaders"
         shader_cache.mkdir()
+        overlay = root / "interface"
+        for name, content in {"ctrl_touch": "1", "touch_strings.tsv": "key\t00000000\ttext\n",
+                              "data/.build.config": "fixture", "data/ui.data": "fixture archive"}.items():
+            target = overlay / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content)
+        romfs = root / "romfs"
+        (romfs / "data").mkdir(parents=True)
+        (romfs / "data/build_key.txt").write_text("fixture build")
         commands: list[list[str]] = []
 
         def run(command: list[str | Path], *, env: dict[str, str] | None = None) -> None:
@@ -60,10 +70,15 @@ def main() -> None:
              patch.object(build, "run", run), patch.object(build, "build_counter_timestamp"), \
              patch.dict("os.environ", {"DM_REFERENCE_BUILD": str(output)}), \
              patch.object(sys, "argv", ["build.py", "--game-run", "--no-turnip", "--install",
+                                        "--interface-overlay", str(overlay), "--interface-romfs", str(romfs),
                                         "--shader-cache", str(shader_cache)]):
             build.main()
         with zipfile.ZipFile(output / "D2R-Android-port.apk") as archive:
             names = set(archive.namelist())
+            with zipfile.ZipFile(io.BytesIO(archive.read("assets/interface.zip"))) as interface:
+                assert interface.namelist()[0] == "android-update.properties"
+                assert interface.read("overlay/data/ui.data") == b"fixture archive"
+                assert "version=dev\n" in interface.read("android-update.properties").decode()
         forbidden = {"assets/turnip/old.so", "assets/touch_art/old.png", "assets/main.target",
                      "assets/main.gates.tsv", "lib/arm64-v8a/libold-driver.so",
                      "lib/arm64-v8a/libold-fixture.so"}

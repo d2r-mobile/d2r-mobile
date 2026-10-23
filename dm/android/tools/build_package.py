@@ -5,7 +5,7 @@ Build a single importable package from already derived game data (format: docs/A
 同一个模块既当命令行工具用，也被 pack_server.py 的网页后端调用；两条路产生完全一样的包。
 
 用法:
-  build_package.py assemble <输出.zip> --game <目录> --romfs <目录> --shaders <目录> [--overlay <目录>] [--subgroup 64]
+  build_package.py assemble <输出.zip> --game <目录> --romfs <目录> --shaders <目录> [--subgroup 64]
   build_package.py inspect  <某个.zip>        只读地打印包内容与清单，不改动任何东西
 """
 import argparse
@@ -350,8 +350,6 @@ def main():
     assemble_parser.add_argument("--shaders", type=Path, required=True)
     assemble_parser.add_argument("--derived", type=Path, default=None,
                                  help="runtime table data (derived.tsv) produced by shell_stubs.py data")
-    assemble_parser.add_argument("--overlay", type=Path, default=None,
-                                 help="optional original touchscreen RomFS overlay directory")
     assemble_parser.add_argument("--note", default=None)
 
     inspect_parser = subparsers.add_parser("inspect", help="print a package's manifest without touching it")
@@ -360,7 +358,7 @@ def main():
     args = parser.parse_args()
     try:
         if args.command == "assemble":
-            assemble(args.output, args.game, args.romfs, args.shaders, derived=args.derived, note=args.note, overlay=args.overlay)
+            assemble(args.output, args.game, args.romfs, args.shaders, derived=args.derived, note=args.note)
         else:
             manifest, groups = inspect(args.archive)
             print(json.dumps(manifest, indent=2, ensure_ascii=False))
