@@ -3,7 +3,7 @@
 // Guest thread environment: gate slot = host gate entry; x18 slot cleared; tpidr_el0 slot = ELF TLS block; tpidrro_el0 slot = Horizon ThreadLocalRegion (0x200).
 // The SDK's internal critical section takes the current thread object pointer from TLR[0x1f8]; here each thread gets a zero-initialized object allocated and written in.
 #include "dm.h"
-#ifdef __ANDROID__
+#if defined(__ANDROID__) && !defined(DM_ANDROID_NATIVE_APP)
 #include "../android/native/host_tls.h"
 #define pthread_setspecific dm_android_host_setspecific
 #endif

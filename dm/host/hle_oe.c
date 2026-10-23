@@ -7,7 +7,7 @@
 #include "dm_cursor.h"
 #include "hle.h"
 #include "dm_uiscreen.h"
-#ifdef __ANDROID__
+#if defined(__ANDROID__) && !defined(DM_ANDROID_NATIVE_APP)
 #include "../android/native/host_tls.h"
 #define pthread_setspecific dm_android_host_setspecific
 #endif

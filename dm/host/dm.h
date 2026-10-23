@@ -20,7 +20,7 @@
 #endif
 
 #define MAX_MOD 8
-#ifdef __ANDROID__
+#if defined(__ANDROID__) && !defined(DM_ANDROID_NATIVE_APP)
 #include <stdatomic.h>
 extern _Atomic int dm_debug_collection_enabled;
 static inline int dm_diagnostics_enabled(void) { return atomic_load_explicit(&dm_debug_collection_enabled, memory_order_relaxed); }
