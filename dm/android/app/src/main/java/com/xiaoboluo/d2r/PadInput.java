@@ -85,10 +85,7 @@ final class PadInput {
 
         float hx = e.getAxisValue(MotionEvent.AXIS_HAT_X), hy = e.getAxisValue(MotionEvent.AXIS_HAT_Y);
         boolean hl = hx < -TRIGGER, hr = hx > TRIGGER, hu = hy < -TRIGGER, hd = hy > TRIGGER;
-        if (hl != s.hatL) { s.hatL = hl; toggle(s, BTN_LEFT, hl); }
-        if (hr != s.hatR) { s.hatR = hr; toggle(s, BTN_RIGHT, hr); }
-        if (hu != s.hatU) { s.hatU = hu; toggle(s, BTN_UP, hu); }
-        if (hd != s.hatD) { s.hatD = hd; toggle(s, BTN_DOWN, hd); }
+        s.hatL = hl; s.hatR = hr; s.hatU = hu; s.hatD = hd;
         publish();
         return true;
     }
@@ -103,12 +100,19 @@ final class PadInput {
 
     // 失活 / 进后台：手柄的键和摇杆清零（iOS 的 dm_gamepad_reset） | Resigned active / backgrounded (iOS dm_gamepad_reset)
     static void reset() {
-        boolean any = false;
         for (State s : pads.values()) {
-            any |= s.buttons != 0 || s.lx != 0 || s.ly != 0 || s.rx != 0 || s.ry != 0;
-            s.buttons = 0; s.lx = s.ly = s.rx = s.ry = 0; s.lt = s.rt = false;
+            s.buttons = 0; s.lx = s.ly = s.rx = s.ry = 0;
+            s.lt = s.rt = s.hatL = s.hatR = s.hatU = s.hatD = false;
         }
-        if (any) publish();
+        onL = onR = needCenter = false;
+        prevButtons = 0;
+        publish();
+    }
+
+    static void removeDevice(int id) {
+        if (pads.remove(id) == null) return;
+        if (pads.isEmpty()) setMode(false);
+        publish();
     }
 
     // 手柄断开后状态别留着（按键卡住会一直发给游戏）；一个手柄都不剩就回触屏布局
@@ -131,10 +135,6 @@ final class PadInput {
         DmActivity.nativePadMode(pad ? 1 : 0);
         DmActivity.onPadMode(pad);
         android.util.Log.i("dm", pad ? "手柄：有明确输入 → 手柄布局" : "手柄：碰屏 / 断开 → 触屏布局");
-    }
-
-    private static void toggle(State s, long bit, boolean on) {
-        if (on) s.buttons |= bit; else s.buttons &= ~bit;
     }
 
     private static State state(int id) {
@@ -201,7 +201,9 @@ final class PadInput {
         float lx = 0, ly = 0, rx = 0, ry = 0;
         double bestL = -1, bestR = -1;
         for (State s : pads.values()) {
-            bits |= s.buttons | (s.lt ? BTN_ZL : 0) | (s.rt ? BTN_ZR : 0);
+            bits |= s.buttons | (s.lt ? BTN_ZL : 0) | (s.rt ? BTN_ZR : 0)
+                | (s.hatL ? BTN_LEFT : 0) | (s.hatR ? BTN_RIGHT : 0)
+                | (s.hatU ? BTN_UP : 0) | (s.hatD ? BTN_DOWN : 0);
             double ml = Math.hypot(s.lx, s.ly), mr = Math.hypot(s.rx, s.ry);
             if (ml > bestL) { bestL = ml; lx = s.lx; ly = s.ly; }
             if (mr > bestR) { bestR = mr; rx = s.rx; ry = s.ry; }
