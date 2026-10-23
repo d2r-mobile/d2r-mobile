@@ -506,6 +506,10 @@ public final class D2RActivity extends NativeActivity {
     private native int getLiveTouchOverlaySnapshot(float[] values, long[] state);
     private native int getLiveTouchGlyphSnapshot(int[] glyphs);
     private native int getLiveTouchAtlasInfo(int[] info);
+    int readWorldHud(float[] values) { return getWorldHudSnapshot(values); }
+    String[] readWorldHudLabels() { return getWorldHudLabels(); }
+    private native int getWorldHudSnapshot(float[] values);
+    private native String[] getWorldHudLabels();
 
     // Readiness controls only the D2R overlay; the legacy pad requires explicit virtual-controller mode.
     private boolean liveTouchReady() {

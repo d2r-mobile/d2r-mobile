@@ -13,6 +13,7 @@ import struct
 import subprocess
 import sys
 import zipfile
+import zlib
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -128,6 +129,39 @@ def validate_touch_art(source):
     return files
 
 
+def validate_map_goal_art(source):
+    names = ["cross"] + [f"sym_{i}" for i in range(7)]
+    names += [f"label_{i}{suffix}" for i in range(31) for suffix in ("", "_en", "_es", "_mx", "_ru")]
+    names += [f"label_{i}_old" for i in range(31) if (source / f"label_{i}_old.png").exists()]
+    files, total = [], 0
+    for name in names:
+        path = source / (name + ".png")
+        if path.is_symlink() or not path.is_file() or not 33 <= path.stat().st_size <= 4 * 1024 * 1024:
+            raise ValueError("map-goal art: missing, linked or oversized " + str(path))
+        data = path.read_bytes(); total += len(data)
+        if total > 32 * 1024 * 1024 or data[:16] != b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR":
+            raise ValueError("map-goal art: invalid PNG or total size " + str(path))
+        width, height = struct.unpack(">II", data[16:24])
+        if not 0 < width <= 4096 or not 0 < height <= 4096:
+            raise ValueError("map-goal art: invalid dimensions " + str(path))
+        position, image_data, ended = 8, False, False
+        while position + 12 <= len(data):
+            length = struct.unpack_from(">I", data, position)[0]
+            end = position + 12 + length
+            if end > len(data) or zlib.crc32(data[position + 4:end - 4]) != struct.unpack_from(">I", data, end - 4)[0]:
+                raise ValueError("map-goal art: truncated PNG or CRC mismatch " + str(path))
+            kind = data[position + 4:position + 8]
+            image_data |= kind == b"IDAT"
+            position = end
+            if kind == b"IEND":
+                ended = length == 0 and end == len(data)
+                break
+        if not image_data or not ended:
+            raise ValueError("map-goal art: incomplete PNG " + str(path))
+        files.append(path)
+    return files
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--install", action="store_true")
@@ -142,6 +176,7 @@ def main():
                         help="不出内置驱动（只出通用包，启动界面里那一项会自己隐藏）")
     parser.add_argument("--touch-art", type=Path,
                         help="root-provided generated TouchArt directory (dm_native_skill_0..8.png); validated against the frozen manifest")
+    parser.add_argument("--map-goal-art", type=Path, help="locally generated NativeHUD/mapgoal directory from gen_map_goal_art.py")
     args = parser.parse_args()
     if args.game_source and not args.game_run: parser.error("--game-source only makes sense with --game-run")
     if args.game_run and not args.game_source:
@@ -154,7 +189,7 @@ def main():
     build = Path(os.environ.get("DM_REFERENCE_BUILD", str(DEFAULT_BUILD)))
     build.mkdir(parents=True, exist_ok=True)
     staging_directories = [build / name for name in ("assets", "res", "java-classes", "dex")]
-    for source in (args.touch_art, args.game_source, args.turnip, args.shader_cache):
+    for source in (args.touch_art, args.map_goal_art, args.game_source, args.turnip, args.shader_cache):
         if source is not None and any(source.resolve().is_relative_to(path.resolve()) for path in staging_directories):
             sys.exit("Build inputs must be outside the disposable APK staging directories: " + str(source))
     for staging in staging_directories:
@@ -242,6 +277,12 @@ def main():
         print("Touch art: packaged %d validated atlases from %s" % (len(touch_files), args.touch_art), flush=True)
     else:
         print("Touch art: not supplied; glyph overlay remains explicitly unknown", flush=True)
+    if args.map_goal_art:
+        map_files = validate_map_goal_art(args.map_goal_art)
+        (assets / "mapgoal").mkdir(exist_ok=True)
+        for path in map_files:
+            shutil.copyfile(path, assets / "mapgoal" / path.name)
+        print("Map-goal art: packaged %d validated images" % len(map_files), flush=True)
     for license_file in (build / "gpu-driver/licenses").glob("*.txt"):
         shutil.copyfile(license_file, licenses / license_file.name)
     # 启动画面背景图随源码发布（dm/android/artwork/），新电脑 clone 后能重建出同样的 APK。
