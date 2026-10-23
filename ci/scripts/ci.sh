@@ -22,7 +22,7 @@ rm -f "$artifacts/manifest.json" "$artifacts/elf-pages.json"
 export TMPDIR=$work/tmp
 export ASAN_OPTIONS=${ASAN_OPTIONS:-halt_on_error=1}
 export UBSAN_OPTIONS=${UBSAN_OPTIONS:-halt_on_error=1}
-params=(CMAKE_BUILD_TYPE=Debug DM_ANDROID_REWRITE_SCAN=OFF DM_ANDROID_VULKAN=OFF)
+params=(DM_ANDROID_CHECKS=ON CMAKE_BUILD_TYPE=Debug DM_ANDROID_REWRITE_SCAN=OFF DM_ANDROID_VULKAN=OFF)
 if [[ "$mode" == host ]]; then
     log=$artifacts/host-ctest.log
 else
@@ -31,7 +31,7 @@ fi
 pages=$artifacts/elf-pages.json
 status=pass
 configure_args=(-S "$root/dm/android" -B "$build"
-    -DCMAKE_BUILD_TYPE=Debug -DDM_ANDROID_REWRITE_SCAN=OFF
+    -DDM_ANDROID_CHECKS=ON -DCMAKE_BUILD_TYPE=Debug -DDM_ANDROID_REWRITE_SCAN=OFF
     -DDM_ANDROID_VULKAN=OFF
     -DFETCHCONTENT_BASE_DIR="$work/fetchcontent-$(uname -m)")
 

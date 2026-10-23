@@ -6,7 +6,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 source "$here/paths.sh"
 mkdir -p "$TMPDIR"
 build=${DM_ANDROID_HOST_BUILD_DIR:-$DM_ROOT/build/host-sanitized}
-cmake -S "$here" -B "$build" -DCMAKE_BUILD_TYPE=Debug \
+cmake -S "$here" -B "$build" -DDM_ANDROID_CHECKS=ON -DCMAKE_BUILD_TYPE=Debug \
     -DCMAKE_C_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' "$@"
 cmake --build "$build" --parallel
 ctest --test-dir "$build" --output-on-failure

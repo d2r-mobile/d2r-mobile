@@ -2,7 +2,7 @@
 
 English: [README.md](README.md)
 
-这是 ARM64 安卓版。APK 接入了公用宿主、Vulkan 回放引擎、AAudio、与 iOS 同一套画法的透明触摸覆盖层及系统输入框，已在真机上玩过（营地、战斗、各面板、NPC 对话），实测数据在 `docs/android-notes/`。玩家装发布页的 APK、导入自己的游戏内容即可，见下面「玩家怎么装」。
+这是 ARM64 安卓版。APK 接入了公用宿主、Vulkan 回放引擎、AAudio、与 iOS 同一套画法的透明触摸覆盖层及系统输入框，已在真机上玩过（营地、战斗、各面板、NPC 对话），实测数据在 `docs/android-notes/`。按下面的「本地构建」生成 APK，再导入自己的游戏内容，见下面「玩家怎么装」。
 
 ## 源码结构
 
@@ -16,7 +16,7 @@ English: [README.md](README.md)
 
 ## 玩家怎么装
 
-发布页的 `D2RMobile-android.apk` 不含任何游戏内容（由 `dm/android/tools/shell_apk.sh` 出：三张从游戏文件生成的表换成替身，运行时读导入的 `derived.tsv`，做法同 iOS 壳）。游戏内容用你自己的游戏文件在电脑上做：
+用 `dm/android/tools/shell_apk.sh` 构建的 `D2RMobile-android.apk` 不含任何游戏内容（由 `dm/android/tools/shell_apk.sh` 出：三张从游戏文件生成的表换成替身，运行时读导入的 `derived.tsv`，做法同 iOS 壳）。游戏内容用你自己的游戏文件在电脑上做：
 
 ```sh
 python3 dm/tools/d2rm_android.py <Switch 版 3.3.94012 的 Update 目录> <输出目录>

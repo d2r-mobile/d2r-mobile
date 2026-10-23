@@ -5,9 +5,7 @@
 This is the ARM64 Android version. The APK links the shared host, the Vulkan
 replay engine, AAudio, a transparent touch overlay drawn the same way as iOS, and
 system text input. It has been played on real phones (camp, fights, panels, NPC
-dialogs); measurements are in `docs/android-notes/`. Players
-install the release APK and import their own game content: see "Installing as a
-player" below.
+dialogs); measurements are in `docs/android-notes/`. Build the APK using "Local build" below, then import your own game content.
 
 ## Source layout
 
@@ -23,8 +21,7 @@ player" below.
 
 ## Installing as a player
 
-The release page's `D2RMobile-android.apk` contains no game content (built by
-`dm/android/tools/shell_apk.sh`: the three tables generated from game files are
+Build `D2RMobile-android.apk` with `dm/android/tools/shell_apk.sh`; it contains no game content ( the three tables generated from game files are
 replaced by stand-ins that read the imported `derived.tsv` at run time, as in the
 iOS shell). You make the game content on a computer from your own game files:
 
