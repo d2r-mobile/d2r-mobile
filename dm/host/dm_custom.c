@@ -21,6 +21,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef __ANDROID__
+#include "../android/native/custom_page.h"
+#endif
 
 static const char *const k_keys[] = { "lang", "auto_mana", "merc_pot", "drop_light", "map_mark", "item_notes", "icloud", "pot_pick", "drop_haptic", "gem_pick", "store_btn", "eco_fps", "q3d", "loot_filter", "auto_buff", "touch_swap_above" };   // 顺序 = 自定义页从上到下的行序（touch_layout.py _CUSTOM_ROWS）：手柄在这页按这个顺序上下选行 | Order = row order of the Custom page from top to bottom (touch_layout.py _CUSTOM_ROWS): the controller selects rows up/down on this page in this order
 #define NK (int)(sizeof k_keys / sizeof *k_keys)
@@ -116,6 +119,16 @@ static uint64_t find_w(uint64_t w, const char *name, int dep) {   // 按名字�
     for (uint64_t i = 0; i < n; i++) { uint64_t r = find_w(*(uint64_t *)(ch + 8 * i), name, dep + 1); if (r) return r; }
     return 0;
 }
+static int custom_visible(int i) {
+#ifdef __ANDROID__
+    return dm_android_custom_visible(k_keys[i]);
+#else
+    (void)i; return 1;
+#endif
+}
+#ifdef __ANDROID__
+static void custom_layout(uint64_t w) { ((void (*)(uint64_t))*(uint64_t *)(*(uint64_t *)w + 0x10))(w); }
+#endif
 // 勾选框的状态（本机逐字节差分，点一下只变这几处）：+0xa88 是它自己的「勾上」标志（点击按它翻转）；
 // +0x6e8..+0x6f4 是「常态 / 按下 / 悬停 / 禁用」四个帧号，勾上 = 4 5 6 -1、没勾 = 0 1 3 2（= 布局里 toggled* / untoggled* 那几项）；+0x610 是此刻画的帧
 // 读写这几处之前核控件是勾选框那个类（dm_widget.h）：不是就当没勾、不写，并记红
@@ -137,6 +150,11 @@ void dm_custom_ui_pump(unsigned long long root) {
         if (was) for (int i = 0; i < NK; i++) atomic_store(&g_pend[i], -1);
         memset(seen, 0, sizeof seen); return; }
     load_once(); if (atomic_exchange(&g_repaint, 0)) memset(seen, 0, sizeof seen);
+#ifdef __ANDROID__
+    static dm_wref filtered;
+    uint64_t rows = find_w(sp, "TouchCustomRows", 0);
+    if (rows && dm_wref_get(&filtered) != rows && dm_android_custom_hide_cloud(rows, custom_layout)) dm_wref_set(&filtered, rows);
+#endif
     if (atomic_load(&g_lang_explicit) < 0) atomic_store(&g_val[0], lang_running());   // 语言那一格没点过应用：生效值 = 此刻实际在跑的语言（读盘时游戏还没设语言，那时取到的不准） | Apply never tapped for the language cell: effective value = the language actually running right now (when read from disk the game has not set the language yet, so the value fetched then is not accurate)
     // 手柄模式：原版选项页的焦点只认表格里它自己的行，够不着我们的勾选框——十字键上下选行（原版手柄选中框 TouchCustomSel 框住这一行）、A 翻勾选（下面照「玩家点了」处理），其余键照旧归原版
     // Controller mode: the original options page's focus only recognizes its own rows in the table and cannot reach our checkboxes. D-pad up/down selects a row
@@ -147,7 +165,8 @@ void dm_custom_ui_pump(unsigned long long root) {
       if (dm_wref_get(&sel_sp) != sp) { dm_wref_set(&sel_sp, sp); sel = 0; }
       uint64_t dm = find_w(sp, "TouchCustomSel", 0), tw = 0, cw = 0; char nm[64];
       if (pad) { uint64_t ev = dm_padmode_page_keys(DM_BTN_UP | DM_BTN_DOWN | DM_BTN_A);
-          if (ev & DM_BTN_DOWN) sel = sel + 1 < NK ? sel + 1 : sel; else if (ev & DM_BTN_UP) sel = sel > 0 ? sel - 1 : 0;
+          int step = ev & DM_BTN_DOWN ? 1 : ev & DM_BTN_UP ? -1 : 0;
+          if (step) { int next = sel + step; while (next >= 0 && next < NK && !custom_visible(next)) next += step; if (next >= 0 && next < NK) sel = next; }
           snprintf(nm, sizeof nm, "TouchCustom_%s", k_keys[sel]); cw = find_w(sp, sel == 0 ? k_lang_box[LANG_N - 1] : nm, 0); snprintf(nm, sizeof nm, "TouchCustom_%s_Text", k_keys[sel]); tw = find_w(sp, nm, 0);   // 语言行：框住标签到最右那一格 | Language row: box from the label to the rightmost cell
           if ((ev & DM_BTN_A) && cw && dm_wref_get(&seen[sel]) == cw) {
               if (sel == K_Q3D || sel == K_TOUCH_SWAP) { int p0 = atomic_load(&g_pend[sel]), sh = p0 >= 0 ? p0 : atomic_load(&g_val[sel]); atomic_store(&g_pend[sel], !sh); set_toggle(cw, !sh); { uint64_t z = find_w(sp, rev_box(sel), 0); if (z) set_toggle(z, sh); }
@@ -176,6 +195,7 @@ void dm_custom_ui_pump(unsigned long long root) {
           if (to != shown) { atomic_store(&g_pend[0], to); LOG("自定义设置：语言 → %s（点「应用」生效）", k_lang_name[to]); }
           for (int k = 0; k < LANG_N; k++) if (TOGGLED(bx[k]) != (k == to)) set_toggle(bx[k], k == to); } }
     for (int i = 1; i < NK; i++) { char nm[48]; snprintf(nm, sizeof nm, "TouchCustom_%s", k_keys[i]);
+        if (!custom_visible(i)) continue;
         uint64_t w = find_w(sp, nm, 0); if (!w || !*(uint8_t *)(w + 0x50)) continue;
         int pd0 = atomic_load(&g_pend[i]), want = pd0 >= 0 ? pd0 : atomic_load(&g_val[i]);
         uint64_t z = rev_box(i) ? find_w(sp, rev_box(i), 0) : 0;   // 两项单选行（3D 画质：上下的「流畅优先」「画质优先」；换组位置）：存的仍是一个键，反面那一项是它的反面 | Two-option radio rows (3D quality: "Smoothness first" / "Quality first" stacked; swap-group position): still stores one key, the other option is its negation
