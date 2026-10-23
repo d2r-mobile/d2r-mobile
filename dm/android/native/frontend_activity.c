@@ -49,6 +49,7 @@
 #include "frontend_pad.h"
 #include "module_metadata.h"
 #include "touch_overlay_contract.h"
+#include "world_hud_snapshot.h"
 
 // Current host exposes resumed directly but not its declaration in dm.h; keep the
 // frontend contract local rather than editing the host header owned by H1.
@@ -75,6 +76,7 @@ typedef struct {
     dm_live_touch_scene_observation live_observation;
     dm_live_touch_geometry live_geometry;
     uint64_t live_visual_signature;
+    float world_hud[DM_WORLD_HUD_VALUES];
     int live_bind_state;
     unsigned map_world_seq, tap_move_seen, world_tap_seen;
     uint32_t selected_point;
@@ -580,7 +582,10 @@ static void live_touch_publish_visual(game_app *s) {
         return;
     }
     v.frontend = dm_uiscreen_ingame() ? 0 : 1;
+    dm_world_hud_capture(s->world_hud, !v.frontend && !v.navigation_mode);
     uint64_t signature = dm_live_touch_visual_signature(&v, &s->live_geometry);
+    for (unsigned i = 0; i < sizeof s->world_hud; i++)
+        signature = (signature ^ ((const unsigned char *)s->world_hud)[i]) * 1099511628211ull;
     dm_hud_info hud; memset(&hud, 0, sizeof hud); dm_hud_get(&hud);
     const uint64_t hud_parts[] = {(uint64_t)(hud.valid ? hud.players : 0), (uint64_t)hud.belt[0],
         (uint64_t)hud.belt[1], (uint64_t)hud.belt[2], (uint64_t)hud.belt[3]};
@@ -1108,6 +1113,21 @@ __attribute__((visibility("default"))) jint Java_org_d2r_android_port_D2RActivit
     jlong state_out[4]={(jlong)v.buttons,(jlong)dm_live_touch_lx(s->live_touch),(jlong)dm_live_touch_ly(s->live_touch),0};
     (*env)->SetFloatArrayRegion(env,values,0,96,out);(*env)->SetLongArrayRegion(env,state,0,4,state_out);return 1;
 }
+__attribute__((visibility("default"))) jint Java_org_d2r_android_port_D2RActivity_getWorldHudSnapshot(JNIEnv *env,jclass klass,jfloatArray out) {
+    (void)klass;game_app *s=application;
+    if(!s||!s->live_provider_available||!out||(*env)->GetArrayLength(env,out)<DM_WORLD_HUD_VALUES)return 0;
+    (*env)->SetFloatArrayRegion(env,out,0,DM_WORLD_HUD_VALUES,s->world_hud);return 1;
+}
+__attribute__((visibility("default"))) jobjectArray Java_org_d2r_android_port_D2RActivity_getWorldHudLabels(JNIEnv *env,jclass klass) {
+    (void)klass;
+    const char *keys[]={"dmRiftHudTitle","dmRiftTierN","dmRiftHudDone","dmRiftHudLate",
+        "dmRiftHudGuard","dmRiftHudNext","dmRiftHudTop","dmRiftHudOver","dmRiftHudKillWave",
+        "dmRiftHudKillN","dmRiftHudOverKill","dmRiftHudOverKillN","dmRiftHudSame","dmRiftHudKill","dmRiftHudGoal"};
+    jclass string=(*env)->FindClass(env,"java/lang/String");if(!string)return NULL;
+    jobjectArray out=(*env)->NewObjectArray(env,15,string,NULL);(*env)->DeleteLocalRef(env,string);if(!out)return NULL;
+    for(int i=0;i<15;i++){jstring text=java_text(env,dm_ui(keys[i]));if(!text)return NULL;(*env)->SetObjectArrayElement(env,out,i,text);(*env)->DeleteLocalRef(env,text);if((*env)->ExceptionCheck(env))return NULL;}
+    return out;
+}
 // Read-only skill glyph indices for the draw-only overlay. The array layout is
 // 5 records of (status, atlas, normal_frame, pressed_frame). It calls the same
 // original dm_ta_current_set mapping and never mutates input or binding state.
@@ -1471,6 +1491,8 @@ __attribute__((visibility("default"))) void ANativeActivity_onCreate(ANativeActi
         {"isLiveTouchReady","()Z",(void*)Java_org_d2r_android_port_D2RActivity_isLiveTouchReady},
         {"takeDropHaptic","()I",(void*)Java_org_d2r_android_port_D2RActivity_takeDropHaptic},
         {"getLiveTouchOverlaySnapshot","([F[J)I",(void*)Java_org_d2r_android_port_D2RActivity_getLiveTouchOverlaySnapshot},
+        {"getWorldHudSnapshot","([F)I",(void*)Java_org_d2r_android_port_D2RActivity_getWorldHudSnapshot},
+        {"getWorldHudLabels","()[Ljava/lang/String;",(void*)Java_org_d2r_android_port_D2RActivity_getWorldHudLabels},
         {"getLiveTouchGlyphSnapshot","([I)I",(void*)Java_org_d2r_android_port_D2RActivity_getLiveTouchGlyphSnapshot},
         {"getLiveTouchAtlasInfo","([I)I",(void*)Java_org_d2r_android_port_D2RActivity_getLiveTouchAtlasInfo},
         {"setOverlayEnabled","(Z)V",(void*)Java_org_d2r_android_port_D2RActivity_setOverlayEnabled},

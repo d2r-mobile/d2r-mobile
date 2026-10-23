@@ -39,6 +39,10 @@ final class D2RTouchOverlay extends View {
     private final float[] values = new float[96];
     private final long[] state = new long[4];
     private final int[] glyphs = new int[20];
+    private final float[] world = new float[WorldHudState.VALUES];
+    private final D2RWorldHud worldHud;
+    private String[] worldLabels;
+    private int worldLanguage = -1;
     private final int[] atlasInfo = new int[45];
     private final Bitmap[] atlases = new Bitmap[TouchGlyph.ATLAS_COUNT];
     private final Bitmap[] glyphCache = new Bitmap[TouchGlyph.ATLAS_COUNT * 128];
@@ -56,6 +60,7 @@ final class D2RTouchOverlay extends View {
     D2RTouchOverlay(D2RActivity activity) {
         super(activity);
         this.activity = activity;
+        this.worldHud = new D2RWorldHud(activity);
         this.decor = activity.getWindow().getDecorView();
         setWillNotDraw(false);
         setClickable(false);
@@ -129,6 +134,12 @@ final class D2RTouchOverlay extends View {
         }
         float[] v = values;
         if (TouchOverlayGeometry.frontend(v)) return; // original front-end pages have no combat controls
+        if (activity.readWorldHud(world) != 0) {
+            if (worldLabels == null || worldLanguage != (int)world[30]) {
+                worldLabels = activity.readWorldHudLabels(); worldLanguage = (int)world[30];
+            }
+            worldHud.draw(canvas, v, world, worldLabels);
+        }
         int mask = (int)v[17];
         int skillSet = (int)v[15];
         int players = (int)v[18];
