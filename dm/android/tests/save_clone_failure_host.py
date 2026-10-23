@@ -15,6 +15,7 @@ prefix = r'''
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -27,6 +28,43 @@ prefix = r'''
 static const char *fault_path;
 static DIR *fault_directory;
 static int fault_mode, saw_file;
+static int io_mode, input_fd = -1, output_fd = -1, interrupted;
+static int test_open(const char *path, int flags, ...) {
+    int fd;
+    if (flags & O_CREAT) {
+        va_list args; va_start(args, flags); int mode = va_arg(args, int); va_end(args);
+        fd = open(path, flags, mode); output_fd = fd;
+    } else { fd = open(path, flags); input_fd = fd; }
+    return fd;
+}
+static ssize_t test_read(int fd, void *buffer, size_t size) {
+    if (fd == input_fd && io_mode == 6) { errno = EIO; return -1; }
+    if (fd == input_fd && io_mode == 5 && !interrupted++) { errno = EINTR; return -1; }
+    return read(fd, buffer, size);
+}
+static ssize_t test_write(int fd, const void *buffer, size_t size) {
+    if (fd == output_fd) {
+        if (io_mode == 1) {
+            if (!interrupted++) return write(fd, buffer, size > 3 ? 3 : size);
+            errno = ENOSPC; return -1;
+        }
+        if (io_mode == 4) { errno = 0; return 0; }
+        if (io_mode == 5 && interrupted++ == 1) { errno = EINTR; return -1; }
+    }
+    return write(fd, buffer, size);
+}
+static int test_fsync(int fd) {
+    if (fd == output_fd && io_mode == 2) { errno = ENOSPC; return -1; }
+    return fsync(fd);
+}
+static int test_close(int fd) {
+    int fail = fd == output_fd && (io_mode == 1 || io_mode == 3);
+    if (fd == output_fd) output_fd = -1;
+    if (fd == input_fd) input_fd = -1;
+    int result = close(fd);
+    if (fail) { errno = EIO; return -1; }
+    return result;
+}
 static DIR *test_opendir(const char *path) {
     DIR *directory = opendir(path);
     if (fault_path && !strcmp(path, fault_path)) fault_directory = directory;
@@ -52,6 +90,11 @@ static int copy_xattrs(const char *source, const char *destination) {
 #define opendir test_opendir
 #define readdir test_readdir
 #define closedir test_closedir
+#define open test_open
+#define read test_read
+#define write test_write
+#define fsync test_fsync
+#define close test_close
 '''
 body = r'''
 static void write_save(const char *path) {
@@ -74,12 +117,26 @@ int main(int argc, char **argv) {
     assert(clone_node("source", "candidate") == -1 && errno == EIO);
     assert(access("candidate", F_OK) == -1 && errno == ENOENT);
     fault_path = NULL; fault_directory = NULL;
+    for (int mode = 1; mode <= 6; mode++) {
+        io_mode = mode; interrupted = 0;
+        int result = clone_node("source", "candidate");
+        if (mode == 5) {
+            assert(!result && !remove_created("candidate"));
+        } else {
+            assert(result == -1 && errno == (mode <= 2 ? ENOSPC : EIO));
+            assert(access("candidate", F_OK) == -1 && errno == ENOENT);
+        }
+        FILE *original = fopen("source/hero.d2s", "r"); assert(original);
+        char bytes[32] = {0}; assert(fread(bytes, 1, sizeof bytes - 1, original) == 13);
+        assert(!fclose(original) && !strcmp(bytes, "original-save"));
+    }
+    io_mode = 0;
     assert(!clone_node("source", "candidate"));
     FILE *file = fopen("candidate/nested/shared.d2i", "r"); assert(file);
     char bytes[32] = {0}; assert(fread(bytes, 1, sizeof bytes - 1, file) == 13);
     assert(!fclose(file) && !strcmp(bytes, "original-save"));
     assert(!remove_created("candidate") && !remove_created("source"));
-    puts("PASS production save clone: enumeration/close errors, nested cleanup, retry and original preservation");
+    puts("PASS production save clone: directory/read/write/fsync/close failures, ENOSPC, EINTR, cleanup and retry");
 }
 '''
 with tempfile.TemporaryDirectory(prefix="dm-save-clone-") as temporary:
