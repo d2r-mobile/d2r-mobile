@@ -53,7 +53,7 @@ android {
     if (!prebuilt) externalNativeBuild { cmake { path '../CMakeLists.txt'; version '3.31.6' } }
     if (prebuilt) sourceSets { main { jniLibs.srcDirs = [prebuilt] } }
     sourceSets { main { res.srcDir(startupStrings.get().asFile); res.srcDir(launcherIcon.get().asFile) } }
-    sourceSets { main { jniLibs.srcDirs += [project.property('dmTestDriverLibs')] } }
+    if (project.hasProperty('dmTestDriverLibs')) sourceSets { main { jniLibs.srcDirs += [project.property('dmTestDriverLibs')] } }
     if (project.hasProperty('dmTurnipAssets')) sourceSets { main { assets.srcDir(project.property('dmTurnipAssets')) } }
     packaging { jniLibs { useLegacyPackaging true; keepDebugSymbols += ['**/*.so'] } }
     buildFeatures { buildConfig true }
