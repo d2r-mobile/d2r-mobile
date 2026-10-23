@@ -66,7 +66,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         @Override public void run() {
             if (!resumed || !portSettingsReady || !AndroidPortSettings.fps(DmActivity.this)) return;
             long now = SystemClock.elapsedRealtime(), frames = libraryLoaded ? nativeSubmittedFrames() : 0;
-            if (fpsTime != 0 && now > fpsTime) fpsText.setText(String.format(Locale.ROOT, "提交 FPS %.1f · Turnip", (frames - fpsFrames) * 1000.0 / (now - fpsTime)));
+            if (fpsTime != 0 && now > fpsTime) fpsText.setText(String.format(Locale.ROOT, "提交 FPS %.1f · %s", (frames - fpsFrames) * 1000.0 / (now - fpsTime), AndroidPortSettings.driverLabel(DmActivity.this)));
             fpsTime = now; fpsFrames = frames;
             fpsText.postDelayed(this, 1000);
         }
@@ -108,7 +108,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
             }
         });
         fpsText = new TextView(this);
-        fpsText.setText("提交 FPS — · Turnip"); fpsText.setTextColor(Color.WHITE);
+        fpsText.setText("提交 FPS —"); fpsText.setTextColor(Color.WHITE);
         fpsText.setTextSize(14); fpsText.setBackgroundColor(0x99000000);
         int pad = (int) (8 * getResources().getDisplayMetrics().density);
         fpsText.setPadding(pad, pad / 2, pad, pad / 2);
@@ -248,6 +248,23 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         if (f.exists() && !f.delete()) throw new IOException("delete " + f.getName());
     }
 
+    private File bundledTurnip() throws IOException {
+        File dir = new File(getFilesDir(), "gpu/turnip-1d80dfa0");
+        if (!dir.isDirectory() && !dir.mkdirs()) throw new IOException("Cannot create driver directory");
+        File library = new File(dir, "vulkan.purple.so");
+        if (!library.isFile()) {
+            android.util.AtomicFile file = new android.util.AtomicFile(library);
+            FileOutputStream output = null;
+            try (InputStream input = getAssets().open("turnip/vulkan.purple.so")) {
+                output = file.startWrite();
+                byte[] buffer = new byte[65536]; int count;
+                while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+                file.finishWrite(output);
+            } catch (IOException error) { if (output != null) file.failWrite(output); throw error; }
+        }
+        return dir;
+    }
+
     private void startHost() {
         if (bootFailure != 0) { showBootFailure(); return; }
         if (!portSettingsReady || started || importing || !resumed || !ensureFileAccess()) return;
@@ -262,9 +279,10 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
             try {
                 Os.setenv("DM_DERIVED", new File(runtime, "derived.tsv").getAbsolutePath(), true);
                 Os.setenv("DM_TURNIP_HOOK_DIR", getApplicationInfo().nativeLibraryDir + "/", true);
-                Os.setenv("DM_TURNIP_DIR", new File(runtime, "turnip").getAbsolutePath() + "/", true);
+                if (AndroidPortSettings.turnip(this)) Os.setenv("DM_TURNIP_DIR", bundledTurnip().getAbsolutePath() + "/", true);
+                Os.setenv("DM_PORT_DRIVER", AndroidPortSettings.turnip(this) ? "turnip" : "system", true);
                 Os.setenv("DM_PORT_WIDESCREEN", AndroidPortSettings.wide(this) ? "1" : "0", true);
-            } catch (ErrnoException e) { showStartError(getString(R.string.dmAndroidStorage)); return; }
+            } catch (ErrnoException | IOException e) { showStartError(getString(R.string.dmAndroidStorage)); return; }
             try { System.loadLibrary("dm"); libraryLoaded = true; }
             catch (UnsatisfiedLinkError error) { showStartError(getString(R.string.dmAndroidLibrary)); return; }
         }

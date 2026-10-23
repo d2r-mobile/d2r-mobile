@@ -54,6 +54,7 @@ android {
     if (prebuilt) sourceSets { main { jniLibs.srcDirs = [prebuilt] } }
     sourceSets { main { res.srcDir(startupStrings.get().asFile); res.srcDir(launcherIcon.get().asFile) } }
     sourceSets { main { jniLibs.srcDirs += [project.property('dmTestDriverLibs')] } }
+    if (project.hasProperty('dmTurnipAssets')) sourceSets { main { assets.srcDir(project.property('dmTurnipAssets')) } }
     packaging { jniLibs { useLegacyPackaging true; keepDebugSymbols += ['**/*.so'] } }
     buildFeatures { buildConfig true }
     // 正式版签名：钥匙不进仓库，路径与密码从环境变量来（tools/shell_apk.sh release 读本机 ~/.config/dm-android/release.env）；没设就不签
