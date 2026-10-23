@@ -1,5 +1,6 @@
 #pragma once
 #include <stddef.h>
+#include <stdint.h>
 #include <android/native_window.h>
 #ifdef __cplusplus
 extern "C" {
@@ -14,6 +15,7 @@ void dm_android_vk_set_window(ANativeWindow *window);
  * shader_directory remains external, is copied internally, and must hold .xgs. */
 int dm_android_vk_initialize(const char *shader_directory,char *error,size_t bytes);
 int dm_android_vk_has_window(void);
+uint64_t dm_android_vk_submitted_frames(void);
 #ifdef __cplusplus
 }
 #endif

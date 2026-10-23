@@ -11,6 +11,6 @@ target_compile_features(dm_vulkan_engine PUBLIC cxx_std_17)
 target_compile_options(dm_vulkan_engine PRIVATE -O2 -fno-strict-aliasing -Wall -Wextra -Wno-missing-field-initializers -Wno-format)
 set_source_files_properties(${E}/xbg_texture.c PROPERTIES COMPILE_OPTIONS -fsigned-char)
 set_target_properties(dm_vulkan_engine PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_link_libraries(dm_vulkan_engine PUBLIC vulkan log)
+target_link_libraries(dm_vulkan_engine PUBLIC log)
 # nvn_vk.c is compiled in dmcore (host compatibility flags); engine deliberately
 # reuses dmcore's nvn_tex.c / nvn_deswizzle.c rather than duplicate definitions.
