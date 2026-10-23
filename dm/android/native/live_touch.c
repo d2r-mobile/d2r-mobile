@@ -195,8 +195,9 @@ int dm_live_touch_take_map_request(dm_live_touch *touch, float *nx, float *ny) {
     return request;
 }
 static int minimap_title_hit(const dm_live_touch *touch, float x, float y) {
-    if (!touch->minimap_valid || touch->state.navigation_mode ||
-        dm_tc_hit(&touch->state.layout, x, y) >= 0) return 0;
+    if (!touch->minimap_valid || touch->state.navigation_mode) return 0;
+    int target = dm_tc_hit(&touch->state.layout, x, y);
+    if (target >= 0 && (touch->state.enabled_targets & (1u << target))) return 0;
     const float *r = touch->minimap;
     float h = (r[3] - r[1]) * touch->height;
     float band = h / 4; if (band < 30) band = fminf(30, h * .4f);

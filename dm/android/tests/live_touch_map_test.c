@@ -39,6 +39,14 @@ int main(void){
     event(t,DM_LIVE_ACTION_DOWN,15,460,15,6000000000);
     dm_live_touch_set_context(t,1,0,1,1,2,0);
     assert(!dm_live_touch_take_map_request(t,&x,&y));
+    dm_live_touch_set_context(t,0,((1u<<DM_TC_COUNT)-1)&~(1u<<DM_TC_MAP),2,2,2,0);
+    float edge_rect[]={.65f,0,1,.35f};
+    dm_live_touch_set_minimap(t,edge_rect,0);
+    dm_tc_state *edge=dm_live_touch_controls(t);
+    float mx=edge->layout.target[DM_TC_MAP].x,my=edge->layout.target[DM_TC_MAP].y;
+    event(t,DM_LIVE_ACTION_DOWN,16,mx,my,8000000000);
+    event(t,DM_LIVE_ACTION_UP,16,mx,my,8100000000);
+    assert(dm_live_touch_take_map_request(t,&x,&y)==1);
     dm_live_touch_destroy(t);
     puts("PASS map: title tap/move, full-map return, skill priority, cancel and context");
 }

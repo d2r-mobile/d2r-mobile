@@ -65,6 +65,10 @@ int dm_ui_stack_left(void){return 0;}
 void mtl_ui_ghost(int on,float px,float py,const float grid[4],float cx,float cy){(void)on;(void)px;(void)py;(void)grid;(void)cx;(void)cy;}
 void dm_vk_ui_ghost_request(int on,float px,float py,const float grid[4],float cx,float cy,int dim,const _Atomic uint64_t *live,uint64_t token){(void)on;(void)px;(void)py;(void)grid;(void)cx;(void)cy;(void)dim;(void)live;(void)token;}
 #include "frontend_actual.inc"
+static uint32_t target_mask(int navigation,int blocked){
+#include "frontend_mask_actual.inc"
+    return mask;
+}
 static void tick(game_app *a,uint64_t ns){clock_ns=ns;live_touch_frontend_tick(a);}
 static void event(game_app *a,int action,float x,float y,uint64_t ns){
     int32_t id=1;
@@ -122,12 +126,20 @@ int main(void){
     live_frontend_touch(&a,2,8,.4f,.6f);assert(a.fe_drag&&touches==prior);
     live_frontend_touch(&a,2,7,.4f,.6f);assert(!a.fe_drag&&!a.fe_pointer_active);
     // Map-title tap queries the world before switching; NPC/item wins over the map.
-    dm_live_touch_set_context(a.live_touch,0,(1u<<DM_TC_COUNT)-1,1,1,1,0);
+    assert(target_mask(1,0)==0);
+    assert(target_mask(1,-1)==(1u<<DM_TC_MENU));
+    dm_live_touch_set_context(a.live_touch,0,target_mask(0,0),1,1,1,0);
     float rect[]={.65f,.02f,.9f,.35f};dm_live_touch_set_minimap(a.live_touch,rect,0);
     event(&a,DM_LIVE_ACTION_DOWN,460,15,6000000000);event(&a,DM_LIVE_ACTION_UP,460,15,6100000000);
     world_result=2;tick(&a,6110000000);assert(!map_calls);
     event(&a,DM_LIVE_ACTION_DOWN,460,15,7000000000);event(&a,DM_LIVE_ACTION_UP,460,15,7100000000);
     world_result=0;tick(&a,7110000000);assert(full&&map_calls==1);
+    assert(c->enabled_targets==(((1u<<DM_TC_COUNT)-1)&~(1u<<DM_TC_MAP)));
+    dm_live_touch_visual visual;assert(dm_live_touch_visual_snapshot(a.live_touch,&visual));
+    assert(!(visual.enabled_targets&(1u<<DM_TC_MAP)));
+    event(&a,DM_LIVE_ACTION_DOWN,30,30,7120000000);
+    assert(!(dm_live_touch_buttons(a.live_touch)&DM_BTN_MINUS));
+    event(&a,DM_LIVE_ACTION_UP,30,30,7130000000);
     c->world_tap_x=200;c->world_tap_y=100;c->world_tap_seq++;
     tick(&a,7200000000);assert(world_taps==1);
     tick(&a,7300000000);assert(world_taps==1);

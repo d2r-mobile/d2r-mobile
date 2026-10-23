@@ -4,6 +4,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 work=$(mktemp -d "${TMPDIR:-/tmp}/live-frontend.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 source=${1:-"$here/../native/frontend_activity.c"}
+sed -n '/uint32_t mask=navigation?/,+1p' "$source" > "$work/frontend_mask_actual.inc"
 sed -n '/^static void shop_ghost_contact_event(game_app \*s,int action,int32_t id) {/,/^}/p' "$source" > "$work/frontend_actual.inc"
 sed -n '/^static void shop_ghost_sync(game_app \*s,const dm_tc_state \*c,const dm_tc_finger \*f) {/,/^}/p' "$source" >> "$work/frontend_actual.inc"
 sed -n '/^static void live_touch_frontend_tick(game_app \*s) {/,/^}/p' "$source" >> "$work/frontend_actual.inc"

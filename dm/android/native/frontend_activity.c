@@ -296,6 +296,7 @@ static int copy_module_asset(void *context,const char *directory,const char *nam
     copy_asset((ANativeActivity *)context,directory,name);return 0;
 }
 static void *boot(void *argument) {
+    if(!getenv("DM_TOUCH_DEFAULTS"))setenv("DM_TOUCH_DEFAULTS","1",1);
     game_app *s=argument;pthread_mutex_lock(&s->lock);while(!s->window&&!s->stop)pthread_cond_wait(&s->ready,&s->lock);int stop=s->stop;pthread_mutex_unlock(&s->lock);if(stop)return NULL;
     char path[1024],metadata[1024],log[1024];snprintf(metadata,sizeof metadata,"%s/game",s->activity->internalDataPath);mkdir(metadata,0700);
     snprintf(log,sizeof log,"%s/game.log",s->activity->internalDataPath);int fd=open(log,O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC,0600);if(fd>=0){dup2(fd,STDERR_FILENO);dup2(fd,STDOUT_FILENO);close(fd);}
@@ -652,7 +653,7 @@ static void live_touch_sync(game_app *s) {
     // iOS defaults to touch-only panels; diagnostic controller circles cover
     // inventory slots. Only an NPC dialogue keeps the bottom menu target.
     uint32_t mask=navigation?(blocked<0?(1u<<DM_TC_MENU):0):
-        ((1u<<DM_TC_COUNT)-1);
+        (((1u<<DM_TC_COUNT)-1)&~(1u<<DM_TC_MAP));
     dm_live_touch_set_context_moving(s->live_touch,navigation,mask,
                               snapshot.scene_epoch,snapshot.world_epoch,
                               snapshot.ui_identity,0,snapshot.movement_continuity);
