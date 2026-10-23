@@ -101,7 +101,7 @@ iPhone 17 Pro Max 实测：
 
 ### 手柄
 
-接上手柄、按任意键，界面自动换成原版手柄布局，每个面板底部带按键提示；碰一下屏幕，立刻回到触屏界面。物品栏、储藏箱、技能树、编年史、设置页全程手柄可操作，键位与 Switch 一致。接的是 Xbox 手柄时会自动换成 PC / Xbox 版的键位（下确认、右返回），按键提示也换成 Xbox 的图标，不用去设置里开。
+接上手柄、按任意键，界面自动换成原版手柄布局，每个面板底部带按键提示；碰一下屏幕，立刻回到触屏界面。物品栏、储藏箱、技能树、编年史、设置页全程手柄可操作，键位与 Switch 一致。接的是 Xbox 手柄时会自动换成 PC / Xbox 版的键位（下确认、右返回），按键提示也换成 Xbox 的图标，不用去设置里开。接的是 PlayStation 手柄（DualSense 或 DualShock 4）时，按键提示自动换成游戏原版的 PS 图标（✕ 确认、○ 返回），由 [@Ti800](https://github.com/Ti800) 贡献。
 
 <p align="center">
   <img src="https://github.com/d2r-mobile/d2r-mobile/releases/download/assets/pad_game.jpg" width="49%" alt="接手柄时的界面">
