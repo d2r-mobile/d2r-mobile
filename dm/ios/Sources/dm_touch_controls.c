@@ -78,14 +78,7 @@ void dm_tc_layout_make(dm_tc_layout *l, float width, float height) {
     /* 第 0 格难度与选择条：选择条 8 格同格宽、格距 120，中线对齐两球中线（效果图 1390），格心 y = 1051.5（七格之上、避开数值文字） | Cell 0 difficulty and the selector bar: the selector bar has 8 cells of the same cell width, cell pitch 120, centerline aligned with the centerline between the two orbs (mock 1390), cell center y = 1051.5 (above the seven cells, clear of the value text) */
     l->diff = (dm_tc_target){l->width/2+(1090-1434)*u, 1241.5f*u, 57*u, 0};
     for (int i = 0; i < 8; ++i) l->pick[i] = (dm_tc_target){l->width/2+(1390+(i-3.5f)*120-1434)*u, 1051.5f*u, 57*u, 0};
-#ifdef __ANDROID__
-    // Android: keep the MAP control in the top-left, clear of the original
-    // game's minimap/title touch entry in the top-right. Same radius and button.
-    // Android 专用：MAP 放到左上，避开原版右上角小地图/标题触控入口；半径与按键不变。
-    l->target[DM_TC_MAP] = (dm_tc_target){30*k, 30*k, 22*k, DM_BTN_MINUS};
-#else
     l->target[DM_TC_MAP] = (dm_tc_target){l->width-30*k, 30*k, 22*k, DM_BTN_MINUS};
-#endif
     // 默认换组键沿传送门外弧向左排布，保持到主技能的半径不变。
     // Default: continue the portal's outer arc to its left, preserving the radius around the primary.
     const dm_tc_target *portal=&l->target[DM_TC_PORTAL];
