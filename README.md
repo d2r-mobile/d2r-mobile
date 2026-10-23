@@ -101,7 +101,7 @@ We rebuilt every panel and every action for touch, with one rule: **keep the ori
 
 ### Controller
 
-Connect a controller and press any button: the interface switches to the original controller layout, with button prompts at the bottom of every panel. Touch the screen and you are back in the touch interface instantly. Inventory, stash, skill tree, Chronicle and settings are fully controller-navigable, with the same button mapping as on Switch. With an Xbox controller the layout switches automatically to the PC / Xbox one (bottom confirms, right goes back) and the prompts show Xbox button icons; there is nothing to turn on.
+Connect a controller and press any button: the interface switches to the original controller layout, with button prompts at the bottom of every panel. Touch the screen and you are back in the touch interface instantly. Inventory, stash, skill tree, Chronicle and settings are fully controller-navigable, with the same button mapping as on Switch. With an Xbox controller the layout switches automatically to the PC / Xbox one (bottom confirms, right goes back) and the prompts show Xbox button icons; there is nothing to turn on. With a PlayStation controller (DualSense or DualShock 4) the prompts switch to the game's own PlayStation button icons (✕ confirms, ○ goes back), contributed by [@Ti800](https://github.com/Ti800).
 
 <p align="center">
   <img src="https://github.com/d2r-mobile/d2r-mobile/releases/download/assets/en_pad_combat.jpg" width="49%" alt="Combat with a controller connected">

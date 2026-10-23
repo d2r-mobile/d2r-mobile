@@ -93,7 +93,7 @@ Esto no es un mando pegado sobre la pantalla. Cada panel y cada acción se rehic
 
 ### Mando
 
-Conecta un mando y pulsa cualquier botón: la interfaz cambia a la distribución original para mando, con indicaciones de botones en la parte inferior de cada panel. Toca la pantalla y vuelves al instante a la interfaz táctil. El inventario, el alijo (Stash), el árbol de habilidades, la Chronicle y los ajustes se pueden manejar por completo con el mando, con la misma asignación de botones que en Switch. Con un mando de Xbox, la asignación cambia sola a la de la versión de PC / Xbox (abajo confirma, derecha vuelve atrás) y las indicaciones muestran los iconos de botones de Xbox; no hay que activar nada.
+Conecta un mando y pulsa cualquier botón: la interfaz cambia a la distribución original para mando, con indicaciones de botones en la parte inferior de cada panel. Toca la pantalla y vuelves al instante a la interfaz táctil. El inventario, el alijo (Stash), el árbol de habilidades, la Chronicle y los ajustes se pueden manejar por completo con el mando, con la misma asignación de botones que en Switch. Con un mando de Xbox, la asignación cambia sola a la de la versión de PC / Xbox (abajo confirma, derecha vuelve atrás) y las indicaciones muestran los iconos de botones de Xbox; no hay que activar nada. Con un mando de PlayStation (DualSense o DualShock 4), las indicaciones cambian a los iconos de PlayStation del propio juego (✕ confirma, ○ vuelve atrás); lo aportó [@Ti800](https://github.com/Ti800).
 
 <p align="center">
   <img src="https://github.com/d2r-mobile/d2r-mobile/releases/download/assets/en_pad_combat.jpg" width="49%" alt="Combate con un mando conectado">
