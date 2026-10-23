@@ -54,7 +54,8 @@ Players do not build the Android version: they install the APK from the release 
 | Tool | Used for | Official site |
 |---|---|---|
 | astcenc | Converting textures for older devices without BC texture support (A16 and earlier); built from source — how to build it and the whole procedure are in [LEGACY_DEVICES.md](LEGACY_DEVICES.md). We use v5.2.0 | <https://github.com/ARM-software/astc-encoder> |
-| hactool | Needed by `dm/tools/extract_game.sh` to extract files from your game package; not needed if your game files are already prepared some other way. We tested with upstream source snapshot` | <https://github.com/SciresM/hactool> |
+| hactool | Extracts files from your own game package for `dm/tools/extract_game.sh`; not needed when the files are already prepared. | <https://github.com/SciresM/hactool> |
+| FFmpeg | Optional VP8 cutscene playback, off by default; default builds and our release packages do not contain it. Mac (`MOVIE_FFMPEG=1`): `brew install ffmpeg pkg-config`. iOS (`DM_MOVIE_FFMPEG=1`): `dm/ios/tools/build_ffmpeg_ios.sh` downloads the official FFmpeg 7.1.1 source tarball from ffmpeg.org, checks its SHA-256 and builds static libraries with only the Matroska demuxer, VP8 decoder and swscale; see [dm/host/MOVIE.md](../dm/host/MOVIE.md). License: that configuration does not enable GPL or non-free parts, so the libraries are LGPL 2.1 or later; the Homebrew build may enable GPL parts (check `ffmpeg -L`). If you distribute an app that statically links FFmpeg, you must meet the LGPL terms yourself (provide the FFmpeg source and let recipients relink the app with a modified FFmpeg) | <https://ffmpeg.org> |
 
 ## Extra tools for on-device and verification scripts
 
