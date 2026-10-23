@@ -330,6 +330,7 @@ def main():
         if classes.exists(): shutil.rmtree(classes)
         classes.mkdir(); dex.mkdir(exist_ok=True)
         run([TOOLS / "jdk/bin/javac", "--release", "8", "-classpath", TOOLS / "platform/android.jar", "-d", classes,
+             ROOT / "app/java/org/d2rmobile/android/diagnostic/AudioFocusBoundary.java",
              *sorted((ROOT / "java").rglob("*.java"))])
         run([TOOLS / "build-tools/d8", "--min-api", "29", "--lib", TOOLS / "platform/android.jar", "--output", dex,
              *sorted(classes.rglob("*.class"))], env=env)
