@@ -223,8 +223,9 @@ static void pulse_tick(void) {
         if (!_pulseSeen && n > _pulseS0) _pulseSeen = now;
         if (_pulseSeen && !_pulseFree && !dm_cursor_pending()) _pulseFree = now;
         double hold = _controls.pulse_hold_s;
-        int taken = _pulseSeen && now - _pulseSeen >= 0.12 && n - _pulseS0 >= 3 && !dm_cursor_pending() && (hold <= 0 || (_pulseFree && now - _pulseFree >= hold));
-        if (taken || now - _pulseT0 > 2.0 + hold) {
+        int taken = hold < 0 ? (_pulseSeen && n > _pulseS0) :
+            (_pulseSeen && now - _pulseSeen >= 0.12 && n - _pulseS0 >= 3 && !dm_cursor_pending() && (hold <= 0 || (_pulseFree && now - _pulseFree >= hold)));
+        if (taken || now - _pulseT0 > 2.0 + fmax(0.0, hold)) {
             if (!taken) LOG("[touch] 【红】脉冲 2 秒内游戏没取走（取了 %llu 次，扣着 %d 下），强制收回", (unsigned long long)(n - _pulseS0), dm_cursor_pending());
             if (dm_tc_pulse_end(&_controls, _pulseEpoch)) push_from();
             _pulseS0 = n; _pulseT0 = now;

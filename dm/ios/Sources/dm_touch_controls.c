@@ -492,6 +492,22 @@ void dm_tc_begin_at(dm_tc_state *s, int slot, float x, float y, double now_s) {
         else { *f = (dm_tc_finger){.active=1, .target=DM_TC_SWAP, .x=x, .y=y}; update(s); return; }
     }
     int enabled = hit >= 0 && (s->enabled_targets & (1u << hit));
+    /* Navigation round buttons are discrete menu commands.  Keeping A/B/X/Y
+       down for the lifetime of a finger lets a dialog consume the same press
+       again after it opens its next layer (for example NPC dialog -> options).
+       Turn these direct button touches into one HID-sample pulses, while the
+       pointer/drag path below keeps its existing hold semantics. */
+    if (s->navigation_mode && enabled && hit >= DM_TC_MAIN && hit <= DM_TC_SKILL4) {
+        uint64_t button = s->layout.target[hit].button;
+        if (button) pointer_pulse_btn(s, x, y, 3, button, -1.0);
+        /* Keep button ownership so Android never also forwards this contact
+           as a raw guest touchscreen press. Suppress only the held key. */
+        *f = (dm_tc_finger){.active=1, .target=hit, .aim_cancelled=1, .x=x, .y=y,
+                             .aim_origin_x=x, .aim_origin_y=y,
+                             .start_time_s=now_s};
+        update(s);
+        return;
+    }
     /* 面板态：被禁用的目标（底栏腰带 / 功能键 / 回城、圆钮收起后的技能钮位置）不占手指——它们压着的地方可能正是面板的按钮
        （设置页「应用」在屏幕底部，落在禁用的底栏目标上，既不判类也不点击）。游戏态仍占着（防隐藏的回城触点变成摇杆）
        Panel state: disabled targets (bottom-bar belt / function key / town portal, and the skill button positions after the round buttons are hidden) do not capture fingers -- the place they cover may be exactly a panel button

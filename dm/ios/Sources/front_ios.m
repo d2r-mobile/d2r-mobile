@@ -687,8 +687,10 @@ static BOOL touch_done(UITouch *t) { UITouchPhase ph=t.phase; return ph==UITouch
         if(!_pulseSeen && n>_pulseS0) _pulseSeen=now;                                                                     // 游戏第一次取到 | First time the game polled it
         if(_pulseSeen && !_pulseFree && !dm_cursor_pending()) _pulseFree=now;                                             // 按键真正送达（不再扣着）的时刻 | The moment the key is actually delivered (no longer withheld)
         double hold=_controls.pulse_hold_s;   // 「按住」脉冲（物品区双击 = 按住 A / Y）：送达之后再按满时长 | "Hold" pulse (double tap in the item area = hold A / Y): hold for the full duration after delivery
-        BOOL taken=_pulseSeen && now-_pulseSeen>=0.12 && n-_pulseS0>=3 && !dm_cursor_pending() && (hold<=0 || (_pulseFree && now-_pulseFree>=hold));
-        if(taken || now-_pulseT0>2.0+hold) {
+        BOOL oneSample=hold<0;   // 导航圆钮是一次性菜单命令，游戏取到一次就释放 | Navigation round buttons are discrete menu commands; release after one poll
+        BOOL taken=oneSample ? (_pulseSeen && n>_pulseS0) :
+            (_pulseSeen && now-_pulseSeen>=0.12 && n-_pulseS0>=3 && !dm_cursor_pending() && (hold<=0 || (_pulseFree && now-_pulseFree>=hold)));
+        if(taken || now-_pulseT0>2.0+fmax(0.0,hold)) {
             if(!taken) LOG("[touch] 【红】脉冲 2 秒内游戏没取走（取了 %llu 次，扣着 %d 下），强制收回",(unsigned long long)(n-_pulseS0),dm_cursor_pending());
             if(dm_tc_pulse_end(&_controls,_pulseEpoch)) [self pushFrom:"release_cast" phase:"none"];
             _pulseS0=n; _pulseT0=now;

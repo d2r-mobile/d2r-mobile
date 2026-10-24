@@ -349,9 +349,12 @@ void dm_android_touch_step(uint64_t guest_now, uint64_t *buttons, int32_t *lx, i
     if (tc.pulse_button && pulse_epoch != tc.pulse_epoch) {
         pulse_epoch = tc.pulse_epoch; pulse_sample = sample; pulse_hold_start = 0;
     }
-    if (tc.pulse_button && !dm_cursor_pending()) {
-        if (!pulse_hold_start) pulse_hold_start = now;
-        if (sample - pulse_sample >= 4 && now - pulse_hold_start >= tc.pulse_hold_s) {
+    if (tc.pulse_button) {
+        int pending = dm_cursor_pending();
+        if (!pending && !pulse_hold_start) pulse_hold_start = now;
+        int taken = tc.pulse_hold_s < 0 ? sample > pulse_sample :
+            (!pending && sample - pulse_sample >= 4 && now - pulse_hold_start >= tc.pulse_hold_s);
+        if (taken) {
             dm_tc_pulse_end(&tc,pulse_epoch); resume_sample = sample + 2;
         }
     }

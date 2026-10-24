@@ -14,13 +14,14 @@
 #include "dm/android/touch_android.c"
 #include "dm/ios/Sources/dm_touch_controls.c"
 
-_Static_assert(DM_ANDROID_TOUCH_DRAW_FLOATS == 183, "Review the Java/native ABI before changing this test");
+_Static_assert(DM_ANDROID_TOUCH_DRAW_FLOATS == 185, "Review the Java/native ABI before changing this test");
 enum { DRAW_JOY = 12, DRAW_SWAP = 13, DRAW_DIFF = 14, DRAW_PICK0 = 15 };
 static const char *case_name = "startup";
 static unsigned checks, cases;
 static uint64_t test_clock_ns = UINT64_C(100000000000), test_sample;
 static int observed_panel;
 static unsigned panel_calls;
+static int map_held;
 
 #define REQUIRE(expression) do { \
     ++checks; \
@@ -63,7 +64,10 @@ int dm_ta_frame_at(int atlas,int frame,dm_ta_frame *out) { (void)atlas; (void)fr
 int dm_swapskill_slot(int slot,int *charges) { (void)slot; *charges=0; return 0; }
 int dm_ui_minimap_rect(float r[4]) { (void)r; return 0; }
 int dm_ui_map_is_full(void) { return 0; }
+int dm_hud_stack_msg(const char *act, const char *arg) { (void)act; (void)arg; return 0; }
+void dm_touch_game_set_scene(int game, uint64_t scene_epoch, uint64_t world_epoch) { (void)game; (void)scene_epoch; (void)world_epoch; }
 void dm_ui_map_full(int on) { (void)on; unexpected_host_call(__func__); }
+void dm_ui_map_hold(int on) { map_held = on; }
 unsigned dm_world_tap(float x,float y) { (void)x; (void)y; unexpected_host_call(__func__); return 0; }
 int dm_world_tap_result(unsigned seq) { (void)seq; return -1; }
 uint32_t dm_ui_hit_id(void) { return 0; }
@@ -83,7 +87,7 @@ int dm_ui_drop_at_now(float x, float lifted, float finger) { (void)x; (void)lift
 int dm_ui_drop_bag(void) { unexpected_host_call(__func__); return 0; }
 int dm_ui_drop_point(float *x, float *y) { (void)x; (void)y; unexpected_host_call(__func__); return 0; }
 int dm_ui_origin_point(float *x, float *y) { (void)x; (void)y; unexpected_host_call(__func__); return 0; }
-int dm_ui_bind_skill_hit(float *x, float *y) { (void)x; (void)y; unexpected_host_call(__func__); return 0; }
+int dm_ui_bind_skill_hit(float *x, float *y) { *x = 0; *y = 0; return 0; }
 void dm_ui_bind_begin(uint64_t key) { (void)key; unexpected_host_call(__func__); }
 void dm_ui_world_tap(float ux, float uy, float wx, float wy) { (void)ux; (void)uy; (void)wx; (void)wy; unexpected_host_call(__func__); }
 void dm_ui_stack_take_at(float x, float y) { (void)x; (void)y; unexpected_host_call(__func__); }
@@ -280,6 +284,27 @@ static uint64_t queue_sample(void) {
     return buttons;
 }
 
+static void test_navigation_one_sample(void) {
+    for (int target = DM_TC_MAIN; target <= DM_TC_SKILL4; ++target) {
+        fixture(1);
+        dm_tc_target button = tc.layout.target[target];
+        dm_android_touch_event(0, 0, button.x, button.y);
+        REQUIRE(queue_sample() == button.button);
+        REQUIRE(tc.finger[0].target == target && tc.pointer_slot == DM_TC_NONE);
+        REQUIRE(queue_sample() == 0);
+        test_clock_ns += UINT64_C(500000000);
+        dm_android_touch_event(1, 0, button.x, button.y);
+        REQUIRE(queue_sample() == 0);
+        dm_android_touch_event(2, 0, button.x, button.y);
+        REQUIRE(queue_sample() == 0);
+        dm_android_touch_event(0, 0, button.x, button.y);
+        dm_android_touch_event(2, 0, button.x, button.y);
+        REQUIRE(queue_sample() == button.button);
+        REQUIRE(queue_sample() == 0);
+        REQUIRE(tc.mouse_click_seq == 0 && tc.world_tap_seq == 0);
+    }
+}
+
 static void test_android_queue_ten_short_taps(void) {
     fixture(0); dm_tc_target main = tc.layout.target[DM_TC_MAIN]; unsigned observed = 0;
     for (unsigned i = 0; i < 10; ++i) {
@@ -353,10 +378,10 @@ static void test_android_panel_observation(void) {
     dm_android_touch_event(2,0,main.x,main.y);
     REQUIRE(head!=tail);
     dm_android_touch_uimsg("PanelManager","OpenPanel","PlayerInventoryExpansionLayout");
-    REQUIRE(tc.navigation_mode!=0 && observed_panel==1 && panel_calls==2);
+    REQUIRE(tc.navigation_mode!=0 && observed_panel==1 && panel_calls==2 && map_held);
     REQUIRE(tc.buttons==0 && head==tail && !tc.finger[0].active);
     dm_android_touch_uimsg("PanelManager","UnloadPanel","PlayerInventoryExpansionLayout");
-    REQUIRE(tc.navigation_mode==0 && observed_panel==0 && panel_calls==3);
+    REQUIRE(tc.navigation_mode==0 && observed_panel==0 && panel_calls==3 && !map_held);
     dm_android_touch_uimsg("PanelManager","OpenPanel","NpcDialogPanel");
     REQUIRE(tc.navigation_mode!=0 && dm_tc_scene_dialog_only(&scene));
     REQUIRE(observed_panel==0 && panel_calls==4);
@@ -370,7 +395,7 @@ static void run_case(const char *name, void (*body)(void)) {
 
 int main(void) {
     puts("SCOPE native_layout_and_input_bridge; no_Java_Canvas_no_guest_no_save_access");
-    run_case("idle_183_abi", test_idle_and_abi);
+    run_case("idle_185_abi", test_idle_and_abi);
     run_case("press_release_multitouch", test_press_release_and_multitouch);
     run_case("slide_cancelled_finger", test_slide_cancel);
     run_case("release_pulse_highlight", test_release_pulse);
@@ -378,6 +403,7 @@ int main(void) {
     run_case("difficulty_hit_and_close", test_difficulty_hit_and_close);
     run_case("belt_diff_target_no_false_highlight", test_belt_diff_target_does_not_light_difficulty);
     run_case("navigation_and_resize", test_navigation_and_resize);
+    run_case("navigation_one_sample", test_navigation_one_sample);
     run_case("android_queue_ten_short_taps", test_android_queue_ten_short_taps);
     run_case("android_focus_cancel", test_android_focus_cancel);
     run_case("android_cancelled_latch", test_android_cancelled_latch);

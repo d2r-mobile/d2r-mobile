@@ -368,7 +368,7 @@ apply_input:
     if (g_touch.state.diff_request) { dm_hud_request_players(g_touch.state.diff_request); g_touch.state.diff_request = 0; }   // 难度选择条选中档位 → 下一拍走原版路径 | a level is selected on the difficulty selector bar -> take the original game's path on the next tick
     dm_tc_tick(&g_touch.state, (double)g_touch.beat / 30.0);
     if (g_touch.state.pulse_button && !g_touch.pulse_end_beat) {
-        g_touch.pulse_end_beat = g_touch.beat + 4;
+        g_touch.pulse_end_beat = g_touch.beat + (g_touch.state.pulse_hold_s < 0 ? 1 : 4);
         g_touch.pulse_epoch = g_touch.state.pulse_epoch; g_touch.pulse_hold_left = (int)(g_touch.state.pulse_hold_s * 30 + .999);
     }
     // 脉冲按「游戏已取走」收（与 iOS 前端 pulseTick 同一规则）：满 4 次采样、且扣着的 A 已送达（上限再等 90 次）；排着的下一个脉冲隔 2 次采样（让游戏看到一次松开）再开始
@@ -376,7 +376,7 @@ apply_input:
     // A pulse ends on "the game has taken it" (same rule as pulseTick in the iOS front end): 4 full samples, and the held-back A has been delivered (wait at most 90 more samples); the next queued pulse starts 2 samples later (so the game sees one release)
     // "Hold" pulses (double tap = hold A / Y): end only after the button has really been delivered (no longer held back) and then held for the full duration
     if (g_touch.pulse_end_beat && g_touch.pulse_hold_left > 0 && !dm_cursor_pending() && g_touch.beat != g_touch.pulse_hold_beat) { g_touch.pulse_hold_beat = g_touch.beat; g_touch.pulse_hold_left--; }
-    if (g_touch.pulse_end_beat && g_touch.beat >= g_touch.pulse_end_beat && ((!dm_cursor_pending() && g_touch.pulse_hold_left <= 0) || g_touch.beat >= g_touch.pulse_end_beat + 90)) {
+    if (g_touch.pulse_end_beat && g_touch.beat >= g_touch.pulse_end_beat && ((g_touch.state.pulse_hold_s < 0 || (!dm_cursor_pending() && g_touch.pulse_hold_left <= 0)) || g_touch.beat >= g_touch.pulse_end_beat + 90)) {
         dm_tc_pulse_end(&g_touch.state, g_touch.pulse_epoch);
         g_touch.pulse_end_beat = 0; g_touch.pulse_resume_beat = dm_tc_pulse_pending(&g_touch.state) ? g_touch.beat + 2 : 0;
     }

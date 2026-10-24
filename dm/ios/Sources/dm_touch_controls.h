@@ -73,10 +73,10 @@ typedef struct {
     float pointer_x, pointer_y;
     /* 物品手势：pointer_item = 当前指针手指落在物品区（前端在松手前按宿主命中结果置位）。物品区单击只移光标（出说明）、
        双击 = 按住 A（游戏提示：按住 = 打开 / 使用 / 装备；开着箱子时按住 Y = 移到另一侧）；非物品区单击照旧 = 移光标 + 按 A。
-       pulse_hold_s > 0 = 这个脉冲要按住这么久，前端在「游戏已取走」之外再等满它才收
+       pulse_hold_s < 0 = 导航圆钮，游戏取到一次就释放；> 0 = 送达后还要按满的时长
        Item gestures: pointer_item = the current pointer finger landed in the item area (set by the front end before release from the host's hit result). A single tap in the item area only moves the cursor (shows the tooltip),
               double tap = hold A (game hint: hold = open / use / equip; with the stash open, hold Y = move to the other side); a single tap outside the item area is as before = move the cursor + press A.
-              pulse_hold_s > 0 = this pulse must be held this long, and the front end waits it out in full in addition to "the game has consumed it" before releasing */
+              pulse_hold_s < 0 = release a navigation command after one game poll; > 0 = hold this long after delivery */
     int pointer_item;
     /* 非物品区的点按走鼠标点击（暂停菜单按钮、布局里插回的关闭 / 修理等按钮只认鼠标）：mouse_click_mode 由前端打开；
        每次这样的点按 mouse_click_seq 加一，前端看到变化就在 (mouse_click_x, mouse_click_y) 发一次界面鼠标点击，不再按 A
