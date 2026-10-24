@@ -435,6 +435,22 @@ static void pointer_control_hit(void) {
     dm_tc_state s; dm_tc_init(&s,667,375); dm_tc_set_navigation_mode(&s,1);
     press(&s,0,DM_TC_MAIN); CHECK(!s.pointer_valid); CHECK(s.buttons==DM_BTN_A);
 }
+/* 导航圆钮是一次性的菜单命令：抬指后保留到下一次 HID 采样，再释放，
+   不能因为手指持续时间把同一个 A/B 送给 NPC 对话的两级菜单。 */
+static void navigation_button_pulse(void) {
+    dm_tc_state s; dm_tc_init(&s,667,375); dm_tc_set_navigation_mode(&s,1);
+    dm_tc_target a=s.layout.target[DM_TC_MAIN], b=s.layout.target[DM_TC_SKILL1];
+    dm_tc_begin_at(&s,0,a.x,a.y,10.0); CHECK(s.buttons==DM_BTN_A && s.pulse_hold_s<0);
+    CHECK(s.finger[0].target==DM_TC_MAIN && s.pointer_slot==DM_TC_NONE);
+    dm_tc_end_at(&s,0,10.4); CHECK(s.buttons==DM_BTN_A);
+    uint64_t first=s.pulse_epoch; CHECK(dm_tc_pulse_end(&s,first)); CHECK(s.buttons==0);
+    dm_tc_begin_at(&s,0,b.x,b.y,11.0); CHECK(s.buttons==DM_BTN_B && s.pulse_hold_s<0);
+    CHECK(s.finger[0].target==DM_TC_SKILL1 && s.pointer_slot==DM_TC_NONE);
+    CHECK(dm_tc_pulse_end(&s,s.pulse_epoch));
+    dm_tc_move_at(&s,0,b.x,b.y,11.3); CHECK(s.buttons==0);
+    CHECK(s.mouse_click_seq==0 && s.world_tap_seq==0);
+    dm_tc_end_at(&s,0,11.4); CHECK(s.buttons==0 && s.pulse_button==0);
+}
 static void pointer_game_mode(void) {
     dm_tc_state s; dm_tc_init(&s,667,375);
     dm_tc_begin_at(&s,0,300,180,10.0); dm_tc_move_at(&s,0,340,200,10.1);
@@ -642,7 +658,7 @@ int main(void) {
     RUN(hit_edges); RUN(key_hold_and_ownership); RUN(two_fingers_same_key); RUN(joystick_deadzone); RUN(joystick_clamp_956);
     RUN(joystick_axes); RUN(joystick_plus_skills); RUN(no_auto_handoff); RUN(background_no_key);
     RUN(circles_before_joystick); RUN(cancel_and_resize); RUN(deferred_skill_vs_belt); RUN(held_skill2_vs_belt); RUN(belt_single_double); RUN(no_ui_drag_outside_modal); RUN(invalid_slots_and_repeated_begin); RUN(all_slots_hold); RUN(enabled_targets); RUN(ui_scene_messages);
-    RUN(pointer_tap); RUN(world_tap); RUN(pointer_outside_close); RUN(scene_dialog_only); RUN(pointer_item_tap); RUN(pointer_stack_tap); RUN(pointer_over_disabled_target); RUN(ui_drag_typing); RUN(pointer_drag_out); RUN(pointer_drag); RUN(pointer_long); RUN(pointer_long_then_drag); RUN(pointer_long_seq); RUN(pointer_shop_drag); RUN(pointer_control_hit); RUN(pointer_game_mode); RUN(pointer_pulse_queue); RUN(safe_insets); RUN(swap_key); RUN(skill_cluster_clearance);
+    RUN(pointer_tap); RUN(world_tap); RUN(pointer_outside_close); RUN(scene_dialog_only); RUN(pointer_item_tap); RUN(pointer_stack_tap); RUN(pointer_over_disabled_target); RUN(ui_drag_typing); RUN(pointer_drag_out); RUN(pointer_drag); RUN(pointer_long); RUN(pointer_long_then_drag); RUN(pointer_long_seq); RUN(pointer_shop_drag); RUN(pointer_control_hit); RUN(navigation_button_pulse); RUN(pointer_game_mode); RUN(pointer_pulse_queue); RUN(safe_insets); RUN(swap_key); RUN(skill_cluster_clearance);
     RUN(belt_expand);
     printf("PASS %d/%d cases; %d/%d checks\n",cases,cases,checks,checks); return 0;
 }

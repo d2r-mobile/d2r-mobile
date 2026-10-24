@@ -732,14 +732,15 @@ int dm_live_touch_scheduler_step(dm_live_touch *touch, int64_t time_ns,
         int64_t hold = (int64_t)(touch->state.pulse_hold_s * 1000000000.0);
         // Withheld A polls do not acknowledge a pickup: keep its origin fixed
         // for three polls and 120ms after the cursor releases A to the game.
-        int taken = touch->pulse_free_ns && time_ns - touch->pulse_free_ns >= 120000000 &&
+        int taken = hold < 0 ? samples > touch->pulse_samples_start :
+            touch->pulse_free_ns && time_ns - touch->pulse_free_ns >= 120000000 &&
             samples >= touch->pulse_samples_free && samples - touch->pulse_samples_free >= 3 && !cursor_pending &&
             (hold <= 0 || (touch->pulse_free_ns && time_ns - touch->pulse_free_ns >= hold));
         if (taken) {
             dm_tc_pulse_end(&touch->state, touch->pulse_epoch);
             touch->pulse_samples_start = samples;
             touch->pulse_started_ns = time_ns;
-        } else if (time_ns - touch->pulse_started_ns > 2000000000LL + hold) {
+        } else if (time_ns - touch->pulse_started_ns > 2000000000LL + (hold > 0 ? hold : 0)) {
             goto unacknowledged;
         }
     } else if (dm_tc_pulse_pending(&touch->state)) {
@@ -925,6 +926,8 @@ void dm_live_touch_item_snapshot_get(const dm_live_touch *touch,
 
 int dm_live_touch_end_released_pulse(dm_live_touch *touch) {
     if (!touch || !touch->state.pulse_button || touch->state.pulse_hold_s > 0) return 0;
+    // Navigation commands wait for a real game poll, not just pad publication.
+    if (touch->state.pulse_hold_s < 0) return 0;
     // The input callback's publish-once shortcut must not lift a pickup or
     // release a drop before the owner scheduler observes game input receipts.
     if (touch->state.pulse_button == DM_BTN_A &&

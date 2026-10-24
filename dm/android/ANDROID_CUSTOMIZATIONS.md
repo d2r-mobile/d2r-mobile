@@ -13,6 +13,12 @@ Android supports Turnip or system-driver selection, aspect selection, a submitte
 
 设置独立于游戏导入目录保存；同包名、同签名覆盖安装会保留。卸载或清除应用数据会删除设置。宽屏调用游戏窗口的比例适配；增加像素后需要另测性能。FPS 是提交帧率，不能据此判断每帧上屏是否均匀。
 
+## Touch menu commands / 触屏菜单命令
+
+Virtual navigation buttons release after one game input sample, preventing the same press from activating the next dialog. The button keeps ownership of its contact until the finger lifts. Gameplay skill holds and item hold/drag timing keep their existing behavior. These buttons remain hidden by default; this fix covers their alternate/debug path.
+
+虚拟导航圆钮在游戏采样一次后释放，防止同一次按压重复触发下一级对话。手指抬起前，触点仍归该按钮所有。技能长按与物品长按、拖动保持原有时序。圆钮默认隐藏，此修复覆盖其备用／调试路径。
+
 ## Physical controllers / 实体手柄
 
 Buttons and sticks feed the existing host controller input; clear controller input selects the original controller layout, and touching the screen returns to the touch layout. No game resource reimport is required for the current matching overlay.

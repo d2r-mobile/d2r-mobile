@@ -102,7 +102,9 @@ int main(void) {
           dm_tc_tick(&t,15.05+0.01); CHECK(t.buttons==DM_BTN_LEFT); dm_tc_pulse_end(&t,t.pulse_epoch); CHECK(t.buttons==0); }
         dm_tc_cancel_all(&t); CHECK(t.skill_set==1 && t.buttons==0);
         dm_tc_resize(&t,812,375); CHECK(t.skill_set==1);
-        dm_tc_set_navigation_mode(&t,1); begin(&t,0,DM_TC_MAIN); CHECK(t.buttons==DM_BTN_A); dm_tc_end(&t,0);
+        dm_tc_set_navigation_mode(&t,1); begin(&t,0,DM_TC_MAIN); CHECK(t.buttons==DM_BTN_A && t.pulse_hold_s<0); dm_tc_end(&t,0);
+        /* Android releases a navigation pulse after the next HID sample. */
+        CHECK(dm_tc_pulse_end(&t,t.pulse_epoch) && t.buttons==0);
         dm_tc_begin(&t,0,t.layout.swap.x,t.layout.swap.y); CHECK(t.skill_set==1 && t.buttons==0); dm_tc_end(&t,0);
         dm_tc_set_navigation_mode(&t,0); w=t.layout.swap;
         dm_tc_begin(&t,0,w.x,w.y); dm_tc_end(&t,0); CHECK(t.skill_set==0 && t.buttons==0);

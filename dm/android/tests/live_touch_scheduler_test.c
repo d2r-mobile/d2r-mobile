@@ -1,4 +1,4 @@
-// #255 owner scheduler fixture: after the last UP, actual core deferred work
+// Owner scheduler fixture: after the last UP, actual core deferred work
 // must keep the owner step alive until the bounded pulse is released and the
 // state is neutral. No game acknowledgement is fabricated.
 #include "../native/live_touch.c"
@@ -71,7 +71,31 @@ static void held_item_tap_uses_drop_path(void) {
     dm_live_touch_destroy(t);
 }
 
+static void navigation_waits_for_one_game_receipt(void) {
+    for (int target = DM_TC_MAIN; target <= DM_TC_SKILL4; ++target) {
+        dm_live_touch *t = dm_live_touch_create(667, 375);
+        assert(t);
+        dm_live_touch_set_mode(t, 1, dm_tc_nav_mask(1));
+        dm_tc_target button = t->state.layout.target[target];
+        dm_tc_begin_at(&t->state, 0, button.x, button.y, 1.0);
+        assert(dm_live_touch_buttons(t) == button.button);
+        assert(!dm_live_touch_end_released_pulse(t));
+        dm_live_touch_scheduler_step(t, 1000000000, 20, 0);
+        dm_live_touch_scheduler_step(t, 1100000000, 20, 0);
+        assert(dm_live_touch_buttons(t) == button.button); // no game poll yet
+        dm_live_touch_scheduler_step(t, 1110000000, 21, 0);
+        assert(dm_live_touch_buttons(t) == 0);
+        dm_tc_move_at(&t->state, 0, button.x, button.y, 1.2);
+        dm_live_touch_scheduler_step(t, 1200000000, 22, 0);
+        assert(dm_live_touch_buttons(t) == 0); // a held finger must not repeat
+        dm_tc_end_at(&t->state, 0, 1.3);
+        assert(dm_live_touch_buttons(t) == 0);
+        dm_live_touch_destroy(t);
+    }
+}
+
 int main(void) {
+    navigation_waits_for_one_game_receipt();
     held_item_tap_uses_drop_path();
     pickup_waits_for_game_receipt();
     dm_live_touch *t = dm_live_touch_create(667, 375);
