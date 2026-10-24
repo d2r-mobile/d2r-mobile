@@ -380,9 +380,6 @@ DM_MAC_M3=1 dm/tools/mac_app.sh      # macOS 15 – 25：产出 D2R Mobile M3.ap
 
 ## 致谢
 
-**v2.0 的安卓版来自三位社区作者，特别感谢：**
-
-
 这个项目建立在下面这些开源工作之上，谢谢各位作者和维护者。
 
 - **Ryujinx**（Ryubing 1.3.2，MIT）：`dm/third_party/ryujinx` 原样内置了它的着色器翻译库（Ryujinx.Graphics.Shader、Spv.Generator、Ryujinx.Common 三个项目，未修改），用来把 Switch 原版着色器翻译成 SPIR-V。开发过程中，我们还用打了补丁的 Ryujinx 跑原版游戏，作为画面和游戏状态的对照参考（做法见 [dm/verify/README.zh-CN.md](dm/verify/README.zh-CN.md)；构建和驱动它的脚本不在本仓库里）。
