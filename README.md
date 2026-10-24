@@ -416,9 +416,6 @@ The cleaner arrangement is to move these defaults into per-game configuration an
 
 ## Acknowledgements
 
-**The Android version in v2.0 comes from three community authors. Special thanks to:**
-
-
 This project stands on the open-source work below. Thank you to its authors and maintainers.
 
 - **Ryujinx** (Ryubing 1.3.2, MIT): `dm/third_party/ryujinx` bundles its shader translator unchanged (the Ryujinx.Graphics.Shader, Spv.Generator and Ryujinx.Common projects), which translates the Switch game's shaders to SPIR-V. During development we also ran the original game in a patched Ryujinx as the reference for comparing pictures and game state (see [dm/verify/README.md](dm/verify/README.md); the scripts that build and drive it are not in this repository).
