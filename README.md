@@ -398,7 +398,7 @@ The cleaner arrangement is to move these defaults into per-game configuration an
 | [docs/GAME_FILES.md](docs/GAME_FILES.md) | Game files: which ones you need, how to get them from your own console, where to put them |
 | [docs/DEPENDENCIES.md](docs/DEPENDENCIES.md) | Dependencies and third-party licenses |
 | [docs/NO_XCODE.md](docs/NO_XCODE.md) | Building without Xcode and without a Mac |
-| [docs/MAC.md](docs/MAC.md) | Playing on a Mac: building the macOS App, key mapping, known gaps |
+| [docs/MAC.md](docs/MAC.md) | Playing on a Mac: building the macOS app, key mapping, and known limitations |
 | [docs/LEGACY_DEVICES.md](docs/LEGACY_DEVICES.md) | Older devices (A16 and earlier): making the texture pack and putting it on the phone |
 | [docs/OLDER_SYSTEMS.md](docs/OLDER_SYSTEMS.md) | Older systems (iOS 18 – 25, macOS 15 – 25): building the older-API version and combining it with the Legacy Device Pack |
 | [docs/qa-rift-pet-life.md](docs/qa-rift-pet-life.md) | Regression checklist for minion life in Greater Rifts (what has been run and what has not; additions welcome) |

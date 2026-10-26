@@ -362,7 +362,7 @@ DM_MAC_M3=1 dm/tools/mac_app.sh      # macOS 15 – 25：产出 D2R Mobile M3.ap
 | [docs/GAME_FILES.zh-CN.md](docs/GAME_FILES.zh-CN.md) | 游戏文件：要哪些、怎么从自己的主机取、放到哪 |
 | [docs/DEPENDENCIES.zh-CN.md](docs/DEPENDENCIES.zh-CN.md) | 依赖清单与第三方许可证 |
 | [docs/NO_XCODE.zh-CN.md](docs/NO_XCODE.zh-CN.md) | 不用 Xcode、不用 Mac 的做法 |
-| [docs/MAC.zh-CN.md](docs/MAC.zh-CN.md) | 在 Mac 上玩：构建 macOS App、键位、已知不足 |
+| [docs/MAC.zh-CN.md](docs/MAC.zh-CN.md) | 在 Mac 上玩：构建 macOS App、键位与已知限制 |
 | [docs/LEGACY_DEVICES.zh-CN.md](docs/LEGACY_DEVICES.zh-CN.md) | 老机型（A16 及更早）：怎么做贴图包、怎么放进手机 |
 | [docs/OLDER_SYSTEMS.zh-CN.md](docs/OLDER_SYSTEMS.zh-CN.md) | 老系统（iOS 18 – 25、macOS 15 – 25）：旧接口版怎么出、和老机型贴图包怎么组合 |
 | [docs/qa-rift-pet-life.zh-CN.md](docs/qa-rift-pet-life.zh-CN.md) | 大秘境随从生命的回归清单（哪些跑过、哪些还没人跑，欢迎补） |
