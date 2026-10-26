@@ -9,7 +9,7 @@ Build the APK using the [Android build guide](../dm/android/README.md), prepare 
 | Step | Status |
 |---|---|
 | Making the import pack on a computer | Works on a Mac: about 5 minutes from scratch (on an Apple silicon Mac; translating the shaders is more than half of it), an import pack of about 670 MB. Not yet tried on Windows / Linux; please open an Issue and tell us how it goes |
-| Shaders in the import pack | The 6,927 game shader bundles are byte-for-byte identical to the set the port's authors tested on their phones |
+| Shaders in the import pack | 6,927 game shader bundles, validated for Vulkan 1.1; compute subgroup helpers are inlined for driver compatibility |
 | Installing the APK, importing, playing | Works on a vivo X200 Ultra (Android 16): permission, import, character creation, playing, panels, NPC dialogs |
 | Frame rate | Measured by the port's authors: median 60 fps in the camp and in fights on a Redmi K50 Ultra (Snapdragon 8+ Gen 1); playable on a OnePlus 13 |
 

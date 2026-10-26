@@ -43,6 +43,14 @@ t "用本机游戏文件生成真表"
 cp "$O/ref/native_art/dm_touch_native_art.c" "$G/" && cp "$G/dm_vault_tab.h" "$G/dm_hud_exp.h" "$G/dm_touch_native_art.c" "$O/ref/" || die "拷真表失败"
 "$PY" "$DM/ios/tools/shell_stubs.py" data-gen "$G" "$O/ref/derived.tsv" || die "拆表失败"
 "$PY" "$DM/ios/tools/shell_stubs.py" stubs-gen "$G" || die "写替身失败"
+DRIVER_ARGS=()
+if [ -n "${DM_TURNIP_DRIVER:-}" ]; then
+  [ -f "${DM_TURNIP_LICENSE:-}" ] || die "DM_TURNIP_LICENSE must name the driver's license notices"
+  t "打包 Turnip 驱动与加载库"
+  "$PY" "$DM/android/tools/build_gpu_driver.py" --output "$O/driver-jni/arm64-v8a" \
+    --driver "$DM_TURNIP_DRIVER" --driver-license "$DM_TURNIP_LICENSE" --assets "$O/driver-assets" || die "Turnip packaging failed"
+  DRIVER_ARGS=(-PdmTestDriverLibs="$O/driver-jni" -PdmTurnipAssets="$O/driver-assets")
+fi
 t "构建 APK"
 if [ $KIND = release ]; then
   SIGN=${DM_ANDROID_SIGN:-$HOME/.config/dm-android/release.env}; [ -f "$SIGN" ] || die "没有正式钥匙配置 $SIGN"
@@ -50,7 +58,7 @@ if [ $KIND = release ]; then
   TASK=:app:assembleRelease; OUT=$W/dm/android/app/build/outputs/apk/release/app-release.apk
 else unset DM_ANDROID_KEYSTORE; TASK=:app:assembleDebug; OUT=$W/dm/android/app/build/outputs/apk/debug/app-debug.apk; fi
 rm -f "$OUT"   # 增量打包会在旧 APK 上追加、留下空洞（实测 25 MB 的内容出了 46 MB），整份重写 | incremental packaging appends to the old APK and leaves holes (25 MB of content came out as 46 MB in a test); rewrite it whole
-gradle --no-daemon -q -p "$W/dm/android" $TASK -PdmGenDir="$G" -PdmPython="$PY" "$@" > "$O/build.log" 2>&1 || { grep -E "error|FAIL" "$O/build.log" | head -8; die "构建失败，日志 $O/build.log"; }
+gradle --no-daemon -q -p "$W/dm/android" $TASK -PdmGenDir="$G" -PdmPython="$PY" "${DRIVER_ARGS[@]}" "$@" > "$O/build.log" 2>&1 || { grep -E "error|FAIL" "$O/build.log" | head -8; die "构建失败，日志 $O/build.log"; }
 cp "$OUT" "$O/D2RMobile-android.apk" || die "没找到构建出的 APK"
 # 核对：APK 里不许有游戏内容——真表里的字符串（编年史仓库的物品键与图标路径，只取源码里本来没有的：多语表等会带物品名）不能出现在原生库里，
 #   也不许带游戏程序 / 着色器包 / 覆盖层
@@ -77,6 +85,7 @@ if [ $KIND = release ]; then
   dn=$("$BT/apksigner" verify --print-certs "$A" 2>&1 | sed -n 's/.*certificate DN: //p' | head -1); [ "$dn" = "CN=D2R Mobile, O=D2R Mobile" ] || die "证书主体不对：$dn"
   "$BT/aapt2" dump xmltree --file AndroidManifest.xml "$A" | grep -q 'android:debuggable' && die "正式包是可调试的"
 fi
-bad=$(unzip -l "$A" | awk '{print $4}' | grep -E '\.(xgs|patched\.bin|data)$|^assets/|overlay|derived\.tsv' | head -3)
+bad=$(unzip -l "$A" | awk '{print $4}' | grep -E '\.(xgs|patched\.bin|data)$|^assets/|overlay|derived\.tsv' \
+  | grep -vE '^assets/turnip/(vulkan\.purple\.so|LICENSE\.txt|libadrenotools\.txt|liblinkernsbypass\.txt)$' | head -3)
 [ -z "$bad" ] || die "APK 里带了不该有的文件：$bad"
 t "好了（${KIND}）：${A}（$(($(stat -f %z "$A") / 1048576)) MB）；核了真表里 $n 个源码里没有的字符串，原生库里 0 处；APK 里没有游戏程序 / 着色器包 / 覆盖层，也没有本机路径"

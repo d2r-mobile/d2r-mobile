@@ -69,6 +69,29 @@ The APK is `dm/android/app/build/outputs/apk/debug/app-debug.apk`. Native linkin
 uses `--no-undefined`. `-PdmPrebuiltJni=...` is a packaging-only fallback; it is not
 evidence that current native sources compile.
 
+### Adreno driver compatibility
+
+For a build with Turnip, supply an Android ARM64 Turnip shared library and the
+license notices from its distribution. The shell builder compiles the loader,
+packages both parts, and includes their notices:
+
+```sh
+DM_TURNIP_DRIVER=/absolute/path/to/libvulkan_freedreno.so \
+DM_TURNIP_LICENSE=/absolute/path/to/LICENSE.txt \
+ANDROID_NDK_HOME=/absolute/path/to/ndk \
+bash dm/android/tools/shell_apk.sh
+```
+
+Select **Turnip** on the startup screen. It is disabled in builds without the
+driver and loader. This provides a separate compiler path for Adreno system
+drivers that reject compute shaders; results still need checking on each device.
+Use the same signing key when updating an installed APK.
+
+New import packs inline compute helpers containing subgroup operations by default
+to avoid a compiler crash seen on Adreno 750. Rebuild and reimport the pack as
+well as the APK; an APK update alone does not replace old shader bundles.
+`DM_VK_INLINE_CS=0` restores the original module shape for diagnosis.
+
 On Linux or WSL, `dm/android/docker/` runs the same build in a container with these
 versions pinned, so no Windows-side Python, NDK or CMake is needed:
 
@@ -123,10 +146,9 @@ locations, the c1 bytes, then the SPIR-V (`xbg_shader_header` in
   shader to SPIR-V for Vulkan, the bindings are renumbered for the single
   descriptor set (original number × 6 + stage number), the capabilities for
   reading and writing storage images of unknown format are added, unused
-  capabilities are trimmed, `<key>.vk.json` is exported, and the packing function
-  of `pack_game_shaders.py` writes the bundle. The 6,927 bundles it makes are
-  byte-for-byte identical to the tested ones made with the project's HarmonyOS
-  shader pipeline (`dmsh_vk.py --compare <reference dir> <output dir>`).
+  capabilities are trimmed, compute subgroup helpers are inlined, and each final
+  module is validated. `<key>.vk.json` is exported, and the packing function of
+  `pack_game_shaders.py` writes the bundle.
 - **4 are the query kernels embedded in the main program** (`q_val0`,
   `q_val8`, `q_dlt0`, `q_dlt8`; Mac and iOS use the MSL versions in
   `dm/gfx/nvn/nvn_builtin.h`). They are hand-written, so they can be built from

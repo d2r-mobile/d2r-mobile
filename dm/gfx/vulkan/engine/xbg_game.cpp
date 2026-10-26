@@ -745,6 +745,12 @@ void retire_slot(Slot &s){
     {CPU_SCOPE(Fence);bool busy=vkGetFenceStatus(cfg.device,s.fence)==VK_NOT_READY;uint64_t b0=busy?timing_clock():0;
      VK(vkWaitForFences(cfg.device,1,&s.fence,VK_TRUE,std::max<uint64_t>(cfg.fence_timeout_ns,10000000000ull)));
      if(busy){block_ns[sync_site]+=timing_clock()-b0;++block_calls[sync_site];}}
+    // The background wait may time out during startup or a surface change. The fence is now signalled,
+    // so finish the skipped pool reset before resetting the fence or reusing the slot.
+    if(s.reset_queued && s.reset_result==VK_TIMEOUT){
+        xbg_logf("NVN command pool: background fence wait timed out; resetting after GPU completion");
+        s.reset_result=vkResetCommandPool(cfg.device,s.pool,0);
+    }
     ++perf.waits;
     if(s.prof){
         s.prof=false;

@@ -8,7 +8,7 @@
 #   ② 裁剪（③）之后，补「未定格式」存储图像读写的能力（Ryujinx 不声明，见 add_format_caps）；
 #   ③ spirv-opt --trim-capabilities：Ryujinx 无条件声明 Float64 / GroupNonUniform* / DrawParameters 等，引擎只放行白名单、见到扩展即报错。其余不优化
 #     （quad / warp 改写器按 Ryujinx 原始写法匹配）。最后 spirv-val --target-env vulkan1.1。
-#   ④ 只在 DM_VK_INLINE_CS=1 时（缺省不做）：计算着色器里「非入口函数含子组指令」的，把辅助函数全部内联进入口（S24 Ultra / Adreno 750
+#   ④ 缺省将计算着色器里「非入口函数含子组指令」的辅助函数全部内联进入口（DM_VK_INLINE_CS=0 可关闭；S24 Ultra / Adreno 750
 #     的高通驱动在这种结构上启动即崩）。只动计算着色器：像素着色器的 quad 改写器认 Ryujinx 的 SHFL 辅助函数调用形式，内联后 176 个就改不了了；
 #     计算着色器内联后 warp32 仍能改写（5 个里 5 个）。
 # 绑定来源（贴图 / 采样器 / 存储缓冲槽、c0 / c2 驱动段、c1）与 dmsh_build.py 的 reflect() / decode_tex() 同一套解码。
@@ -23,7 +23,7 @@
 #   ② after trimming (③), add the capabilities for reading and writing storage images of unknown format (Ryujinx does not declare them, see add_format_caps);
 #   ③ spirv-opt --trim-capabilities: Ryujinx always declares Float64 / GroupNonUniform* / DrawParameters and others, while the engine allows only a whitelist and fails on any extension. No other optimization
 #     (the quad / warp rewriters match Ryujinx's original form). Finally spirv-val --target-env vulkan1.1.
-#   ④ Only with DM_VK_INLINE_CS=1 (off by default): compute shaders where a non-entry function contains subgroup instructions get every helper inlined into the entry point (the Qualcomm driver on the S24 Ultra / Adreno 750
+#   ④ By default, compute shaders where a non-entry function contains subgroup instructions get every helper inlined into the entry point (DM_VK_INLINE_CS=0 disables this; the Qualcomm driver on the S24 Ultra / Adreno 750
 #     crashes at startup on that shape). Compute shaders only: the pixel shaders' quad rewriter matches Ryujinx's SHFL helper-call form, and 176 of them could no longer be rewritten after inlining;
 #     after inlining, warp32 still rewrites the compute shaders (5 of 5).
 # Binding sources (texture / sampler / storage buffer slots, the c0 / c2 driver banks, c1) use the same decoding as reflect() / decode_tex() in dmsh_build.py.
@@ -35,7 +35,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 DM_ROOT = os.environ.get('DM_ROOT') or os.path.expanduser('~/dm-work')
 OPT, VAL = (os.environ.get(k, d) for k, d in (('SPIRV_OPT', 'spirv-opt'), ('SPIRV_VAL', 'spirv-val')))
 STAGE_NO = {'vs': 0, 'hs': 1, 'ds': 2, 'gs': 3, 'ps': 4, 'cs': 5}
-INLINE_CS = os.environ.get('DM_VK_INLINE_CS') == '1'
+INLINE_CS = os.environ.get('DM_VK_INLINE_CS', '1') != '0'
 
 
 def helper_has_subgroup(spv):

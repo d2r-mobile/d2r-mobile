@@ -309,19 +309,18 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     }
 
     private File bundledTurnip() throws IOException {
-        File dir = new File(getFilesDir(), "gpu/turnip-1d80dfa0");
+        File dir = new File(getFilesDir(), "gpu/turnip");
         if (!dir.isDirectory() && !dir.mkdirs()) throw new IOException("Cannot create driver directory");
         File library = new File(dir, "vulkan.purple.so");
-        if (!library.isFile()) {
-            android.util.AtomicFile file = new android.util.AtomicFile(library);
-            FileOutputStream output = null;
-            try (InputStream input = getAssets().open("turnip/vulkan.purple.so")) {
-                output = file.startWrite();
-                byte[] buffer = new byte[65536]; int count;
-                while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
-                file.finishWrite(output);
-            } catch (IOException error) { if (output != null) file.failWrite(output); throw error; }
-        }
+        // Refresh on each process start so an APK update cannot keep an older extracted driver.
+        android.util.AtomicFile file = new android.util.AtomicFile(library);
+        FileOutputStream output = null;
+        try (InputStream input = getAssets().open("turnip/vulkan.purple.so")) {
+            output = file.startWrite();
+            byte[] buffer = new byte[65536]; int count;
+            while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+            file.finishWrite(output);
+        } catch (IOException error) { if (output != null) file.failWrite(output); throw error; }
         return dir;
     }
 
@@ -339,10 +338,13 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
             try {
                 Os.setenv("DM_DERIVED", new File(runtime, "derived.tsv").getAbsolutePath(), true);
                 Os.setenv("DM_TURNIP_HOOK_DIR", getApplicationInfo().nativeLibraryDir + "/", true);
-                if (AndroidPortSettings.turnip(this)) Os.setenv("DM_TURNIP_DIR", bundledTurnip().getAbsolutePath() + "/", true);
+                if (AndroidPortSettings.turnip(this)) {
+                    if (!AndroidPortSettings.hasTurnip(this)) throw new IOException("Turnip driver is not included in this APK");
+                    Os.setenv("DM_TURNIP_DIR", bundledTurnip().getAbsolutePath() + "/", true);
+                }
                 Os.setenv("DM_PORT_DRIVER", AndroidPortSettings.turnip(this) ? "turnip" : "system", true);
                 Os.setenv("DM_PORT_WIDESCREEN", AndroidPortSettings.wide(this) ? "1" : "0", true);
-            } catch (ErrnoException | IOException e) { showStartError(getString(R.string.dmAndroidStorage)); return; }
+            } catch (ErrnoException | IOException e) { showStartError(e.getMessage()); return; }
             try { System.loadLibrary("dm"); libraryLoaded = true; }
             catch (UnsatisfiedLinkError error) { showStartError(getString(R.string.dmAndroidLibrary)); return; }
         }
