@@ -17,6 +17,7 @@ extern "C" int xbg_completion_wait_selftest(char *report,size_t bytes);
 #include "xbg_framebuffer.h"
 #include "xbg_clear.h"
 #include "xbg_blit.h"
+#include "xbg_adreno_policy.h"
 #include "xbg_bc_policy.h"
 #include "xbg_writeback_policy.h"
 #include "xbg_clear_spv.h"
@@ -452,7 +453,7 @@ std::vector<PendingReport> pending_reports;
 // so a frame stays one submission and the 2-slot ring does not wrap inside it.
 // The game reads event values only through nvnEventGetValue, and the host's CPU event initialize, finalize and signal land a
 // pending value first (xbg_game_event_read); a command-buffer wait on an event with a pending value completes the GPU work
-// first (main's 07ea121). Without the marker the host may set the default through DM_GFX_DEFER_EVENTS (the Android app sets
+// first (main's source snapshot). Without the marker the host may set the default through DM_GFX_DEFER_EVENTS (the Android app sets
 // 2); a marker '0' turns deferral off.
 struct PendingEvent {uint64_t addr;uint32_t mode,v;const void *slot;};
 std::vector<PendingEvent> pending_events,recording_events;   // recording_events: mode 2, slot not yet submitted
@@ -581,7 +582,12 @@ struct Job{Slot *slot;VkFence fence;VkCommandPool pool;};std::vector<Job> jobs;
 uint64_t queued=0,waits=0,wait_ns=0;   // render thread only
 void run(){
     for(;;){Job j;{std::unique_lock<std::mutex> l(mu);cv.wait(l,[]{return stop || !jobs.empty();});if(jobs.empty())return;j=jobs.front();jobs.erase(jobs.begin());}
-        VkResult r=vkWaitForFences(cfg.device,1,&j.fence,VK_TRUE,std::max<uint64_t>(cfg.fence_timeout_ns,10000000000ull));
+        const uint64_t timeout=std::max<uint64_t>(cfg.fence_timeout_ns,10000000000ull);
+        VkResult r=vkWaitForFences(cfg.device,1,&j.fence,VK_TRUE,timeout);
+        // 栅栏一直不亮而驱动又不报 DEVICE_LOST 时，这里只剩 VK_TIMEOUT；把它说清楚，别让崩在后面的检查里只留下一个 2。
+        // When the fence never signals and the driver does not report DEVICE_LOST, all that is left here is VK_TIMEOUT; say so,
+        // so the fatal check later does not leave just a 2 in the crash report.
+        if(r==VK_TIMEOUT)xbg_logf("NVN command pool reset: the slot's fence did not signal within %llu ms (GPU hang)",(unsigned long long)(timeout/1000000ull));
         if(r==VK_SUCCESS)r=vkResetCommandPool(cfg.device,j.pool,0);
         {std::lock_guard<std::mutex> l(mu);j.slot->reset_result=r;j.slot->reset_busy=false;}cv.notify_all();}
 }
@@ -664,7 +670,7 @@ unsigned cur_op=0;uint64_t pass_end_by[64],barrier_by[64];
 // nvn_mtl.m), not one per draw. A run ends with its pass, at a counter reset, and at a report (which ends the pass), so a
 // report still sums exactly the draws since its reset. ~2200 begin/end pairs per D2R camp frame cost the Adreno 730
 // ~10 ms of GPU time and ~4 ms of CPU. gfx-query-per-draw = '1' restores one query per draw.
-// The run helpers and names are main's (1b5465e); occlusion_batch_enabled is false with gfx-query-per-draw = '1' or a
+// The run helpers and names are main's (source snapshot); occlusion_batch_enabled is false with gfx-query-per-draw = '1' or a
 // gfx-no-query-batch marker.
 struct OpenOcclusion {VkCommandBuffer cmd{};VkQueryPool pool{};uint32_t index=0;} open_occlusion;
 bool occlusion_batch_enabled=true;uint64_t occlusion_queries_started=0;
@@ -814,7 +820,7 @@ Slot &recording_slot(){
         s.readback.cached=readback_cached;
         if(!s.fence){VkFenceCreateInfo f{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};VK(vkCreateFence(cfg.device,&f,nullptr,&s.fence));}
         if(!s.timestamps && timestamp_bits){VkQueryPoolCreateInfo q{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};q.queryType=VK_QUERY_TYPE_TIMESTAMP;q.queryCount=2;VK(vkCreateQueryPool(cfg.device,&q,nullptr,&s.timestamps));}
-        bind_cache_reset();if(s.pool){if(s.reset_queued){poolreset::finish(s);s.reset_queued=false;VK(s.reset_result);}else VK(vkResetCommandPool(cfg.device,s.pool,0));}else{VK(vkResetCommandBuffer(s.cmd,0));if(s.pro)VK(vkResetCommandBuffer(s.pro,0));}VkCommandBufferBeginInfo b{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};b.flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;VK(vkBeginCommandBuffer(s.cmd,&b));
+        bind_cache_reset();if(s.pool){if(s.reset_queued){poolreset::finish(s);s.reset_queued=false;if(s.reset_result==VK_TIMEOUT)xbg_fatalf("The GPU did not finish this slot's work within %llu ms (fence wait timed out), so the device is hung",(unsigned long long)(std::max<uint64_t>(cfg.fence_timeout_ns,10000000000ull)/1000000ull));else VK(s.reset_result);}else VK(vkResetCommandPool(cfg.device,s.pool,0));}else{VK(vkResetCommandBuffer(s.cmd,0));if(s.pro)VK(vkResetCommandBuffer(s.pro,0));}VkCommandBufferBeginInfo b{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};b.flags=VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;VK(vkBeginCommandBuffer(s.cmd,&b));
         if(s.timestamps){vkCmdResetQueryPool(s.cmd,s.timestamps,0,2);vkCmdWriteTimestamp(s.cmd,VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,s.timestamps,0);}
         s.recording=true;s.ops=0;
         const uint64_t frame=stats.presents.load()+1;
@@ -1146,7 +1152,7 @@ bool snapshot(uint64_t address,size_t bytes,Buffer &out){
     if(!pick->coherent){VkMappedMemoryRange mr{VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE};mr.memory=pick->memory;mr.size=VK_WHOLE_SIZE;VK(vkFlushMappedMemoryRanges(cfg.device,1,&mr));}
     pick->last_use=slot_serial;out=Buffer{};out.buffer=pick->buffer;out.memory=pick->memory;out.offset=0;out.size=bytes;out.mapped=pick->mapped;out.coherent=pick->coherent;return true;
 }
-// Renderer shutdown, once the queue is idle (from main's 65721a2): the tracked guest pages become writable again and the
+// Renderer shutdown, once the queue is idle (from main's source snapshot): the tracked guest pages become writable again and the
 // tracked copies are freed, so a restarted renderer tracks afresh; a fault handler the engine installed itself is replaced by
 // the previous one, while host fault hooks stay with the host. Tracking stays enabled for the next start.
 void release(){
@@ -1725,7 +1731,7 @@ Image &get_image_slow(const tex_t *t,bool upload){CPU_SCOPE(Image);
     }
     provenance_image(upload?"GET_UPLOAD":"GET",t,im);im.slot_use=slot_serial;return im;
 }
-// read_preflight: main's order (cc91eb1). Copy the descriptor, resolve CPU reads of its storage, then look the image up.
+// read_preflight: main's order (source snapshot). Copy the descriptor, resolve CPU reads of its storage, then look the image up.
 Image &get_image_read(const tex_t *t,bool upload){
     need(t && t->serial && t->magic==MAGIC('T','E','X',0),"Invalid NVN texture");
     need(!t->mem || xbg_wb_range_valid(uint64_t(uintptr_t(t->mem)),t->L.size),"Texture CPU read range overflow or empty");
@@ -2911,7 +2917,7 @@ bool first_draw_covers(const Pass &p,int prim,int first,int count,const p_draw_i
 // translucent effect: every written color target blends with the destination (a destination factor other than ZERO, so
 // a ONE / ZERO "blend" that overwrites is not one), no depth or stencil write, no storage buffer or image writes in any
 // stage, no capture running, and no samples counted once the game has recorded a samples-passed report. D2R counts samples
-// for every draw after its first counter reset but never reports them, so counting alone excluded every draw (fc46144).
+// for every draw after its first counter reset but never reports them, so counting alone excluded every draw (source snapshot).
 bool async_skippable(const std::vector<VkPipelineColorBlendAttachmentState> &att,const VkPipelineDepthStencilStateCreateInfo &ds){
     if(!warm::async_on || (state.count_samples && samples_report_seen) || capture.active || ds.depthWriteEnable)return false;
     if(ds.stencilTestEnable && (ds.front.writeMask || ds.back.writeMask))return false;
@@ -3710,10 +3716,14 @@ extern "C" int xbg_game_initialize(const xbg_game_config *c,char *error,size_t b
     VkPhysicalDeviceShaderDrawParametersFeatures draw_parameters{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES};VkPhysicalDeviceFeatures2 features{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2};features.pNext=&draw_parameters;vkGetPhysicalDeviceFeatures2(cfg.physical,&features);if(cfg.enabled_shader_draw_parameters && !draw_parameters.shaderDrawParameters){if(error&&bytes)snprintf(error,bytes,"shaderDrawParameters unsupported");return -1;}
     VkCommandPoolCreateInfo cp{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};cp.queueFamilyIndex=cfg.queue_family;cp.flags=VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;VkResult r=vkCreateCommandPool(cfg.device,&cp,nullptr,&command_pool);if(r!=VK_SUCCESS){if(error&&bytes)snprintf(error,bytes,"vkCreateCommandPool=%d",r);return r;}
     VkPipelineCacheCreateInfo cache{VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO};std::vector<uint8_t> cache_data=load_pipeline_cache();cache.initialDataSize=cache_data.size();cache.pInitialData=cache_data.empty()?nullptr:cache_data.data();r=vkCreatePipelineCache(cfg.device,&cache,nullptr,&pipeline_cache);if(r!=VK_SUCCESS){vkDestroyCommandPool(cfg.device,command_pool,nullptr);command_pool=VK_NULL_HANDLE;if(error&&bytes)snprintf(error,bytes,"vkCreatePipelineCache=%d",r);return r;}
-    {std::string dir=cfg.shader_directory;size_t cut=dir.find_last_of('/');FILE *q=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-quad-derivatives").c_str(),"rb");quad_derivatives=false;
-     if(q){quad_derivatives=fgetc(q)!='0';fclose(q);}else if(const char *e=getenv("DM_GFX_QUAD_DERIVATIVES"))quad_derivatives=atoi(e)!=0;xbg_logf("NVN quad shuffles to fine derivatives=%d (marker gfx-quad-derivatives)",int(quad_derivatives));}
-    {std::string dir=cfg.shader_directory;size_t cut=dir.find_last_of('/');FILE *q=fopen(((cut==std::string::npos?dir:dir.substr(0,cut))+"/gfx-warp32").c_str(),"rb");warp32=false;
-     if(q){warp32=fgetc(q)!='0';fclose(q);}else if(const char *e=getenv("DM_GFX_WARP32"))warp32=atoi(e)!=0;xbg_logf("NVN 32-lane warps in wider subgroups=%d subgroup=%u (marker gfx-warp32)",int(warp32),subgroup.subgroupSize);}
+    {std::string dir=cfg.shader_directory;size_t cut=dir.find_last_of('/');std::string base=cut==std::string::npos?dir:dir.substr(0,cut);
+     const bool rewrites_fault=xbg_adreno_rewrites_fault(properties.vendorID,properties.deviceName);
+     if(rewrites_fault)xbg_logf("NVN Adreno 740/750 (device \"%s\"): the quad-derivative and warp32 rewrites default off; a marker file still turns either on",properties.deviceName);
+     auto sw=[&](const char *marker,const char *env){FILE *q=fopen((base+marker).c_str(),"rb");const bool present=q!=nullptr;int c=-1;if(q){c=fgetc(q);fclose(q);}return xbg_adreno_rewrite_option(present,c,getenv(env),rewrites_fault);};
+     quad_derivatives=sw("/gfx-quad-derivatives","DM_GFX_QUAD_DERIVATIVES");
+     warp32=sw("/gfx-warp32","DM_GFX_WARP32");
+     xbg_logf("NVN quad shuffles to fine derivatives=%d (marker gfx-quad-derivatives)",int(quad_derivatives));
+     xbg_logf("NVN 32-lane warps in wider subgroups=%d subgroup=%u (marker gfx-warp32)",int(warp32),subgroup.subgroupSize);}
     {std::string dir=cfg.shader_directory;size_t cut=dir.find_last_of('/');std::string base=cut==std::string::npos?dir:dir.substr(0,cut);
      auto dm=[&](const char *marker,const char *env){FILE *q=fopen((base+marker).c_str(),"rb");bool on=false;if(q){on=fgetc(q)!='0';fclose(q);}else if(const char *e=getenv(env))on=atoi(e)!=0;return on;};
      ldc_fold=dm("/gfx-ldc-fold","DM_GFX_LDC_FOLD");forward_temps=dm("/gfx-forward-temps","DM_GFX_FORWARD_TEMPS");nan_minmax=dm("/gfx-nan-minmax","DM_GFX_NAN_MINMAX");
