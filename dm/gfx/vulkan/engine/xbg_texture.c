@@ -260,7 +260,13 @@ static void bc_run(bc_job *j) {
 static pthread_mutex_t bc_mu=PTHREAD_MUTEX_INITIALIZER,bc_submit=PTHREAD_MUTEX_INITIALIZER;static pthread_cond_t bc_cv=PTHREAD_COND_INITIALIZER,bc_done=PTHREAD_COND_INITIALIZER;
 static bc_job *bc_cur;static unsigned bc_gen,bc_threads=0;static int bc_inited;
 static void *bc_worker(void *a) {
-    (void)a; pthread_setname_np(pthread_self(),"xbg-bcdec"); unsigned seen=0;
+    (void)a;
+#ifdef __APPLE__
+    pthread_setname_np("xbg-bcdec");
+#else
+    pthread_setname_np(pthread_self(),"xbg-bcdec");
+#endif
+    unsigned seen=0;
     for(;;){pthread_mutex_lock(&bc_mu);while(bc_gen==seen)pthread_cond_wait(&bc_cv,&bc_mu);seen=bc_gen;bc_job *j=bc_cur;if(j)atomic_fetch_add(&j->active,1);pthread_mutex_unlock(&bc_mu);
         if(!j)continue;bc_run(j);pthread_mutex_lock(&bc_mu);if(atomic_fetch_sub(&j->active,1)==1)pthread_cond_broadcast(&bc_done);pthread_mutex_unlock(&bc_mu);}
     return NULL;
