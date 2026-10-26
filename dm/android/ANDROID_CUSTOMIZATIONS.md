@@ -41,6 +41,10 @@ References: [parked app manifest](https://developer.android.com/training/cars/pa
 
 ## App updates / 应用更新
 
+Android 2.0.1 includes widened-stash position restoration, controller-legend cleanup, BC4/BC5 filtering compatibility, Adreno 740/750 shader settings and compute-pipeline failure handling. Adreno 830 keeps its existing defaults. These fixes require an APK update; no game resource reimport is needed.
+
+Android 2.0.1 修复加宽储物箱的位置恢复、手柄提示清理、BC4／BC5 过滤兼容及计算管线失败处理，并调整 Adreno 740／750 的着色器设置。Adreno 830 保持现有默认值。这些修复只需更新 APK，无需重新导入游戏资源。
+
 Keep the preference filename and keys stable. Verify both aspect modes, touch coordinates, FPS off/on and an APK update preserving preferences. Game imports must pass the product/version checks.
 
 保持设置文件名与键名稳定，更新后复验两种比例、触控、FPS 开关和覆盖安装保留设置。游戏包仍须通过产品与版本检查。
