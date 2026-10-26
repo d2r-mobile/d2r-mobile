@@ -2205,6 +2205,49 @@ void pstat_log(VkPipeline pl){
         std::string en=ex[i].name;for(auto &c:en)if(c==' ')c='_';
         xbg_logf("NVN PSTAT pipeline=%p what=%s exec=%u stages=%#x name=%s subgroup=%u%s",(void*)pl,pstat_what().c_str(),i,unsigned(ex[i].stages),en.c_str(),ex[i].subgroupSize,line.c_str());}
 }
+// 有的驱动在自己的着色器编译器里崩掉建管线的调用（Adreno 750：vkCreateComputePipelines 里 libllvm-qgl.so 段错误，
+// 只碰流体模拟的一个计算着色器），有的直接报错（Adreno 650：-13）。建计算管线前把着色器键写进 gfx-pipe-inflight，建完删掉；
+// 下次启动看到它还在，说明上次死在编译器里，就把这个键记进 gfx-pipe-skip，之后这条计算着色器的派发一律跳过（少一个特效，
+// 不再每次启动都崩）。驱动报错的同样记下跳过。删掉 gfx-pipe-skip 即恢复。
+// Some drivers crash inside their own shader compiler while building a pipeline (Adreno 750: a segfault in libllvm-qgl.so
+// inside vkCreateComputePipelines, on one fluid-simulation compute shader only); others return an error (Adreno 650: -13).
+// Before a compute pipeline is built its shader key is written to gfx-pipe-inflight and removed afterwards; if the next boot
+// still finds it, the last one died in the compiler, so the key goes into gfx-pipe-skip and that compute shader's dispatches
+// are skipped from then on (one effect fewer instead of a crash on every boot). A driver error is recorded the same way.
+// Deleting gfx-pipe-skip restores them.
+namespace pipeguard{
+std::unordered_set<std::string> skip;bool loaded=false;std::unordered_set<std::string> told;
+std::string base(){std::string dir=cfg.shader_directory;size_t cut=dir.find_last_of('/');return cut==std::string::npos?dir:dir.substr(0,cut);}
+void record(const std::string &key,const char *why){
+    if(!skip.insert(key).second)return;
+    if(FILE *f=fopen((base()+"/gfx-pipe-skip").c_str(),"ab")){fprintf(f,"%s\n",key.c_str());fclose(f);}
+    xbg_logf("NVN compute shader %s %s; its dispatches are skipped from now on (gfx-pipe-skip)",key.c_str(),why);
+}
+void load(){
+    if(loaded)return;loaded=true;char line[128];
+    if(FILE *f=fopen((base()+"/gfx-pipe-skip").c_str(),"rb")){while(fgets(line,sizeof line,f)){line[strcspn(line,"\r\n")]=0;if(*line)skip.insert(line);}fclose(f);}
+    const std::string inflight=base()+"/gfx-pipe-inflight";
+    if(FILE *f=fopen(inflight.c_str(),"rb")){const bool got=fgets(line,sizeof line,f)!=nullptr;fclose(f);remove(inflight.c_str());
+        // 要连着两次启动死在同一个着色器上才记下：一次可能只是建管线那几毫秒里进程正好被系统杀掉。
+        // It takes two boots in a row dying on the same shader: once may just be the process being killed during those milliseconds.
+        if(got){line[strcspn(line,"\r\n")]=0;const std::string suspect=base()+"/gfx-pipe-suspect";char prev[128]={0};
+            if(FILE *g=fopen(suspect.c_str(),"rb")){if(!fgets(prev,sizeof prev,g))*prev=0;fclose(g);prev[strcspn(prev,"\r\n")]=0;}
+            if(*line && !strcmp(line,prev)){remove(suspect.c_str());record(line,"crashed the driver's shader compiler on two boots");}
+            else if(*line){if(FILE *g=fopen(suspect.c_str(),"wb")){fprintf(g,"%s\n",line);fclose(g);}xbg_logf("NVN compute shader %s was being built when the last boot ended",line);}}}
+    // Adreno 750 这一族上流体模拟的累加着色器每次都让编译器崩，不必先崩两次。
+    // On the Adreno 750 family the fluid-simulation accumulate shader crashes the compiler every time ;
+    // there is no need to crash twice first.
+    if(properties.vendorID==0x5143){const int model=xbg_adreno_model(properties.deviceName);if(model>=750 && model<800)record("098a126f92bf533a","crashes the Adreno 750 shader compiler");}
+    if(!skip.empty())xbg_logf("NVN compute shaders skipped=%zu (gfx-pipe-skip)",skip.size());
+}
+bool skipped(const std::string &key){load();if(!skip.count(key))return false;if(told.insert(key).second)xbg_logf("NVN dispatch of compute shader %s skipped (gfx-pipe-skip)",key.c_str());return true;}
+// 一个着色器第一次建成之后就不再写记号：同一着色器换布局再建不会走到编译器的另一条路，也省掉每次派发的文件操作。
+// Once a shader has built once it is no longer marked: rebuilding it for another layout does not take the compiler down a
+// different path, and dispatches do not pay for the file operations.
+std::unordered_set<std::string> proven;bool marking=false;
+void begin(const std::string &key){marking=!proven.count(key);if(marking)if(FILE *f=fopen((base()+"/gfx-pipe-inflight").c_str(),"wb")){fprintf(f,"%s\n",key.c_str());fclose(f);}}
+void end(const std::string &key,bool ok){if(!marking)return;marking=false;remove((base()+"/gfx-pipe-inflight").c_str());if(ok)proven.insert(key);}
+}
 void pipeline_lookup(PipelineLease &out,const XbgPipelineKey &key,bool cacheable,const VkGraphicsPipelineCreateInfo *graphics,const VkComputePipelineCreateInfo *compute,bool may_skip=false){
     static std::string bytes;bytes.clear();   // reused key buffer (graphics thread only)
     if(cacheable){
@@ -2217,7 +2260,7 @@ void pipeline_lookup(PipelineLease &out,const XbgPipelineKey &key,bool cacheable
     // A draw that may be skipped gets no pipeline while its build is queued (warm::async_request); it is not cached.
     else if(graphics && cacheable && may_skip && warm::async_request(*graphics,key,bytes)){out.pipeline=VK_NULL_HANDLE;out.transient=true;++warm::async_skips;return;}
     else if(graphics){uint64_t t0=timing_clock();VkGraphicsPipelineCreateInfo g=*graphics;if(pipe_stats)g.flags|=VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR;VK(vkCreateGraphicsPipelines(cfg.device,pipeline_cache,1,&g,nullptr,&out.pipeline));if(pipe_stats)pstat_log(out.pipeline);uint64_t dt=timing_clock()-t0;if(dt>=compile_ns)++pipelines_unsaved;++warm::creates;warm::create_ns+=dt;++hud::pipelines;hud::pipeline_ns+=dt;warm::create_max_ns=std::max(warm::create_max_ns,dt);if(cacheable)warm::record(*graphics,key);}
-    else{uint64_t t0=timing_clock();VkComputePipelineCreateInfo cc=*compute;if(pipe_stats)cc.flags|=VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR;VK(vkCreateComputePipelines(cfg.device,pipeline_cache,1,&cc,nullptr,&out.pipeline));++pipelines_unsaved;++hud::pipelines;hud::pipeline_ns+=timing_clock()-t0;if(pipe_stats)pstat_log(out.pipeline);}
+    else{uint64_t t0=timing_clock();VkComputePipelineCreateInfo cc=*compute;if(pipe_stats)cc.flags|=VK_PIPELINE_CREATE_CAPTURE_STATISTICS_BIT_KHR;const std::string &shader_key=state.shader[5]->key;pipeguard::begin(shader_key);const VkResult made=vkCreateComputePipelines(cfg.device,pipeline_cache,1,&cc,nullptr,&out.pipeline);pipeguard::end(shader_key,made==VK_SUCCESS);if(made!=VK_SUCCESS){char why[64];snprintf(why,sizeof why,"failed to build (result=%d)",int(made));pipeguard::record(shader_key,why);out.pipeline=VK_NULL_HANDLE;out.transient=true;return;}++pipelines_unsaved;++hud::pipelines;hud::pipeline_ns+=timing_clock()-t0;if(pipe_stats)pstat_log(out.pipeline);}
     if(!cacheable){out.transient=true;return;}
     if(pipeline_objects.size()==pipeline_object_limit){
         // All prior draws/dispatches waited their fence. This lookup occurs
@@ -3147,7 +3190,7 @@ void after_dispatch(Commands &c){
     ++applied;
 }
 }
-void dispatch(const p_dispatch &p){preflight_cpu_reads();CPU_SCOPE(Dispatch);provenance_log("DISPATCH shader=%s",state.shader[5]?state.shader[5]->key.c_str():"null");need(state.shader[5],"Dispatch has no genuine compute shader");need(p.x>=0 && p.y>=0 && p.z>=0,"Negative compute dispatch");if(!p.x||!p.y||!p.z)return;need(uint32_t(p.x)<=properties.limits.maxComputeWorkGroupCount[0] && uint32_t(p.y)<=properties.limits.maxComputeWorkGroupCount[1] && uint32_t(p.z)<=properties.limits.maxComputeWorkGroupCount[2],"Compute dispatch exceeds device limit");Commands c;Descriptors &d=acquire_descriptors();descriptors(d,c,true);VkComputePipelineCreateInfo ci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};ci.stage={VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};ci.stage.stage=VK_SHADER_STAGE_COMPUTE_BIT;ci.stage.module=state.shader[5]->module;ci.stage.pName="main";ci.layout=d.pipeline_layout;PipelineLease pipeline;{CPU_SCOPE(Pipeline);XbgPipelineKey key;bool cacheable=xbg_compute_pipeline_key(key,ci,d.entry->definition.view());pipeline_lookup(pipeline,key,cacheable,nullptr,&ci);}vkCmdBindPipeline(c.command,VK_PIPELINE_BIND_POINT_COMPUTE,pipeline.pipeline);vkCmdBindDescriptorSets(c.command,VK_PIPELINE_BIND_POINT_COMPUTE,d.pipeline_layout,0,1,&d.set,uint32_t(d.dynamic_offsets.size()),d.dynamic_offsets.data());int prof_dispatch=pass_prof_compute_begin(c.command,p);vkCmdDispatch(c.command,p.x,p.y,p.z);pass_prof_complete(c.command,prof_dispatch);bright::after_dispatch(c);VkMemoryBarrier b{VK_STRUCTURE_TYPE_MEMORY_BARRIER};b.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT;b.dstAccessMask=VK_ACCESS_HOST_READ_BIT;vkCmdPipelineBarrier(c.command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&b,0,nullptr,0,nullptr);c.finish();++perf.dispatches;d.defer_writeback();++stats.dispatches;}
+void dispatch(const p_dispatch &p){preflight_cpu_reads();CPU_SCOPE(Dispatch);provenance_log("DISPATCH shader=%s",state.shader[5]?state.shader[5]->key.c_str():"null");need(state.shader[5],"Dispatch has no genuine compute shader");need(p.x>=0 && p.y>=0 && p.z>=0,"Negative compute dispatch");if(!p.x||!p.y||!p.z)return;if(pipeguard::skipped(state.shader[5]->key))return;need(uint32_t(p.x)<=properties.limits.maxComputeWorkGroupCount[0] && uint32_t(p.y)<=properties.limits.maxComputeWorkGroupCount[1] && uint32_t(p.z)<=properties.limits.maxComputeWorkGroupCount[2],"Compute dispatch exceeds device limit");Commands c;Descriptors &d=acquire_descriptors();descriptors(d,c,true);VkComputePipelineCreateInfo ci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};ci.stage={VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};ci.stage.stage=VK_SHADER_STAGE_COMPUTE_BIT;ci.stage.module=state.shader[5]->module;ci.stage.pName="main";ci.layout=d.pipeline_layout;PipelineLease pipeline;{CPU_SCOPE(Pipeline);XbgPipelineKey key;bool cacheable=xbg_compute_pipeline_key(key,ci,d.entry->definition.view());pipeline_lookup(pipeline,key,cacheable,nullptr,&ci);}if(!pipeline.pipeline){c.finish();return;}vkCmdBindPipeline(c.command,VK_PIPELINE_BIND_POINT_COMPUTE,pipeline.pipeline);vkCmdBindDescriptorSets(c.command,VK_PIPELINE_BIND_POINT_COMPUTE,d.pipeline_layout,0,1,&d.set,uint32_t(d.dynamic_offsets.size()),d.dynamic_offsets.data());int prof_dispatch=pass_prof_compute_begin(c.command,p);vkCmdDispatch(c.command,p.x,p.y,p.z);pass_prof_complete(c.command,prof_dispatch);bright::after_dispatch(c);VkMemoryBarrier b{VK_STRUCTURE_TYPE_MEMORY_BARRIER};b.srcAccessMask=VK_ACCESS_SHADER_WRITE_BIT;b.dstAccessMask=VK_ACCESS_HOST_READ_BIT;vkCmdPipelineBarrier(c.command,VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,VK_PIPELINE_STAGE_HOST_BIT,0,1,&b,0,nullptr,0,nullptr);c.finish();++perf.dispatches;d.defer_writeback();++stats.dispatches;}
 
 struct MaskedClear {
     VkShaderModule vs{},fs{};VkPipelineLayout layout{};VkPipeline pipeline{};
