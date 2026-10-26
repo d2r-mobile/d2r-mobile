@@ -52,7 +52,7 @@ VkResult vkWaitForFences(int,int,const VkFence*,int,uint64_t) {
 VkResult vkResetCommandPool(int,VkCommandPool,int) {assert(gpu_complete); ++resets; return reset_result;}
 VkResult vkGetFenceStatus(int,VkFence) {return gpu_complete?VK_SUCCESS:VK_NOT_READY;}
 bool ab_off(const char*) {return false;}
-void xbg_logf(const char*) {}
+void xbg_logf(const char*,...) {}
 uint64_t timing_clock() {return uint64_t(std::chrono::steady_clock::now().time_since_epoch().count());}
 uint64_t block_ns[1]{}, block_calls[1]{}; int sync_site=0;
 #define CPU_SCOPE(name) (void)0

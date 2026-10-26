@@ -587,7 +587,7 @@ void run(){
         // 栅栏一直不亮而驱动又不报 DEVICE_LOST 时，这里只剩 VK_TIMEOUT；把它说清楚，别让崩在后面的检查里只留下一个 2。
         // When the fence never signals and the driver does not report DEVICE_LOST, all that is left here is VK_TIMEOUT; say so,
         // so the fatal check later does not leave just a 2 in the crash report.
-        if(r==VK_TIMEOUT)xbg_logf("NVN command pool reset: the slot's fence did not signal within %llu ms (GPU hang)",(unsigned long long)(timeout/1000000ull));
+        if(r==VK_TIMEOUT)xbg_logf("NVN command pool reset: the slot's fence is still pending after %llu ms",(unsigned long long)(timeout/1000000ull));
         if(r==VK_SUCCESS)r=vkResetCommandPool(cfg.device,j.pool,0);
         {std::lock_guard<std::mutex> l(mu);j.slot->reset_result=r;j.slot->reset_busy=false;}cv.notify_all();}
 }
