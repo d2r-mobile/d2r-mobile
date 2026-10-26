@@ -19,7 +19,8 @@ import urllib.request
 ROOT = Path(__file__).resolve().parents[1]
 TOOLS = Path(os.environ.get("DM_ANDROID_TOOLS", str(Path.home() / "dm-work/tools/android")))
 NDK_PREBUILT = os.environ.get("DM_NDK_PREBUILT", "darwin-x86_64" if sys.platform == "darwin" else "linux-x86_64")
-BIN = TOOLS / "ndk/toolchains/llvm/prebuilt" / NDK_PREBUILT / "bin"
+NDK = Path(os.environ.get("ANDROID_NDK_HOME") or os.environ.get("ANDROID_NDK_ROOT") or TOOLS / "ndk")
+BIN = NDK / "toolchains/llvm/prebuilt" / NDK_PREBUILT / "bin"
 PINNED = (("eden-emulator/libadrenotools", "8ba23b42d7"),
           ("bylaws/liblinkernsbypass", "aa3975893d"))
 
@@ -83,6 +84,9 @@ def build_locked(output):
         cpp = path.suffix == ".cpp"
         compiler = BIN / ("aarch64-linux-android29-clang++" if cpp else "aarch64-linux-android29-clang")
         command = [str(compiler), "-c", "-O2", "-fPIC", "-Wall", "-Wextra",
+                   "-ffile-prefix-map=" + str(source) + "=adrenotools",
+                   "-ffile-prefix-map=" + str(linker) + "=linkernsbypass",
+                   "-ffile-prefix-map=" + str(NDK) + "=ndk",
                    "-MMD", "-MF", str(deps), "-I", str(source), "-I", str(source / "include"),
                    "-I", str(linker), str(path), "-o", str(obj)]
         if cpp:
@@ -145,14 +149,42 @@ def build_locked(output):
                              "local_input_override":bool(os.environ.get("DM_ADRENOTOOLS_SOURCE" if index==0 else "DM_LINKERNSBYPASS_SOURCE"))}
                             for index,((repo, commit), src) in enumerate(zip(PINNED, (source, linker)))],
                 "libraries": [str(p) for p in libraries], "include": str(output / "include"),
-                "ndk": str(TOOLS / "ndk"), "abi": "arm64-v8a", "api": 29,
+                "ndk": str(NDK), "abi": "arm64-v8a", "api": 29,
                 "cxx_runtime": "static", "max_page_size": 16384}
     (output / "build.json").write_text(json.dumps(manifest, indent=2) + "\n")
     print("GPU driver libraries:", ", ".join(p.name for p in libraries), flush=True)
     return libraries
 
 
+def stage_driver(driver, license_file, assets, loader_output):
+    """Package an explicitly supplied ARM64 driver together with its loader and notices."""
+    with driver.open("rb") as library:
+        header = library.read(20)
+    if len(header) < 20 or header[:7] != b"\x7fELF\x02\x01\x01" or header[16:20] != b"\x03\x00\xb7\x00":
+        raise ValueError("Turnip driver must be an ARM64 ELF shared library")
+    if not license_file.is_file() or not license_file.stat().st_size:
+        raise ValueError("Supply the Turnip distribution's license notices")
+    build(loader_output)
+    target = assets / "turnip"
+    target.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(driver, target / "vulkan.purple.so")
+    shutil.copyfile(license_file, target / "LICENSE.txt")
+    for notice in (loader_output / "licenses").glob("*.txt"):
+        shutil.copyfile(notice, target / notice.name)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, default=ROOT / "build/gpu-driver")
-    build(parser.parse_args().output)
+    parser.add_argument("--driver", type=Path, help="Turnip ARM64 shared library to package")
+    parser.add_argument("--driver-license", type=Path, help="License notices supplied with the driver")
+    parser.add_argument("--assets", type=Path, help="Android assets output directory")
+    args = parser.parse_args()
+    if args.driver:
+        if not args.driver_license or not args.assets:
+            parser.error("--driver requires --driver-license and --assets")
+        stage_driver(args.driver, args.driver_license, args.assets, args.output)
+    else:
+        if args.driver_license or args.assets:
+            parser.error("--driver-license and --assets require --driver")
+        build(args.output)

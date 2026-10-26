@@ -17,6 +17,9 @@ import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 import android.widget.ScrollView;
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
 
 final class AndroidPortSettings {
     private AndroidPortSettings() {}
@@ -26,6 +29,12 @@ final class AndroidPortSettings {
     static boolean wide(Context context) { return preferences(context).getBoolean("wide_screen", true); }
     static boolean fps(Context context) { return preferences(context).getBoolean("show_fps", true); }
     static boolean turnip(Context context) { return preferences(context).getBoolean("use_turnip", false); }
+    static boolean hasTurnip(Context context) {
+        for (String name : new String[]{"adrenotools", "hook_impl", "main_hook", "file_redirect_hook", "gsl_alloc_hook"})
+            if (!new File(context.getApplicationInfo().nativeLibraryDir, "lib" + name + ".so").isFile()) return false;
+        try (InputStream input = context.getAssets().open("turnip/vulkan.purple.so")) { return input.read() != -1; }
+        catch (IOException error) { return false; }
+    }
     static String driverLabel(Context context) { return turnip(context) ? "Turnip" : "系统Vulkan"; }
     private static final int GOLD = 0xffe8c078, TEXT = 0xffe8e0d0, MUTED = 0xffa2988c;
     private static int dp(Context c, int value) { return (int) (value * c.getResources().getDisplayMetrics().density); }
@@ -53,7 +62,7 @@ final class AndroidPortSettings {
         LinearLayout left = card(activity, "D2R MOBILE"); left.setGravity(Gravity.CENTER_VERTICAL);
         TextView title = text(activity, "暗黑破坏神 II\n狱火重生", 27, TEXT);
         title.setPadding(0, dp(activity, 16), 0, dp(activity, 16)); left.addView(title);
-        left.addView(text(activity, "上游核心 · Android\n显示与驱动设置", 13, MUTED));
+        left.addView(text(activity, "Android\n显示与驱动设置", 13, MUTED));
         Button start = new Button(activity); start.setText("启动游戏"); start.setTextSize(18);
         start.setTextColor(0xff15110b); start.setBackgroundTintList(ColorStateList.valueOf(GOLD));
         LinearLayout.LayoutParams launchLayout = new LinearLayout.LayoutParams(-1, dp(activity, 56));
@@ -73,9 +82,11 @@ final class AndroidPortSettings {
         driverTitle.setPadding(0, dp(activity, 16), 0, 0); settings.addView(driverTitle);
         RadioGroup drivers = new RadioGroup(activity);
         RadioButton turnip = option(activity, drivers, "Turnip");
-        RadioButton system = option(activity, drivers, "系统高通 Vulkan");
-        drivers.check(turnip(activity) ? turnip.getId() : system.getId()); settings.addView(drivers);
-        settings.addView(text(activity, "驱动在下次启动游戏时生效；系统驱动可能出现黑块。", 12, MUTED));
+        RadioButton system = option(activity, drivers, "系统 Vulkan");
+        boolean available = hasTurnip(activity);
+        turnip.setEnabled(available);
+        drivers.check(available && turnip(activity) ? turnip.getId() : system.getId()); settings.addView(drivers);
+        settings.addView(text(activity, available ? "部分 Adreno 系统驱动会在启动时崩溃，可尝试 Turnip。" : "此安装包未包含 Turnip 驱动，使用系统 Vulkan。", 12, MUTED));
         Switch fps = new Switch(activity);
         fps.setText("显示简易FPS（提交帧率）"); fps.setTextSize(14); fps.setTextColor(TEXT);
         fps.setMinHeight(dp(activity, 56)); fps.setChecked(fps(activity)); settings.addView(fps);

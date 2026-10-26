@@ -773,6 +773,9 @@ endif()
 if(NOT ANDROID)
     find_package(Python3 COMPONENTS Interpreter QUIET)
     if(Python3_Interpreter_FOUND)
+        add_test(NAME vulkan_pool_reset_timeout
+            COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/../gfx/vulkan/engine/tests/pool_reset_timeout_test.py)
+        set_tests_properties(vulkan_pool_reset_timeout PROPERTIES TIMEOUT 30)
         add_test(NAME shader_pair_contract
             COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/shader_pair_contract_test.py)
         set_tests_properties(shader_pair_contract PROPERTIES TIMEOUT 30)

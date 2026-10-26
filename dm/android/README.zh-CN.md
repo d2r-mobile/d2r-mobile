@@ -40,6 +40,21 @@ gradle -p dm/android :app:assembleDebug :app:lintDebug \
 
 APK 位于 `dm/android/app/build/outputs/apk/debug/app-debug.apk`，原生链接启用 `--no-undefined`。`-PdmPrebuiltJni=...` 只供使用已有库打包，不是当前原生源码编译通过的证据。
 
+### Adreno 驱动兼容
+
+需要带 Turnip 的 APK 时，提供 Android ARM64 Turnip 共享库及其发行包里的许可说明。构建脚本会编译加载库，打包驱动和加载库，并保留许可说明：
+
+```sh
+DM_TURNIP_DRIVER=/绝对路径/libvulkan_freedreno.so \
+DM_TURNIP_LICENSE=/绝对路径/LICENSE.txt \
+ANDROID_NDK_HOME=/绝对路径/ndk \
+bash dm/android/tools/shell_apk.sh
+```
+
+启动页选择 **Turnip**。未包含驱动或加载库的 APK 会禁用此选项。对于拒绝计算着色器的 Adreno 系统驱动，这提供了另一条编译路径，具体机型仍需实测。覆盖升级时使用原有签名。
+
+新导入包默认内联包含子组指令的计算辅助函数，规避 Adreno 750 上出现的编译器崩溃。APK 和导入包都要重建、重新导入；只更新 APK 不会替换旧着色器包。`DM_VK_INLINE_CS=0` 可恢复原模块形式，供排查使用。
+
 在 Linux 或 WSL 上，可用 `dm/android/docker/` 在容器里跑同一构建，上述版本均已钉死，不需要在 Windows 侧装 Python、NDK 或 CMake：
 
 ```sh
