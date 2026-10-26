@@ -91,6 +91,12 @@ APK 和 Git 仓库均不含游戏程序、着色器、游戏美术或存档。�
 
 一套包还可以附带 `vk-pipeline-list.seed`。首次启动、还没有 `files/dm/vk-pipeline-list.bin` 时，引擎在启动期间编好种子里列出的管线，种子覆盖的地方第一次去就不会因为现编管线而卡。`dm/android/tools/merge_warm_lists.py` 把几台设备的 `files/dm/vk-pipeline-list.bin` 合成一个种子。种子只能和录它时的那套包一起用，所以随包发放。实测见 `docs/android-notes/2026-10-22-first-play-stutter.zh-CN.md`。
 
+## Android Auto停车游戏
+
+现有游戏Activity声明`MAIN` / `CAR_LAUNCHER`并允许窗口调整尺寸，用于Android 15或更新版本的Android Auto停车游戏。渲染、存档及触屏输入仍由手机处理。先在手机完成资源配置及文件访问授权；车辆移动时由Android Auto自动退出停车应用。
+
+本地安装APK需要开启Android Auto自身的开发者模式和“未知来源”，停车后重新连接兼容车机，在应用列表查找D2R Mobile。参见[停车应用接入](https://developer.android.com/training/cars/parked/auto)及[本地车机测试](https://developer.android.com/training/cars/testing#allow-unknown-sources)。尚待DHU／真实车机验证启动、画面比例与触控坐标、暂停恢复、声音及断开重连。
+
 ## 验证与剩余工作
 
 执行根目录贡献检查及 `:app:lintDebug`。纯 Java 输入测试不需要手机：
