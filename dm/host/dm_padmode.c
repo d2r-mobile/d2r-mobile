@@ -321,10 +321,10 @@ void dm_padmode_legend(int act, const char *text) {   // 游戏主线程，页�
 // Which legend the entry is on: this page's own legend widget (found by name, e.g. CharacterOptionsLegend on the character creation mode page), not the one at the bottom in a run
 static struct { const char *legend; int act; } g_lh[4]; static int g_lh_n; static uint64_t g_lh_frame;
 void dm_padmode_legend_hide(const char *legend, int act) { uint64_t f = dm_guest_frame(); if (f != g_lh_frame) { g_lh_frame = f; g_lh_n = 0; } if (g_lh_n < 4) { g_lh[g_lh_n].legend = legend; g_lh[g_lh_n].act = act; g_lh_n++; } }
-static uint64_t legend_obj(uint8_t *b) {
+static uint64_t legend_obj(uint8_t *b, int hidden_too) {
     uint64_t root = rd8((uint64_t)(uintptr_t)(b + 0x2f05458)), ch = root ? rd8(root + 0x58) : 0, n = root ? rd8(root + 0x60) : 0;
     for (uint64_t i = 0; ch && i < n && i < 256; i++) { uint64_t w = rd8(ch + 8 * i); const char *nm = w ? (const char *)(uintptr_t)rd8(w + 8) : NULL;
-        if (nm && !strcmp(nm, "ControllerOverlay")) return *(uint8_t *)(uintptr_t)(w + 0x50) ? rd8(w + 0x440) : 0; }
+        if (nm && !strcmp(nm, "ControllerOverlay")) return *(uint8_t *)(uintptr_t)(w + 0x50) || hidden_too ? rd8(w + 0x440) : 0; }
     return 0;
 }
 static void legend_free(uint8_t *b, uint64_t *ent) {   // 条目里的串超过 15 字节时是原版分配器分配的：照原版调用点用完释放 | When the string in an entry exceeds 15 bytes it was allocated by the original allocator: free it after use as the original call sites do
@@ -425,11 +425,20 @@ static void legend_pump(uint8_t *b, uint64_t frame) {   // 游戏主线程每帧
       if (!off || frame < (uint64_t)off) for (int i = 0; i < n; i++) dm_padmode_legend(tv[i].a, tv[i].t); }
     if (g_cur && frame - g_lh_frame <= 2) for (int i = 0; i < g_lh_n; i++) { uint64_t w = pm_find(rd8((uint64_t)(uintptr_t)(b + 0x2f05458)), g_lh[i].legend, 0);
         if (w && legend_find(b, w, g_lh[i].act)) { ((void (*)(uint64_t, int))(b + 0xaaa610))(w, g_lh[i].act); static int lgd; if (lgd++ < 8) LOG("手柄提示条：%s 上原版的动作 %d 那一条拿掉（这一页把这个键收掉了）", g_lh[i].legend, g_lh[i].act); } }
-    uint64_t lg = g_cur ? legend_obj(b) : 0; if (!lg) { g_lg_on_n = 0; return; }   // 提示条不在屏上（面板关了 / 回触屏模式）：原版自己会重建，记的清掉 | Button legend not on screen (panel closed / back to touch mode): the original rebuilds it by itself, so clear what we recorded
+    uint64_t lg = g_cur ? legend_obj(b, 0) : 0; if (!lg) {   // 提示条不在屏上（面板关了 / 回触屏模式）：控件还在、只是藏着。我们加的条目当场从它上面删掉再清记录——原版重新填条目时不删我们的，残留会把条目数顶过 8（见下面追加处） | Button legend not on screen (panel closed / back to touch mode): the widget still exists, only hidden. Remove the entries we added from it right away, then clear the record -- when the original refills the legend it does not remove ours, and leftovers push the count past 8 (see the append below)
+        uint64_t hid = g_lg_on_n ? legend_obj(b, 1) : 0;
+        for (int k = 0; hid && k < g_lg_on_n; k++) { uint64_t e = legend_find(b, hid, g_lg_on[k].act); if (e && legend_ours(e, g_lg_on[k].text)) ((void (*)(uint64_t, int))(b + 0xaaa610))(hid, g_lg_on[k].act); }
+        g_lg_on_n = 0; return; }
     int live = frame - g_lg_frame <= 2 ? g_lg_n : 0;   /* 页的声明与这里谁先谁后不定：两帧内声明过都算在屏上 | The order between a page's declaration and this code is not fixed: anything declared within the last two frames counts as on screen */
     for (int k = 0; k < g_lg_on_n; k++) { int keep = 0; for (int i = 0; i < live; i++) keep |= g_lg[i].act == g_lg_on[k].act;   // 上一轮加过、这一轮不再声明的：删 | Added last round and no longer declared this round: remove
         if (!keep) { uint64_t e = legend_find(b, lg, g_lg_on[k].act); if (e && legend_ours(e, g_lg_on[k].text)) ((void (*)(uint64_t, int))(b + 0xaaa610))(lg, g_lg_on[k].act); } }
     for (int i = 0; i < live; i++) { tot++; uint64_t e = legend_find(b, lg, g_lg[i].act); if (e && legend_ours(e, g_lg[i].text)) continue; miss++;
+        // 原版提示条只有 8 个排版槽（+0x680 起每个 0x230，到 +0x1800 为止），重排时不查上限：第 9 条越界读、在 main+0x390b44 崩（佣兵栏 + 背包时）。
+        //   已有同一键帽的只换字不加条；要新加且已满 8 条就不加。
+        // The original legend has only 8 layout slots (0x230 each from +0x680, ending at +0x1800) and its relayout does not check the
+        //   bound: a 9th entry is read out of bounds and crashes at main+0x390b44 (mercenary page + inventory). An existing entry with the
+        //   same keycap only has its text replaced; a new one is not added once there are 8.
+        if (!e && rd8(lg + 0x90) >= 8) { static int full; if (full++ < 8) LOG("手柄提示条：已有 %llu 条，动作 %d「%s」不再加（原版只排得下 8 条）", (unsigned long long)rd8(lg + 0x90), g_lg[i].act, g_lg[i].text); continue; }
         uint64_t ent[8] = { 0 }; struct { const char *p; uint64_t n; } sv = { g_lg[i].text, strlen(g_lg[i].text) };
         ((void (*)(void *, int, int, void *))(b + 0xaa9358))(ent, g_lg[i].act, 0, &sv); ((void (*)(uint64_t, void *))(b + 0xaa9ef4))(lg, ent); legend_free(b, ent); }
     g_lg_on_n = live; memcpy(g_lg_on, g_lg, sizeof g_lg[0] * (size_t)live);
