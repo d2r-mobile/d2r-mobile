@@ -81,6 +81,8 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     };
     private TouchOverlay touchOverlay;
     private boolean started;
+    private static volatile boolean hostLaunched;
+    private SaveBackupUi saveBackup;
     private boolean portSettingsReady;
     private boolean importing;
     private boolean libraryLoaded;
@@ -124,19 +126,28 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         int pad = (int) (8 * getResources().getDisplayMetrics().density);
         fpsText.setPadding(pad, pad / 2, pad, pad / 2);
         gameFrame.addView(fpsText, new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.CENTER_HORIZONTAL));
+        try { if (!hostLaunched && !SaveBackupUi.busy()) SaveArchive.recover(getFilesDir().toPath()); }
+        catch (IOException error) { showStartError(getString(R.string.dmAndroidSaveFailed, error.getMessage())); return; }
+        saveBackup = new SaveBackupUi(this, () -> !hostLaunched && !portSettingsReady && !importing);
         AndroidPortSettings.show(this, () -> {
+            if (SaveBackupUi.busy()) { android.widget.Toast.makeText(this, R.string.dmAndroidSaveBusy, android.widget.Toast.LENGTH_LONG).show(); return; }
             portSettingsReady = true;
             fpsText.setVisibility(AndroidPortSettings.fps(this) ? View.VISIBLE : View.GONE);
             setContentView(gameContainer);
             fpsTime = 0; fpsText.removeCallbacks(fpsUpdate); fpsText.post(fpsUpdate);
             startHost();
-        });
+        }, saveBackup::exportSave, saveBackup::importSave);
         immersive();
     }
 
     private void immersive() {
         WindowInsetsController c = getWindow().getInsetsController();
         if (c != null) { c.hide(WindowInsets.Type.systemBars()); c.setSystemBarsBehavior(WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE); }
+    }
+
+    @Override protected void onActivityResult(int request, int result, Intent data) {
+        super.onActivityResult(request, result, data);
+        if (saveBackup != null) saveBackup.result(request, result, data);
     }
 
     // 实体手柄：按键与摇杆在 PadInput 里合成宿主的手柄状态（nativePad → dm_pad_set），与触屏的虚拟手柄在游戏取手柄时合并。
@@ -379,6 +390,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         File data = new File(downloads, "S2X/D2R Mobile/data"), earlier = new File(downloads, "data");
         if (!data.isDirectory() && earlier.isDirectory()) data = earlier;
         String src = data.getAbsolutePath();
+        hostLaunched = true;
         int result = nativeStart(getFilesDir().getAbsolutePath(), ext.getAbsolutePath(), src, Locale.getDefault().toLanguageTag());
         if (result < 0) {
             int resource = switch (result) {

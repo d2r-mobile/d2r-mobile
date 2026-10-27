@@ -19,6 +19,23 @@ Virtual navigation buttons release after one game input sample, preventing the s
 
 虚拟导航圆钮在游戏采样一次后释放，防止同一次按压重复触发下一级对话。手指抬起前，触点仍归该按钮所有。技能长按与物品长按、拖动保持原有时序。圆钮默认隐藏，此修复覆盖其备用／调试路径。
 
+## Startup save backups / 启动页存档备份
+
+Export and import are available only before the native game starts. Exit normally and reopen the application before managing saves. The system document picker can save the ZIP to Downloads or an installed cloud document provider; this does not implement automatic cloud synchronization. Only ZIPs exported by this feature are supported. Restore replaces the complete committed `files/save` directory, including characters, shared stash and saved settings. It does not change game resources, `save.work`, or Android startup preferences.
+
+导出／导入只在游戏启动前可用。请先正常存盘退出，再重新打开应用。系统文件选择器支持下载目录及已接入的云盘；不提供自动云同步。导入会替换全部角色、共享储物箱和存档设置，不修改游戏资源或启动设置。请先导出一份外部备份。
+
+Archives are validated in a staging directory before replacement: version marker, relative `save/` paths, no duplicate entries, at most 4096 entries plus the marker, 64 MiB per file and 512 MiB in total. Symlink exports are rejected. Before replacing existing saves, a ZIP is retained in private `files/save-backups/before-import-<UUID>.zip`; the previous directory also remains as an interrupted-swap fallback. Startup recovers that directory if the committed directory is missing. These private backups are removed by uninstall/clear-data and are not a substitute for an exported ZIP. They can accumulate with repeated imports. Filesystem rename recovery does not guarantee durability after power loss.
+
+导入前先在暂存目录校验路径、数量、大小和版本，再保留本机旧存档备份并换目录。私有备份随卸载／清除数据一起删除，反复导入也会增加占用，不能代替保存到下载或云盘的外部 ZIP。断电持久性不作保证。手机文件选择器与实际存档恢复仍需实机验收。
+
+Local archive regression (synthetic saves only):
+
+```sh
+javac -encoding UTF-8 -d /tmp/dm-save-tests dm/android/app/src/main/java/com/xiaoboluo/d2r/SaveArchive.java dm/android/tests/startup-save/SaveArchiveTest.java
+java -cp /tmp/dm-save-tests com.xiaoboluo.d2r.SaveArchiveTest
+```
+
 ## Physical controllers / 实体手柄
 
 Buttons and sticks feed the existing host controller input; clear controller input selects the original controller layout, and touching the screen returns to the touch layout. No game resource reimport is required for the current matching overlay.
