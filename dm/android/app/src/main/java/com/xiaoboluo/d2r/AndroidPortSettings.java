@@ -54,7 +54,7 @@ final class AndroidPortSettings {
         button.setTextColor(TEXT); button.setTextSize(14); button.setMinHeight(dp(a, 48));
         button.setButtonTintList(ColorStateList.valueOf(GOLD)); group.addView(button); return button;
     }
-    static void show(Activity activity, Runnable launch) {
+    static void show(Activity activity, Runnable launch, Runnable exportSave, Runnable importSave) {
         int pad = dp(activity, 20);
         LinearLayout page = new LinearLayout(activity);
         page.setOrientation(LinearLayout.HORIZONTAL); page.setGravity(Gravity.CENTER_VERTICAL);
@@ -90,6 +90,16 @@ final class AndroidPortSettings {
         Switch fps = new Switch(activity);
         fps.setText("显示简易FPS（提交帧率）"); fps.setTextSize(14); fps.setTextColor(TEXT);
         fps.setMinHeight(dp(activity, 56)); fps.setChecked(fps(activity)); settings.addView(fps);
+        settings.addView(text(activity, activity.getString(R.string.dmAndroidSaveTitle), 15, GOLD));
+        settings.addView(text(activity, activity.getString(R.string.dmAndroidSaveHint), 12, MUTED));
+        LinearLayout saves = new LinearLayout(activity);
+        Button export = new Button(activity); export.setText(R.string.dmAndroidSaveExport);
+        export.setOnClickListener(v -> exportSave.run());
+        Button restore = new Button(activity); restore.setText(R.string.dmAndroidSaveImport);
+        restore.setOnClickListener(v -> importSave.run());
+        saves.addView(export, new LinearLayout.LayoutParams(0, dp(activity, 52), 1));
+        saves.addView(restore, new LinearLayout.LayoutParams(0, dp(activity, 52), 1));
+        settings.addView(saves);
         start.setOnClickListener(v -> {
             boolean saved = preferences(activity).edit().putBoolean("wide_screen", modes.getCheckedRadioButtonId() == wide.getId())
                 .putBoolean("show_fps", fps.isChecked()).putBoolean("use_turnip", drivers.getCheckedRadioButtonId() == turnip.getId()).commit();

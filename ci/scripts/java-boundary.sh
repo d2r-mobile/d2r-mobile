@@ -126,6 +126,17 @@ else
     fail "save archive integrity regression"
 fi
 
+startup_save_java=$work/java/startup-save
+mkdir -p "$startup_save_java"
+if "$javac" --release 11 -d "$startup_save_java" \
+        "$root/dm/android/app/src/main/java/com/xiaoboluo/d2r/SaveArchive.java" \
+        "$root/dm/android/tests/startup-save/SaveArchiveTest.java" >> "$log" 2>&1 \
+    && "$(dirname "$javac")/java" -cp "$startup_save_java" com.xiaoboluo.d2r.SaveArchiveTest >> "$log" 2>&1; then
+    log_line "PASS startup save ZIP export, restore and recovery"
+else
+    fail "startup save ZIP regression"
+fi
+
 # Drop-haptic lifecycle and tier policy share the production classes only.
 # The native AAudio/HUD path is device-owned; this host gate covers the
 # single-slot queue semantics that otherwise replay a paused drop on resume.
