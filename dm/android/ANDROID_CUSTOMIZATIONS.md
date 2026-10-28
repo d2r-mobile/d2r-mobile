@@ -19,6 +19,12 @@ Virtual navigation buttons release after one game input sample, preventing the s
 
 虚拟导航圆钮在游戏采样一次后释放，防止同一次按压重复触发下一级对话。手指抬起前，触点仍归该按钮所有。技能长按与物品长按、拖动保持原有时序。圆钮默认隐藏，此修复覆盖其备用／调试路径。
 
+## Camera views / 镜头视角
+
+Choose Options → Custom → Camera view for the original, over-the-shoulder or first-person view. The touch camera buttons hide while a physical controller is active. Camera modes require an overlay generated from the same sources as the APK; prepare a matching import pack before updating. Device validation is pending.
+
+在游戏「选项 → 自定义 → 镜头视角」选择原版、越肩或第一人称视角。使用实体手柄时，触屏转向按钮会隐藏。镜头模式需要与 APK 同份源码生成的覆盖层，更新前请准备匹配的导入包，待实机验证。
+
 ## Startup save backups / 启动页存档备份
 
 Export and import are available only before the native game starts. Exit normally and reopen the application before managing saves. The system document picker can save the ZIP to Downloads or an installed cloud document provider; this does not implement automatic cloud synchronization. Only ZIPs exported by this feature are supported. Restore replaces the complete committed `files/save` directory, including characters, shared stash and saved settings. It does not change game resources, `save.work`, or Android startup preferences.
