@@ -40,8 +40,8 @@ else:
         if name not in on_line and name not in both: red.append('dm_cursor.c 定义了 %s，但每帧那一行和「两种模式都跑」单子上都没有它' % name)
 
 # ---- 2 ----
-PADMODE = {'host/dm_cursor.c': 9, 'host/dm_custom.c': 2, 'host/dm_kills.c': 2, 'host/dm_rift_ui.c': 4, 'host/dm_runeword.c': 3, 'host/dm_vault_ui.c': 1, 'host/dm_update.c': 2, 'host/hle_tact.c': 1}
-AUTOKEY = {'host/dm_cursor.c': 39, 'host/dm_rift_ui.c': 8, 'host/hle_hid.c': 2, 'ios/Sources/front_ios.m': 4}
+PADMODE = {'host/dm_cursor.c': 10, 'host/dm_custom.c': 2, 'host/dm_kills.c': 2, 'host/dm_rift_ui.c': 4, 'host/dm_runeword.c': 3, 'host/dm_vault_ui.c': 1, 'host/dm_update.c': 2, 'host/hle_tact.c': 1}
+AUTOKEY = {'host/dm_cursor.c': 40, 'host/dm_rift_ui.c': 8, 'host/hle_hid.c': 2, 'ios/Sources/front_ios.m': 4}
 def count(pat, skip_defs):
     out = {}
     for f in sorted(glob.glob(os.path.join(root, 'host', '*.c')) + glob.glob(os.path.join(root, 'ios', 'Sources', '*.m')) + glob.glob(os.path.join(root, 'ios', 'Sources', '*.c'))):
