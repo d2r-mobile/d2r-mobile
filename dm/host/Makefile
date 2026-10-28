@@ -42,6 +42,7 @@ SRC=\
 	dm_beltauto.c \
 	dm_bossrush.c \
 	dm_bright.c \
+	dm_cam.c \
 	dm_cloudsync.c \
 	dm_cursor.c \
 	dm_cursor_item.c \

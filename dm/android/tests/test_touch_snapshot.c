@@ -66,6 +66,9 @@ int dm_ui_minimap_rect(float r[4]) { (void)r; return 0; }
 int dm_ui_map_is_full(void) { return 0; }
 int dm_hud_stack_msg(const char *act, const char *arg) { (void)act; (void)arg; return 0; }
 void dm_touch_game_set_scene(int game, uint64_t scene_epoch, uint64_t world_epoch) { (void)game; (void)scene_epoch; (void)world_epoch; }
+int dm_cam_mode(void) { return 0; }
+void dm_cam_tilt(float rad) { (void)rad; }
+void dm_cam_turn(float rad) { (void)rad; }
 void dm_ui_map_full(int on) { (void)on; unexpected_host_call(__func__); }
 void dm_ui_map_hold(int on) { map_held = on; }
 unsigned dm_world_tap(float x,float y) { (void)x; (void)y; unexpected_host_call(__func__); return 0; }

@@ -60,6 +60,20 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     static native void nativePad(long buttons, int lx, int ly, int rx, int ry);
     static native void nativePadMode(int pad);
     static native void nativePadGlyph(int glyph);
+    // 越肩镜头的体感转向（CamSensor）：开哪种传感器（0 = 不开），每次转动的弧度
+    // Sensor steering of the over-the-shoulder camera (CamSensor): which sensor to listen to (0 = none), each turn in radians
+    static native int nativeCamSensor();
+    static native void nativeCamTurn(float rad);
+    // 镜头档（nativeStart 之后才准）与「此刻在局里、镜头在出图」（CamButtons）
+    // The camera mode (valid only after nativeStart) and "in a game right now with the camera drawing" (CamButtons)
+    static native int nativeCamMode();
+    static native int nativeCamActive();
+    // 画面外的怪（CamThreats）：每条 5 个数，返回条数
+    // Monsters off the picture (CamThreats): 5 numbers each, returns the count
+    static native int nativeCamThreats(float[] out);
+    // 小地图上的朝向箭头（CamThreats）：4 个数，返回 1 = 该画
+    // Heading arrow on the minimap (CamThreats): 4 numbers, returns 1 = draw it
+    static native int nativeCamHeading(float[] out);
 
     private static WeakReference<DmActivity> current = new WeakReference<>(null);
     private static volatile int bootFailure;
@@ -89,6 +103,9 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     private boolean resumed;
     private DisplayManager displays;
     private InputManager inputs;
+    private CamSensor camSensor;
+    private CamButtons camButtons;
+    private CamThreats camThreats;
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
@@ -103,6 +120,7 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         if (displays != null) displays.registerDisplayListener(this, null);
         inputs = getSystemService(InputManager.class);
         if (inputs != null) inputs.registerInputDeviceListener(this, null);
+        camSensor = new CamSensor(this);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         getWindow().getAttributes().layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
         view = new SurfaceView(this);
@@ -406,6 +424,19 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         }
         started = true;
         applyPadMode(PadInput.isPadMode());
+        if (camSensor != null) camSensor.start(nativeCamSensor());
+        // 越肩镜头的左右转按钮：盖在触屏层上面，只收按钮上的触摸。镜头可以在局中从「自定义」页打开（dm_cam.c dm_cam_mode），所以总是加上：
+        // 镜头没在出图时按钮不画、触摸全部漏给下面的触屏层（nativeCamActive，每帧问一次）
+        // Turn buttons of the over-the-shoulder camera: above the touch layer, taking only touches on the buttons. The camera can be turned on mid-game from
+        // the Custom page (dm_cam.c dm_cam_mode), so they are always added: while the camera is not drawing the buttons are not drawn and every touch falls
+        // through to the touch layer below (nativeCamActive, asked every frame)
+        // 画面外的怪的箭头与地图上的朝向箭头放在按钮下面一层：只画不收触摸，镜头关着时什么都不画
+        // The off-picture monster arrows and the map heading arrow go one layer below the buttons: drawing only, no touches, nothing drawn while the camera is off
+        if (camButtons == null) {
+            camThreats = new CamThreats(this); gameFrame.addView(camThreats, new FrameLayout.LayoutParams(-1, -1));
+            camButtons = new CamButtons(this); gameFrame.addView(camButtons, new FrameLayout.LayoutParams(-1, -1)); }
+        if (camButtons != null) camButtons.start();
+        if (camThreats != null) camThreats.start();
         nativeFocus(3);
     }
 
@@ -530,8 +561,8 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
     @Override public void onInputDeviceAdded(int id) {}
     @Override public void onInputDeviceChanged(int id) { if (started) PadInput.removeDevice(id); }
     @Override public void onInputDeviceRemoved(int id) { if (started) PadInput.removeDevice(id); }
-    @Override protected void onResume() { super.onResume(); resumed = true; fpsTime = 0; if (fpsText != null) { fpsText.removeCallbacks(fpsUpdate); fpsText.post(fpsUpdate); } immersive(); startHost(); updateRefresh(); if (started) { nativeFocus(3); if (touchOverlay != null && bootFailure == 0) applyPadMode(PadInput.isPadMode()); } }
-    @Override protected void onPause() { resumed = false; if (fpsText != null) fpsText.removeCallbacks(fpsUpdate); if (inputDialog != null) inputDialog.dismiss(); releaseTouches(); swallowed.clear(); if (started) PadInput.reset(); if (touchOverlay != null) touchOverlay.setInputEnabled(false); if (started) nativeFocus(0); super.onPause(); }
+    @Override protected void onResume() { super.onResume(); resumed = true; fpsTime = 0; if (fpsText != null) { fpsText.removeCallbacks(fpsUpdate); fpsText.post(fpsUpdate); } immersive(); startHost(); updateRefresh(); if (started) { nativeFocus(3); if (touchOverlay != null && bootFailure == 0) applyPadMode(PadInput.isPadMode()); if (camSensor != null) camSensor.start(nativeCamSensor()); if (camButtons != null) camButtons.start(); if (camThreats != null) camThreats.start(); } }
+    @Override protected void onPause() { resumed = false; if (camSensor != null) camSensor.stop(); if (camButtons != null) camButtons.stop(); if (camThreats != null) camThreats.stop(); if (fpsText != null) fpsText.removeCallbacks(fpsUpdate); if (inputDialog != null) inputDialog.dismiss(); releaseTouches(); swallowed.clear(); if (started) PadInput.reset(); if (touchOverlay != null) touchOverlay.setInputEnabled(false); if (started) nativeFocus(0); super.onPause(); }
     @Override protected void onStart() { super.onStart(); if (started) nativeFocus(2); }
     @Override protected void onStop() { if (started) nativeFocus(1); com.xiaoboluo.d2r.widget.HeroWidgetProvider.requestUpdate(this); super.onStop(); }
     @Override protected void onDestroy() { if (displays != null) displays.unregisterDisplayListener(this); if (inputs != null) inputs.unregisterInputDeviceListener(this); if (inputDialog != null) inputDialog.dismiss(); if (current.get() == this) current.clear(); super.onDestroy(); }
