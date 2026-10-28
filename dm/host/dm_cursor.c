@@ -1548,7 +1548,7 @@ static void ui_item_pump(uint64_t root, int width, int height) {
     unsigned seq = atomic_load(&g_iq_seq); if (seq == atomic_load(&g_iq_done)) return;
     uint64_t v = atomic_load(&g_iq_xy); int x = (int)(((v >> 16) & 0xffff) / 65535.0 * width), y = (int)((v & 0xffff) / 65535.0 * height);
     char hit[40] = ""; int r; g_cls_out = atomic_load(&g_iq_out);
-    if (atomic_exchange(&g_iq_drop, 0)) { r = ui_drop_kind(main_module(), root, x, y, (int)(atomic_load(&g_iq_y2) / 65535.0 * height)); 
+    if (atomic_exchange(&g_iq_drop, 0)) { r = ui_drop_kind(main_module(), root, x, y, (int)(atomic_load(&g_iq_y2) / 65535.0 * height));
         if (r == 5 && g_press_stack && dm_wref_get(&g_slot) && *(uint64_t *)(dm_wref_get(&g_slot) + 8) && !strcmp((const char *)*(uint64_t *)(dm_wref_get(&g_slot) + 8), "horadriccube_grid")) r = 11;   // 11 = 从成叠格拖出、物品图落在这一页下方的魔盒格上（前端：1 件进魔盒，不是取到背包）。g_slot = 刚才落点分类命中的物品区控件 | 11 = dragged out of a stacked slot with the item image landing on the Horadric Cube slot below this page (front end: 1 item goes into the Cube, not taken to the backpack). g_slot = the item-area widget hit by the drop-point classification just now
         snprintf(hit, sizeof hit, "拖放落点类 %d", r); atomic_store(&g_iq_res, r); atomic_store(&g_drop_last, r); atomic_store(&g_iq_done, seq);
         if (hit_log_ok(hit)) LOG("界面命中：(%d,%d) → %s", x, y, hit); return; }
@@ -2012,7 +2012,16 @@ static void ui_map_center(module_t *m, uint64_t root, int mini) {
     if (*sc == want || (*sc != ours && *sc != 0)) { if (*sc == want) ours = want; return; }   // 已是目标值；或是别人写的非零值（不是我们上次写的）：不动 | Already the target value; or a non-zero value written by someone else (not what we last wrote): leave it alone
     { static int lg; if (lg++ < 8) LOG("全屏地图中心：纵向卷动量 %d → %d 格", *sc, want); } *sc = want; ours = want;
 }
-static void ui_map_pump(module_t *m) {
+// 过场把小地图关了（原版：剧情里头一回随 NPC 换幕播片头 ProgressionMessage:PlayVideo，同一拍 PanelManager:ClosePanel AutoMap；播完不再开）。
+// 手柄上玩家按地图键（−）再开；触屏没有开关地图的键，只靠选项「进局自动开启地图」（AutoMap Open On Load，配置对象 main+0x2d485a8，值在 +0xC）进局那一次开，
+// 结果一路到重启都没有小地图（线上：A1→A2、A2→A3 随 NPC 换幕后右上角小地图消失）。触屏模式下这一选项开着时，过场播完、回到局内就替玩家按一下地图键：
+// 走原版开地图那条路，地名一并回来（只发 PanelManager:OpenPanel AutoMap 时线条回来了、右上角地名没回来，宿主实测）。
+// Cutscenes close the minimap (original game: the first story act change with an NPC plays an intro, ProgressionMessage:PlayVideo, and in the same tick PanelManager:ClosePanel AutoMap; nothing reopens it afterwards).
+// On a controller the player reopens it with the map key (−); touch has no map toggle and relies on the "AutoMap Open On Load" option (config object main+0x2d485a8, value at +0xC), which opens it once on entering a run,
+// so the minimap stayed gone until a restart (player report: after the A1→A2 / A2→A3 NPC act change the top-right minimap disappeared). In touch mode, with that option on, once the cutscene is over and the run is back, press the map key once for the player:
+// the original map-opening path, which brings the area name back too (sending only PanelManager:OpenPanel AutoMap brought the lines back but not the area name at the top right, measured on the host).
+static _Atomic int g_map_movie;
+static void ui_map_pump(module_t *m, uint64_t root) {
 #if defined(__OHOS__)
     // 鸿蒙的 UI 线程可能在选角面板加载时先请求收起地图；此时原版 AutoMap 尚未创建，回调会解引用空对象。
     // 局外不调用地图回调，也不把旧请求带进下一局；游戏内的切换仍走原路径。
@@ -2047,6 +2056,9 @@ static void ui_map_pump(module_t *m) {
         ((void (*)(int))(m->base + 0x40f780))(want ? 0 : small); mini = *(volatile int32_t *)(m->base + 0x2d5c748);
         static int n; if (n++ < 40) LOG("地图：→ %s（%s；配置值 %d 不动）", want ? "全屏" : small == 1 ? "微缩放左" : "微缩放右", hold ? "面板开着先让开" : g_map_want ? "玩家要全屏" : "玩家要小地图", cfg); }
     atomic_store(&g_map_full_now, mini == 0);
+    { void dm_ui_key_pulse_alone(uint64_t mask, int frames); uint64_t am = ui_panel(root, "AutoMap"); static uint64_t sent;
+      if (am && *(uint64_t *)am == (uint64_t)m->base + 0x20c58a0 && !*(uint8_t *)(am + 0x50) && *(volatile int32_t *)(m->base + 0x2d485b4) && hi.valid && dm_uiscreen_ingame() && !atomic_load(&g_map_movie)) {
+          uint64_t fr = dm_guest_frame(); if (!sent || fr >= sent + 120) { sent = fr; dm_ui_key_pulse_alone(DM_BTN_MINUS, 4); LOG("地图：局内小地图关着（过场关的）、选项「进局自动开启地图」开着 → 替玩家按一下地图键（−）"); } } }
 }
 // ---------- 右上角小地图的位置：触摸层把它当点击区（点一下 = 地图开关键），矩形取游戏自己的 AutoMap 面板，不写死 ----------
 // AutoMap 控件（虚表 main+0x20c58a0）：+0x70 / +0x74 = x / y、+0x78 / +0x7c = 宽 / 高（布局单位，2160 = 画面高；微缩地图放右时 x = −宽，即贴着画面右边），+0x80 缩放。
@@ -2876,7 +2888,7 @@ void dm_ui_mouse_pump(void) {   // 游戏取手柄处调（hle_hid fill，主线
                 else fix = 0; }
             if (th) { ui_auto_key(th); tnext = fr + 8; } } } }
     { module_t *pm = main_module(); uint64_t proot = 0; if (pm) { memcpy(&proot, pm->base + 0x2f05458, 8); int32_t pw = *(int32_t *)(pm->base + 0x211da38), phh = *(int32_t *)(pm->base + 0x211da3c);
-        static uint64_t pf = UINT64_MAX; if (proot && pw > 0 && phh > 0 && pf != fr) { pf = fr; { static int dd; const char *dn; if (!dd && (dn = getenv("DM_UI_DUMP")) && atomic_load(&g_taps_base) && fr >= atomic_load(&g_taps_base) + (getenv("DM_UI_DUMP_AT") ? atoi(getenv("DM_UI_DUMP_AT")) : 45)) { dd = 1; ui_dump(proot, 0, dn, 0, pm); } } int tm = ui_touch_mode(); if (tm) ui_wtap_pump(pm, proot, pw, phh); if (tm) ui_long_pump(); ui_target_pump(pm, fr); if (tm) ui_use_pump(); if (tm) ui_buy_pump(pw, phh); ui_item_pump(proot, pw, phh); ui_ptr_pump(pm, proot, pw, phh); if (tm) ui_drag_pump(pm, proot, pw, phh); UI_MOUSE_ITEM_PUMPS(pm, proot, pw, phh); { int lu = atomic_load(&g_load_up); dm_uiscreen_set_ingame(ui_panel(proot, "HUDPanel") && !(lu < 0 ? ui_find(proot, "LoadScreenPanel", 0) != 0 : lu)); } ui_safe_pump(pm, proot, fr); ui_lift_pump(proot, fr); ui_note_dock_pump(proot); ui_trove_tabs_pump(pm, proot, fr); ui_minimap_pump(pm, proot, pw, phh, fr); ui_map_pump(pm); ui_map_geom_pump(pm, proot); ui_boss_pct_pump(pm, proot); ui_npcdlg_pump(proot); ui_map_center(pm, proot, *(volatile int32_t *)(pm->base + 0x2d5c748)); if (tm) ui_bind_pump(proot, fr); if (tm) swaptab_pump(proot); if (tm) ui_mercpg_pump(pm, proot, fr); ui_widestash_pump(proot); mv_audit_pump(proot, fr); ui_pages_pump(pm, proot); } } }
+        static uint64_t pf = UINT64_MAX; if (proot && pw > 0 && phh > 0 && pf != fr) { pf = fr; { static int dd; const char *dn; if (!dd && (dn = getenv("DM_UI_DUMP")) && atomic_load(&g_taps_base) && fr >= atomic_load(&g_taps_base) + (getenv("DM_UI_DUMP_AT") ? atoi(getenv("DM_UI_DUMP_AT")) : 45)) { dd = 1; ui_dump(proot, 0, dn, 0, pm); } } int tm = ui_touch_mode(); if (tm) ui_wtap_pump(pm, proot, pw, phh); if (tm) ui_long_pump(); ui_target_pump(pm, fr); if (tm) ui_use_pump(); if (tm) ui_buy_pump(pw, phh); ui_item_pump(proot, pw, phh); ui_ptr_pump(pm, proot, pw, phh); if (tm) ui_drag_pump(pm, proot, pw, phh); UI_MOUSE_ITEM_PUMPS(pm, proot, pw, phh); { int lu = atomic_load(&g_load_up); dm_uiscreen_set_ingame(ui_panel(proot, "HUDPanel") && !(lu < 0 ? ui_find(proot, "LoadScreenPanel", 0) != 0 : lu)); } ui_safe_pump(pm, proot, fr); ui_lift_pump(proot, fr); ui_note_dock_pump(proot); ui_trove_tabs_pump(pm, proot, fr); ui_minimap_pump(pm, proot, pw, phh, fr); ui_map_pump(pm, proot); ui_map_geom_pump(pm, proot); ui_boss_pct_pump(pm, proot); ui_npcdlg_pump(proot); ui_map_center(pm, proot, *(volatile int32_t *)(pm->base + 0x2d5c748)); if (tm) ui_bind_pump(proot, fr); if (tm) swaptab_pump(proot); if (tm) ui_mercpg_pump(pm, proot, fr); ui_widestash_pump(proot); mv_audit_pump(proot, fr); ui_pages_pump(pm, proot); } } }
     if (atomic_load(&g_fe_name_open) && atomic_load(&g_ut_phase) == 2) {   // 起名页：点输入框（底板 / 文本框）= 重新弹系统键盘，不发鼠标点击 | naming page: tapping the input box (backplate / text box) = pop up the system keyboard again, no mouse click is sent
         module_t *nm = main_module(); uint64_t nroot = 0; if (nm) memcpy(&nroot, nm->base + 0x2f05458, 8); uint64_t pn = nroot ? ui_find(nroot, "CharacterCreateNamePanel", 0) : 0;
         if (pn && nm) { int32_t w = *(int32_t *)(nm->base + 0x211da38), h = *(int32_t *)(nm->base + 0x211da3c); uint64_t v = atomic_load(&g_ut_xy);
@@ -3040,6 +3052,8 @@ void dm_ui_on_uimsg(const char *cat, const char *act, const char *arg) {
           ld = !strcmp(cat, "PanelManager") && arg && !strcmp(arg, "LoadScreenPanel") && !strcmp(act, "OpenPanel");
       if (ex || ld) { module_t *pm = main_module(); uint64_t root = 0; if (pm) memcpy(&root, pm->base + 0x2f05458, 8); if (ex) g_nd_hold = 1;   // 提示框停靠：停靠条件结束，当场写回原值 | notice docking: the docking condition ended, write the original value back on the spot
           note_dock_restore(root, ex ? (act[0] == 'E' ? "保存并退出" : "回到前端") : "读取画面（切场景）"); } }
+    if (!strcmp(cat, "ProgressionMessage") && !strcmp(act, "PlayVideo")) atomic_store(&g_map_movie, 1);   // 过场开播 / 播完（含按键跳过）、出局：见 ui_map_pump | Cutscene starts / ends (skipping included), leaving the run: see ui_map_pump
+    else if ((!strcmp(cat, "Cinematics") && !strcmp(act, "MovieComplete")) || (!strcmp(cat, "FrontEndNavigation") && !strcmp(act, "ToFrontEnd"))) atomic_store(&g_map_movie, 0);
     if (!strcmp(cat, "QuestLogPanelMessage") && !strcmp(act, "DialogueFinished")) atomic_store(&g_speech_end, dm_guest_frame());
     if (!strcmp(cat, "PanelManager")) ui_panel_note(act, arg ? arg : "");
 #ifdef __ANDROID__
