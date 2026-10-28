@@ -149,6 +149,7 @@ Se entra por el portal rojo de Harrogath tras completar Infierno. Hay 100 nivele
 | Guía en el minimapa | Cada mapa marca su Waypoint y sus salidas; cada objetivo de misión aparece en el mapa; cuando un objetivo está fuera de la pantalla, su nombre se escribe a lo largo del borde |
 | Tareas tediosas eliminadas | Identificación gratuita, Town Portal gratuito sin necesidad de pergaminos, aparición justo al lado del Waypoint, Quick Restart, mercancía de los vendedores renovable |
 | Partidas guardadas | Se guardan de inmediato al cambiar de app, al cerrarla deslizando o al salir; sincronización por iCloud entre dispositivos (requiere firmar con una cuenta de desarrollador de pago) |
+| Modo de entretenimiento (experimental) | Cámara sobre el hombro y en primera persona: arrastra la mitad derecha para mirar alrededor, flechas para los monstruos fuera de la imagen y un indicador de orientación en el mapa ([detalles](docs/over-the-shoulder-camera.md)) |
 
 La mayoría de las funciones se pueden activar o desactivar una por una en el juego, en Options → Custom.
 
