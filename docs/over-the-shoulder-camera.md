@@ -2,15 +2,19 @@
 
 中文：[over-the-shoulder-camera.zh-CN.md](over-the-shoulder-camera.zh-CN.md) · Typeset PDF (Chinese): [over-the-shoulder-camera.zh-CN.pdf](over-the-shoulder-camera.zh-CN.pdf)
 
-Turns the isometric top-down game into a shooter-style over-the-shoulder follow camera, inside the graphics translation layer. Off by default, switched on with an environment variable, Metal backend (iOS / Mac) only.
+Turns the isometric top-down game into a shooter-style over-the-shoulder follow camera, inside the graphics translation layer. Off by default. Available on iOS / Mac (Metal backend) and Android (Vulkan backend); HarmonyOS shares the Vulkan code but has not been run on a HarmonyOS device yet.
 
 **In one sentence:** the game itself is not changed at all. On the picture side, in the layer that translates NVN to Metal, the "main camera" constant buffer the game uploads every frame is replaced with our own perspective matrices; on the input side, touch points and stick directions on the perspective picture are converted back to points and directions on the original orthographic picture before the game sees them. The game still believes it is top-down; the player sees an over-the-shoulder view.
 
 ## Trying it
 
+In game: **Options → Custom → Camera view**, a three-way choice "Original view / Over-the-shoulder (experimental) / First person (experimental)" that can be switched mid-game. In both camera modes, dragging on the right half where there are no buttons turns (left / right) and tilts (up / down); in first person the left stick walks and strafes relative to the view. Arrows on the picture's edge point to monsters off the picture (coloured by name: white normal, blue champion, gold unique / super unique, red act boss; your own summons are left out), and the minimap and the full-screen map show which way the character faces.
+
+The environment variables below are for development and testing:
+
 | Environment variable | Effect | Default |
 |---|---|---|
-| `DM_CAM` | `1` over-the-shoulder (picture + input conversion); `2` first person (picture only, input not converted); unset = off | off |
+| `DM_CAM` | `1` over-the-shoulder; `2` first person; when set it wins and the custom page cannot change it; unset = follow the custom page | unset |
 | `DM_CAM_DIST` / `DM_CAM_H` | over-the-shoulder: camera distance behind / height above the character | 20 / 13 |
 | `DM_CAM_LOOK` / `DM_CAM_LOOKH` | over-the-shoulder: look-at point distance ahead of / height above the character | 4 / 3 |
 | `DM_CAM_FOV` | horizontal field of view (degrees) | 65 over-the-shoulder, 75 first person |
@@ -20,7 +24,6 @@ Turns the isometric top-down game into a shooter-style over-the-shoulder follow 
 
 On a Mac, put `DM_CAM=1` in front of the launch command; on iOS add it under Xcode Scheme → Run → Environment Variables. The log shows `DM_CAM=1：镜头实验开` once and then `镜头实验：第 N 次改相机` every 600 camera replacements.
 
-Android / HarmonyOS use the Vulkan backend, which is not wired up: `DM_CAM` changes nothing there (input conversion gets no matrices and passes input through unchanged).
 
 ## Where the code is
 

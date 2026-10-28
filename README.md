@@ -157,6 +157,7 @@ Enter through the red portal in Harrogath. The Rift has 100 levels, and the mons
 | Minimap guidance | Every map marks its Waypoint and exits, and every quest goal sits on the map. When a target is off screen, its name runs along the screen edge |
 | Chores removed | Free identification, free Town Portal with no scrolls, spawning beside the Waypoint, Quick Restart, refreshable vendor stock |
 | Saves | The game saves the moment you switch apps, swipe the app away or quit. iCloud syncs your saves across devices (requires signing with a paid developer account) |
+| Entertainment mode (experimental) | Over-the-shoulder and first-person camera: drag the right half to look around, with arrows for off-screen monsters and a facing pointer on the map ([details](docs/over-the-shoulder-camera.md)) |
 
 You can toggle most features one by one in game under Options → Custom.
 
