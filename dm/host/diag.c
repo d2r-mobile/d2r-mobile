@@ -610,6 +610,7 @@ void inflate_bench_maybe(void) {
 // 5 unit tables (128 buckets, next=+0x158) + global seed G+0x1a8, merged in stable ascending (type, id) order into each cell's FNV-1a 64. Unreadable pointers follow the ground-truth Reader semantics (failed read = None).
 // One JSON line per tick (fields in the same order and with the same separators as swtick.py's json.dumps); each tick number is taken only once, a gap reports a failure; exits normally once DM_TICKS_N ticks are recorded. When off, no callback is attached to the observation gate.
 static int tk_rd(uint64_t a, void *buf, size_t n);
+static void cam_threats_tick(uint64_t G, uint64_t pl);
 static _Atomic uint64_t g_player_path;   // 本地玩家的路径头（状态泵每拍更新） | path head of the local player (updated by the state pump every tick)
 // 本地玩家的逻辑位置（16.16 定点，格）：给图形层的连拍逐帧记一份，好和画面位移对照。读不到返回 0
 // Logical position of the local player (16.16 fixed point, tiles): the graphics layer's burst capture records one per frame so it can be compared with on-screen displacement. Returns 0 when it cannot be read
@@ -1014,6 +1015,7 @@ static void hud_tick(uint64_t G) {        // 每拍：受控玩家等级 / 本�
     { void dm_cloudmerge_srv_tick(uint8_t *, uint64_t, uint64_t); if (main) DM_PROF(1, "s.cloudmerge", dm_cloudmerge_srv_tick((uint8_t *)main->base, G, player)); }   // iCloud 收件箱局内并回（dm_cloudmerge.c）；不在局内 player 为 0   // 百宝囊收 / 放、存放的系统提示（dm_pouch.c）；不在局内 player 为 0   // 编年史仓库存取（dm_vault.c）；同上 | iCloud inbox in-game merge (dm_cloudmerge.c); player is 0 when not in game   // System notices for pouch take / put and deposit (dm_pouch.c); player is 0 when not in game   // Chronicle stash take / store (dm_vault.c); same as above
     if (main && player) DM_PROF(1, "s.kills", dm_kills_tick(G, player, (uint8_t *)main->base)); dm_ipf_frame(1);   // 刷怪积分牌（dm_kills.c）：在首领连战之后，连战本关的首领它已记好 id | Kill board (dm_kills.c): runs after boss rush, which has already recorded the id of the boss of the current boss rush stage
     cube_diag_tick(G, player);   // 合成读数 | Transmute readout
+    cam_threats_tick(G, player);
     if (main && player) seek_tp_step(G, player, main);
     if (main && h.valid) h.quest_unread = *(volatile uint8_t *)(main->base + 0x2d5ff58) != 0;   // 任务提示：收到任务更新包时游戏置 1（0x306cfc），原版只在点 HUD 任务提示按钮时清（0xbbe6ec） | Quest hint: the game sets it to 1 when a quest update packet arrives (0x306cfc); the original game only clears it when the HUD quest hint button is tapped (0xbbe6ec)
     dm_hud_info ha = h, hb = g_hud; ha.x = ha.y = hb.x = hb.y = 0;   // 坐标每步都变，不算「变化」（否则走几步就把 200 行记满） | Coordinates change on every step and do not count as a "change" (otherwise a few steps would fill up the 200 lines)
@@ -1174,6 +1176,72 @@ static FILE *g_c2sfp;
 static struct c2s_ent { uint32_t tick, unit, len; int has_unit, sys; uint8_t *pkt; } *g_rp; static size_t g_nrp, g_irp;
 static uint64_t g_lastG; static uint32_t g_sysclient; static int g_sysclient_set; static unsigned g_sysdrop;   // 最近一次拍入口的 G；系统类消息的客户端号（取宿主自己的加入消息） | G of the most recent tick entry; client number for system-class messages (taken from the host's own join message)
 static int64_t g_rplast = -1; static unsigned g_rpdrop;
+// 越肩镜头（dm_cam.c dm_cam_attack）：放技能的命令包带着目标——对地点（0x05 / 0x08 / 0x0c / 0x0f：x、y 各 2 字节，子格；落点附近的活怪见下）或对单位
+// （0x06 / 0x07 / 0x09 / 0x0a / 0x0d / 0x0e / 0x10 / 0x11：类型、单位号各 4 字节；只认玩家 0 与怪 1，它们的路径 +0x38 → +0 / +4 是 16.16 定点子格坐标）。
+// 把玩家到目标的方向交给镜头，原地放远程技能时镜头也转去看目标。只读服务端单位表，镜头没开时什么都不做
+// Over-the-shoulder camera (dm_cam.c dm_cam_attack): skill cast commands carry their target -- a location (0x05 / 0x08 / 0x0c / 0x0f: x, y, 2 bytes each,
+// sub-cells) or a unit (0x06 / 0x07 / 0x09 / 0x0a / 0x0d / 0x0e / 0x10 / 0x11: type and unit id, 4 bytes each; only players 0 and monsters 1, whose path
+// +0x38 -> +0 / +4 holds 16.16 fixed-point sub-cell coordinates). The direction from the player to the target goes to the camera, so a ranged skill cast in
+// place also turns the camera towards the target. Reads the server unit tables only, and does nothing while the camera is off
+static void cam_c2s(uint64_t G, uint64_t pl, const uint8_t *b, uint32_t n) {
+    int dm_cam_mode(void); void dm_cam_attack(float dx, float dz);
+    if (!n || !pl || dm_cam_mode() != 1) return;
+    uint8_t op = b[0]; float tx, ty;
+    if ((op == 0x05 || op == 0x08 || op == 0x0c || op == 0x0f) && n >= 5) {
+        // 对地点：触屏点按的自动选怪在这一版发的是「对目标所在格放」（Redmi 实测：贴着僵尸时 0x05 落在僵尸那格，离人 0.7 格；没有怪时落在脚下，同样 0.7 格），
+        // 光看距离分不出来。所以在那一格 2 格内找一只活着的怪，朝它的真实位置转；找不到 = 空放 / 对自己放，不转
+        // A location: touch auto-targeting in this build casts "at the target's cell" (measured on the Redmi: next to a zombie, 0x05 landed on the zombie's
+        // cell, 0.7 cells from the player; with no monster it landed at the feet, also 0.7 cells away), so distance alone cannot tell them apart. Look for a
+        // living monster within 2 cells of that cell and turn towards its real position; none = an empty cast or a cast on oneself, no turn
+        float lx = (float)(b[1] | b[2] << 8), ly = (float)(b[3] | b[4] << 8), best = 4; uint64_t u = 0; int found = 0;
+        for (int bk = 0; bk < 128; bk++) if (tk_rd(G + 0x2230 + 1 * 0x400 + 8 * bk, &u, 8)) for (int k = 0; u && k < 4096; k++) {
+            uint32_t mode = 0; uint64_t tp = 0; uint32_t xy[2];
+            if (tk_rd(u + 0xC, &mode, 4) && mode != 0 && mode != 12 && tk_rd(u + 0x38, &tp, 8) && tp && tk_rd(tp, xy, 8)) {
+                float mx = xy[0] / 65536.0f, my = xy[1] / 65536.0f, d2 = (mx - lx) * (mx - lx) + (my - ly) * (my - ly);
+                if (d2 < best) { best = d2; tx = mx; ty = my; found = 1; } }
+            if (!tk_rd(u + 0x158, &u, 8)) break; }
+        if (!found) return;
+    }
+    else if ((op == 0x06 || op == 0x07 || op == 0x09 || op == 0x0a || op == 0x0d || op == 0x0e || op == 0x10 || op == 0x11) && n >= 9) {
+        uint32_t type = b[1] | b[2] << 8 | b[3] << 16 | (uint32_t)b[4] << 24, id = b[5] | b[6] << 8 | b[7] << 16 | (uint32_t)b[8] << 24; if (type > 1) return;
+        uint64_t u = 0, hit = 0;
+        for (int bk = 0; bk < 128 && !hit; bk++) if (tk_rd(G + 0x2230 + type * 0x400 + 8 * bk, &u, 8)) for (int k = 0; u && k < 4096; k++) { uint32_t i2 = 0; if (tk_rd(u + 8, &i2, 4) && i2 == id) { hit = u; break; } if (!tk_rd(u + 0x158, &u, 8)) break; }
+        uint64_t tp = 0; uint32_t xy[2]; if (!hit || !tk_rd(hit + 0x38, &tp, 8) || !tp || !tk_rd(tp, xy, 8)) return;
+        tx = xy[0] / 65536.0f; ty = xy[1] / 65536.0f;
+    } else return;
+    uint64_t pp = 0; uint32_t pxy[2]; if (!tk_rd(pl + 0x38, &pp, 8) || !pp || !tk_rd(pp, pxy, 8)) return;
+    dm_cam_attack(tx - pxy[0] / 65536.0f, ty - pxy[1] / 65536.0f);
+}
+// 越肩镜头的怪物指示（dm_cam.c dm_cam_threats）：透视画面只看得见前方，怪从画面外很快贴上脸（维护者试玩）。每拍从服务端怪物表取玩家
+// DM_CAM_THREAT_RANGE（缺省 30）格内活着的怪（模式不是 0 死亡中 / 12 已死），去掉佣兵（类号 271 / 338 / 359 / 560 / 561），带上配色档（hle_target.c dm_threat_tier：普通 / 冠军 / 独特 / 首领）交给镜头；城里不取。
+// 玩家自己的召唤物（骷髅、魔像、狼、复活的怪等）不算：客户端宠物链表 main+0x2d33528（每项 +8 单位号、+0xc 属主号、+0x30 下一项，同 dm_actions.c
+// 喂佣兵处）里属主 = 玩家的单位号，扫怪时跳过；别人的召唤物照算
+// Monster indicators of the over-the-shoulder camera (dm_cam.c dm_cam_threats): the perspective picture only shows what is ahead, and monsters reach the
+// character's face from outside the picture fast (the maintainer's play test). Every tick, take the living monsters (mode neither 0 dying nor 12 dead)
+// within DM_CAM_THREAT_RANGE (default 30) cells of the player from the server monster table, drop mercenaries (classes 271 / 338 / 359 / 560 / 561), and
+// hand them with their tier to the camera; nothing in town. The player's own summons (skeletons, golems, wolves, revived
+// monsters and so on) do not count: the unit ids owned by the player in the client pet list main+0x2d33528 (each entry +8 unit id, +0xc owner id, +0x30
+// next, as at the mercenary feeding in dm_actions.c) are skipped while scanning; other players' summons still count
+static void cam_threats_tick(uint64_t G, uint64_t pl) {
+    int dm_cam_mode(void); void dm_cam_set_threats(const float *xy, const int *tier, int n); int dm_threat_tier(uint64_t unit);
+    if (dm_cam_mode() <= 0 || !pl) return;   // 越肩与第一人称都收（原先只认越肩，第一人称下一个也没有） | both over-the-shoulder and first person (it used to take mode 1 only, so first person had none)
+    static float range = -1; if (range < 0) { const char *e = getenv("DM_CAM_THREAT_RANGE"); range = e ? (float)atof(e) : 30; }
+    dm_hud_info h; dm_hud_get(&h); if (h.valid && dm_hud_area_is_town(h.area)) { dm_cam_set_threats(NULL, NULL, 0); return; }
+    uint64_t pp = 0; uint32_t pxy[2]; if (!tk_rd(pl + 0x38, &pp, 8) || !pp || !tk_rd(pp, pxy, 8)) return;
+    float px = pxy[0] / 65536.0f, py = pxy[1] / 65536.0f, xy[64]; int tier[32], n = 0; uint64_t u = 0;
+    uint32_t me = 0, pet[64]; int np = 0; module_t *m = main_mod(); uint64_t e = 0;   // 玩家自己的召唤物 | the player's own summons
+    if (m && tk_rd(pl + 8, &me, 4) && tk_rd((uint64_t)m->base + 0x2d33528, &e, 8))
+        for (int k = 0; e && k < 256 && np < 64; k++) { uint32_t id = 0, owner = 0; if (tk_rd(e + 8, &id, 4) && tk_rd(e + 0xc, &owner, 4) && owner == me) pet[np++] = id; if (!tk_rd(e + 0x30, &e, 8)) break; }
+    for (int bk = 0; bk < 128 && n < 32; bk++) if (tk_rd(G + 0x2230 + 1 * 0x400 + 8 * bk, &u, 8)) for (int k = 0; u && k < 4096 && n < 32; k++) {
+        uint32_t cls = 0, mode = 0, mxy[2]; uint64_t tp = 0;
+        uint32_t uid = 0; int mine = 0; if (np && tk_rd(u + 8, &uid, 4)) for (int k = 0; k < np && !mine; k++) mine = pet[k] == uid;
+        if (!mine && tk_rd(u + 4, &cls, 4) && tk_rd(u + 0xC, &mode, 4) && mode != 0 && mode != 12 && cls != 271 && cls != 338 && cls != 359 && cls != 560 && cls != 561
+            && tk_rd(u + 0x38, &tp, 8) && tp && tk_rd(tp, mxy, 8)) {
+            float mx = mxy[0] / 65536.0f, my = mxy[1] / 65536.0f, dx = mx - px, dy = my - py;
+            if (dx * dx + dy * dy <= range * range) { int r = dm_threat_tier(u); xy[2 * n] = mx; xy[2 * n + 1] = my; tier[n++] = r < 0 ? 0 : r; } }
+        if (!tk_rd(u + 0x158, &u, 8)) break; }
+    dm_cam_set_threats(xy, tier, n);
+}
 static void c2s_obs(const uint64_t *regs) {
     uint32_t tick = 0, uid = 0, len = (uint32_t)regs[3]; int hu = 0;
     tk_rd(regs[0] + 0x170, &tick, 4);
@@ -1181,6 +1249,7 @@ static void c2s_obs(const uint64_t *regs) {
     uint8_t b[512]; uint32_t n = len < 512 ? len : 512; if (!tk_rd(regs[2], b, n)) n = 0;
     if (n >= 1 && b[0] == 0x20) cube_diag_req(regs[0], regs[1], b, n);   // 合成读数 | Transmute readout
     dm_bossrush_c2s(regs[0], regs[1], b, n);
+    cam_c2s(regs[0], regs[1], b, n);
     { void dm_rift_c2s(uint64_t, const uint8_t *, uint32_t); dm_rift_c2s(regs[0], b, n); }
     { void dm_pouch_c2s(uint64_t *); dm_pouch_c2s((uint64_t *)(uintptr_t)regs); }   // 珍宝匣：符文 / 宝石 / 材料拖进共享页时改道进高级仓库（dm_pouch.c；会换掉 x2 / x3 指向的包） | Trove: runes / gems / materials dragged into the shared tab are rerouted into the advanced stash tabs (dm_pouch.c; replaces the packet x2 / x3 point to)
     { void dm_shoprefresh_c2s(uint64_t, uint64_t, const uint8_t *, uint32_t); dm_shoprefresh_c2s(regs[0], regs[1], b, n); }   // 商人交易页「刷新货架」（dm_shoprefresh.c）   // 首领连战：玩家点了连战的门（门只是外观，换关由 dm_bossrush.c 做） | Vendor trade page 「刷新货架」(Refresh Stock) (dm_shoprefresh.c)   // Boss rush: the player tapped the boss rush door (the door is appearance only; the level change is done by dm_bossrush.c)

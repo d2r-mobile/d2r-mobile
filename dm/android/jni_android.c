@@ -323,6 +323,31 @@ static ANativeWindow *g_win;
 JNIEXPORT jlong JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeSubmittedFrames(JNIEnv *env,jclass cls) {
     (void)env;(void)cls;return (jlong)dm_android_vk_submitted_frames();
 }
+// 越肩镜头的体感转向（dm/host/dm_cam.c、CamSensor.java）：开哪种传感器（0 = 不开），以及每次转动的弧度（正 = 往画面右边转）
+// Sensor steering of the over-the-shoulder camera (dm/host/dm_cam.c, CamSensor.java): which sensor to listen to (0 = none), and each turn in radians
+// (positive = towards the right of the picture)
+int dm_cam_sensor_mode(void); void dm_cam_turn(float rad); int dm_cam_mode(void); int dm_cam_on(void);
+JNIEXPORT jint JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeCamSensor(JNIEnv *env, jclass cls) { (void)env; (void)cls; return dm_cam_sensor_mode(); }
+// 镜头档（DM_CAM，nativeStart 读进环境之后才准）与「此刻在局里、镜头在出图」（CamButtons 据此显示左右转按钮）
+// The camera mode (DM_CAM, valid only after nativeStart has loaded the environment) and "in a game right now with the camera drawing" (CamButtons shows the
+// turn buttons by it)
+JNIEXPORT jint JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeCamMode(JNIEnv *env, jclass cls) { (void)env; (void)cls; return dm_cam_mode(); }
+JNIEXPORT jint JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeCamActive(JNIEnv *env, jclass cls) { (void)env; (void)cls; return dm_cam_on(); }
+// 画面外的怪（dm_cam.c dm_cam_threats）：每条 5 个数（屏幕 x、y、箭头方向、紧迫度、档位），返回条数；CamThreats 每帧取一次
+// Monsters off the picture (dm_cam.c dm_cam_threats): 5 numbers each (screen x, y, arrow direction, urgency, tier), returns the count; CamThreats takes them
+// once per frame
+int dm_cam_threats(float *out, int max);
+JNIEXPORT jint JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeCamThreats(JNIEnv *env, jclass cls, jfloatArray out) {
+    (void)cls; jsize len = (*env)->GetArrayLength(env, out); float buf[16 * 5]; int max = len / 5 < 16 ? len / 5 : 16;
+    int n = dm_cam_threats(buf, max); if (n > 0) (*env)->SetFloatArrayRegion(env, out, 0, n * 5, buf); return n; }
+// 小地图上的朝向箭头（dm_cam.c dm_cam_map_heading）：4 个数（中心 x、y、箭头方向、小地图框高），返回 1 = 该画；CamThreats 每帧取一次
+// Heading arrow on the minimap (dm_cam.c dm_cam_map_heading): 4 numbers (centre x, y, arrow direction, minimap frame height), returns 1 = draw it;
+// CamThreats takes it once per frame
+int dm_cam_map_heading(float out[4]);
+JNIEXPORT jint JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeCamHeading(JNIEnv *env, jclass cls, jfloatArray out) {
+    (void)cls; float buf[4]; if ((*env)->GetArrayLength(env, out) < 4 || !dm_cam_map_heading(buf)) return 0;
+    (*env)->SetFloatArrayRegion(env, out, 0, 4, buf); return 1; }
+JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeCamTurn(JNIEnv *env, jclass cls, jfloat rad) { (void)env; (void)cls; dm_cam_turn(rad); }
 JNIEXPORT void JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeRefresh(JNIEnv *env, jclass cls, jfloat hz) {
     (void)env; (void)cls;
     front_android_set_refresh(hz);
