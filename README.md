@@ -333,7 +333,7 @@ Build the APK from source, then prepare your own game content on a computer. Imp
 3. Over USB, copy the `android` folder it made and the game resource folder `data` to `Download/S2X/D2R Mobile/` on the phone.
 4. Build and install the APK using the [Android build guide](dm/android/README.md), open it and allow "All files access". The app imports your pack and starts the game.
 
-Before starting the game, the Android startup screen can export saves to a ZIP or restore an exported backup. Restore keeps a local copy of the previous saves. See [save backups](dm/android/ANDROID_CUSTOMIZATIONS.md#startup-save-backups--启动页存档备份) for details; device validation is pending.
+Before starting the game, the Android startup screen can export saves to a ZIP or restore an exported backup. Restore keeps a local ZIP backup of the previous saves. See [save backups](dm/android/ANDROID_CUSTOMIZATIONS.md#startup-save-backups--启动页存档备份) for details; device validation is pending.
 
 The source must be from the same release as the APK; for a new release, replace both the APK and the import pack, and your saves stay. To build the APK yourself from source, see [dm/android/README.md](dm/android/README.md).
 

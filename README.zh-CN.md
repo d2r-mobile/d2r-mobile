@@ -216,7 +216,7 @@ flowchart LR
 
 **现在怎么用**：按 [Android 构建说明](dm/android/README.zh-CN.md)生成 APK，再用 `python3 dm/tools/d2rm_android.py <Update 目录> <输出目录>` 准备自己的游戏内容。将生成的 `android` 文件夹和游戏资源 `data` 文件夹拷到手机的 `Download/S2X/D2R Mobile/`，打开 App 导入。完整步骤见 [安装指南](docs/ANDROID.zh-CN.md)。
 
-Android 启动页可导出存档 ZIP，也可恢复已导出的备份；导入前会先备份当前存档。详见[存档备份](dm/android/ANDROID_CUSTOMIZATIONS.md#startup-save-backups--启动页存档备份)，文件选择器与存档恢复待实机验证。
+Android 启动页可导出存档 ZIP，也可恢复已导出的备份；导入前会先在本机备份当前存档。详见[存档备份](dm/android/ANDROID_CUSTOMIZATIONS.md#startup-save-backups--启动页存档备份)，文件选择器与存档恢复待实机验证。
 
 开发进度、每一轮的实测记录与待办在 [docs/ANDROID_COLLABORATION.zh-CN.md](docs/ANDROID_COLLABORATION.zh-CN.md) 和 [docs/android-notes/](docs/android-notes/)。鸿蒙版见下一节。
 
