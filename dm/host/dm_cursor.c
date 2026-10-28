@@ -1959,6 +1959,8 @@ int dm_ui_map_is_full(void) { return atomic_load(&g_map_full_now); }
 static _Atomic int g_map_hidden_req = -1, g_map_hidden_now;
 void dm_ui_map_hidden(int hidden) { atomic_store(&g_map_hidden_req, !!hidden); }
 int dm_ui_map_is_hidden(void) { return atomic_load(&g_map_hidden_now); }
+// Explicit hide requests remain in effect during automatic map restoration.
+static int ui_map_auto_restore_allowed(void) { return !atomic_load(&g_map_hidden_now) && atomic_load(&g_map_hidden_req) != 1; }
 static void ui_map_visibility_pump(module_t *m, uint64_t root) {
     static uint64_t owner;
     int dm_padmode_current(void), dm_padmode_busy(void);
@@ -2057,7 +2059,7 @@ static void ui_map_pump(module_t *m, uint64_t root) {
         static int n; if (n++ < 40) LOG("地图：→ %s（%s；配置值 %d 不动）", want ? "全屏" : small == 1 ? "微缩放左" : "微缩放右", hold ? "面板开着先让开" : g_map_want ? "玩家要全屏" : "玩家要小地图", cfg); }
     atomic_store(&g_map_full_now, mini == 0);
     { void dm_ui_key_pulse_alone(uint64_t mask, int frames); uint64_t am = ui_panel(root, "AutoMap"); static uint64_t sent;
-      if (am && *(uint64_t *)am == (uint64_t)m->base + 0x20c58a0 && !*(uint8_t *)(am + 0x50) && *(volatile int32_t *)(m->base + 0x2d485b4) && hi.valid && dm_uiscreen_ingame() && !atomic_load(&g_map_movie)) {
+      if (ui_map_auto_restore_allowed() && am && *(uint64_t *)am == (uint64_t)m->base + 0x20c58a0 && !*(uint8_t *)(am + 0x50) && *(volatile int32_t *)(m->base + 0x2d485b4) && hi.valid && dm_uiscreen_ingame() && !atomic_load(&g_map_movie)) {
           uint64_t fr = dm_guest_frame(); if (!sent || fr >= sent + 120) { sent = fr; dm_ui_key_pulse_alone(DM_BTN_MINUS, 4); LOG("地图：局内小地图关着（过场关的）、选项「进局自动开启地图」开着 → 替玩家按一下地图键（−）"); } } }
 }
 // ---------- 右上角小地图的位置：触摸层把它当点击区（点一下 = 地图开关键），矩形取游戏自己的 AutoMap 面板，不写死 ----------
@@ -2776,7 +2778,7 @@ static void ui_panel_state_pump(uint64_t root) {   // 游戏主线程，每帧 |
 //   触屏专属（带 if (tm)）：请求全部来自触摸手势——点世界 / 佣兵头像、长按取物、双击使用、点货买、拖放、点技能绑定、副手组页签、开佣兵页。
 //     手柄模式与切换事务进行中不跑；在途的请求由切换清理作废（dm_ui_cache_mode_leave）。
 //   两种模式都跑：ui_target_pump（鉴定目标，含手柄按住 A）、ui_item_pump（命中查询，宿主自己也问）、ui_ptr_pump（指针事件，宿主合成的点击也走）、
-//     ui_safe_pump / ui_lift_pump / ui_note_dock_pump / ui_trove_tabs_pump / ui_minimap_pump / ui_map_pump / ui_map_geom_pump / ui_map_center（屏幕几何，与输入方式无关）、ui_boss_pct_pump、ui_npcdlg_pump、
+//     ui_safe_pump / ui_lift_pump / ui_note_dock_pump / ui_trove_tabs_pump / ui_minimap_pump / ui_map_pump / ui_map_visibility_pump / ui_map_title_pump / ui_map_geom_pump / ui_map_center（屏幕几何，与输入方式无关）、ui_boss_pct_pump、ui_npcdlg_pump、
 //     ui_widestash_pump、mv_audit_pump、ui_pages_pump（含手柄 L / R 翻页）、ui_watch_pump、ui_panel_heal、ui_panel_state_pump、rs_pump（一键重开，在前端泵里调）
 // 物品说明框停靠（观测门 OBS_TOOLTIP，挂在说明框面板的「提交一条说明」函数入口 main+0xb0d560(面板, 文字, 目标矩形左上 x2, 目标矩形宽高 x3, 样式, 文字 2)）。
 // 说明框是即时式的：悬停着的控件每帧重新提交、画完就清，宿主在自己的时机读面板里的记录数一直是 0，所以只能在提交那一刻改输入。
@@ -2793,7 +2795,7 @@ static void ui_panel_state_pump(uint64_t root) {   // 游戏主线程，每帧 |
 //   Touch only (with if (tm)): requests all come from touch gestures: tapping the world / mercenary portrait, long-press to pick up, double-tap to use, tap to buy, drag and drop, tapping to bind a skill, the off-hand set tab, opening the mercenary page.
 //     Not run in gamepad mode or while a switch transaction is in progress; requests in flight are cancelled by the switch cleanup (dm_ui_cache_mode_leave).
 //   Run in both modes: ui_target_pump (identify target, including holding A on the gamepad), ui_item_pump (hit queries, the host asks too), ui_ptr_pump (pointer events, host-synthesized clicks go through it as well),
-//     ui_safe_pump / ui_lift_pump / ui_note_dock_pump / ui_trove_tabs_pump / ui_minimap_pump / ui_map_pump / ui_map_geom_pump / ui_map_center (screen geometry, independent of input method), ui_boss_pct_pump, ui_npcdlg_pump,
+//     ui_safe_pump / ui_lift_pump / ui_note_dock_pump / ui_trove_tabs_pump / ui_minimap_pump / ui_map_pump / ui_map_visibility_pump / ui_map_title_pump / ui_map_geom_pump / ui_map_center (screen geometry, independent of input method), ui_boss_pct_pump, ui_npcdlg_pump,
 //     ui_widestash_pump, mv_audit_pump, ui_pages_pump (including L / R page turning on the gamepad), ui_watch_pump, ui_panel_heal, ui_panel_state_pump, rs_pump (one-tap restart, called from the front end pump)
 // Item description box docking (observation gate OBS_TOOLTIP, on the entry of the description panel's "submit one description" function main+0xb0d560(panel, text, target rect top-left x2, target rect size x3, style, text 2)).
 // The description box is immediate-mode: the hovered widget resubmits it every frame and it is cleared after drawing, so when the host reads the panel at its own time the record count is always 0; the input can only be changed at the moment of submission.
