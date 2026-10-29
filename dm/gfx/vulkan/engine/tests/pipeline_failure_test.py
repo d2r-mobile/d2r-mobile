@@ -113,8 +113,12 @@ void pass_prof_complete(int,int) {}
 namespace bright {void after_dispatch(Commands &) {}}
 struct {int dispatches=0;} perf,stats;
 '''
+# Preserve the renderer's compact layout without treating GCC's layout warning
+# as a failure of these runtime checks. Keep other warnings fatal.
+harness += '\n#pragma GCC diagnostic push\n#pragma GCC diagnostic ignored "-Wmisleading-indentation"\n'
 for marker in ("namespace pipeguard{\nstd::mutex", "void pipeline_lookup(", "void dispatch(const p_dispatch &p)"):
     harness += block(source, marker) + "\n"
+harness += '\n#pragma GCC diagnostic pop\n'
 harness += r'''
 int main(int argc,char **argv) {
     assert(argc==2); cfg.shader_directory=std::string(argv[1])+"/shaders";
