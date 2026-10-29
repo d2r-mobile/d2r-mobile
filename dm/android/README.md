@@ -87,10 +87,31 @@ driver and loader. This provides a separate compiler path for Adreno system
 drivers that reject compute shaders; results still need checking on each device.
 Use the same signing key when updating an installed APK.
 
-New import packs inline compute helpers containing subgroup operations by default
-to avoid a compiler crash seen on Adreno 750. Rebuild and reimport the pack as
-well as the APK; an APK update alone does not replace old shader bundles.
-`DM_VK_INLINE_CS=0` restores the original module shape for diagnosis.
+The current APK inlines shader helpers containing subgroup operations at load
+time on Adreno 750–799. Import packs keep the same shader form for every device.
+The startup log reports `shaders with subgroup helpers are inlined at load=1`
+when this path is active. The `files/dm/gfx-inline` marker explicitly overrides
+it (`1` enables it, `0` disables it). Updating this runtime fix does not require
+rebuilding the shader pack; regenerate the import pack when the product or
+overlay checks require it.
+
+Adreno 740–799 also default the quad-derivative and warp32 rewrites off; explicit
+marker files can override those defaults. A driver rejecting a compute pipeline
+is a separate failure: the renderer records that pipeline in
+`files/dm/gfx-pipe-skip` and avoids its dispatch. This can leave an effect missing;
+it does not make the rejected shader equivalent or prove device compatibility.
+Helper inlining has not resolved every older Adreno 650 system-driver failure.
+Turnip provides an alternative compiler when included in the APK.
+
+For a remaining crash, attach the full `files/dm/boot.log` and logcat from launch
+through the first error. Include the device's reported GPU/driver, APK version
+and selected driver. Current native crash records include library-relative
+PC/LR addresses; absolute addresses or `SIGSEGV addr=0x48` alone do not identify
+the faulting library. If only an older log is available, its memory map and the
+matching unstripped `libdm.so` are needed to locate host addresses. A
+`s.reset_result failed: 2` report from an older APK has a different cause: a stale
+background fence timeout, recovered after a successful foreground wait in the
+current renderer. A real timeout or device loss still fails.
 
 On Linux or WSL, `dm/android/docker/` runs the same build in a container with these
 versions pinned, so no Windows-side Python, NDK or CMake is needed:
@@ -146,9 +167,9 @@ locations, the c1 bytes, then the SPIR-V (`xbg_shader_header` in
   shader to SPIR-V for Vulkan, the bindings are renumbered for the single
   descriptor set (original number × 6 + stage number), the capabilities for
   reading and writing storage images of unknown format are added, unused
-  capabilities are trimmed, compute subgroup helpers are inlined, and each final
-  module is validated. `<key>.vk.json` is exported, and the packing function of
-  `pack_game_shaders.py` writes the bundle.
+  capabilities are trimmed, and each final module is validated. Device-specific
+  helper inlining happens when the APK loads the shader. `<key>.vk.json` is
+  exported, and the packing function of `pack_game_shaders.py` writes the bundle.
 - **4 are the query kernels embedded in the main program** (`q_val0`,
   `q_val8`, `q_dlt0`, `q_dlt8`; Mac and iOS use the MSL versions in
   `dm/gfx/nvn/nvn_builtin.h`). They are hand-written, so they can be built from
