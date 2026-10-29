@@ -56,11 +56,10 @@ if [[ "$mode" == host ]]; then
     fi
     if [[ "$status" == pass ]]; then
         (
-            set -e
             c++ -std=c++17 -Wall -Wextra -Werror \
-                "$root/dm/gfx/vulkan/engine/tests/adreno_policy_test.cpp" -o "$build/adreno-policy-test"
-            "$build/adreno-policy-test"
-            python3 "$root/dm/gfx/vulkan/engine/tests/pool_reset_timeout_test.py"
+                "$root/dm/gfx/vulkan/engine/tests/adreno_policy_test.cpp" -o "$build/adreno-policy-test" &&
+            "$build/adreno-policy-test" &&
+            python3 "$root/dm/gfx/vulkan/engine/tests/pool_reset_timeout_test.py" &&
             python3 "$root/dm/gfx/vulkan/engine/tests/pipeline_failure_test.py"
         ) >>"$log" 2>&1 || status=test_failed
     fi
