@@ -263,6 +263,7 @@ static void on_crash(int sig, siginfo_t *si, void *uc_) {
     // Second part: dladdr symbol names and every thread's state, watched by a 3-second alarm (crash_deadman)
     g_crash_sig = sig;
     struct sigaction da = {.sa_handler = crash_deadman}; sigemptyset(&da.sa_mask); sigaction(SIGALRM, &da, 0); alarm(3);
+    if (sig == SIGALRM) { sigset_t set; sigemptyset(&set); sigaddset(&set, SIGALRM); sigprocmask(SIG_UNBLOCK, &set, NULL); }
     fprintf(stderr, "[dm] CRASH 符号 | symbols:");
     off("addr", (uint64_t)si->si_addr); off("pc", DM_UC_PC(uc)); off("lr", DM_UC_LR(uc));
     fprintf(stderr, "\n");
