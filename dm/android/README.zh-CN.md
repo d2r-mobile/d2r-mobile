@@ -53,7 +53,11 @@ bash dm/android/tools/shell_apk.sh
 
 启动页选择 **Turnip**。未包含驱动或加载库的 APK 会禁用此选项。对于拒绝计算着色器的 Adreno 系统驱动，这提供了另一条编译路径，具体机型仍需实测。覆盖升级时使用原有签名。
 
-新导入包默认内联包含子组指令的计算辅助函数，规避 Adreno 750 上出现的编译器崩溃。APK 和导入包都要重建、重新导入；只更新 APK 不会替换旧着色器包。`DM_VK_INLINE_CS=0` 可恢复原模块形式，供排查使用。
+当前 APK 在 Adreno 750–799 上载入着色器时内联包含子组指令的辅助函数，导入包为各机型保留相同的着色器形式。生效时启动日志包含 `shaders with subgroup helpers are inlined at load=1`。`files/dm/gfx-inline` 标记文件可显式覆盖该策略（`1` 开、`0` 关）。更新这项运行时修复不要求重新生成着色器包；产物代号或覆盖层校验要求更新时，仍需重新生成导入包。
+
+Adreno 740–799 还会默认关闭 quad-derivative 和 warp32 改写，显式标记文件可覆盖默认值。驱动拒绝计算管线是另一类问题：引擎会把该管线记入 `files/dm/gfx-pipe-skip`，避免继续派发。这样可能缺失一项画面效果，不代表被拒绝的着色器已等价改写，也不代表机型已经验证通过。内联尚未解决所有旧 Adreno 650 系统驱动的编译失败；带 Turnip 的 APK 可使用另一套编译器。
+
+若仍闪退，请附从启动到首次错误的完整 `files/dm/boot.log` 和 logcat，并记录设备实际报告的 GPU／驱动、APK 版本和所选驱动。当前原生崩溃日志会记录 PC／LR 所属库及库内偏移；仅凭绝对地址或 `SIGSEGV addr=0x48` 不能确认崩溃在哪个库。旧日志需要当次内存映射和匹配的未剥离符号 `libdm.so` 才能定位宿主地址。旧 APK 的 `s.reset_result failed: 2` 属于另一条路径：后台等待曾超时，但前台等待成功后仍使用了旧结果；当前引擎会在前台等待成功后完成复位，实际超时和设备丢失仍会报错。
 
 在 Linux 或 WSL 上，可用 `dm/android/docker/` 在容器里跑同一构建，上述版本均已钉死，不需要在 Windows 侧装 Python、NDK 或 CMake：
 

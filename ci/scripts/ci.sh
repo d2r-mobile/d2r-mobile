@@ -54,6 +54,16 @@ if [[ "$mode" == host ]]; then
     if [[ "$status" == pass ]]; then
         ctest --test-dir "$build" --output-on-failure >"$log" 2>&1 || status=test_failed
     fi
+    if [[ "$status" == pass ]]; then
+        (
+            set -e
+            c++ -std=c++17 -Wall -Wextra -Werror \
+                "$root/dm/gfx/vulkan/engine/tests/adreno_policy_test.cpp" -o "$build/adreno-policy-test"
+            "$build/adreno-policy-test"
+            python3 "$root/dm/gfx/vulkan/engine/tests/pool_reset_timeout_test.py"
+            python3 "$root/dm/gfx/vulkan/engine/tests/pipeline_failure_test.py"
+        ) >>"$log" 2>&1 || status=test_failed
+    fi
     test_status=$status
 else
     ndk=${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}
