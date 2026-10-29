@@ -321,7 +321,7 @@ The interface is the original's gamepad interface. Keyboard: Space confirms, Esc
 
 ### Android
 
-Build the APK from source, then prepare your own game content on a computer. Import-pack generation has been verified on a Mac. The full steps, the tools to install and what to do when something goes wrong are in [docs/ANDROID.md](docs/ANDROID.md).
+Build the APK from source, then prepare your own game content on a computer. Import-pack generation has been verified on a Mac. For build steps, required tools and troubleshooting, see [docs/ANDROID.md](docs/ANDROID.md).
 
 1. Prepare your game files, the same as for Apple devices ([docs/GAME_FILES.md](docs/GAME_FILES.md)).
 2. Make the import pack on a computer:
