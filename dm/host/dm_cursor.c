@@ -2037,18 +2037,20 @@ static void ui_map_center(module_t *m, uint64_t root, int mini) {
 // the original map-opening path, which brings the area name back too (sending only PanelManager:OpenPanel AutoMap brought the lines back but not the area name at the top right, measured on the host).
 static _Atomic int g_map_movie;
 static void ui_map_pump(module_t *m, uint64_t root) {
-#if defined(__OHOS__)
-    // 鸿蒙的 UI 线程可能在选角面板加载时先请求收起地图；此时原版 AutoMap 尚未创建，回调会解引用空对象。
-    // 局外不调用地图回调，也不把旧请求带进下一局；游戏内的切换仍走原路径。
-    // The HarmonyOS UI thread can request a map reset while character select is loading, before the guest AutoMap exists.
-    // Discard out-of-game requests instead of calling the map callback or carrying them into the next game.
+    // 局外（前端各页、读取画面，按本帧界面判：有 HUD 且没有读取画面才算局内）一律不调原版地图切换 0x40f780：它经 0x411540 按当前关卡重建地图线条，
+    // 出局那几帧旧局的关卡数据已释放，读到的是垃圾指针。线上：一键重开回到前端、发出载入后的下一帧在 main+0x4117cc 崩（iOS 18.6，三次同址）。
+    // 不能拿 HUD 读数的 valid 当局内：它由服务端拍发布，出局后不再有拍，停在最后一次的 1。局外的切换请求也丢掉，不带进下一局。
+    // Outside a run (front-end pages, loading screen; judged from this frame's UI: in a run only with the HUD up and no loading screen), never call the
+    // original map switch 0x40f780: through 0x411540 it rebuilds the map lines from the current level, and in the frames after leaving a run the old
+    // level data is already freed, so it reads garbage pointers. Player report: quick restart crashed at main+0x4117cc on the frame after the load was
+    // sent from the front end (iOS 18.6, three times at the same address). The HUD readout's valid is not "in a run": it is published by the server
+    // tick, and with no ticks after leaving it stays at its last value 1. Out-of-run switch requests are dropped too, not carried into the next run.
     if (!dm_uiscreen_ingame()) {
         int pending = atomic_exchange(&g_map_req, -1);
         atomic_store(&g_map_full_now, 0);
-        if (pending >= 0) { static int n; if (n++ < 4) LOG("鸿蒙：局外地图切换请求已忽略（地图尚未就绪）"); }
+        if (pending >= 0) { static int n; if (n++ < 4) LOG("地图：局外的切换请求已丢掉（局外不调原版地图切换）"); }
         return;
     }
-#endif
     int cfg = *(volatile int32_t *)(m->base + 0x2d479f4), mini = *(volatile int32_t *)(m->base + 0x2d5c748);
     // 测试开关 DM_TEST_AUTOMAP=<帧>:<档>：到帧把配置改成这一档并调回调（当作玩家在选项页选了它）
     // Test switch DM_TEST_AUTOMAP=<frame>:<setting>: at that frame, change the config to this setting and call the callback (as if the player had picked it on the options page)
@@ -2067,7 +2069,7 @@ static void ui_map_pump(module_t *m, uint64_t root) {
         g_map_want = cfg == 0; { static int n; if (n++ < 8) LOG("地图：「透视地图尺寸」读到 %d → 触屏下%s", cfg, cfg == 0 ? "缺省全屏地图（点右上角那一块回小地图）" : "缺省小地图"); } g_map_cfg_seen = cfg; }
     if (r >= 0 && g_map_want != r) { g_map_want = r; LOG("地图：玩家点了 → 记住%s", r ? "全屏地图" : "小地图"); }
     int small = cfg == 1 ? 1 : 2, hold = atomic_load(&g_map_hold), want = g_map_want == 1 && !hold;   // 全屏档时小地图按微缩放右显示 | with the full-screen setting, the minimap is shown as minimap right
-    if (hi.valid && (mini == 0) != want) {   // 局内才切（局外原版地图面板还没建）；换区域后游戏按配置重建、开关面板，都在这里对回去 | switch only in a run (outside one the original map panel does not exist yet); after an area change the game rebuilds from the config, and panels open / close: both are put right here
+    if (hi.valid && (mini == 0) != want) {   // 局外已在函数开头返回；valid 只保证读得到玩家。换区域后游戏按配置重建、开关面板，都在这里对回去 | out of a run already returned at the top; valid only means the player is readable. After an area change the game rebuilds from the config, and panels open / close: both are put right here
         ((void (*)(int))(m->base + 0x40f780))(want ? 0 : small); mini = *(volatile int32_t *)(m->base + 0x2d5c748);
         static int n; if (n++ < 40) LOG("地图：→ %s（%s；配置值 %d 不动）", want ? "全屏" : small == 1 ? "微缩放左" : "微缩放右", hold ? "面板开着先让开" : g_map_want ? "玩家要全屏" : "玩家要小地图", cfg); }
     atomic_store(&g_map_full_now, mini == 0);

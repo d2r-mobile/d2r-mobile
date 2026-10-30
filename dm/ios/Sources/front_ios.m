@@ -441,7 +441,7 @@ static void restart_cover_hook(int on) { dispatch_async(dispatch_get_main_queue(
     int mode=dm_ui_map_geom(&cell); UIImage *im=[self mgImage:@"heading.png"];
     BOOL on=im && mode && !_navigation && !_info.hidden && dm_cam_heading(&fx,&fz,&sx,&sy) && (mode==2 || dm_ui_minimap_rect(mm));
     if(!_mhPtr) { _mhPtr=[CALayer layer]; _mhPtr.contentsGravity=kCAGravityResizeAspect; _mhPtr.hidden=YES;
-        // 光晕：原版浅金（地图名牌人名色 212,196,145），在花地图上也跳得出来（jhz：箭头不够明显、容易忽略） | glow: the original pale gold (map nameplate colour 212,196,145), so it stands out on a busy map (jhz: the arrow was too easy to miss)
+        // 光晕：原版浅金（地图名牌人名色 212,196,145），在花地图上也跳得出来（箭头不够明显、容易忽略） | glow: the original pale gold (map nameplate colour 212,196,145), so it stands out on a busy map (the arrow was too easy to miss)
         _mhPtr.shadowColor=[UIColor colorWithRed:212/255.0 green:196/255.0 blue:145/255.0 alpha:1].CGColor; _mhPtr.shadowOffset=CGSizeZero; _mhPtr.shadowRadius=4; _mhPtr.shadowOpacity=0.95;
         [_info.layer addSublayer:_mhPtr]; }
     [CATransaction begin]; [CATransaction setDisableActions:YES];
