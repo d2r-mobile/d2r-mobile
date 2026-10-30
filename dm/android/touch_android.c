@@ -211,7 +211,6 @@ static int direct_begin(const touch_event *e) {
         if (band<30) band=fminf(30,h*.4f);
         if (e->x>=r[0]*width && e->x<=r[2]*width && e->y>=r[1]*height && e->y<=r[1]*height+band) kind=2;
     }
-    if (!kind && target<0 && dm_ui_map_is_full() && !(e->x<tc.layout.joy_zone_r && e->y>=tc.layout.joy_zone_t)) kind=3;
     if (!kind) return 0;
     direct[e->slot]=(direct_gesture){kind,e->x,e->y,e->time,key}; return 1;
 }
@@ -287,7 +286,7 @@ void dm_android_touch_step(uint64_t guest_now, uint64_t *buttons, int32_t *lx, i
         if (e.phase == 0) latched[e.slot] = 0;
         if (e.phase == 0) {
             if (dm_tc_belt_outside(&tc,e.x,e.y)) { dm_belt_expand(0); continue; }
-            { int dm_cam_mode(void); tc.cam_on = dm_cam_mode(); }   /* 镜头实验：右半屏拖动看四周要知道档 | camera experiment: looking around on the right half needs the mode */
+            { int dm_cam_mode(void), dm_cam_style(void); tc.cam_on = dm_cam_mode(); tc.cam_orbit = dm_cam_style() == 1; }   /* 镜头实验：右半屏拖动看四周要知道档 | camera experiment: looking around on the right half needs the mode */
             dm_tc_begin_at(&tc,e.slot,e.x,e.y,e.time);
             if (!tc.navigation_mode && f->target == DM_TC_PORTAL) { dm_tc_cancel_finger(&tc,e.slot); dm_tp_request(); }
             if (tc.navigation_mode && tc.pointer_slot == e.slot) dm_tc_pointer_item(&tc,dm_ui_item_at_now(e.x/width,e.y/height));

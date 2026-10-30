@@ -333,6 +333,17 @@ JNIEXPORT jint JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeCamSensor(JNIEnv 
 // turn buttons by it)
 JNIEXPORT jint JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeCamMode(JNIEnv *env, jclass cls) { (void)env; (void)cls; return dm_cam_mode(); }
 JNIEXPORT jint JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeCamActive(JNIEnv *env, jclass cls) { (void)env; (void)cls; return dm_cam_on(); }
+// 越肩档的操作风格（dm_cam.c dm_cam_style）：1 = 原神式，转镜头靠右半屏拖动，CamButtons 不出左右转按钮
+// The over-the-shoulder control style (dm_cam.c dm_cam_style): 1 = Genshin style, the camera turns by dragging the right half, so CamButtons shows no turn
+// buttons
+int dm_cam_style(void);
+JNIEXPORT jint JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeCamStyle(JNIEnv *env, jclass cls) { (void)env; (void)cls; return dm_cam_style(); }
+// 瞄准环（dm_cam.c dm_cam_aim）：5 × 5 网格点（x、y，0..1），返回 25 = 正在瞄；CamThreats 每帧取一次
+// Aim ring (dm_cam.c dm_cam_aim): a 5 x 5 grid of points (x, y, 0..1), returns 25 = aiming; CamThreats takes it once per frame
+int dm_cam_aim(float out[50]);
+JNIEXPORT jint JNICALL Java_com_xiaoboluo_d2r_DmActivity_nativeCamAim(JNIEnv *env, jclass cls, jfloatArray out) {
+    (void)cls; float buf[50]; if ((*env)->GetArrayLength(env, out) < 50) return 0; int n = dm_cam_aim(buf);
+    if (n == 25) (*env)->SetFloatArrayRegion(env, out, 0, 50, buf); return n; }
 // 画面外的怪（dm_cam.c dm_cam_threats）：每条 5 个数（屏幕 x、y、箭头方向、紧迫度、档位），返回条数；CamThreats 每帧取一次
 // Monsters off the picture (dm_cam.c dm_cam_threats): 5 numbers each (screen x, y, arrow direction, urgency, tier), returns the count; CamThreats takes them
 // once per frame

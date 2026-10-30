@@ -2,7 +2,7 @@
 
 中文：[2026-10-17-frame-overlap.zh-CN.md](2026-10-17-frame-overlap.zh-CN.md)
 
-Measured from 08:43 to 09:50 NZDT (UTC+13) on the Redmi K50 Ultra (Adreno 730, Vulkan 1.1.128, Android 15); device setup in [2026-10-16-redmi-k50-vulkan11.md](2026-10-16-redmi-k50-vulkan11.md). Build `android/linux-build`.
+Measured from 08:43 to 09:50 NZDT (UTC+13) on the Redmi K50 Ultra (Adreno 730, Vulkan 1.1.128, Android 15); device setup in [2026-10-16-redmi-k50-vulkan11.md](2026-10-16-redmi-k50-vulkan11.md). Build experimental build.
 - **Same scene for every row:** cold start, Play on the saved Sorceress, stand at the Rogue Encampment arrival point for 75 s. The numbers are the last four 60-frame `NVN PERF v=1` windows.
 - **Markers:** files in `files/dm/`, read once at start. Without them the behaviour is unchanged.
 
@@ -19,7 +19,7 @@ Measured from 08:43 to 09:50 NZDT (UTC+13) on the Redmi K50 Ultra (Adreno 730, V
 | Z0 | none, final build | 7.6–7.9 | 59.4–61.8 | 112.6–115.5 | 1.7–1.8 | 3 | 60.2 (2 × event) |
 | **Z2** | **defer=2 + overlap, final build** | **19.3–19.7** | 41.7–42.0 | 41.8–42.3 | 2.1–2.2 | 1 | **0** |
 
-Z0 and Z2 use the final build (`2c105e6`), which includes the epoch fix below; the other rows came before it.
+Z0 and Z2 use the final build (`recorded build`), which includes the epoch fix below; the other rows came before it.
 
 The two changes only help together: **7.7 → 19.5 fps (2.5×)** in the camp. Either one alone moves the wait somewhere else.
 
@@ -44,7 +44,7 @@ What it shows in the camp:
 - **`gfx-defer-events`=1** (submit at the signal, publish at retire) removes those waits. The frame then becomes 3 submissions, which wraps the 2-slot ring inside the frame, and the wrap waits for the first submission: about 57 ms.
 - **The presenter waits for the blit fence and then `vkQueueWaitIdle` after every present.** Even with no wait inside the frame, frame N+1 can't start translating until frame N's GPU work has finished. Run E2 shows this: present takes 62 ms.
 
-## The changes (branch `android/frame-overlap`, opt-in)
+## The changes (branch experimental build, opt-in)
 
 - **`gfx-defer-events` = `2`:** SignalEvent doesn't submit.
   - The value waits in the slot being recorded and is published when that slot retires, after its writebacks.

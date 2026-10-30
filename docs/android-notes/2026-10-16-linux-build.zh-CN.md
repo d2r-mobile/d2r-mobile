@@ -2,7 +2,7 @@
 
 English: [2026-10-16-linux-build.md](2026-10-16-linux-build.md)
 
-第二位贡献者从 `main` `9125cec` 起步的记录：Windows 11 + WSL2（Ubuntu 18.04）+ Docker，分支 `android/linux-build`，时间为新西兰夏令时（UTC+13）。本构建尚未上真机；以下都是构建或读码结论，不是可玩性结论。
+第二位贡献者从 `main` `记录版本` 起步的记录：Windows 11 + WSL2（Ubuntu 18.04）+ Docker，分支 试验构建，时间为新西兰夏令时（UTC+13）。本构建尚未上真机；以下都是构建或读码结论，不是可玩性结论。
 
 ## 在 Linux / WSL 上用 Docker 构建
 
@@ -17,7 +17,7 @@ DM_GEN_DIR=/绝对路径/宿主表头目录 dm/android/docker/build.sh
 - 容器以宿主用户身份运行。Gradle 缓存放在具名卷，调试签名钥匙放在宿主目录（`~/.android-dm`）。首次运行时，若 Windows 版 Android Studio 有 `debug.keystore` 就拷来，两边出的 APK 可以互相覆盖安装。
 - sdkmanager 解出的可执行文件权限是 744（只有 root 能跑），镜像在同一层补 `chmod -R a+rX`。不补的话，第一次构建报 "Cannot run program …/cmake: Permission denied"。
 
-**在 Linux 上准备的输入**（容器内 Python 3.12、Pillow 12.1.1、lz4、capstone 5.0.x），取 `9125cec` 的 `git archive` 来跑，工作树不受影响：
+**在 Linux 上准备的输入**（容器内 Python 3.12、Pillow 12.1.1、lz4、capstone 5.0.x），取 `记录版本` 的 `git archive` 来跑，工作树不受影响：
 
 | 步骤 | 用时 | 结果 |
 |---|---|---|
@@ -49,12 +49,12 @@ DM_GEN_DIR=/绝对路径/宿主表头目录 dm/android/docker/build.sh
 1. **本仓库无法生成 `.xgs` 着色器包。** 引擎从着色器目录读取 `<key>.xgs`（`xbg_game.cpp:1110-1125`），格式为 `xbg_shader_header`（magic `XGS1`、版本 1、阶段、绑定、输入、c1 字节、SPIR-V；`xbg_game.h:81-87`）。仓库里没有任何脚本、工具或文档会写出这种文件，`dm/android/README.md` 只写了"与游戏和 Vulkan 后端匹配的外部 `.xgs` 包"。新贡献者能编出 APK，却无法仅凭本仓库给设备备齐运行文件。请问团队：生成工具在哪里（鸿蒙那边的工具？），能否把它或格式说明提交到本仓库？
 2. **改写校验不覆盖 `DM_TARGET=android`。** `dm/verify/structck.py`（第 ⑥、⑧ 项）和 `equiv.py:84` 认的是苹果的槽序列（`mrs tpidrro_el0` + 键页），安卓产物是 `mrs tpidr_el0; ldur [x,#-8]`（`patch_nso.py:286`）。所以 `regress.sh` 无法校验安卓模块，目前只能靠上面的哈希互相对照。
 3. **引擎只要 Vulkan 1.1，清单和 README 却要 1.3。** 实例请求 1.1（`vulkan_present.cpp:139`），引擎只要求 1.1（`xbg_vulkan.cpp:154`，"SPIR-V 1.3"）；`AndroidManifest.xml:6` 声明的 `android.hardware.vulkan.version` 为 `0x403000`，即 1.3。此前在 Redmi K50 Ultra（骁龙 8+ Gen 1、Adreno 730、HyperOS 3、Android 15）上的探针报告为 Vulkan **1.1.128**、驱动 512.615、子组 64 路、无 `shaderFloat64`、无片元着色器互锁。这台手机是下一个测试目标。为 Adreno 830 翻译的着色器包可能声明了在那里会被 `validate_capabilities` 拒绝的能力。
-4. **App 在 USAP 下启动时间线零点错误。** `main.c` 从 `/proc/self/stat` 读进程创建时刻。安卓可能预先分叉 App 进程（USAP 池），此时该字段是预分叉时刻。在 Redmi 上它读出 **8,422 秒**，而 Java 的 `Process.getStartUptimeMillis()` 为 **3.3 秒**。所有 `[x.xxs]` 日志时间和启动剖析的 ⓪ 段都偏了这么多。修复见 PR（分支 `android/start-time-from-java`）。
-5. **App 不链接 `.holes` 区段表，上游给测试者的剔零资源包会出错。** `jni_android.c` 的 `link_romfs` 只链接 `*.data` 和 `build.config`。`hle_fs.c` 在 `romfs/data/` 下找 `<档案>.holes`，找不到就按物理偏移读那四个剔零档案。修复见 PR（分支 `android/link-holes-tables`），设备证据见下。
+4. **App 在 USAP 下启动时间线零点错误。** `main.c` 从 `/proc/self/stat` 读进程创建时刻。安卓可能预先分叉 App 进程（USAP 池），此时该字段是预分叉时刻。在 Redmi 上它读出 **8,422 秒**，而 Java 的 `Process.getStartUptimeMillis()` 为 **3.3 秒**。所有 `[x.xxs]` 日志时间和启动剖析的 ⓪ 段都偏了这么多。修复见 PR（分支 试验构建）。
+5. **App 不链接 `.holes` 区段表，上游给测试者的剔零资源包会出错。** `jni_android.c` 的 `link_romfs` 只链接 `*.data` 和 `build.config`。`hle_fs.c` 在 `romfs/data/` 下找 `<档案>.holes`，找不到就按物理偏移读那四个剔零档案。修复见 PR（分支 试验构建），设备证据见下。
 
 ## Redmi K50 Ultra 上机（15:15–15:35）
 
-Redmi K50 Ultra，骁龙 8+ Gen 1、Adreno 730，HyperOS 3 / Android 15（API 35），USAP 池已开。APK 由本分支构建（已并入 PR #1、#2），用本机调试钥匙签名。
+Redmi K50 Ultra，骁龙 8+ Gen 1、Adreno 730，HyperOS 3 / Android 15（API 35），USAP 池已开。APK 由本分支构建（已并入 改动），用本机调试钥匙签名。
 
 | 步骤 | 结果 |
 |---|---|
@@ -65,16 +65,16 @@ Redmi K50 Ultra，骁龙 8+ Gen 1、Adreno 730，HyperOS 3 / Android 15（API 35
 | 无着色器启动 | 链接 23 个文件，停在 `boot: no shader bundles`（报错界面，符合设计） |
 
 为了在真着色器到来前检查宿主，有两次启动放了一个**空占位** `.xgs`，事后已删除。它只能骗过启动器的目录检查，第一次真正加载着色器时必然失败。
-- **带 PR #2：**
+- **带 改动：**
   - Vulkan 引擎在 Adreno 730 上初始化成功：`NVN caps api=1.1.128`、交换链 2712×1220、`mirror-clamp-to-edge` 已启用。
   - 模块用 bionic 键表槽装载（`bionic 键表偏移 0`），重定位完成，264 条强制接管全部命中。
   - SDK 初始化与 `nnMain` 运行，客体堆 3,728 MB。
   - RomFS、临时目录与事务式存档挂载成功，`hle_fs.c` 登记了全部四个 `.holes` 表。
   - NVN 窗口 2000×900，停在游戏第一次请求着色器处：`Missing genuine shader bundle …/a1217a07d94c1184.xgs`。
-- **不带 PR #2**（同样数据，先删掉残留链接）：链接 19 个文件，三次 `tact：zlib 解码失败`，随后在 `main+0x1b692dc` 处 `CRASH sig=11`，此时还没请求任何着色器。
-- **启动时刻（PR #1）：** 按 `/proc/<pid>/stat`，本 App 自己的进程被记成启动前 21,668 秒（约 6 小时）创建，因为它是 USAP 池预先分叉的。
+- **不带 改动**（同样数据，先删掉残留链接）：链接 19 个文件，三次 `tact：zlib 解码失败`，随后在 `main+0x1b692dc` 处 `CRASH sig=11`，此时还没请求任何着色器。
+- **启动时刻（改动）：** 按 `/proc/<pid>/stat`，本 App 自己的进程被记成启动前 21,668 秒（约 6 小时）创建，因为它是 USAP 池预先分叉的。
 
-手机上现为 PR #2 的构建，没有占位文件；存档里有这几次运行生成的缺省 `Settings`。
+手机上现为 改动 的构建，没有占位文件；存档里有这几次运行生成的缺省 `Settings`。
 
 ## 下一步
 

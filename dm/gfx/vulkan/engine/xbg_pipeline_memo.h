@@ -1,5 +1,5 @@
 // PR16前一draw管线memo的共享状态、生命周期与CPU可测逻辑；基于7f6ab77c并补代际与布局契约。
-// Shared state, lifetime and CPU-testable previous-draw pipeline memo logic, based on PR16 7f6ab77c with generation/layout contracts.
+// Shared state, lifetime and CPU-testable previous-draw pipeline memo logic, with generation/layout contracts.
 #pragma once
 #include "xbg_game_internal.h"
 #include <array>

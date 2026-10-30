@@ -5,7 +5,7 @@
 Measured on 2026-10-21 between 11:52 and 15:08 (NZDT) on the Redmi K50 Ultra (Adreno 730) and the OnePlus 13 (Adreno
 830), production defaults (3D scale ceiling 0.85, dynamic) unless noted, saves restored after each session.
 
-## The long-frame line on Android (`0f2f384`)
+## The long-frame line on Android (`recorded build`)
 
 The HUD long-frame line (`[长帧]`, `hle_nvn.c`) took its GPU, pipeline, shader-library and upload fields from the Metal
 backend, so on Android it always read `新建管线 0 … GPU -1.0 ms`, even in frames that compiled pipelines. The Vulkan
@@ -36,7 +36,7 @@ single frames of 24-30 ms in about 2.5 minutes. Two kinds of frames are visible 
 A per-frame TSV (`DM_NVN_TSV`) adds hitches of its own (26 long frames in play in 120 s against 9 in 180 s without).
 `DM_SLOWFRAME=1` records the same fields only for dropped frames and writes no per-frame file.
 
-## Texture uploads ahead of the submission (`5dc14f0`, Android default since `ed70553`)
+## Texture uploads ahead of the submission (`recorded build`, Android default since `recorded build`)
 
 A whole upload ran as a non-draw `Commands` block: it ended the open render pass and put full barriers before and after
 it, so on a tiling GPU each upload in the middle of a frame stored the pass's attachments and loaded them again.
@@ -59,7 +59,7 @@ pairs of this session alone give means of about 88 and 109. Its upload CPU dropp
 the same 10 messages of one existing check (`VUID-RuntimeSpirv-maxCombinedClipAndCullDistances-00710`) and no layout or
 hazard messages.
 
-## Shader loads (`da088b6`, Android default since `ad8eb2a`)
+## Shader loads (`recorded build`, Android default since `recorded build`)
 
 The `NVN shader … loaded` line now times each part of a load. In a camp entry (110 loads) the SPIR-V rewrites took
 105-110 ms of 135-140 ms: fragment shaders 1.53 ms each on average, the largest (37k-50k words) 6-9 ms; reading the

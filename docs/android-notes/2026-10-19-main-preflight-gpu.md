@@ -6,7 +6,7 @@ Measured on the afternoon of 2026-10-19 (NZDT) on the Redmi K50 Ultra (Adreno 73
 
 ## Frame overlap on `main` (#9) and the preflight (#29)
 
-`main` (`d187015`) with local test-only hooks: the data path, the Debug env file, and a skip of the overlay manifest check. The full A/B, with APK hashes, is on #9.
+`main` (`recorded build`) with local test-only hooks: the data path, the Debug env file, and a skip of the overlay manifest check. The full A/B, with APK hashes, is on #9.
 
 | Run | Settings | fps | Submit CPU ms | GPU ms | Submits / waits per frame |
 |---|---|---|---|---|---|
@@ -17,11 +17,11 @@ Measured on the afternoon of 2026-10-19 (NZDT) on the Redmi K50 Ultra (Adreno 73
 | F | C′ plus `main`'s other opt-ins | 43.09–43.60 | 17.62–17.73 | 20.11–20.14 | 1 / 1 |
 | F′ | F with the preflight on | 7.37–7.46 | 121.8–123.1 | 73.8–73.9 | 10 / 10 |
 
-`beebb5b` calls `resolve_pending()` before every draw, dispatch, clear, copy, present and readback. Whenever a writeback or counter report is pending, that call is a full GPU sync. In the camp that happens about 6 times a frame for writebacks and 3–4 times for reports, so every frame becomes 10–11 submit-and-wait round trips. While it is on, frame overlap and the other opt-ins change almost nothing. Issue #29 proposes a range-based preflight: resolve only when a pending result overlaps a range the operation reads on the CPU, and keep the descriptor-entry invariant as a check over those ranges.
+`recorded build` calls `resolve_pending()` before every draw, dispatch, clear, copy, present and readback. Whenever a writeback or counter report is pending, that call is a full GPU sync. In the camp that happens about 6 times a frame for writebacks and 3–4 times for reports, so every frame becomes 10–11 submit-and-wait round trips. While it is on, frame overlap and the other opt-ins change almost nothing. Issue #29 proposes a range-based preflight: resolve only when a pending result overlaps a range the operation reads on the CPU, and keep the descriptor-entry invariant as a check over those ranges.
 
-## The memo-path CPU trims on `main` (PR #30)
+## The memo-path CPU trims on `main` (the changes)
 
-The four trims from `9c8fd57` (`memofront`, `descreserve`, `tlsgate`, `imgfast`), ported to `main`. `main`'s `get_image` wraps the lookup in a CPU-read sync (`xbg_image_after_cpu_access`). The fast path takes only calls that read no guest memory, and so it skips the map lookup, the descriptor copy and the pending-writeback scan.
+The four trims from `recorded build` (`memofront`, `descreserve`, `tlsgate`, `imgfast`), ported to `main`. `main`'s `get_image` wraps the lookup in a CPU-read sync (`xbg_image_after_cpu_access`). The fast path takes only calls that read no guest memory, and so it skips the map lookup, the descriptor copy and the pending-writeback scan.
 
 The trims can't show up in `main` as it is. So they were measured with the preflight off and `main`'s opt-ins on, using a local A/B target that switches all four together: 360 s at 10 s phases, battery 31.5 → 41.5 °C.
 
@@ -31,11 +31,11 @@ The trims can't show up in `main` as it is. So they were measured with the prefl
 | fps | 45.70 | 45.07 | +0.95 ± 0.48 |
 | GPU ms | 20.00 | 19.83 | +0.15 ± 0.19 |
 
-That is about 2.5 times the saving on `linux-build` (about −0.17 ms), because `main`'s `get_image` did more per call.
+That is about 2.5 times the saving on the Linux test build (about −0.17 ms), because `main`'s `get_image` did more per call.
 
-## Where the camp's GPU time goes (`linux-build`)
+## Where the camp's GPU time goes (the Linux test build)
 
-`gfx-pass-profile` now also counts the vertices (or indices) times instances each pass draws (`verts=`, source snapshot`). Build `android/linux-build` plus the local diagnostic source snapshot` (driver statistics and SPIR-V overrides, not for merging), APK SHA-256 `d7bf79427c9d7f97e2a68f6253ee20499a6d3076d9cf72cb9bc454cd6c044950`. These are medians over 12 profiled frames; the run averaged 60.0 fps and 15.84 ms of GPU time.
+`gfx-pass-profile` now also counts the vertices (or indices) times instances each pass draws (`verts=`, source snapshot`). Build experimental build plus the local diagnostic source snapshot` (driver statistics and SPIR-V overrides, not for merging), APK SHA-256 `d7bf79427c9d7f97e2a68f6253ee20499a6d3076d9cf72cb9bc454cd6c044950`. These are medians over 12 profiled frames; the run averaged 60.0 fps and 15.84 ms of GPU time.
 
 | Part of the frame | GPU µs | Notes |
 |---|---|---|
@@ -104,7 +104,7 @@ G0 → G8, by pass:
 
 The `NVN PERF` GPU time went from 15.84 to 14.44 ms a frame. The UI and compute increases are within the noise between G0 and G1.
 
-**Confirmed on the committed build.** L1 is the same camp run (20:16, battery 31.3 °C at the start) with `android/linux-build` `6a6982d`, APK SHA-256 `b6df8760e71b5a587f66ef1cd9f2195eb85a49f8edf21aac2cfac5d76fcfb9d7`, with no overrides and no diagnostics (1,283 indexes folded, 141,737 temporaries forwarded):
+**Confirmed on the committed build.** L1 is the same camp run (20:16, battery 31.3 °C at the start) with experimental build `recorded build`, APK SHA-256 `b6df8760e71b5a587f66ef1cd9f2195eb85a49f8edf21aac2cfac5d76fcfb9d7`, with no overrides and no diagnostics (1,283 indexes folded, 141,737 temporaries forwarded):
 
 | Pass | G0 µs | L1 µs |
 |---|---|---|
