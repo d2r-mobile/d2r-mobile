@@ -64,14 +64,12 @@ int dm_ta_frame_at(int atlas,int frame,dm_ta_frame *out) { (void)atlas; (void)fr
 int dm_swapskill_slot(int slot,int *charges) { (void)slot; *charges=0; return 0; }
 int dm_ui_minimap_rect(float r[4]) { (void)r; return 0; }
 int dm_ui_map_is_full(void) { return 0; }
-int dm_hud_stack_msg(const char *act, const char *arg) { (void)act; (void)arg; return 0; }
 void dm_touch_game_set_scene(int game, uint64_t scene_epoch, uint64_t world_epoch) { (void)game; (void)scene_epoch; (void)world_epoch; }
 int dm_cam_mode(void) { return 0; }
 int dm_cam_style(void) { return 0; }
 void dm_cam_tilt(float rad) { (void)rad; }
 void dm_cam_turn(float rad) { (void)rad; }
 void dm_ui_map_full(int on) { (void)on; unexpected_host_call(__func__); }
-void dm_ui_map_hold(int on) { map_held = on; }
 unsigned dm_world_tap(float x,float y) { (void)x; (void)y; unexpected_host_call(__func__); return 0; }
 int dm_world_tap_result(unsigned seq) { (void)seq; return -1; }
 uint32_t dm_ui_hit_id(void) { return 0; }
@@ -115,6 +113,11 @@ void dm_uiscreen_set_panel(int panel) {
     REQUIRE(panel==0 || panel==1);
     observed_panel=panel; ++panel_calls;
 }
+/* 面板栈读数与全屏地图让位（宿主 dm_cursor.c）：桥在每条界面消息上调。面板栈回 0（没有挡底栏的面板，面板态只看场景），地图让位记下最后一次的值。
+ * Panel stack reading and the full-screen map stepping aside (host dm_cursor.c), called by the bridge on UI messages. The stack answers 0 (no panel
+ * blocking the bottom bar, so the panel mode comes from the scene alone), and the map hold records the last value. */
+int dm_hud_stack_msg(const char *act, const char *arg) { REQUIRE(act && arg); return 0; }
+void dm_ui_map_hold(int on) { REQUIRE(on==0 || on==1); map_held=on; }
 static void fixture(int navigation) {
     memset(&tc, 0, sizeof tc);
     memset(&scene, 0, sizeof scene);
@@ -125,7 +128,7 @@ static void fixture(int navigation) {
     seen_world = seen_mouse = seen_tab = seen_use = seen_ident = seen_long = seen_item = seen_stack = 0;
     frontend = 0; fe_slot = -1; fe_drag = 0; fe_x0 = fe_y0 = 0;
     test_clock_ns = UINT64_C(100000000000); test_sample = 0;
-    observed_panel=-1; panel_calls=0;
+    observed_panel=-1; panel_calls=0; map_held=-1;
     dm_tc_set_safe_insets(0, 0); dm_tc_set_edge_bottom(0); dm_tc_set_safe_bottom(0); dm_tc_set_swap_above(0);
     dm_tc_set_panel_state(0); dm_tc_set_tap_box(0); dm_tc_set_cur_stack(0); dm_tc_set_hover_unid(0);
     init_locked();
@@ -174,6 +177,21 @@ static void test_idle_and_abi(void) {
     REQUIRE(a[0] == 800 && a[1] == 375 && a[2] == 0 && a[3] == 0);
     REQUIRE(visible(a, DRAW_JOY) && visible(a, DRAW_SWAP) && visible(a, DRAW_DIFF));
     for (int i = 0; i < 23; ++i) REQUIRE(!lit(a, i));
+    REQUIRE(a[DM_ANDROID_TOUCH_HUD + 16] == 0 && a[DM_ANDROID_TOUCH_HUD + 17] == 0);
+}
+
+/* The last two HUD values are the stick deflection the Java overlay draws the thumb from (TouchOverlay HUD+16 / HUD+17). */
+static void test_stick_deflection(void) {
+    fixture(0); float a[DM_ANDROID_TOUCH_DRAW_FLOATS];
+    const float x = tc.layout.joy_x, y = tc.layout.joy_y, r = tc.layout.joy_radius;
+    dm_tc_begin_at(&tc, 0, x, y, 100.0);
+    REQUIRE(tc.finger[0].active && tc.finger[0].target == DM_TC_JOYSTICK);
+    dm_tc_move_at(&tc, 0, x + r, y, 100.05); read_twice(a);
+    REQUIRE(tc.lx > 0);
+    REQUIRE(a[DM_ANDROID_TOUCH_HUD + 16] == tc.lx && a[DM_ANDROID_TOUCH_HUD + 17] == tc.ly);
+    dm_tc_end_at(&tc, 0, 100.1); read_twice(a);
+    REQUIRE(tc.lx == 0 && tc.ly == 0);
+    REQUIRE(a[DM_ANDROID_TOUCH_HUD + 16] == 0 && a[DM_ANDROID_TOUCH_HUD + 17] == 0);
 }
 
 static void test_press_release_and_multitouch(void) {
@@ -388,9 +406,9 @@ static void test_android_panel_observation(void) {
     REQUIRE(tc.navigation_mode==0 && observed_panel==0 && panel_calls==3 && !map_held);
     dm_android_touch_uimsg("PanelManager","OpenPanel","NpcDialogPanel");
     REQUIRE(tc.navigation_mode!=0 && dm_tc_scene_dialog_only(&scene));
-    REQUIRE(observed_panel==0 && panel_calls==4);
+    REQUIRE(observed_panel==0 && panel_calls==4 && map_held==1);
     dm_android_touch_uimsg("PanelManager","UnloadAll","");
-    REQUIRE(tc.navigation_mode==0 && observed_panel==0 && panel_calls==5);
+    REQUIRE(tc.navigation_mode==0 && observed_panel==0 && panel_calls==5 && map_held==0);
 }
 
 static void run_case(const char *name, void (*body)(void)) {
@@ -400,6 +418,7 @@ static void run_case(const char *name, void (*body)(void)) {
 int main(void) {
     puts("SCOPE native_layout_and_input_bridge; no_Java_Canvas_no_guest_no_save_access");
     run_case("idle_185_abi", test_idle_and_abi);
+    run_case("stick_deflection", test_stick_deflection);
     run_case("press_release_multitouch", test_press_release_and_multitouch);
     run_case("slide_cancelled_finger", test_slide_cancel);
     run_case("release_pulse_highlight", test_release_pulse);
