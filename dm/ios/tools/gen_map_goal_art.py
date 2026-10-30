@@ -77,8 +77,8 @@ def main():
     # triangle that already points outward from a centre). 12 frames = left / down / right / up x three states; frame 3 (normal, pointing up) is taken
     # and the front end rotates it to the heading
     ptr, pfw, pn, ppitch = sprite_png('hd/global/ui/Controller/Panel/EmoteWheel/Emote_Arrow.sprite'); assert pn == 12
-    # 原图是等边三角形，缩小到地图上看不出哪个是尖（jhz 真机反馈）：横向收到 0.5，成细长的箭头形，尖端一眼可辨，鎏金与宝石照旧
-    # The original is an equilateral triangle, and shrunk onto the map it is unclear which corner is the tip (jhz, on the phone): narrowed to 0.5 across
+    # 原图是等边三角形，缩小到地图上看不出哪个是尖（真机反馈）：横向收到 0.5，成细长的箭头形，尖端一眼可辨，鎏金与宝石照旧
+    # The original is an equilateral triangle, and shrunk onto the map it is unclear which corner is the tip (on the phone): narrowed to 0.5 across
     # into a slim arrowhead whose tip reads at a glance; the gilding and the jewel stay
     up = ptr.crop((3 * ppitch, 0, 3 * ppitch + pfw, ptr.height)).resize((max(1, pfw // 2), ptr.height), Image.LANCZOS); up.save(os.path.join(OUT, 'heading.png'))
     # 画面外怪物的指针（front_ios.m threatsSync，宿主 dm_cam_threats）：同一个指针按档位套原版名字配色——普通怪银白（去色）、冠军蓝（原版蓝名精英）、
