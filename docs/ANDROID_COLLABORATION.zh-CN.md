@@ -1,28 +1,12 @@
-# 安卓团队协作入口
+# Android 开发说明
 
 English: [ANDROID_COLLABORATION.md](ANDROID_COLLABORATION.md)
 
-## 仓库职责
+## 提交改动
 
-| 仓库 | 维护与用途 |
-| --- | --- |
-| Android implementation | 我们维护的私有安卓开发仓库；本仓是安卓日常协作入口 |
-| Android implementation | 我们维护的私有鸿蒙开发仓库；权限及源码归属独立 |
-| [d2r-mobile/d2r-mobile](https://github.com/d2r-mobile/d2r-mobile) | 上游项目主仓库；我们以安卓、鸿蒙端贡献者身份提交 PR，由上游维护者审查合入 |
+先阅读[构建说明](../dm/android/README.zh-CN.md)和[贡献规范](../CONTRIBUTING.zh-CN.md)。使用自己的游戏文件准备资源，游戏内容和生成文件不提交到仓库。
 
-本仓保留 d2r-mobile 的 Git 历史及 MIT 许可。集成的上游基线为 `source snapshot`。鸿蒙旧仓源自 xbl-ios，其生产源码与本仓分开维护，不自动互相覆盖。
-
-GitHub 上现有公开 fork `the project/d2r-mobile` 只作为向上游提 PR 的通道，不是另一条产品开发线。私有本仓不是 GitHub fork；需要贡献时，将已审核的提交放到该 fork 的主题分支再提上游 PR，不整仓镜像或直接推上游 main。鸿蒙已有草稿 PR，未合并；安卓当前没有上游 PR。
-
-## 新协作者从这里开始
-
-1. 仓库管理员在 Settings → Collaborators 添加你的 GitHub 账号；接受邀请后克隆本仓。每位开发者使用自己的克隆或工作树。
-2. 阅读本页、[安卓构建说明](../dm/android/README.zh-CN.md)、[上游贡献规范](../CONTRIBUTING.zh-CN.md)。游戏程序、资源、着色器及由游戏生成的文件在各自机器上准备，不在 Git 仓库中。
-3. 以 `main` 为集成基线，使用 `android/<主题>` 分支。开始修改前，在本仓 Issue 中明确负责人和文件范围，避免多人同时改同一片文件；重构建及设备验证串行协调。
-4. 完成后向本仓提 PR，写明源码提交、构建版本、设备、实际测试时间、结果和未验证项。日常开发提交可以包含明确标注的未完成功能；不能据此宣称可玩验收通过。
-5. 经测试的独立修复再整理成上游 PR，遵循中英注释、文字表、资源边界及回归要求。上游同步先比较再合并，不 reset/clean 或强推覆盖本仓开发成果。
-
-推荐远程命名：`origin` 指向本仓；`upstream` 指向 d2r-mobile/d2r-mobile，只拉取；`fork` 指向个人公开贡献 fork。本地可设置 `remote.pushDefault=origin`，并给 upstream 配置不可用的 push URL，防止误推。
+从 `dev` 创建开发分支，完成后提交 PR。说明改动、构建版本、设备、实际测试结果和未验证项；涉及共用宿主或图形代码时，运行受影响平台的回归检查。
 
 ## 代码结构
 
@@ -30,12 +14,12 @@ GitHub 上现有公开 fork `the project/d2r-mobile` 只作为向上游提 PR �
 - `dm/android/jni_android.c`、`text_input_jni.c`、`lifecycle_dispatch.h`：启动、专用宿主输入线程、生命周期派发。
 - `dm/android/vulkan_present.*`：Android 窗口与交换链呈现。
 - `dm/gfx/vulkan/`：NVN 接口适配、Vulkan 回放；`engine/xbg_game.cpp` 是当前图形性能及缓存问题的主要入口。
-- `dm/host/`、`dm/i18n/`：共用宿主与中英文字表；跨平台改动须兼顾上游。
+- `dm/host/`、`dm/i18n/`：共用宿主与中英文字表；跨平台改动须兼顾其他平台。
 - `dm/android/tests/`、`dm/gfx/vulkan/engine/tests/`：Android 与 Vulkan 的独立回归检查。
 
 ## 当前实测状态（2026-10-16，北京时间）
 
-开发包 `0.1.7-dev / code8` 在 vivo X200 Ultra（V2454A，Android 16/API36，Adreno 830）于 08:56 安装。APK SHA256：`381514cce18027320cb6b0a5a72a83beb2cfefcbedb9bc3a9d0fb7f089cf62d0`。对应源码提交 `c7db2646eb9ff74678cd47dc3c6f87834b3852ca`。这是开发基线，不是完成版。
+开发包 `0.1.7-dev / code8` 在 vivo X200 Ultra（V2454A，Android 16/API36，Adreno 830）于 08:56 安装。APK SHA256：`381514cce18027320cb6b0a5a72a83beb2cfefcbedb9bc3a9d0fb7f089cf62d0`。这是开发基线，不是完成版。
 
 | 项目 | 实际结果 |
 | --- | --- |

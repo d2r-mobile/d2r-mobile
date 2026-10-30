@@ -48,6 +48,10 @@ __attribute__((weak)) float dm_bright_k(void);
 // The host side of the over-the-shoulder / first-person camera (dm/host/dm_cam.c): the switch, the heading the follow wants, the matrices published
 // for input conversion, how far the wall behind the character is; weak: graphics unit tests without the host keep the camera off
 __attribute__((weak)) int dm_cam_mode(void);
+__attribute__((weak)) int dm_cam_style(void);
+__attribute__((weak)) int dm_cam_attack_dir(float *wx,float *wz);
+__attribute__((weak)) void dm_cam_publish_height(float py);
+__attribute__((weak)) int dm_cam_ahead_pick(float rx,float rz,int host_ok,float hx,float hz,float fx,float fz,float *ox,float *oz);
 __attribute__((weak)) int dm_cam_want_dir(float *wx,float *wz);
 __attribute__((weak)) int dm_cam_clearance(float bx,float bz,float *dist,float *px,float *pz);
 __attribute__((weak)) float dm_cam_take_turn(void);
@@ -2458,7 +2462,7 @@ Buffer uniform_snapshot_cached(uint64_t address,size_t copy);
 namespace cam {
 const char *const cull_cs="1188eaedc8db3285";
 int mode_=-1;xbg_cam_params params;xbg_cam_state st;uint64_t patches=0,scenes=0,widened=0;
-float clear=0,host_px=0,host_pz=0,turned=0;bool clear_ok=false;
+float clear=0,host_px=0,host_pz=0,turned=0,drag_k=0.5f,pull_pitch=40,pull_min=5,pull_near=10,pull_blend=4;bool clear_ok=false;uint64_t drift_frame=0;
 struct Copy{uint64_t address=0,bytes=0,epoch=0;Buffer buffer;};std::array<Copy,8> copies;unsigned next=0;
 float envf(const char *k,float d){const char *e=getenv(k);return e?float(atof(e)):d;}
 int mode(){
@@ -2467,10 +2471,16 @@ int mode(){
     const int m=dm_cam_mode?dm_cam_mode():0;
     if(m!=mode_){mode_=m;
         if(mode_>0){params=xbg_cam_default_params(mode_);
+            // 原神式（宿主 dm_cam_style = 1）的越肩缺省机位：没有上下拖调俯仰，视野靠机位给——前看 7、水平视角 70°、上沿不设远处限制
+            // （画面上沿只保留水平线下 3°）。远处游戏还没画的地方会露黑块，用户在 OnePlus 13 上看过：视野更要紧，可以接受。下面的环境变量照样能改
+            // Over-the-shoulder defaults of the Genshin style (host dm_cam_style = 1): with no dragged pitch, the view has to come from the rig -- look-ahead 7,
+            // horizontal field of view 70 degrees, no far limit for the top edge (only the 3 degrees below the horizon stays). Far ground the game has not drawn
+            // yet shows black patches; the user saw them on a OnePlus 13 and judged the view more important. The environment variables below still override
+            if(mode_==1 && dm_cam_style && dm_cam_style()==1){params.look=7;params.fov=70;params.reach=0;}
             params.dist=envf("DM_CAM_DIST",params.dist);params.h=envf("DM_CAM_H",params.h);params.look=envf("DM_CAM_LOOK",params.look);params.lookh=envf("DM_CAM_LOOKH",params.lookh);
             params.eye=envf("DM_CAM_EYE",params.eye);params.fwd=envf("DM_CAM_FWD",params.fwd);params.pitch=envf("DM_CAM_PITCH",params.pitch);params.fov=envf("DM_CAM_FOV",params.fov);
-            params.tau=envf("DM_CAM_TAU",params.tau);params.near_=envf("DM_CAM_NEAR",params.near_);params.reach=envf("DM_CAM_REACH",params.reach);xbg_cam_init(&st);
-            xbg_logf("NVN cam mode=%d dist=%g h=%g look=%g lookh=%g eye=%g fwd=%g pitch=%g fov=%g tau=%g near=%g reach=%g",mode_,params.dist,params.h,params.look,params.lookh,params.eye,params.fwd,params.pitch,params.fov,params.tau,params.near_,params.reach);}}
+            params.tau=envf("DM_CAM_TAU",params.tau);params.near_=envf("DM_CAM_NEAR",params.near_);params.reach=envf("DM_CAM_REACH",params.reach);drag_k=envf("DM_CAM_DRAG",0.5f);pull_pitch=envf("DM_CAM_PULL_PITCH",40);pull_min=envf("DM_CAM_PULL_MIN",5);pull_near=envf("DM_CAM_PULL_NEAR",10);pull_blend=envf("DM_CAM_PULL_BLEND",4);xbg_cam_init(&st);
+            xbg_logf("NVN cam mode=%d dist=%g h=%g look=%g lookh=%g eye=%g fwd=%g pitch=%g fov=%g tau=%g near=%g reach=%g drag=%g pull=%g/%g near=%g+%g",mode_,params.dist,params.h,params.look,params.lookh,params.eye,params.fwd,params.pitch,params.fov,params.tau,params.near_,params.reach,drag_k,pull_pitch,pull_min,pull_near,pull_blend);}}
     return mode_;
 }
 // 绑定长度：认出主相机或场景块（先读客体内存里签名那几行，便宜）就返回整块长度，否则原样返回 copy
@@ -2494,22 +2504,55 @@ Buffer patch(uint64_t address,size_t copy,const Buffer &src){
         // Follow once per frame: the host's heading (aim drag > move stick) first, then the character's displacement; the over-the-shoulder mode
         // publishes both matrix sets for input conversion, first person does not convert input
         float px,py,pz,wx=0,wz=0;xbg_cam_ground(p,&px,&py,&pz);const int want=dm_cam_want_dir?dm_cam_want_dir(&wx,&wz):0;
+        // 原版画面往前挪（宿主 dm_cam.c DM_CAM_AHEAD）：认出这一帧原版镜头带的挪动量，从人物点里扣掉；xbg_cam_build 里同样扣（st.ahead）
+        // The original picture moved ahead (host dm_cam.c DM_CAM_AHEAD): recognise the shift this frame's original camera carries and remove it from the
+        // character point; xbg_cam_build removes it the same way (st.ahead)
+        st.ahead[0]=st.ahead[1]=0;
+        if(dm_cam_ahead_pick){float c=0,hx=0,hz=0;const int hok=dm_cam_clearance && dm_cam_clearance(-st.fx,-st.fz,&c,&hx,&hz);dm_cam_ahead_pick(px,pz,hok,hx,hz,st.fx,st.fz,&st.ahead[0],&st.ahead[1]);px-=st.ahead[0];pz-=st.ahead[1];}
         // 体感转向（宿主 dm_cam.c）：每帧取走一次累计的转动；最近一秒内转过就让跟随不动朝向，转动在跟随之后加上
         // Sensor steering (host dm_cam.c): take the accumulated turn once per frame; with a turn within the last second the follow leaves the heading alone,
         // and the turn is added after the follow
         const uint64_t frame=stats.presents.load();float turn=0;
         if(frame!=st.frame){turn=dm_cam_take_turn?dm_cam_take_turn():0;st.hold=dm_cam_turn_age && dm_cam_turn_age()<1.0;}
-        const double t0=st.t;const bool fresh=xbg_cam_follow(&st,px,pz,frame,timing_clock()*1e-9,want,wx,wz,mode_==2?1e9f:params.tau);   // 第一人称不自动跟随，见 nvn_mtl.m cam_build | first person does not follow, see nvn_mtl.m cam_build
+        // 原神式（宿主 dm_cam_style = 1，越肩档）：镜头被人物拖着走（xbg_cam_drag），不朝摇杆方向追；其余照旧
+        // Genshin style (host dm_cam_style = 1, over-the-shoulder): the camera is dragged along by the character (xbg_cam_drag) and does not chase the stick
+        // direction; everything else as before
+        const int style=mode_==1 && dm_cam_style?dm_cam_style():0;
+        // 第一人称不自动跟随，见 nvn_mtl.m cam_build | first person does not follow, see nvn_mtl.m cam_build
+        const double t0=st.t;const bool fresh=style==1?xbg_cam_drag(&st,px,pz,frame,timing_clock()*1e-9,params.dist,drag_k):xbg_cam_follow(&st,px,pz,frame,timing_clock()*1e-9,want,wx,wz,mode_==2?1e9f:params.tau);
         if(fresh && turn!=0){xbg_cam_turn(&st,turn);turned+=turn;}
+        // 原神式：放技能时人转过去对着目标，镜头跟着转（宿主 dm_cam_attack_dir：0.8 秒内、摇杆都没推时才有；玩家自己刚转过镜头就不动）
+        // Genshin style: casting a skill turns the character to face the target and the camera turns with it (host dm_cam_attack_dir: only within 0.8 s and
+        // with neither stick pushed; not while the player has just turned the camera)
+        if(fresh && style==1 && !st.hold && dm_cam_attack_dir){float ax=0,az=0;if(dm_cam_attack_dir(&ax,&az))xbg_cam_ease(&st,ax,az,t0?st.t-t0:0,params.tau);}
         // 避墙（越肩档）：宿主按碰撞格量的、镜头朝后那个方向上离墙多远，每帧拉一次
         // Wall avoidance (over-the-shoulder mode): how far the wall is in the camera's backward direction, as the host measured on the collision grid, pulled once per frame
-        if(fresh && mode_==1){float c=0;clear_ok=dm_cam_clearance && dm_cam_clearance(-st.fx,-st.fz,&c,&host_px,&host_pz);clear=clear_ok?c:0;xbg_cam_pull(&st,params.dist,clear,t0?st.t-t0:0);}
+        // 原神式只理会离人近的墙（DM_CAM_PULL_NEAR，缺省 10）：镜头在人后 20、高 13，视线在人后 d 处离地约 3 + d / 2，再远的墙一般在视线下面、挡不住人。
+        // near 到 near + blend 之间从 near 渐变到满距离，越过门槛时不一下跳 10 个单位（用户 2026-10-29：避墙太敏感）
+        // The Genshin style only minds walls close to the character (DM_CAM_PULL_NEAR, default 10): with the camera 20 behind and 13 up, the sight line d
+        // behind the character is about 3 + d / 2 above the ground, so farther walls are usually below it and do not hide the character. Between near and
+        // near + blend the distance goes from near to the full distance, so crossing the threshold does not jump 10 units (the user, 2026-10-29: the wall
+        // avoidance reacts too easily)
+        if(fresh && mode_==1){float c=0;clear_ok=dm_cam_clearance && dm_cam_clearance(-st.fx,-st.fz,&c,&host_px,&host_pz);clear=clear_ok?c:0;
+            float want=clear;if(style==1 && want>0){if(want>=pull_near+pull_blend)want=0;else if(want>pull_near)want=pull_near+(params.dist-pull_near)*(want-pull_near)/pull_blend;if(want>0 && want<pull_min)want=pull_min;}
+            xbg_cam_pull(&st,params.dist,want,t0?st.t-t0:0);}
+        // 诊断：人物估计（xbg_cam_ground）和宿主读到的人物位置差 3 个单位以上就记一笔（最多每秒一次）——缩放算式不对、开面板时原版镜头横移，都会在这里露出来
+        // Diagnostic: log when the character estimate (xbg_cam_ground) is more than 3 units from the position the host reads (at most once a second) -- a
+        // wrong zoom formula or the original camera moving sideways for an open panel shows up here
+        if(fresh && clear_ok && hypotf(px-host_px,pz-host_pz)>3 && frame-drift_frame>60){drift_frame=frame;xbg_logf("NVN cam drift player=%.1f,%.1f host=%.1f,%.1f off=%.1f",px,pz,host_px,host_pz,hypotf(px-host_px,pz-host_pz));}
         // 玩家上下拖的俯仰（宿主 dm_cam.c）；算完把宿主的累计值夹回本帧机位能取的范围
         // The player's dragged pitch (host dm_cam.c); afterwards clamp the host's sum to this frame's range
-        st.tilt=dm_cam_tilt_get?dm_cam_tilt_get():0;
-        float vp[16],ivp[16];xbg_cam_build(&st,p,d,mode_,&params,vp,ivp);if(fresh && dm_cam_tilt_clamp)dm_cam_tilt_clamp(st.tilt_lo,st.tilt_hi);
+        // 原神式不调俯仰（触屏层也不再送）：以前拖过的俯仰也不用，固定在缺省机位
+        // The Genshin style has no pitch (the touch layer no longer sends it): an earlier dragged pitch is not used either, the default rig stays
+        st.tilt=style==1?0:dm_cam_tilt_get?dm_cam_tilt_get():0;
+        // 原神式：拉近时不超过 pull_pitch 度下俯、离人至少 pull_min（宁可镜头稍微进墙，也不贴在背上或变成头顶视角）
+        // Genshin style: when pulled in, no steeper than pull_pitch degrees and at least pull_min from the character (better slightly inside the wall than on
+        // the character's back or overhead)
+        xbg_cam_params rig=params;if(style==1)rig.pull_pitch=pull_pitch;
+        float vp[16],ivp[16];xbg_cam_build(&st,p,d,mode_,&rig,vp,ivp);if(fresh && dm_cam_tilt_clamp)dm_cam_tilt_clamp(st.tilt_lo,st.tilt_hi);
         if(dm_cam_publish)dm_cam_publish(reinterpret_cast<const float*>(p+336),reinterpret_cast<const float*>(p+400),vp,ivp,px,pz);
-        if(patches++%600==0)xbg_logf("NVN cam patch=%llu scene=%llu widened=%llu mode=%d bytes=%zu player=%.1f,%.1f heading=%.2f,%.2f eye=%.1f,%.1f,%.1f clear=%.1f(%d) dist=%.1f host=%.1f,%.1f turned=%.2f hold=%d",(unsigned long long)patches,(unsigned long long)scenes,(unsigned long long)widened,mode_,copy,px,pz,st.fx,st.fz,st.eye[0],st.eye[1],st.eye[2],clear,int(clear_ok),st.dcur,host_px,host_pz,turned,st.hold);
+        if(dm_cam_publish_height)dm_cam_publish_height(py);
+        if(patches++%600==0)xbg_logf("NVN cam patch=%llu scene=%llu widened=%llu mode=%d style=%d bytes=%zu player=%.1f,%.1f,%.1f heading=%.2f,%.2f eye=%.1f,%.1f,%.1f clear=%.1f(%d) dist=%.1f host=%.1f,%.1f turned=%.2f hold=%d ahead=%.0f,%.0f",(unsigned long long)patches,(unsigned long long)scenes,(unsigned long long)widened,mode_,style,copy,px,py,pz,st.fx,st.fz,st.eye[0],st.eye[1],st.eye[2],clear,int(clear_ok),st.dcur,host_px,host_pz,turned,st.hold,st.ahead[0],st.ahead[1]);
         if(patches==1){
             // 原版正交画面的大小（世界单位）：宽 2/pr[0]、高 2/pr[5]；原版下俯 30°，所以画面的高在地面上沿视线方向盖住两倍长。
             // 越肩镜头画得出来的东西不出这个范围：按正交视锥剔除的计算着色器和游戏自己挑单位都按它
@@ -2517,7 +2560,7 @@ Buffer patch(uint64_t address,size_t copy,const Buffer &src){
             // picture's height covers twice that length along the sight line. What the over-the-shoulder camera can draw stays inside this area: the compute
             // shader that culls against the orthographic frustum and the game's own choice of units both use it
             float pr[16];memcpy(pr,p+208,sizeof pr);
-            if(pr[0]!=0 && pr[5]!=0)xbg_logf("NVN cam original view=%.1fx%.1f ground=%.1fx%.1f (world units)",fabsf(2/pr[0]),fabsf(2/pr[5]),fabsf(2/pr[0]),fabsf(4/pr[5]));}
+            if(pr[0]!=0 && pr[5]!=0)xbg_logf("NVN cam original view=%.1fx%.1f ground=%.1fx%.1f (world units) axis offset=%.4f,%.4f",fabsf(2/pr[0]),fabsf(2/pr[5]),fabsf(2/pr[0]),fabsf(4/pr[5]),pr[12],pr[13]);}
     }else{xbg_cam_build10(&st,d);++scenes;}
     b.flush();Copy &c=copies[next++%copies.size()];c.address=address;c.bytes=copy;c.epoch=snapshot_epoch;c.buffer=b;return b;
 }

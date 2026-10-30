@@ -579,10 +579,16 @@ void dm_tc_move_at(dm_tc_state *s, int slot, float x, float y, double now_s) {
            once the move crosses the tap threshold, and once fixed the release is not a ground tap. A screen height = 90 degrees, a screen width = 180 degrees.
            Only radians are summed here (cam_pitch / cam_yaw); the front end takes them and hands them to the host (dm_cam_tilt / dm_cam_turn) */
         float ax = fabsf(x - f->aim_origin_x), ay = fabsf(y - f->aim_origin_y), th = DM_TC_POINTER_MOVE_PT * scale_for(&s->layout);
-        if (!f->cam_drag && (ay > th || (s->cam_on == 2 && ax > th)) && (s->cam_on == 2 || ay > ax)) { f->cam_drag = 1; f->cam_x = f->aim_origin_x; f->cam_y = f->aim_origin_y; }
+        /* 左右也转：第一人称，或越肩档开了原神式（cam_orbit） | Horizontal turns too: first person, or over-the-shoulder with Genshin style (cam_orbit) */
+        const int yaw = s->cam_on == 2 || (s->cam_on == 1 && s->cam_orbit);
+        if (!f->cam_drag && (ay > th || (yaw && ax > th)) && (yaw || ay > ax)) { f->cam_drag = 1; f->cam_x = f->aim_origin_x; f->cam_y = f->aim_origin_y; }
         if (f->cam_drag && s->layout.height > 0 && s->layout.width > 0) {
-            s->cam_pitch += (f->cam_y - y) / s->layout.height * 1.5707963f; f->cam_y = y;
-            if (s->cam_on == 2) s->cam_yaw += (x - f->cam_x) / s->layout.width * 3.1415927f;
+            /* 原神式（cam_orbit）只左右转、不调俯仰：上下的分量不算，打架时斜着划不会把镜头压低（用户在 OnePlus 13 上的意见）
+               Genshin style (cam_orbit) only turns, no pitch: the vertical part is ignored, so a slanted swipe in a fight does not tilt the camera (the
+               user's call on the OnePlus 13) */
+            if (!(s->cam_on == 1 && s->cam_orbit)) s->cam_pitch += (f->cam_y - y) / s->layout.height * 1.5707963f;
+            f->cam_y = y;
+            if (yaw) s->cam_yaw += (x - f->cam_x) / s->layout.width * 3.1415927f;
             f->cam_x = x; }
     } else if (f->target==DM_TC_SWAP) {
         if (dm_tc_hit(&s->layout,x,y)!=DM_TC_SWAP) f->aim_cancelled=1;

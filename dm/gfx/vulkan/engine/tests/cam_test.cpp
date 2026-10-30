@@ -18,17 +18,20 @@ static void get(const uint8_t *block,size_t at,float *m,size_t n){memcpy(m,block
 static void xf(const float *M,const float v[4],float o[4]){for(int j=0;j<4;j++)o[j]=v[0]*M[j]+v[1]*M[4+j]+v[2]*M[8+j]+v[3]*M[12+j];}
 static bool identity(const float *a,const float *b,double eps){float m[16];xbg_cam_m4_mul(a,b,m);for(int i=0;i<16;i++)if(!near(m[i],i%5==0?1:0,eps))return false;return true;}
 
-// 原版主相机块：视图（右、上、后三列），镜头在人物 (px, py, pz) 沿「后」方向 884.03 处（原版的固定距离），正交投影 40 × 22.5（16:9）、反向 Z
-// The original main camera block: view (right, up, back columns), camera 884.03 along "back" from the character (px, py, pz) (the original's fixed
-// distance), orthographic 40 x 22.5 (16:9), reversed Z
-static void original(uint8_t *block,float px,float pz,float py=0){
+// 原版主相机块：视图（右、上、后三列），镜头照游戏的摆法（xbg_cam_ground）：人物 (px, py, pz) 沿「后」方向 d、再水平往后 s；正交投影高 H = 53.03·u、
+// 宽按 16:9，反向 Z。缩放 zoom 缺省 1.2（玩家常用的那档：d = 884.0、s ≈ 0）
+// The original main camera block: view (right, up, back columns), the camera placed the game's way (xbg_cam_ground): d along "back" from the character
+// (px, py, pz) and then s further back horizontally; orthographic height H = 53.03 * u, width 16:9, reversed Z. The zoom defaults to 1.2 (the usual
+// setting: d = 884.0, s about 0)
+static void original(uint8_t *block,float px,float pz,float py=0,float zoom=1.2f){
     memset(block,0,XBG_CAM_BLOCK);
     const float r[3]={0.70711f,0,-0.70711f},u[3]={-0.35355f,0.86603f,-0.35355f},b[3]={0.61237f,0.5f,0.61237f};
-    const float eye[3]={px+b[0]*884.03f,py+b[1]*884.03f,pz+b[2]*884.03f};
+    const double k=atan(0.03/zoom)/atan(0.03),H=0.75*70.7107*k,d=H/(2*0.03/zoom),s=7.25*(k-1)+0.176777*8*k,bl=hypot(b[0],b[2]);
+    const float eye[3]={float(px+b[0]*d+s*b[0]/bl),float(py+b[1]*d),float(pz+b[2]*d+s*b[2]/bl)};
     float V[16]={r[0],u[0],b[0],0, r[1],u[1],b[1],0, r[2],u[2],b[2],0,
         -(eye[0]*r[0]+eye[1]*r[1]+eye[2]*r[2]),-(eye[0]*u[0]+eye[1]*u[1]+eye[2]*u[2]),-(eye[0]*b[0]+eye[1]*b[1]+eye[2]*b[2]),1};
     float iV[16];xbg_cam_m4_inv(V,iV);
-    float P[16]={2/40.0f,0,0,0, 0,2/22.5f,0,0, 0,0,1/1000.0f,0, 0,0,1.55f,1},VP[16],iVP[16];
+    float P[16]={float(2/(H*16/9)),0,0,0, 0,float(2/H),0,0, 0,0,1/1000.0f,0, 0,0,1.55f,1},VP[16],iVP[16];
     xbg_cam_m4_mul(V,P,VP);xbg_cam_m4_inv(VP,iVP);
     put(block,80,V,16);put(block,144,iV,16);put(block,208,P,16);put(block,336,VP,16);put(block,400,iVP,16);
     const float depth[4]={1000,100,0,1};put(block,592,depth,4);
@@ -58,6 +61,13 @@ int main(){
     // follows and the horizontal position does not drift
     {float px,py,pz;xbg_cam_ground(src,&px,&py,&pz);CHECK(near(px,100,1e-2) && near(py,0,1e-2) && near(pz,50,1e-2));
      uint8_t low[XBG_CAM_BLOCK];original(low,100,50,-12);xbg_cam_ground(low,&px,&py,&pz);CHECK(near(px,100,1e-2) && near(py,-12,1e-2) && near(pz,50,1e-2));}
+    // 镜头打开时缩放调到 0.6（dm_world.c）：原版画面大一倍、镜头水平往后挪 7.2——照样找回人物；按以前的固定距离算会偏出 6 个单位以上
+    // With the camera on the zoom becomes 0.6 (dm_world.c): the original picture is twice as big and the camera 7.2 further back horizontally -- the
+    // character is still found; the old fixed distance would be more than 6 units off
+    {uint8_t z[XBG_CAM_BLOCK];original(z,100,50,0,0.6f);float pr[16],iv[16];get(z,208,pr,16);get(z,144,iv,16);CHECK(near(2/pr[5],88.4,0.1));
+     float px,py,pz;xbg_cam_ground(z,&px,&py,&pz);CHECK(near(px,100,1e-2) && near(py,0,1e-2) && near(pz,50,1e-2));
+     CHECK(hypot(iv[12]-884.03*iv[8]-100,iv[14]-884.03*iv[10]-50)>6);
+     original(z,100,50,-12,0.6f);xbg_cam_ground(z,&px,&py,&pz);CHECK(near(px,100,1e-2) && near(py,-12,1e-2) && near(pz,50,1e-2));}
 
     // 首帧：朝向重置为原版视线的水平方向；同一帧再调不再更新
     // First frame: the heading resets to the horizontal direction of the original sight line; another call in the same frame does not update
@@ -143,6 +153,14 @@ int main(){
      // 人还在画面中间一带：脚在中线以下、不到下半屏的 3/4（不沉到底栏底下）
      // The character stays around the middle of the picture: the feet below the centre line but within three quarters of the lower half (not sunk under the bottom bar)
      const float feet[4]={100,0,50,1};float c[4];xf(vp,feet,c);CHECK(c[3]>0 && c[1]/c[3]<0 && c[1]/c[3]>-0.75);}
+    // 原神式 pull_pitch = 40：拉到 2 时镜头到看点的视线下俯不超过 40°（缺省吊臂这时约 84°）；pull_pitch = 0 照旧
+    // Genshin style pull_pitch = 40: pulled to 2, the sight line from the camera to the look point looks down at most 40 degrees (the default boom gives about
+    // 84 there); pull_pitch = 0 unchanged
+    {xbg_cam_params p=xbg_cam_default_params(1);CHECK(p.pull_pitch==0);original(src,100,50);
+     auto down=[&](float pitch){xbg_cam_state s;xbg_cam_init(&s);xbg_cam_follow(&s,100,50,1,1.0,0,0,0,p.tau);xbg_cam_pull(&s,p.dist,2,0);xbg_cam_params q=p;q.pull_pitch=pitch;
+      memcpy(dst,src,sizeof dst);xbg_cam_build(&s,src,dst,1,&q,vp,ivp);const double la=p.look*2/p.dist,ax=100+s.fx*la,az=50+s.fz*la;
+      return atan2(s.eye[1]-p.lookh,hypot(s.eye[0]-ax,s.eye[2]-az))*180/3.14159265358979;};
+     CHECK(down(0)>80);CHECK(down(40)<=40+0.3 && down(40)>30);}
     // 不拉近时也受 reach 限制：上沿视线落地在人前方 reach 以内（原来只要求 3°，会看到游戏还没画的远处）
     // Not pulled in, reach still applies: the top-edge sight line meets the ground within reach ahead of the character (only 3 degrees used to be required,
     // which showed far ground the game had not drawn yet)
@@ -160,6 +178,33 @@ int main(){
      s.hold=1;const float hx=s.fx,hz=s.fz;xbg_cam_follow(&s,0,3,2,1.2,1,0,1,0.2f);CHECK(s.fx==hx && s.fz==hz);
      xbg_cam_follow(&s,0,40,3,1.4,1,0,1,0.2f);CHECK(near(s.fx,-0.70711,1e-4) && near(s.fz,-0.70711,1e-4));
      s.hold=0;xbg_cam_follow(&s,0,40,4,1.6,1,0,1,0.2f);CHECK(heading_deg(s)>-135+1);}
+
+    // 拖着走的跟随（原神式，dist 20）：首帧重置；往前走不转；横跨 5：镜头原在 (5 − 20, 0)，新朝向 = 指向 (5, 5) 的方向 = atan(5 / 20)；
+    // 往镜头走不调头；同一帧不算；一帧 ≥ 20 重置。一直往左（垂直于朝向）小步走：人物绕着几乎不动的镜头转圈，转过的角度 ≈ 路程 / dist
+    // Dragged follow (Genshin style, dist 20): the first frame resets; walking forward does not turn; a 5 sidestep from (5, 0): the camera was at (5 - 20, 0),
+    // so the new heading points at (5, 5) = atan(5 / 20); walking towards the camera does not turn round; the same frame does nothing; >= 20 in one frame
+    // resets. Small steps to the left (perpendicular to the heading): the character circles a nearly fixed camera, turning by about path / dist
+    {xbg_cam_state s;xbg_cam_init(&s);CHECK(xbg_cam_drag(&s,0,0,1,1.0,20,1)==1);CHECK(near(s.fx,-0.70711,1e-4) && near(s.fz,-0.70711,1e-4));
+     s.fx=1;s.fz=0;xbg_cam_drag(&s,5,0,2,1.1,20,1);CHECK(near(s.fx,1,1e-6) && near(s.fz,0,1e-6));
+     xbg_cam_drag(&s,5,5,3,1.2,20,1);CHECK(near(heading_deg(s),atan2(5.0,20.0)*180/3.14159265358979,1e-3));
+     CHECK(xbg_cam_drag(&s,9,9,3,1.25,20,1)==0 && s.px==5 && s.pz==5);
+     s.fx=1;s.fz=0;xbg_cam_drag(&s,0,5,4,1.3,20,1);CHECK(near(s.fx,1,1e-6) && near(s.fz,0,1e-6));
+     xbg_cam_drag(&s,0,30,5,1.4,20,1);CHECK(near(s.fx,-0.70711,1e-4) && near(s.fz,-0.70711,1e-4));
+     s.fx=1;s.fz=0;const double cx0=s.px-20*s.fx,cz0=s.pz-20*s.fz;double turned=0,x=s.px,z=s.pz;uint64_t fr=6;
+     for(int i=0;i<200;++i){const double a0=atan2(s.fz,s.fx);x+=0.5*s.fz;z+=-0.5*s.fx;xbg_cam_drag(&s,float(x),float(z),fr++,1.5+i/60.0,20,1);
+      double d=atan2(s.fz,s.fx)-a0;while(d>3.14159265358979)d-=2*3.14159265358979;while(d<-3.14159265358979)d+=2*3.14159265358979;turned+=d;}
+     CHECK(hypot(s.px-20*s.fx-cx0,s.pz-20*s.fz-cz0)<2 && near(fabs(turned),100.0/20,0.25));}
+    // 缓转（原神式放技能时镜头跟着人转）：dt = tau 转过 1 − 1/e；走短的那边；dt = 0 或方向为零不动
+    // Easing (the Genshin style's camera turning with the character on a skill): dt = tau turns 1 - 1/e of the gap; the shorter way round; dt = 0 or a zero
+    // direction does nothing
+    {xbg_cam_state s;xbg_cam_init(&s);s.fx=1;s.fz=0;xbg_cam_ease(&s,0,1,0.35,0.35f);CHECK(near(heading_deg(s),90*(1-exp(-1.0)),0.2));
+     s.fx=1;s.fz=0;xbg_cam_ease(&s,float(cos(-170*3.14159265358979/180)),float(sin(-170*3.14159265358979/180)),0.35,0.35f);CHECK(heading_deg(s)<0);
+     s.fx=1;s.fz=0;xbg_cam_ease(&s,0,1,0,0.35f);xbg_cam_ease(&s,0,0,1,0.35f);CHECK(s.fx==1 && s.fz==0);}
+    // k = 0.5：同样横跨 5 只转一半的角度；k = 0 不转
+    // k = 0.5: the same 5 sidestep turns half the angle; k = 0 does not turn
+    {xbg_cam_state s;xbg_cam_init(&s);xbg_cam_drag(&s,5,0,1,1.0,20,0.5f);s.fx=1;s.fz=0;xbg_cam_drag(&s,5,5,2,1.1,20,0.5f);
+     CHECK(near(heading_deg(s),0.5*atan2(5.0,20.0)*180/3.14159265358979,1e-3));
+     s.fx=1;s.fz=0;xbg_cam_drag(&s,5,10,3,1.2,20,0);CHECK(near(s.fx,1,1e-6) && near(s.fz,0,1e-6));}
 
     // 玩家上下拖（tilt）：0 = 缺省机位不变；正 = 绕看点往平处转（水平距离不超过缺省、只降高度）；负 = 更俯视、绕看点往近处转；
     // 夹在视线下俯 4°–75°，tilt_lo / tilt_hi 给出这个范围；第一人称直接加到俯仰上。期望值按圆弧手算，不调被测函数

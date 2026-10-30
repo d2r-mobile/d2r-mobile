@@ -2,7 +2,7 @@
 
 中文：[2026-10-18-gpu-profile.zh-CN.md](2026-10-18-gpu-profile.zh-CN.md)
 
-Measured 17:40–18:40 NZDT on the Redmi K50 Ultra (Adreno 730, Vulkan 1.1, Android 15). Build `android/linux-build` with the Android defaults, camp, 3D scale held at 0.6 unless noted. The diagnostics are on branch `android/pipe-stats`, which is not for merging. The 120 Hz change is PR #17 (branch `android/frame-rate`).
+Measured 17:40–18:40 NZDT on the Redmi K50 Ultra (Adreno 730, Vulkan 1.1, Android 15). Build experimental build with the Android defaults, camp, 3D scale held at 0.6 unless noted. The diagnostics are on branch experimental build, which is not for merging. The 120 Hz change is the changes (branch experimental build).
 
 ## Which GPU profilers can work here
 
@@ -53,7 +53,7 @@ At the same frame rate, no frame now stays on screen for two whole 60 Hz refresh
 
 Marker `gfx-frame-rate` = N (Hz) changes the vote; 0 casts none.
 
-## Presenting at the game's output size (PR #18)
+## Presenting at the game's output size (the changes)
 
 The presenter's swapchain was 2712×1220. Every frame it cleared the whole image and scaled the game's 2000×900 output up with a nearest blit; the display engine then rotated the layer into the portrait panel (`DEVICE` composition, `ROT_90`; never GPU composition). Now the window's buffers take the game's output size (`ANativeWindow_setBuffersGeometry`), the presenter copies 1:1 without a clear, and the display engine scales the layer along with the rotation.
 
@@ -64,7 +64,7 @@ The presenter's swapchain was 2712×1220. Every frame it cleared the whole image
 
 About 13 MB less memory traffic per frame, a smoother upscale than nearest, the same picture otherwise. Marker `gfx-present-native` = 0 keeps the old swapchain; `gfx-present-timing` logs the presenter's GPU time.
 
-## The touch overlay redrew on every refresh (PR #19)
+## The touch overlay redrew on every refresh (the changes)
 
 In a fight the busiest threads were the game thread (72% of the X2 core), two game workers (15–20% each) and Android's own `RenderThread` at 12%. `TouchOverlay`, the view that draws the touch controls over the game, asked for another redraw at the end of every `onDraw`, so HWUI rendered it on every display refresh: 1,228 frames in 10 s at 120 Hz. It now checks the native layout once per refresh and redraws only when that changes.
 
@@ -96,4 +96,4 @@ The GPU is about 28% faster, so its clock was capped too. The catch is heat: the
 
 Four compute shaders (`098a126f92bf533a`, `7c16e695919ffc6e`, `fc85981c8d9148c9` with 8×8 workgroups, `fbc4a0eb955f5960` with 128×1) build per-tile lists with the warp-aggregated append. The highest active lane reserves `bitCount(ballot)` entries with one atomic add, and every lane writes at `base + bitCount(ballot & lanes below it)`.
 
-The translation takes only `subgroupBallot(...).x`, the 32 lanes of a Maxwell warp. Adreno runs 64-wide subgroups, so lanes 32–63 are missing from the count and all compute the same offset past the reserved range: their entries overwrite each other. The fix is a SPIR-V rewrite that emulates 32-wide warps inside the 64-wide subgroup (the virtual lane `id & 31`, the ballot word `id >> 5`, shuffles kept inside the half). Done in PR #21: see [2026-10-19-review-fixes.md](2026-10-19-review-fixes.md), with what it costs.
+The translation takes only `subgroupBallot(...).x`, the 32 lanes of a Maxwell warp. Adreno runs 64-wide subgroups, so lanes 32–63 are missing from the count and all compute the same offset past the reserved range: their entries overwrite each other. The fix is a SPIR-V rewrite that emulates 32-wide warps inside the 64-wide subgroup (the virtual lane `id & 31`, the ballot word `id >> 5`, shuffles kept inside the half). Done in the changes: see [2026-10-19-review-fixes.md](2026-10-19-review-fixes.md), with what it costs.

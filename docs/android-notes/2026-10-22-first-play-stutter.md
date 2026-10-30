@@ -13,7 +13,7 @@ is ready (not kept), and shipping the warm-up seed with the shader bundles (reco
   and restored afterwards.
 - Den of Evil fight with a fixed world seed (`DM_TEST_WARP_LV=250:8`, `DM_GAME_SEED=12345`), 120 s, per-frame times from
   `DM_NVN_TSV`. Each run contains about 9,700 frames, including the area load.
-- Production APK from `ea047f3` (SHA-256 `86f9449d3cff2f69…`) for the production and seed runs. The background-build runs
+- Production APK from `recorded build` (SHA-256 `86f9449d3cff2f69…`) for the production and seed runs. The background-build runs
   used experiment builds of the same tree.
 
 ## Results

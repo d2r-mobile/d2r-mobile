@@ -2,7 +2,7 @@
 
 English: [2026-10-18-writebacks.md](2026-10-18-writebacks.md)
 
-12:03–12:32（新西兰夏令时）在 Redmi K50 Ultra（Adreno 730、Vulkan 1.1、Android 15）上测。构建为 `android/linux-build`，用安卓缺省，含[四元组修复](2026-10-18-combat.zh-CN.md)。改动是 PR #15（分支 `android/wb-skip`）。诊断在分支 `android/wb-census` 上，不合并。
+12:03–12:32（新西兰夏令时）在 Redmi K50 Ultra（Adreno 730、Vulkan 1.1、Android 15）上测。构建为 试验构建，用安卓缺省，含[四元组修复](2026-10-18-combat.zh-CN.md)。改动是 改动（分支 试验构建）。诊断在分支 试验构建 上，不合并。
 
 **结果：** 比例固定 0.6 时，营地从 50.99 到 52.72 fps，CPU 每帧少 1.15 ms（进程内 A/B）。邪恶洞穴打斗在比例 0.75 下受 GPU 限制，CPU 少 0.8 ms，fps 不变。
 
@@ -60,7 +60,7 @@ HLE 现在维护一张池标志表（`hle_nvn.c` 里的 `nvn_pool_flags(addr, le
 - 打斗中两种相位的截图一样：火把光、火球、地面、单位都对。日志里没有报错。
 - 钉了 X2 之后，营地的帧现在等 GPU 等得更久（呈现 1.55 ms，原来 1.17 ms）。
 
-## 另外：沿用上一次绘制的管线（PR #16）
+## 另外：沿用上一次绘制的管线（改动）
 
 存储写回之后，下一个单项是选管线。每次绘制都把 `VkGraphicsPipelineCreateInfo` 序列化成键（`xbg_graphics_pipeline_key`，每个阶段还要查一次模块编号），再去哈希表里查：约占游戏线程的 6%。
 
@@ -91,7 +91,7 @@ HLE 现在维护一张池标志表（`hle_nvn.c` 里的 `nvn_pool_flags(addr, le
 | 57 个小通道（模糊链、最后几道） | — | 多为 1 | 3,676 |
 
 **试过、没有收益的：**
-- **清除改成载入操作**（分支 `android/clear-load`，未推送）：打开通道的整幅清除改为兼容通道里该附件的 `LOAD_OP_CLEAR`，不再先 `LOAD` 再 `vkCmdClearAttachments`。每帧转了 15 次，进程内 A/B 两相 GPU 都是 17.69 ms。驱动显然已自行省掉了那次载入。
+- **清除改成载入操作**（分支 试验构建，未推送）：打开通道的整幅清除改为兼容通道里该附件的 `LOAD_OP_CLEAR`，不再先 `LOAD` 再 `vkCmdClearAttachments`。每帧转了 15 次，进程内 A/B 两相 GPU 都是 17.69 ms。驱动显然已自行省掉了那次载入。
 - **不要遮挡查询**（诊断 `gfx-no-occlusion`）：GPU 17.99 ms，有查询时 17.69 ms。每帧 48 个查询没有可测的开销。
 - **主通道片元着色器**（`358197ac3db59cbc`，SPIR-V 1.4 万行）：没有函数内数组（不用暂存内存），也没有别的子组操作。它就是一个大的光照着色器（5 个循环，35 次纹理操作）。
 
@@ -100,8 +100,8 @@ HLE 现在维护一张池标志表（`hle_nvn.c` 里的 `nvn_pool_flags(addr, le
 | 标记 | 没有它 | 有它 |
 |---|---|---|
 | `gfx-wb-skip` = 0 / 1 | 安卓上开（`DM_GFX_WB_SKIP`），别处关 | 关 / 开（A/B 目标 `wbskip`；`NVN PERF wbskip` 计省掉的次数） |
-| `gfx-wb-census`（分支 `android/wb-census`） | | 诊断：按着色器统计写回、改了的字节、读回耗时、谁在读、绑定与退役次序 |
-| `env` 里的 `DM_POOL_LOG`（分支 `android/wb-census`） | | 每个内存池一行日志，带标志 |
+| `gfx-wb-census`（分支 试验构建） | | 诊断：按着色器统计写回、改了的字节、读回耗时、谁在读、绑定与退役次序 |
+| `env` 里的 `DM_POOL_LOG`（分支 试验构建） | | 每个内存池一行日志，带标志 |
 | `gfx-pipe-memo` = 0 / 1 | 安卓上开（`DM_GFX_PIPE_MEMO`），别处关 | 关 / 开（A/B 目标 `pipememo`；`NVN PERF pipememo` 计命中与未命中） |
 
 ## 下一步

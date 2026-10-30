@@ -19,9 +19,14 @@ enum { XBG_CAM_BLOCK = 608, XBG_CAM_SCENE = 1440 };
 // reach = 画面上沿那条视线最远落到人前方多远（世界单位；游戏只备好原版画面那一片，见 xbg_cam_build 的俯仰限制）
 // reach = how far ahead of the character the picture's top-edge sight line may meet the ground (world units; the game only prepares the original picture's
 // area, see the pitch limit in xbg_cam_build)
-typedef struct { float dist, h, look, lookh, eye, fwd, pitch, fov, tau, near_, reach; } xbg_cam_params;
+// pull_pitch = 避墙拉近时最多升到视线下俯多少度（0 = 照吊臂一直升，贴墙时接近头顶往下看；原神式给 40，xbg_game.cpp）。放在最后：
+// 用 xbg_cam_default_params 起的参数（含 Metal nvn_mtl.m）这一项是 0，行为不变
+// pull_pitch = how far the camera may rise when wall avoidance pulls it in, as the sight line's look-down in degrees (0 = rise along the boom all the way,
+// looking down from nearly overhead against a wall; the Genshin style gives 40, xbg_game.cpp). Kept last: parameters started from xbg_cam_default_params
+// (Metal's nvn_mtl.m included) have 0 here, so their behaviour is unchanged
+typedef struct { float dist, h, look, lookh, eye, fwd, pitch, fov, tau, near_, reach, pull_pitch; } xbg_cam_params;
 static inline xbg_cam_params xbg_cam_default_params(int mode) {
-    xbg_cam_params p = { 20.0f, 13.0f, 4.0f, 3.0f, 6.0f, 2.2f, 8.0f, mode == 2 ? 75.0f : 65.0f, 0.35f, 0.3f, 45.0f };
+    xbg_cam_params p = { 20.0f, 13.0f, 4.0f, 3.0f, 6.0f, 2.2f, 8.0f, mode == 2 ? 75.0f : 65.0f, 0.35f, 0.3f, 45.0f, 0.0f };
     return p;
 }
 
@@ -36,7 +41,10 @@ static inline xbg_cam_params xbg_cam_default_params(int mode) {
 // tilt = the pitch offset the player dragged (radians, positive = look up; the host's dm_cam_tilt_get, filled in by the caller every frame); tilt_lo /
 // tilt_hi = the range it can take for this frame's rig, computed by xbg_cam_build, which the caller uses to clamp the host's sum (so dragging back after
 // overshooting does not start with a dead stretch)
-typedef struct { float vp_prev[16], vp_last[16], fx, fz, px, pz, eye[3], fwd[3], dcur, tilt, tilt_lo, tilt_hi; int have, have_eye, hold; uint64_t frame; double t; } xbg_cam_state;
+// ahead = 宿主这一帧给原版镜头加的挪动量（世界 x / z，dm_cam.c dm_cam_ahead_pick，调用方每帧填）：矩阵反推的人物点要先扣掉它；不挪的后端（Metal）恒 0
+// ahead = the shift the host added to the original camera this frame (world x / z, dm_cam.c dm_cam_ahead_pick, filled in by the caller every frame): the
+// character point derived from the matrices has it removed first; backends that do not shift (Metal) keep 0
+typedef struct { float vp_prev[16], vp_last[16], fx, fz, px, pz, eye[3], fwd[3], dcur, tilt, tilt_lo, tilt_hi, ahead[2]; int have, have_eye, hold; uint64_t frame; double t; } xbg_cam_state;
 static inline void xbg_cam_init(xbg_cam_state *s) {
     memset(s, 0, sizeof *s);
     // 朝向缺省取原版视线的水平方向（原版镜头看向 −x −z），画面一进来和原版同一个朝向
@@ -87,22 +95,39 @@ static inline int xbg_cam_m4_inv(const float *m, float *o) {
     return 1;
 }
 
-// 人物位置：原版镜头总对准人物，而且离人物的距离固定（XBG_CAM_ORIG_DIST，沿视线）。逆视图（+144）第 3 行 = 视图 +z 的世界方向、第 4 行 = 镜头位置，
-// 人物 = 镜头位置 − 距离 × 视图 +z。地面有高低：人物走下坡、从高处传送下来时原版镜头跟着降（iPhone 实测：镜头 y 从 442.0 平滑降到 430.1），
-// 所以不能按「视线落到 y = 0」算——那样人物在低处时水平位置偏、透视镜头也停在原来的高度，像浮在空中
-// The character's position: the original camera always aims at the character from a fixed distance (XBG_CAM_ORIG_DIST, along the sight line). In the
-// inverse view (+144) row 3 = world direction of view +z and row 4 = camera position, so character = camera position - distance * view +z. The ground has
-// heights: walking down a slope or teleporting down from a height, the original camera goes down with the character (measured on an iPhone: camera y
-// eased from 442.0 to 430.1), so "where the sight line meets y = 0" is wrong -- with the character lower, the horizontal position is off and the
-// perspective camera stays at the old height, as if floating
-// 884.03 = 平地（y = 0）上视线到地面的距离，营地两次进局不同位置都是这个数 | 884.03 = the sight-line distance to the ground on flat ground (y = 0), the same at two different spots in camp
+// 人物位置：原版镜头总对准人物，摆在人物沿视线往后 d、再水平往后 s 处（主程序 0x89c370 每帧这样摆）。逆视图（+144）第 3 行 = 视图 +z（朝后）的世界方向、
+// 第 4 行 = 镜头位置，所以人物 = 镜头位置 − d × 视图 +z − s × 视图 +z 的水平单位方向。地面有高低：人物走下坡、从高处传送下来时原版镜头跟着降
+// （iPhone 实测：镜头 y 从 442.0 平滑降到 430.1），所以不能按「视线落到 y = 0」算——那样人物在低处时水平位置偏、透视镜头也停在原来的高度，像浮在空中
+// The character's position: the original camera aims at the character from d back along the sight line and then s further back horizontally (main
+// 0x89c370 places it so every frame). In the inverse view (+144) row 3 = world direction of view +z (backwards) and row 4 = camera position,
+// so character = camera position - d * view +z - s * the horizontal unit direction of view +z. The ground has heights: walking down a slope or teleporting
+// down from a height, the original camera goes down with the character (measured on an iPhone: camera y eased from 442.0 to 430.1), so "where the sight
+// line meets y = 0" is wrong -- with the character lower, the horizontal position is off and the perspective camera stays at the old height, as if floating
+// d 和 s 都随缩放（cameraZoomSetting，游戏夹在 0.5～2.25）变：视角 fov = 2·atan(0.03 / 缩放)，u = fov / fov(缩放 1)；正交画面高 H = 53.03·u（= 2 / pr[5]，
+// 所以 u 从投影 +208 就能反推），d = H / (2·tan(fov / 2))，s = 7.25·(u − 1) + 0.1768·8·u。玩家常用的缩放 1.2：d = 884.0、s ≈ 0，就是以前在营地量到的
+// 884.03；镜头打开时缩放调到 0.6（dm_world.c w_cam_zoom）：d = 883.4、s = 7.2，按固定距离算人物会偏出 6～7 个单位
+// d and s both change with the zoom (cameraZoomSetting, clamped by the game to 0.5..2.25): field of view fov = 2 * atan(0.03 / zoom), u = fov / fov(zoom 1);
+// the orthographic picture height H = 53.03 * u (= 2 / pr[5], so u follows from the projection at +208), d = H / (2 * tan(fov / 2)),
+// s = 7.25 * (u - 1) + 0.1768 * 8 * u. At the usual zoom 1.2: d = 884.0 and s about 0, the 884.03 measured in camp before; with the camera on the zoom
+// becomes 0.6 (dm_world.c w_cam_zoom): d = 883.4 and s = 7.2, and a fixed distance puts the character 6 to 7 units off
+// 投影不像原版（高为 0 或离谱）时退回固定距离 | With a projection unlike the original's (height 0 or absurd) fall back to the fixed distance
 #define XBG_CAM_ORIG_DIST 884.03f
 static inline void xbg_cam_ground(const uint8_t *src, float *px, float *py, float *pz) {
-    float iv[16];
+    float iv[16], pr[16];
     memcpy(iv, src + 144, sizeof iv);
-    *px = iv[12] - XBG_CAM_ORIG_DIST * iv[8];
-    *py = iv[13] - XBG_CAM_ORIG_DIST * iv[9];
-    *pz = iv[14] - XBG_CAM_ORIG_DIST * iv[10];
+    memcpy(pr, src + 208, sizeof pr);
+    float d = XBG_CAM_ORIG_DIST, s = 0;
+    const float h = pr[5] != 0 ? fabsf(2 / pr[5]) : 0;
+    if (h > 10 && h < 500) {
+        const float u = h / (0.75f * 70.7107f);
+        d = h / (2 * tanf(u * atanf(0.03f)));
+        s = 7.25f * (u - 1) + 0.176777f * 8 * u;
+    }
+    const float hl = sqrtf(iv[8] * iv[8] + iv[10] * iv[10]);
+    if (!(hl > 1e-4f)) s = 0;
+    *px = iv[12] - d * iv[8] - (s != 0 ? s * iv[8] / hl : 0);
+    *py = iv[13] - d * iv[9];
+    *pz = iv[14] - d * iv[10] - (s != 0 ? s * iv[10] / hl : 0);
 }
 
 // 镜头跟随，每帧一次（frame 变了才走，返回 1）。want = 宿主给的朝向（瞄准拖拽 > 移动摇杆，已是世界方向），没有就取人物位移方向，都没有就保持。
@@ -137,6 +162,58 @@ static inline int xbg_cam_follow(xbg_cam_state *s, float px, float pz, uint64_t 
     return 1;
 }
 
+// 拖着走的跟随（原神式，宿主 dm_cam.c dm_cam_style = 1）：镜头留在上一帧的水平位置、只转过来对着人物，离人物的水平距离保持 dist——
+// 往前走不转；横着走镜头被拖着转（转速 ≈ 横向速度 ÷ dist，摇杆一直往左就绕着镜头转圈）；往镜头这边走镜头往后退、不调头。
+// 不朝摇杆方向追（那是 xbg_cam_follow 的做法），朝向只由人物的位移和玩家自己转（拖动 / 转向键 / 体感，跟随之后加）来定。
+// 首帧、位移一帧超过 20（换区域 / 传送 / 过门）照旧把朝向重置为原版视线的水平方向
+// Dragged follow (Genshin style, host dm/host/dm_cam.c dm_cam_style = 1): the camera stays at last frame's horizontal position and only turns to face the
+// character, keeping the horizontal distance dist -- walking forward does not turn it; walking sideways drags it round (turn rate ~ sideways speed / dist,
+// so holding the stick left circles the character round the camera); walking towards the camera pushes it back without turning round. It does not chase
+// the stick direction (that is xbg_cam_follow); the heading comes only from the character's displacement and the player's own turns (drag / turn buttons /
+// sensors, added after the follow). The first frame, or a displacement above 20 in one frame (area change / teleport / door), still resets the heading to
+// the horizontal direction of the original sight line
+// k = 跟着转的份额（0..1）：1 = 镜头完全不挪、只转（横着走转得最快，摇杆一直往左绕着半径 dist 的圈转）；0.5 = 只转一半、其余由镜头跟着人物平移补上
+// （转速减半，圈的半径变成 dist / k）。人物跑得快（实测约 31 世界单位每秒），k = 1 时一直往左每秒转约 90°
+// k = the share of the turn taken (0..1): 1 = the camera never moves, it only turns (fastest when walking sideways; holding the stick left circles at radius
+// dist); 0.5 = half the turn, the rest made up by the camera sliding along with the character (half the turn rate, a circle of radius dist / k). Characters
+// run fast (about 31 world units a second measured), so with k = 1 holding left turns about 90 degrees a second
+static inline int xbg_cam_drag(xbg_cam_state *s, float px, float pz, uint64_t frame, double now, float dist, float k) {
+    if (frame == s->frame) return 0;
+    s->frame = frame;
+    s->t = now;
+    float dx = px - s->px, dz = pz - s->pz, l = sqrtf(dx * dx + dz * dz);
+    if (!s->have || l >= 20) s->fx = s->fz = -0.70711f;
+    else if (l > 1e-4f) {
+        float ex = px - (s->px - s->fx * dist), ez = pz - (s->pz - s->fz * dist), el = sqrtf(ex * ex + ez * ez);
+        if (el > 1e-3f) {
+            float a = atan2f(s->fz, s->fx), d = atan2f(ez, ex) - a;
+            while (d > 3.14159265f) d -= 6.2831853f;
+            while (d < -3.14159265f) d += 6.2831853f;
+            a += d * (k < 0 ? 0 : k > 1 ? 1 : k);
+            s->fx = cosf(a);
+            s->fz = sinf(a);
+        }
+    }
+    s->px = px;
+    s->pz = pz;
+    s->have = 1;
+    memcpy(s->vp_prev, s->vp_last, 64);
+    return 1;
+}
+
+// 朝 (wx, wz) 按墙钟一阶阻尼转 dt 秒（tau 秒，走短的那边；同 xbg_cam_follow 的转法）：原神式放技能时镜头跟着人转（xbg_game.cpp）
+// Turn towards (wx, wz) for dt seconds with a wall-clock first-order lag (tau seconds, the shorter way round; the same turn as xbg_cam_follow): in the
+// Genshin style the camera turns with the character when a skill is cast (xbg_game.cpp)
+static inline void xbg_cam_ease(xbg_cam_state *s, float wx, float wz, double dt, float tau) {
+    if (!(dt > 0) || !(tau > 0) || (wx == 0 && wz == 0)) return;
+    float a = atan2f(s->fz, s->fx), d = atan2f(wz, wx) - a;
+    while (d > 3.14159265f) d -= 6.2831853f;
+    while (d < -3.14159265f) d += 6.2831853f;
+    a += d * (float)(1 - exp(-dt / tau));
+    s->fx = cosf(a);
+    s->fz = sinf(a);
+}
+
 // 体感转向：朝向转 rad 弧度，正 = 往画面右边转（朝向 f 转向 右 = (−f.z, f.x)，即世界 xz 平面里角度增大）
 // Sensor steering: turn the heading by rad radians, positive = towards the right of the picture (heading f turns towards right = (-f.z, f.x), i.e. the
 // angle in the world xz plane increases)
@@ -168,6 +245,8 @@ static inline void xbg_cam_build(xbg_cam_state *s, const uint8_t *src, uint8_t *
     float pr[16], px, py, pz;
     memcpy(pr, src + 208, sizeof pr);
     xbg_cam_ground(src, &px, &py, &pz);
+    px -= s->ahead[0];
+    pz -= s->ahead[1];
     float fx = s->fx, fz = s->fz, eye[3], at[3], fov = pp->fov;
     if (mode == 2) {
         // 俯仰 = 缺省下俯减去玩家拖的偏移，夹在下俯 60° 到上仰 10° 之间
@@ -189,6 +268,10 @@ static inline void xbg_cam_build(xbg_cam_state *s, const uint8_t *src, uint8_t *
         // the character sinks to the bottom of the picture under the bottom bar (measured on the Redmi: 8 out and 23.9 high put the character at 86% of the height)
         float la = pp->dist > 0 && d < pp->dist ? pp->look * d / pp->dist : pp->look;
         float h = d < pp->dist ? lh + sqrtf(fmaxf(boom - d * d, 0)) : pp->h;
+        // 原神式（pull_pitch > 0）：拉近时最多升到视线下俯 pull_pitch 度，不变成从头顶往下看（OnePlus 13：贴墙时下俯约 84°，打架时很烦）
+        // Genshin style (pull_pitch > 0): when pulled in, rise only until the sight line looks down pull_pitch degrees, never to a top-down view (OnePlus 13:
+        // about 84 degrees down against a wall, annoying in a fight)
+        if (pp->pull_pitch > 0 && d < pp->dist) h = fminf(h, lh + (d + la) * tanf(pp->pull_pitch * 3.14159265f / 180));
         // 俯仰限制：画面上沿在水平线下至少 3°，并且上沿那条视线落地不超过人前方 reach——原版俯视，没有天空；游戏也只备好原版正交画面那一片
         // （约 98 × 88 世界单位），更远处还没画，透视下就是黑的（OnePlus 13：走近了才画出来）。竖直半视角按本帧纵横比算；落地点随高度变，迭代几次就收敛
         // Pitch limit: the top edge of the picture is at least 3 degrees below the horizon, and the top edge's sight line meets the ground no further than reach

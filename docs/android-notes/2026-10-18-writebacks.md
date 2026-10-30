@@ -2,7 +2,7 @@
 
 中文：[2026-10-18-writebacks.zh-CN.md](2026-10-18-writebacks.zh-CN.md)
 
-Measured 12:03–12:32 NZDT on the Redmi K50 Ultra (Adreno 730, Vulkan 1.1, Android 15). Build `android/linux-build` with the Android defaults, including the [quad fix](2026-10-18-combat.md). The change is PR #15 (branch `android/wb-skip`). The diagnostics are on branch `android/wb-census`, which is not for merging.
+Measured 12:03–12:32 NZDT on the Redmi K50 Ultra (Adreno 730, Vulkan 1.1, Android 15). Build experimental build with the Android defaults, including the [quad fix](2026-10-18-combat.md). The change is the changes (branch experimental build). The diagnostics are on branch experimental build, which is not for merging.
 
 **Result:** with the scale held at 0.6, the camp goes from 50.99 to 52.72 fps and the CPU spends 1.15 ms less per frame (in-process A/B). The Den fight at scale 0.75 is GPU bound, so it saves 0.8 ms of CPU there with no fps change.
 
@@ -60,7 +60,7 @@ In-process A/B (`gfx-ab-toggle` 10 s, `gfx-ab-target` `wbskip`), battery at 29�
 - Screenshots from both phases of the fight look the same, including torch light, fire bolt, floor and units. The log shows no errors.
 - With the pin, the camp frame now waits on the GPU for longer (present 1.55 ms instead of 1.17).
 
-## Also: the previous draw's pipeline (PR #16)
+## Also: the previous draw's pipeline (the changes)
 
 After the writebacks, the next single item was pipeline selection. Every draw serialized its `VkGraphicsPipelineCreateInfo` into a key (`xbg_graphics_pipeline_key`, with a module-id lookup per stage) and looked it up in a hash map: about 6% of the game thread.
 
@@ -91,7 +91,7 @@ With both changes the camp at scale 0.6 is GPU bound: the CPU needs 11.6 ms of a
 | 57 small passes (blur chains, final passes) | — | mostly 1 | 3,676 |
 
 **Tried, no gain:**
-- **Clear on load** (branch `android/clear-load`, not pushed): a whole-attachment clear that opens a pass became the attachment's `LOAD_OP_CLEAR` in a compatible render pass, instead of `LOAD` followed by `vkCmdClearAttachments`. 15 clears per frame converted, GPU 17.69 ms in both phases of an in-process A/B. The driver evidently skips the load itself.
+- **Clear on load** (branch experimental build, not pushed): a whole-attachment clear that opens a pass became the attachment's `LOAD_OP_CLEAR` in a compatible render pass, instead of `LOAD` followed by `vkCmdClearAttachments`. 15 clears per frame converted, GPU 17.69 ms in both phases of an in-process A/B. The driver evidently skips the load itself.
 - **No occlusion queries** (diagnostic `gfx-no-occlusion`): GPU 17.99 ms against 17.69 ms. The 48 queries per frame cost nothing measurable.
 - **Main-pass fragment shader** (`358197ac3db59cbc`, 14K lines of SPIR-V): no function-local arrays (no scratch memory), no other subgroup operation. It is simply a large lighting shader (5 loops, 35 texture operations).
 
@@ -100,8 +100,8 @@ With both changes the camp at scale 0.6 is GPU bound: the CPU needs 11.6 ms of a
 | Marker | Without it | With it |
 |---|---|---|
 | `gfx-wb-skip` = 0 / 1 | on on Android (`DM_GFX_WB_SKIP`), off elsewhere | off / on (A/B target `wbskip`; `NVN PERF wbskip` counts the drops) |
-| `gfx-wb-census` (branch `android/wb-census`) | | diagnostic: writebacks per shader, changed bytes, read time, readers, bind and retire order |
-| `DM_POOL_LOG` in `env` (branch `android/wb-census`) | | one log line per memory pool with its flags |
+| `gfx-wb-census` (branch experimental build) | | diagnostic: writebacks per shader, changed bytes, read time, readers, bind and retire order |
+| `DM_POOL_LOG` in `env` (branch experimental build) | | one log line per memory pool with its flags |
 | `gfx-pipe-memo` = 0 / 1 | on on Android (`DM_GFX_PIPE_MEMO`), off elsewhere | off / on (A/B target `pipememo`; `NVN PERF pipememo` counts hits and misses) |
 
 ## Next

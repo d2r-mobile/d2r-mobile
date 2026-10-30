@@ -1,6 +1,6 @@
 # 延后事件与报告边界的顺序模型和源码门，依据 PR9 及 code9 的完成契约。
 # Ordering model and source gates for deferred events/report boundaries, based on PR9 and code9 completion contracts.
-# linux-build keeps only the event-guard gates of main's 07ea121 (its report batching and default-off marker differ).
+# Event-guard gates are tested independently of report batching and default markers.
 from pathlib import Path
 from texture_cache_regression import balanced
 root=Path(__file__).resolve().parent.parent
