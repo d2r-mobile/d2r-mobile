@@ -93,7 +93,7 @@ APK 和 Git 仓库均不含游戏程序、着色器、游戏美术或存档。�
 
 - **4 个是 main 程序本体内嵌的查询核**（`q_val0`、`q_val8`、`q_dlt0`、`q_dlt8`；Mac 与 iOS 用 `dm/gfx/nvn/nvn_builtin.h` 里的 MSL 版）。它们是手写的，能从源码做：`python3 dm/gfx/tools/pack_builtin_queries.py --output <新目录>` 用 `glslc`（NDK 的 `shader-tools/` 下就有）编译 `dm/gfx/vulkan/kernels/builtin_queries.comp`，写出这 4 个文件。
 
-一套包还可以附带 `vk-pipeline-list.seed`。首次启动、还没有 `files/dm/vk-pipeline-list.bin` 时，引擎在启动期间编好种子里列出的管线，种子覆盖的地方第一次去就不会因为现编管线而卡。`dm/android/tools/merge_warm_lists.py` 把几台设备的 `files/dm/vk-pipeline-list.bin` 合成一个种子。种子只能和录它时的那套包一起用，所以随包发放。实测见 `docs/android-notes/2026-10-22-first-play-stutter.zh-CN.md`。
+一套包还可以附带 `vk-pipeline-list.seed`。首次启动、还没有 `files/dm/vk-pipeline-list.bin` 时，引擎在启动期间编好种子里列出的管线，种子覆盖的地方第一次去就不会因为现编管线而卡。`dm/android/tools/merge_warm_lists.py` 把几台设备的 `files/dm/vk-pipeline-list.bin` 合成一个种子。种子只能和录它时的那套包一起用，所以随包发放：`dm/tools/d2rm_android.py --warm-seed <文件>` 把它放进导入包（在耗时的步骤之前先核种子），并记在 `pack_info.txt` 的 `WARM_SEED=` 一行。种子放在仓库外。种子只对首次启动有用：手机上已经有 `files/dm/vk-pipeline-list.bin` 的，重新导入后仍用自己的清单。工具的检查随 `make -C dm/host/tests run` 跑（也可以 `python3 dm/tools/tests/test_warm_seed.py`）。实测见 `docs/android-notes/2026-10-22-first-play-stutter.zh-CN.md`。
 
 ## Android Auto停车游戏
 
