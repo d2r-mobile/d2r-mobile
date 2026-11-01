@@ -35,6 +35,7 @@ harness = r'''
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <unistd.h>
 #include <vector>
 using VkPipeline=uint64_t;
 using VkResult=int;
