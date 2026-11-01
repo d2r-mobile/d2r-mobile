@@ -23,6 +23,7 @@ void gate_obs_set(int id, void (*fn)(const uint64_t *)) { if (id == 6) gate6_cal
 int gate_obs_present(int id) { return id == 6 && gate6_present; }
 uint64_t now_ns(void) { return ++fake_now; }
 int dm_swapskill_equipped(int32_t item) { (void)item; return 1; }
+int dm_swapskill_offhand_gives(int skill) { (void)skill; return 0; }
 
 static void fill_mapping(unsigned char *mapping) {
     static const uint32_t logical[6] = {0x1000, 0x2000, 0x4000, 0x8000, 0x200, 0x800};
