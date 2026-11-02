@@ -308,6 +308,8 @@ public class DmActivity extends Activity implements SurfaceHolder.Callback, Disp
         for (String item : IMPORT_ITEMS) if (!new File(source, item).exists()) throw new IOException("missing " + item);
         List<String> items = new ArrayList<>(Arrays.asList(IMPORT_ITEMS));
         for (String item : OPTIONAL_ITEMS) if (new File(source, item).exists()) items.add(item);
+        items.remove("pack_info.txt");
+        items.add("pack_info.txt");
         File part = new File(runtime, "import.part");
         deleteTree(part);
         long sum = 0;
