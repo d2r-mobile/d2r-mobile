@@ -137,6 +137,17 @@ else
     fail "startup save ZIP regression"
 fi
 
+save_transfer_java=$work/java/save-transfer
+mkdir -p "$save_transfer_java"
+if "$javac" --release 11 -d "$save_transfer_java" \
+        "$root/dm/android/app/src/main/java/com/xiaoboluo/d2r/SaveTransfer.java" \
+        "$root/dm/android/tests/SaveTransferTest.java" >> "$log" 2>&1 \
+    && "$(dirname "$javac")/java" -cp "$save_transfer_java" com.xiaoboluo.d2r.SaveTransferTest >> "$log" 2>&1; then
+    log_line "PASS save folder transfers, duplicate imports and same-phone stash preservation"
+else
+    fail "save folder transfer regression"
+fi
+
 # Drop-haptic lifecycle and tier policy share the production classes only.
 # The native AAudio/HUD path is device-owned; this host gate covers the
 # single-slot queue semantics that otherwise replay a paused drop on resume.
